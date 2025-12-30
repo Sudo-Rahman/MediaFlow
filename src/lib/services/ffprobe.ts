@@ -39,7 +39,6 @@ function parseStream(stream: FFprobeStream): Track | null {
     track.channels = stream.channels;
     track.sampleRate = stream.sample_rate ? parseInt(stream.sample_rate) : undefined;
   }
-  console.error(track)
 
   return track;
 }

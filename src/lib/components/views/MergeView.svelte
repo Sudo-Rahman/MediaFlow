@@ -312,7 +312,7 @@
 
     const videosToMerge = mergeStore.videosReadyForMerge;
     if (videosToMerge.length === 0) {
-      toast.warning('No videos ready to merge. Attach tracks to videos first.');
+      toast.warning('No videos ready to merge.');
       return;
     }
 
@@ -344,15 +344,36 @@
           fullOutputPath = `${outputPath}/${outputFilename}`;
         }
 
+        // Build attached track args (external tracks to add)
         const trackArgs = attachedTracks.map(track => ({
           inputPath: track.path,
           trackIndex: 0,
           config: track.config
         }));
 
+        // Build source track configs (for metadata modifications and track selection)
+        const sourceTrackConfigs = video.tracks.map(track => {
+          const config = mergeStore.getSourceTrackConfig(track.id);
+          return {
+            originalIndex: track.originalIndex,
+            type: track.type,
+            config: config || {
+              trackId: track.id,
+              enabled: true,
+              language: track.language,
+              title: track.title,
+              default: track.default,
+              forced: track.forced,
+              delayMs: 0,
+              order: 0
+            }
+          };
+        });
+
         await invoke('merge_tracks', {
           videoPath: video.path,
           tracks: trackArgs,
+          sourceTrackConfigs,
           outputPath: fullOutputPath
         });
 

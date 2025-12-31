@@ -45,9 +45,9 @@
 
   const isProcessing = $derived(status === 'processing');
   const isCompleted = $derived(status === 'completed');
+  // Can merge if we have videos and an output path (attached tracks are optional - user may just want to modify metadata or remove tracks)
   const canMerge = $derived(
     videosCount > 0 &&
-    enabledTracksCount > 0 &&
     outputConfig.outputPath &&
     !isProcessing
   );
@@ -136,11 +136,19 @@
       </Alert.Root>
     {/if}
   </Card.Content>
-  <Card.Footer>
+  <Card.Footer class="flex flex-col gap-2">
     {#if isCompleted}
-      <Button class="w-full" onclick={onOpenFolder}>
+      <Button class="w-full" variant="outline" onclick={onOpenFolder}>
         <FolderOpen class="size-4 mr-2" />
         Open folder
+      </Button>
+      <Button
+        class="w-full"
+        onclick={onMerge}
+        disabled={!canMerge}
+      >
+        <Play class="size-4 mr-2" />
+        Merge again
       </Button>
     {:else}
       <Button

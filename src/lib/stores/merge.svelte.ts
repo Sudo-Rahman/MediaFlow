@@ -136,6 +136,8 @@ export const mergeStore = {
     importedTracks = importedTracks.map(t =>
       t.id === trackId ? { ...t, config: { ...t.config, ...updates } } : t
     );
+    // Reset status if completed so user can re-merge
+    if (status === 'completed') status = 'idle';
   },
 
   // Source track config management
@@ -165,6 +167,8 @@ export const mergeStore = {
     if (current) {
       sourceTrackConfigs = new Map(sourceTrackConfigs);
       sourceTrackConfigs.set(trackId, { ...current, ...updates });
+      // Reset status if completed so user can re-merge
+      if (status === 'completed') status = 'idle';
     }
   },
 
@@ -173,6 +177,8 @@ export const mergeStore = {
     if (current) {
       sourceTrackConfigs = new Map(sourceTrackConfigs);
       sourceTrackConfigs.set(trackId, { ...current, enabled: !current.enabled });
+      // Reset status if completed so user can re-merge
+      if (status === 'completed') status = 'idle';
     }
   },
 
@@ -183,6 +189,8 @@ export const mergeStore = {
       attachedTracks: v.attachedTracks.filter(at => at.trackId !== trackId)
     }));
     importedTracks = importedTracks.filter(t => t.id !== trackId);
+    // Reset status if completed so user can re-merge
+    if (status === 'completed') status = 'idle';
   },
 
   // Attach track to video
@@ -200,6 +208,8 @@ export const mergeStore = {
         ? [...v.attachedTracks, { trackId, order: v.attachedTracks.length }]
         : v.attachedTracks.filter(at => at.trackId !== trackId)
     }));
+    // Reset status if completed so user can re-merge
+    if (status === 'completed') status = 'idle';
   },
 
   // Detach track from video
@@ -209,6 +219,8 @@ export const mergeStore = {
         ? { ...v, attachedTracks: v.attachedTracks.filter(at => at.trackId !== trackId) }
         : v
     );
+    // Reset status if completed so user can re-merge
+    if (status === 'completed') status = 'idle';
   },
 
   // Reorder attached tracks within a video
@@ -263,11 +275,9 @@ export const mergeStore = {
     if (err) status = 'error';
   },
 
-  // Get videos ready for merge (have attached tracks)
+  // Get videos ready for merge (just need to be ready, attached tracks are optional)
   get videosReadyForMerge(): MergeVideoFile[] {
-    return videoFiles.filter(v =>
-      v.status === 'ready' && v.attachedTracks.length > 0
-    );
+    return videoFiles.filter(v => v.status === 'ready');
   },
 
   // Get total tracks to merge

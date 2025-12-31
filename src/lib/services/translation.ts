@@ -425,28 +425,18 @@ export async function translateSubtitle(
 
   reportProgress({ progress: 15, currentBatch: 0, totalBatches });
 
-  // Step 3: Translate each batch
-  const allTranslatedCues: TranslatedCue[] = [];
+  // Step 3: Translate all batches in parallel
+  interface BatchResult {
+    batchIndex: number;
+    cues: TranslatedCue[];
+    error?: string;
+  }
 
-  for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-    // Check for cancellation before each batch
+  const translateBatch = async (batch: Cue[], batchIndex: number): Promise<BatchResult> => {
+    // Check for cancellation before starting
     if (signal?.aborted) {
-      return {
-        originalFile: file,
-        translatedContent: '',
-        success: false,
-        error: 'Translation cancelled'
-      };
+      return { batchIndex, cues: [], error: 'Translation cancelled' };
     }
-
-    const batch = batches[batchIndex];
-    const batchProgress = 15 + ((batchIndex / totalBatches) * 70);
-
-    reportProgress({
-      progress: Math.round(batchProgress),
-      currentBatch: batchIndex + 1,
-      totalBatches
-    });
 
     // Build translation request for this batch
     const translationRequest = buildTranslationRequest(batch, sourceLang, targetLang);
@@ -463,38 +453,72 @@ export async function translateSubtitle(
     );
 
     if (signal?.aborted) {
-      return {
-        originalFile: file,
-        translatedContent: '',
-        success: false,
-        error: 'Translation cancelled'
-      };
+      return { batchIndex, cues: [], error: 'Translation cancelled' };
     }
 
     if (llmResponse.error) {
-      return {
-        originalFile: file,
-        translatedContent: '',
-        success: false,
-        error: `Batch ${batchIndex + 1}/${totalBatches} failed: ${llmResponse.error}`
-      };
+      return { batchIndex, cues: [], error: `Batch ${batchIndex + 1}/${totalBatches} failed: ${llmResponse.error}` };
     }
 
     // Parse LLM response
     const translationResponse = parseTranslationResponse(llmResponse.content);
 
     if (!translationResponse) {
+      return { batchIndex, cues: [], error: `Batch ${batchIndex + 1}/${totalBatches}: Failed to parse translation response` };
+    }
+
+    return { batchIndex, cues: translationResponse.cues };
+  };
+
+  // Launch all batch translations in parallel
+  const batchPromises = batches.map((batch, index) => translateBatch(batch, index));
+
+  // Track progress as batches complete
+  let completedBatches = 0;
+  const batchResults: BatchResult[] = [];
+
+  // Use Promise.allSettled to handle all batches, even if some fail
+  const results = await Promise.allSettled(
+    batchPromises.map(async (promise, index) => {
+      const result = await promise;
+      completedBatches++;
+      const batchProgress = 15 + ((completedBatches / totalBatches) * 70);
+      reportProgress({
+        progress: Math.round(batchProgress),
+        currentBatch: completedBatches,
+        totalBatches
+      });
+      return result;
+    })
+  );
+
+  // Collect results and check for errors
+  for (const result of results) {
+    if (result.status === 'fulfilled') {
+      if (result.value.error) {
+        return {
+          originalFile: file,
+          translatedContent: '',
+          success: false,
+          error: result.value.error
+        };
+      }
+      batchResults.push(result.value);
+    } else {
       return {
         originalFile: file,
         translatedContent: '',
         success: false,
-        error: `Batch ${batchIndex + 1}/${totalBatches}: Failed to parse translation response`
+        error: `Batch translation failed: ${result.reason}`
       };
     }
-
-    // Add translated cues from this batch
-    allTranslatedCues.push(...translationResponse.cues);
   }
+
+  // Sort results by batch index to maintain order
+  batchResults.sort((a, b) => a.batchIndex - b.batchIndex);
+
+  // Combine all translated cues in order
+  const allTranslatedCues: TranslatedCue[] = batchResults.flatMap(r => r.cues);
 
   reportProgress({ progress: 85, currentBatch: totalBatches, totalBatches });
 

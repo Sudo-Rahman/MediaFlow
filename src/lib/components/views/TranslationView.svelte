@@ -37,6 +37,9 @@
   import Download from 'lucide-svelte/icons/download';
   import Copy from 'lucide-svelte/icons/copy';
   import Loader2 from 'lucide-svelte/icons/loader-2';
+  import RotateCw from 'lucide-svelte/icons/rotate-cw';
+
+  import { Textarea } from '$lib/components/ui/textarea';
 
   interface TranslationViewProps {
     onNavigateToSettings?: () => void;
@@ -189,6 +192,47 @@
     }
   }
 
+
+  async function handleDownloadAll() {
+    const completedJobs = translationStore.jobs.filter(j => j.status === 'completed' && j.result?.translatedContent);
+    if (completedJobs.length === 0) {
+      toast.warning('No translated files to download');
+      return;
+    }
+
+    try {
+      const selectedDir = await open({
+        directory: true,
+        multiple: false,
+        title: 'Select Destination Folder'
+      });
+
+      if (!selectedDir || typeof selectedDir !== 'string') return;
+
+      let savedCount = 0;
+      const isWindows = navigator.userAgent.includes('Windows');
+      const sep = isWindows ? '\\' : '/';
+
+      for (const job of completedJobs) {
+        if (!job.result?.translatedContent) continue;
+        
+        const extension = getSubtitleExtension(job.file.format);
+        const baseName = job.file.name.replace(/\.[^/.]+$/, '');
+        const targetLang = translationStore.config.targetLanguage;
+        const fileName = `${baseName}.${targetLang}${extension}`;
+        const filePath = `${selectedDir}${sep}${fileName}`;
+        
+        await writeTextFile(filePath, job.result.translatedContent);
+        savedCount++;
+      }
+      
+      toast.success(`Saved ${savedCount} files`);
+    } catch (e) {
+      console.error('Download all error:', e);
+      toast.error('Failed to save files');
+    }
+  }
+
   async function handleTranslateAll() {
     const pendingJobs = translationStore.jobs.filter(j => j.status === 'pending' || j.status === 'error');
 
@@ -205,19 +249,47 @@
       totalBatches: 0
     });
 
-    const maxParallel = settingsStore.settings.translationSettings.maxParallelFiles;
+    let i = 0;
+    const activePromises = new Set<Promise<void>>();
 
-    // Process jobs in parallel batches
-    for (let i = 0; i < pendingJobs.length; i += maxParallel) {
-      const batch = pendingJobs.slice(i, i + maxParallel);
-      await Promise.all(batch.map(job => translateJob(job)));
+    // We keep looping as long as there are pending jobs OR active translations
+    while (i < pendingJobs.length || activePromises.size > 0) {
+      // Check cancellation
+      if ((translationStore.progress.status as string) === 'cancelled') {
+        break;
+      }
+
+      // Dynamic batch size - read from settings every iteration
+      const maxParallel = settingsStore.settings.translationSettings.maxParallelFiles;
+
+      // Fill the pool with new jobs up to maxParallel
+      while (activePromises.size < maxParallel && i < pendingJobs.length) {
+        if ((translationStore.progress.status as string) === 'cancelled') break;
+
+        const job = pendingJobs[i++];
+        const promise = translateJob(job).finally(() => {
+          activePromises.delete(promise);
+        });
+        
+        activePromises.add(promise);
+      }
+
+      // If we have active jobs, wait for at least one to finish before checking again
+      // This creates the "sliding window" effect
+      if (activePromises.size > 0) {
+        await Promise.race(activePromises);
+      }
     }
 
-    translationStore.updateProgress({
-      status: 'completed',
-      progress: 100
-    });
+    // Only set completed if not cancelled
+    if ((translationStore.progress.status as string) !== 'cancelled') {
+      translationStore.updateProgress({
+        status: 'completed',
+        progress: 100
+      });
+    }
   }
+
 
   function handleCancelAll() {
     translationStore.cancelAllJobs();
@@ -305,6 +377,11 @@
     hasApiKey
   );
   const selectedJob = $derived(translationStore.selectedJob);
+  
+  // Global progress
+  const totalJobs = $derived(translationStore.jobs.length);
+  const completedJobsCount = $derived(translationStore.jobs.filter(j => j.status === 'completed').length);
+  const globalProgressPercent = $derived(totalJobs === 0 ? 0 : (completedJobsCount / totalJobs) * 100);
 </script>
 
 <div class="flex flex-col h-full">
@@ -314,7 +391,7 @@
     <div class="flex-1 max-w-108 border-r flex flex-col min-h-0 p-4 gap-4 overflow-auto">
       <!-- File Section -->
       <Card.Root>
-        <Card.Header class="pb-3">
+        <Card.Header>
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2">
               <FileText class="size-5 text-primary" />
@@ -323,15 +400,35 @@
                 <Badge variant="secondary">{translationStore.jobs.length}</Badge>
               {/if}
             </div>
-            <Button variant="outline" size="sm" onclick={handleImportClick} disabled={isTranslating}>
-              <Upload class="size-4 mr-2" />
-              Import
-            </Button>
+            
+            <div class="flex items-center gap-2">
+              <Button variant="outline" size="sm" onclick={handleImportClick} disabled={isTranslating}>
+                <Upload class="size-4 mr-2" />
+                Import
+              </Button>
+            </div>
           </div>
+          {#if isTranslating || completedJobsCount > 0}
+            <div class="mt-4 flex items-end gap-3">
+              <div class="flex-1 space-y-1">
+                <div class="flex justify-between text-xs text-muted-foreground">
+                  <span>Total Progress</span>
+                  <span>{Math.round(globalProgressPercent)}% ({completedJobsCount}/{totalJobs})</span>
+                </div>
+                <Progress value={globalProgressPercent} class="h-2" />
+              </div>
+              {#if completedJobsCount > 0 && !isTranslating}
+                <Button variant="outline" size="sm" onclick={handleDownloadAll} disabled={isTranslating} class="h-8">
+                  <Download class="size-4 mr-2" />
+                  Download All
+                </Button>
+              {/if}
+            </div>
+          {/if}
         </Card.Header>
-        <Card.Content>
+        <Card.Content class="p-2">
           {#if hasFiles}
-            <ScrollArea class="max-h-48">
+            <ScrollArea class="h-48 px-3">
               <div class="space-y-2">
                 {#each translationStore.jobs as job (job.id)}
                   {@const StatusIcon = getStatusIcon(job.status)}
@@ -368,6 +465,18 @@
                           <Square class="size-3" />
                         </Button>
                       {:else}
+                        {#if job.status === 'error'}
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            class="size-7 hover:text-primary" 
+                            onclick={(e) => { e.stopPropagation(); translateJob(job); }} 
+                            disabled={isTranslating}
+                            title="Retry"
+                          >
+                            <RotateCw class="size-3" />
+                          </Button>
+                        {/if}
                         <Button variant="ghost" size="icon" class="size-7" onclick={(e) => { e.stopPropagation(); handleRemoveJob(job.id); }} disabled={isTranslating}>
                           <X class="size-3" />
                         </Button>
@@ -493,7 +602,17 @@
                     <Progress value={selectedJob.progress} class="w-48" />
                   </div>
                 {:else if selectedJob.result?.translatedContent}
-                  <pre class="p-4 text-sm whitespace-pre-wrap font-mono">{selectedJob.result.translatedContent}</pre>
+                  <Textarea
+                    class="w-full h-full p-4 resize-none font-mono text-sm border-0 focus-visible:ring-0 rounded-none bg-transparent"
+                    value={selectedJob.result.translatedContent}
+                    oninput={(e) => {
+                      if (selectedJob && selectedJob.result) {
+                        translationStore.updateJob(selectedJob.id, {
+                          result: { ...selectedJob.result, translatedContent: e.currentTarget.value }
+                        });
+                      }
+                    }}
+                  />
                 {:else if selectedJob.status === 'error'}
                   <div class="flex flex-col items-center justify-center h-full p-8 gap-4">
                     <AlertCircle class="size-8 text-destructive" />

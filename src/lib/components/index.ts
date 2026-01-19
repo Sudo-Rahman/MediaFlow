@@ -36,3 +36,6 @@ export * from './merge';
 
 // Translation components
 export * from './translation';
+
+// Rename components
+export * from './rename';

@@ -196,6 +196,54 @@ async fn get_ffmpeg_version() -> Result<String, String> {
     }
 }
 
+/// Rename a file on disk
+#[tauri::command]
+async fn rename_file(old_path: String, new_path: String) -> Result<(), String> {
+    std::fs::rename(&old_path, &new_path)
+        .map_err(|e| format!("Failed to rename file: {}", e))
+}
+
+/// Copy a file to a new location
+#[tauri::command]
+async fn copy_file(source_path: String, dest_path: String) -> Result<(), String> {
+    std::fs::copy(&source_path, &dest_path)
+        .map_err(|e| format!("Failed to copy file: {}", e))?;
+    Ok(())
+}
+
+/// File metadata structure
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileMetadata {
+    size: u64,
+    created_at: Option<u64>,  // Unix timestamp in milliseconds
+    modified_at: Option<u64>, // Unix timestamp in milliseconds
+}
+
+/// Get file metadata (size, created, modified dates)
+#[tauri::command]
+async fn get_file_metadata(path: String) -> Result<FileMetadata, String> {
+    let metadata = std::fs::metadata(&path)
+        .map_err(|e| format!("Failed to get file metadata: {}", e))?;
+    
+    let size = metadata.len();
+    
+    let created_at = metadata.created()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64);
+    
+    let modified_at = metadata.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64);
+    
+    Ok(FileMetadata {
+        size,
+        created_at,
+        modified_at,
+    })
+}
+
 /// Merge tracks into a video file
 #[tauri::command]
 async fn merge_tracks(
@@ -430,7 +478,10 @@ pub fn run() {
             open_folder,
             check_ffmpeg,
             get_ffmpeg_version,
-            merge_tracks
+            merge_tracks,
+            rename_file,
+            copy_file,
+            get_file_metadata
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -18,6 +18,7 @@
     progress: ExtractionProgress;
     onSelectOutputDir?: () => void;
     onExtract?: () => void;
+    onExtractAgain?: () => void;
     onOpenFolder?: () => void;
     class?: string;
   }
@@ -28,6 +29,7 @@
     progress,
     onSelectOutputDir,
     onExtract,
+    onExtractAgain,
     onOpenFolder,
     class: className = ''
   }: ExtractionPanelProps = $props();
@@ -112,12 +114,19 @@
       </Alert.Root>
     {/if}
   </Card.Content>
-  <Card.Footer>
-    <!-- Action buttons -->
+  <Card.Footer class="flex-col gap-2">
     {#if isCompleted}
-      <Button class="w-full" onclick={onOpenFolder}>
+      <Button class="w-full" variant="outline" onclick={onOpenFolder}>
         <FolderOpen class="size-4 mr-2" />
         Open folder
+      </Button>
+      <Button
+        class="w-full"
+        onclick={onExtractAgain}
+        disabled={!canExtract}
+      >
+        <Play class="size-4 mr-2" />
+        Extract again
       </Button>
     {:else}
       <Button

@@ -12,6 +12,7 @@
 
   import { fileListStore } from '$lib/stores/files.svelte';
   import { extractionStore } from '$lib/stores/extraction.svelte';
+  import { recentFilesStore } from '$lib/stores/recentFiles.svelte';
   import { uiStore } from '$lib/stores/ui.svelte';
   import { scanFile } from '$lib/services/ffprobe';
   import { extractTrack, buildOutputPath } from '$lib/services/ffmpeg';
@@ -189,6 +190,7 @@
 
     let successCount = 0;
     let errorCount = 0;
+    const extractedPaths: string[] = [];
 
     for (let i = 0; i < extractions.length; i++) {
       const { file, track } = extractions[i];
@@ -212,12 +214,18 @@
 
       if (result.success) {
         successCount++;
+        extractedPaths.push(outputPath);
       } else {
         errorCount++;
       }
     }
 
     extractionStore.updateProgress({ status: 'completed' });
+
+    // Add extracted files to recent files store for potential import in Rename tool
+    if (extractedPaths.length > 0) {
+      recentFilesStore.addExtractedFiles(extractedPaths);
+    }
 
     if (errorCount === 0) {
       toast.success(`${successCount} track(s) extracted successfully`);
@@ -239,6 +247,11 @@
     extractionStore.reset();
     extractionStore.clearAllTracks();
     toast.info('File list cleared');
+  }
+
+  function handleExtractAgain() {
+    // Reset progress but keep the selected tracks and output dir
+    extractionStore.reset();
   }
 
   const selectedFile = $derived(fileListStore.selectedFile);
@@ -327,6 +340,7 @@
       progress={extractionStore.progress}
       onSelectOutputDir={handleSelectOutputDir}
       onExtract={handleExtract}
+      onExtractAgain={handleExtractAgain}
       onOpenFolder={handleOpenFolder}
     />
   </div>

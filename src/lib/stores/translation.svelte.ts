@@ -125,6 +125,18 @@ export const translationStore = {
     }
   },
 
+  // Remove all jobs
+  removeAllJobs() {
+    for (const job of jobs) {
+      if (job.abortController) {
+        job.abortController.abort();
+      }
+    }
+    jobs = [];
+    selectedJobId = null;
+    globalProgress = { status: 'idle', currentFile: '', progress: 0, currentBatch: 0, totalBatches: 0 };
+  },
+
   // Select a job
   selectJob(jobId: string) {
     selectedJobId = jobId;

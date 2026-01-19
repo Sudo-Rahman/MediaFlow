@@ -11,6 +11,7 @@
   import { flip } from 'svelte/animate';
 
   import { mergeStore } from '$lib/stores';
+  import { recentFilesStore } from '$lib/stores/recentFiles.svelte';
   import { scanFile } from '$lib/services/ffprobe';
   import { dndzone } from '$lib/utils/dnd';
   import type { MergeVideoFile, ImportedTrack, MergeTrack, MergeTrackConfig } from '$lib/types';
@@ -328,6 +329,8 @@
 
     try {
       let completed = 0;
+      const mergedPaths: string[] = [];
+      
       for (const video of videosToMerge) {
         const attachedTracks = mergeStore.getAttachedTracks(video.id);
 
@@ -386,11 +389,18 @@
           outputPath: fullOutputPath
         });
 
+        mergedPaths.push(fullOutputPath);
         completed++;
         mergeStore.setProgress((completed / videosToMerge.length) * 100);
       }
 
       mergeStore.setStatus('completed');
+      
+      // Add merged files to recent files store for potential import in Rename tool
+      if (mergedPaths.length > 0) {
+        recentFilesStore.addMergedFiles(mergedPaths);
+      }
+      
       toast.success(`Successfully merged ${completed} file(s)!`);
     } catch (error) {
       mergeStore.setError(error instanceof Error ? error.message : String(error));

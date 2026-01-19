@@ -8,13 +8,13 @@
   import { Separator } from '$lib/components/ui/separator';
   import { Alert, AlertTitle, AlertDescription, ThemeToggle } from '$lib/components';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
-  import { ExtractView, MergeView, SettingsView, InfoView, TranslationView } from '$lib/components/views';
+  import { ExtractView, MergeView, SettingsView, InfoView, TranslationView, RenameView } from '$lib/components/views';
   import AlertCircle from 'lucide-svelte/icons/alert-circle';
   import { OS } from '$lib/utils';
   import {useSidebar} from "$lib/components/ui/sidebar";
 
   // Current view state
-  let currentView = $state<'extract' | 'merge' | 'translate' | 'info' | 'settings'>('extract');
+  let currentView = $state<'extract' | 'merge' | 'translate' | 'rename' | 'info' | 'settings'>('extract');
   let ffmpegAvailable = $state<boolean | null>(null);
   let unlistenDragDrop: (() => void) | null = null;
 
@@ -23,6 +23,7 @@
   let mergeViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let infoViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let translateViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let renameViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
 
   const isMacOS = OS() === 'MacOS';
 
@@ -30,6 +31,7 @@
     extract: 'Track Extraction',
     merge: 'Track Merge',
     translate: 'AI Translation',
+    rename: 'Batch Rename',
     info: 'File Information',
     settings: 'Settings'
   };
@@ -69,12 +71,14 @@
         await infoViewRef.handleFileDrop(event.payload.paths);
       } else if (currentView === 'translate' && translateViewRef) {
         await translateViewRef.handleFileDrop(event.payload.paths);
+      } else if (currentView === 'rename' && renameViewRef) {
+        await renameViewRef.handleFileDrop(event.payload.paths);
       }
     });
   }
 
   function handleNavigate(viewId: string) {
-    currentView = viewId as 'extract' | 'merge' | 'translate' | 'info' | 'settings';
+    currentView = viewId as 'extract' | 'merge' | 'translate' | 'rename' | 'info' | 'settings';
   }
 </script>
 
@@ -84,7 +88,7 @@
     onNavigate={handleNavigate}
   />
 
-  <Sidebar.Inset class="flex flex-col h-screen overflow-scroll w-[calc(100%-var(--sidebar-width))]">
+  <Sidebar.Inset class="flex flex-col h-screen overflow-hidden w-[calc(100%-var(--sidebar-width))]">
     <!-- Header -->
     <header
       class="flex h-14 shrink-0 items-center gap-2 border-b px-4"
@@ -116,6 +120,8 @@
         <MergeView bind:this={mergeViewRef} />
       {:else if currentView === 'translate'}
         <TranslationView bind:this={translateViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
+      {:else if currentView === 'rename'}
+        <RenameView bind:this={renameViewRef} />
       {:else if currentView === 'info'}
         <InfoView bind:this={infoViewRef} />
       {:else if currentView === 'settings'}

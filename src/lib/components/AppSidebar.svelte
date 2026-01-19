@@ -6,6 +6,7 @@
   import Info from 'lucide-svelte/icons/info';
   import Settings from 'lucide-svelte/icons/settings';
   import Languages from 'lucide-svelte/icons/languages';
+  import PenLine from 'lucide-svelte/icons/pen-line';
   import type { ComponentProps } from 'svelte';
   import {OS} from "$lib/utils";
 
@@ -31,6 +32,11 @@
       id: 'translate',
       title: 'AI Translation',
       icon: Languages,
+    },
+    {
+      id: 'rename',
+      title: 'Rename',
+      icon: PenLine,
     },
     {
       id: 'info',

@@ -402,6 +402,18 @@
             </div>
             
             <div class="flex items-center gap-2">
+              {#if translationStore.jobs.length > 0}
+                <Button 
+                  variant="ghost" 
+                  size="icon-sm" 
+                  onclick={() => { translationStore.removeAllJobs(); toast.info('All files cleared'); }} 
+                  disabled={isTranslating}
+                  class="text-muted-foreground hover:text-destructive"
+                >
+                  <Trash2 class="size-4" />
+                  <span class="sr-only">Clear all</span>
+                </Button>
+              {/if}
               <Button variant="outline" size="sm" onclick={handleImportClick} disabled={isTranslating}>
                 <Upload class="size-4 mr-2" />
                 Import
@@ -428,7 +440,7 @@
         </Card.Header>
         <Card.Content class="p-2">
           {#if hasFiles}
-            <ScrollArea class="h-48 px-3">
+            <div class="px-3">
               <div class="space-y-2">
                 {#each translationStore.jobs as job (job.id)}
                   {@const StatusIcon = getStatusIcon(job.status)}
@@ -485,7 +497,7 @@
                   </div>
                 {/each}
               </div>
-            </ScrollArea>
+            </div>
           {:else}
             <SubtitleDropZone />
           {/if}

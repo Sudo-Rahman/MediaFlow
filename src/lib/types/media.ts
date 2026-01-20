@@ -11,11 +11,17 @@ export interface Track {
   language?: string;
   title?: string;
   bitrate?: number;
+  size?: number;
+  numberOfFrames?: number;
   // Video specific
   resolution?: string;
   width?: number;
   height?: number;
   frameRate?: string;
+  pixelFormat?: string;
+  colorRange?: string;
+  colorSpace?: string;
+  aspectRatio?: string;
   // Audio specific
   channels?: number;
   sampleRate?: number;
@@ -69,6 +75,14 @@ export interface FFprobeStream {
   channels?: number;
   bit_rate?: string;
   r_frame_rate?: string;
+  pix_fmt?: string;
+  level?: number;
+  color_range?: string;
+  color_space?: string;
+  color_transfer?: string;
+  color_primaries?: string;
+  sample_aspect_ratio?: string;
+  display_aspect_ratio?: string;
   disposition?: {
     default?: number;
     forced?: number;
@@ -78,6 +92,10 @@ export interface FFprobeStream {
     title?: string;
     // bitrate in tags can sometimes be present
     "BPS-eng"?: string;
+    BPS?: string;
+    DURATION?: string;
+    NUMBER_OF_FRAMES?: string;
+    NUMBER_OF_BYTES?: string;
   };
 }
 

@@ -21,17 +21,27 @@ function parseStream(stream: FFprobeStream): Track | null {
     codecLong: stream.codec_long_name,
     language: stream.tags?.language,
     title: stream.tags?.title,
-    bitrate: stream.bit_rate ? parseInt(stream.bit_rate) : stream.tags?.["BPS-eng"] ? parseInt(stream.tags["BPS-eng"]) : undefined,
+    bitrate: stream.bit_rate ? parseInt(stream.bit_rate) : 
+             stream.tags?.BPS ? parseInt(stream.tags.BPS) :
+             stream.tags?.["BPS-eng"] ? parseInt(stream.tags["BPS-eng"]) : undefined,
+    size: stream.tags?.NUMBER_OF_BYTES ? parseInt(stream.tags.NUMBER_OF_BYTES) : undefined,
+    numberOfFrames: stream.tags?.NUMBER_OF_FRAMES ? parseInt(stream.tags.NUMBER_OF_FRAMES) : undefined,
     default: stream.disposition?.default === 1,
     forced: stream.disposition?.forced === 1,
   };
 
   // Video specific
-  if (type === 'video' && stream.width && stream.height) {
-    track.width = stream.width;
-    track.height = stream.height;
-    track.resolution = `${stream.width}×${stream.height}`;
+  if (type === 'video') {
+    if (stream.width && stream.height) {
+      track.width = stream.width;
+      track.height = stream.height;
+      track.resolution = `${stream.width}×${stream.height}`;
+    }
     track.frameRate = stream.r_frame_rate;
+    track.pixelFormat = stream.pix_fmt;
+    track.colorRange = stream.color_range;
+    track.colorSpace = stream.color_space;
+    track.aspectRatio = stream.display_aspect_ratio;
   }
 
   // Audio specific

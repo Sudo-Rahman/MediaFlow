@@ -260,7 +260,6 @@
 
   // DnD callbacks
   function handleUnassignedConsider(items: typeof unassignedItems) {
-    console.log(items);
     unassignedItems = items;
   }
 
@@ -714,7 +713,7 @@
             <Card.Header class="py-3">
               <Card.Title class="text-sm flex items-center gap-2">
                 <Link class="size-4 text-primary" />
-                Attached to: {video.name}
+                <span class="wrap-anywhere">Attached to: {video.name}</span>
               </Card.Title>
               <Card.Description>Drop tracks here to merge with this video</Card.Description>
             </Card.Header>

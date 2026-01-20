@@ -273,82 +273,6 @@
         </Button>
       </div>
     </div>
-
-    <!-- Import from other views -->
-    {#if extractionFilesCount > 0 || mergeFilesCount > 0}
-      <div class="p-2 border-b">
-        <p class="text-xs text-muted-foreground mb-2">Import from:</p>
-        <div class="flex gap-2">
-          {#if extractionFilesCount > 0}
-            <Button variant="outline" size="sm" class="flex-1 text-xs" onclick={handleImportFromExtraction}>
-              <Import class="size-3 mr-1" />
-              Extraction ({extractionFilesCount})
-            </Button>
-          {/if}
-          {#if mergeFilesCount > 0}
-            <Button variant="outline" size="sm" class="flex-1 text-xs" onclick={handleImportFromMerge}>
-              <Import class="size-3 mr-1" />
-              Merge ({mergeFilesCount})
-            </Button>
-          {/if}
-        </div>
-      </div>
-    {/if}
-
-    <div class="flex-1 min-h-0 overflow-auto p-2 space-y-1">
-      {#each files as file (file.id)}
-        {@const isSelected = selectedFileId === file.id}
-        <button
-          class="w-full flex items-start gap-2 rounded-lg border p-2.5 text-left transition-colors hover:bg-accent {isSelected ? 'border-primary bg-primary/5' : ''}"
-          onclick={() => selectedFileId = file.id}
-        >
-          <div class="shrink-0 mt-0.5">
-            {#if file.status === 'scanning'}
-              <Loader2 class="size-4 text-muted-foreground animate-spin" />
-            {:else if file.status === 'error'}
-              <XCircle class="size-4 text-destructive" />
-            {:else}
-              <FileVideo class="size-4 text-primary" />
-            {/if}
-          </div>
-
-          <div class="flex-1 min-w-0">
-            <p class="text-sm font-medium truncate">{file.name}</p>
-            {#if file.status === 'ready'}
-              <div class="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-                <span>{formatFileSize(file.size)}</span>
-                {#if file.duration}
-                  <span>•</span>
-                  <span>{formatDuration(file.duration)}</span>
-                {/if}
-              </div>
-            {:else if file.status === 'scanning'}
-              <p class="text-xs text-muted-foreground mt-1">Scanning...</p>
-            {:else if file.status === 'error'}
-              <p class="text-xs text-destructive mt-1 truncate">{file.error}</p>
-            {/if}
-          </div>
-
-          <Button
-            variant="ghost" size="icon-sm"
-            class="shrink-0 text-muted-foreground hover:text-destructive"
-            onclick={(e: MouseEvent) => { e.stopPropagation(); handleRemoveFile(file.id); }}
-          >
-            <Trash2 class="size-3" />
-          </Button>
-        </button>
-      {:else}
-        <div class="flex flex-col items-center justify-center py-12 text-center">
-          <Film class="size-12 text-muted-foreground/30 mb-3" />
-          <p class="text-sm text-muted-foreground">No files</p>
-          <p class="text-xs text-muted-foreground mt-1 mb-4">Drop media files here or click Add</p>
-          <Button variant="outline" size="sm" onclick={handleAddFiles}>
-            <Plus class="size-4 mr-1" />
-            Add files
-          </Button>
-        </div>
-      {/each}
-    </div>
   </div>
 
   <!-- Right panel: File details -->
@@ -478,6 +402,24 @@
                             <p>{formatBitrate(track.bitrate)}</p>
                           </div>
                         {/if}
+                        {#if track.size}
+                          <div>
+                            <p class="text-xs text-muted-foreground">Size</p>
+                            <p>{formatFileSize(track.size)}</p>
+                          </div>
+                        {/if}
+                        {#if track.pixelFormat}
+                          <div>
+                            <p class="text-xs text-muted-foreground">Pixel Format</p>
+                            <p>{track.pixelFormat}</p>
+                          </div>
+                        {/if}
+                        {#if track.colorRange}
+                          <div>
+                            <p class="text-xs text-muted-foreground">Color Range</p>
+                            <p>{track.colorRange}</p>
+                          </div>
+                        {/if}
                       </div>
                     </div>
                   {/each}
@@ -510,6 +452,7 @@
                           <Badge>Default</Badge>
                         {/if}
                       </div>
+                      
                       <div class="flex gap-4 mt-2 text-sm text-muted-foreground">
                         {#if track.channels}
                           <span>{track.channels} channels</span>
@@ -519,6 +462,9 @@
                         {/if}
                         {#if track.bitrate}
                           <span>{formatBitrate(track.bitrate)}</span>
+                        {/if}
+                        {#if track.size}
+                          <span>{formatFileSize(track.size)}</span>
                         {/if}
                       </div>
                     </div>
@@ -553,6 +499,18 @@
                         {/if}
                         {#if track.forced}
                           <Badge variant="destructive">Forced</Badge>
+                        {/if}
+                      </div>
+                      
+                      <div class="flex gap-4 mt-2 text-sm text-muted-foreground">
+                        {#if track.bitrate}
+                          <span>{formatBitrate(track.bitrate)}</span>
+                        {/if}
+                        {#if track.size}
+                          <span>{formatFileSize(track.size)}</span>
+                        {/if}
+                        {#if track.numberOfFrames}
+                          <span>{track.numberOfFrames} frames</span>
                         {/if}
                       </div>
                     </div>
@@ -596,6 +554,13 @@
                         {#if track.codecLong}
                           <span>Codec: {track.codecLong}</span>
                         {/if}
+                        {#if track.bitrate}
+                          <span>Bitrate: {formatBitrate(track.bitrate)}</span>
+                        {/if}
+                        {#if track.size}
+                          <span>Size: {formatFileSize(track.size)}</span>
+                        {/if}
+                        
                         {#if track.type === 'video'}
                           {#if track.width && track.height}
                             <span>Resolution: {track.width}×{track.height}</span>
@@ -603,7 +568,17 @@
                           {#if track.frameRate}
                             <span>FPS: {track.frameRate}</span>
                           {/if}
+                          {#if track.pixelFormat}
+                            <span>Format: {track.pixelFormat}</span>
+                          {/if}
+                          {#if track.colorRange}
+                            <span>Range: {track.colorRange}</span>
+                          {/if}
+                          {#if track.aspectRatio}
+                            <span>AR: {track.aspectRatio}</span>
+                          {/if}
                         {/if}
+                        
                         {#if track.type === 'audio'}
                           {#if track.channels}
                             <span>Channels: {track.channels}</span>
@@ -612,8 +587,9 @@
                             <span>Sample Rate: {track.sampleRate} Hz</span>
                           {/if}
                         {/if}
-                        {#if track.bitrate}
-                          <span>Bitrate: {formatBitrate(track.bitrate)}</span>
+
+                        {#if track.numberOfFrames}
+                          <span>Frames: {track.numberOfFrames}</span>
                         {/if}
                       </div>
                     </div>

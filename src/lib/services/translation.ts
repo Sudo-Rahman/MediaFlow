@@ -23,7 +23,7 @@ import { log } from '$lib/utils/log-toast';
 // SYSTEM PROMPT (for JSON-based translation)
 // ============================================================================
 
-const TRANSLATION_SYSTEM_PROMPT = `You are an expert subtitle translator. You will receive a JSON object containing subtitle cues to translate.
+export const TRANSLATION_SYSTEM_PROMPT = `You are an expert subtitle translator. You will receive a JSON object containing subtitle cues to translate.
 
 CRITICAL RULES:
 1. Return ONLY a valid JSON object with the translated cues
@@ -112,6 +112,27 @@ function buildUserPrompt(request: TranslationRequest): string {
   return `Translate the following subtitle cues from ${request.sourceLang} to ${request.targetLang}.
 
 ${JSON.stringify(request, null, 2)}`;
+}
+
+/**
+ * Build the full prompt (system + user) for token counting
+ * This represents the actual text that will be sent to the LLM
+ */
+export function buildFullPromptForTokenCount(
+  content: string,
+  sourceLang: LanguageCode,
+  targetLang: LanguageCode
+): string {
+  const parsed = parseSubtitle(content);
+  if (!parsed) {
+    // Fallback: return raw content if parsing fails
+    return TRANSLATION_SYSTEM_PROMPT + '\n\n' + content;
+  }
+
+  const request = buildTranslationRequest(parsed.cues, sourceLang, targetLang);
+  const userPrompt = buildUserPrompt(request);
+
+  return TRANSLATION_SYSTEM_PROMPT + '\n\n' + userPrompt;
 }
 
 /**

@@ -5,13 +5,14 @@
 </script>
 
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { open, save } from '@tauri-apps/plugin-dialog';
   import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
   import { toast } from 'svelte-sonner';
 
   import { translationStore, settingsStore } from '$lib/stores';
-  import { translateSubtitle, detectSubtitleFormat, getSubtitleExtension, type BatchProgressInfo } from '$lib/services/translation';
+  import { translateSubtitle, detectSubtitleFormat, getSubtitleExtension, buildFullPromptForTokenCount, type BatchProgressInfo } from '$lib/services/translation';
+  import { countTokens } from '$lib/services/tokenizer';
   import { logAndToast } from '$lib/utils/log-toast';
   import type { SubtitleFile, TranslationJob } from '$lib/types';
 
@@ -52,6 +53,49 @@
   const hasApiKey = $derived(
     settingsStore.isLoaded && !!settingsStore.getLLMApiKey(translationStore.config.provider)
   );
+
+  // Token count cache by file path (to avoid recalculating on job status changes)
+  let tokenCountCache = $state<Map<string, number>>(new Map());
+  let isCountingTokens = $state(false);
+
+  // Get token count for selected job from cache
+  const tokenCount = $derived(() => {
+    const path = translationStore.selectedJob?.file?.path;
+    return path ? tokenCountCache.get(path) ?? null : null;
+  });
+
+  // Calculate tokens only when a NEW file path is selected
+  let lastCountedPath = $state<string | null>(null);
+  
+  $effect(() => {
+    const job = translationStore.selectedJob;
+    const filePath = job?.file?.path;
+    
+    // Only calculate if we have a new file that wasn't counted before
+    if (filePath && filePath !== lastCountedPath && !tokenCountCache.has(filePath)) {
+      const fileContent = job.file.content;
+      lastCountedPath = filePath;
+      isCountingTokens = true;
+      
+      // Use untrack to avoid re-triggering on config changes
+      untrack(() => {
+        const { sourceLanguage, targetLanguage } = translationStore.config;
+        const fullPrompt = buildFullPromptForTokenCount(
+          fileContent,
+          sourceLanguage,
+          targetLanguage
+        );
+        
+        countTokens(fullPrompt)
+          .then(count => {
+            tokenCountCache.set(filePath, count);
+            tokenCountCache = new Map(tokenCountCache); // Trigger reactivity
+          })
+          .catch(() => { /* ignore errors */ })
+          .finally(() => { isCountingTokens = false; });
+      });
+    }
+  });
 
   // Expose API for drag & drop from parent
   export async function handleFileDrop(paths: string[]) {
@@ -608,7 +652,14 @@
             <div class="h-full flex flex-col">
               <div class="p-2 bg-muted/30 border-b flex items-center justify-between">
                 <span class="text-sm font-medium">Original</span>
-                <span class="text-xs text-muted-foreground">{selectedJob.file.content.split('\n').length} lines</span>
+                <span class="text-xs text-muted-foreground">
+                  {selectedJob.file.content.split('\n').length} lines
+                  {#if tokenCount() !== null}
+                    · ~{tokenCount()?.toLocaleString()} tokens
+                  {:else if isCountingTokens}
+                    · <Loader2 class="size-3 animate-spin inline" />
+                  {/if}
+                </span>
               </div>
               <div class="flex-1 overflow-y-scroll">
                 <pre class="p-4 text-sm whitespace-pre-wrap font-mono">{selectedJob.file.content}</pre>

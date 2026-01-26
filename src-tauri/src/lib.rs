@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
+use tiktoken_rs::o200k_base_singleton;
 use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -244,6 +245,18 @@ async fn get_file_metadata(path: String) -> Result<FileMetadata, String> {
     })
 }
 
+/// Count tokens in a text using tiktoken o200k_base encoding (GPT-4o, GPT-5)
+/// Runs async to avoid blocking the main thread
+#[tauri::command]
+async fn count_tokens(text: String) -> Result<usize, String> {
+    tokio::task::spawn_blocking(move || {
+        let bpe = o200k_base_singleton();
+        bpe.encode_with_special_tokens(&text).len()
+    })
+    .await
+    .map_err(|e| format!("Token counting failed: {}", e))
+}
+
 /// Merge tracks into a video file
 #[tauri::command]
 async fn merge_tracks(
@@ -481,7 +494,8 @@ pub fn run() {
             merge_tracks,
             rename_file,
             copy_file,
-            get_file_metadata
+            get_file_metadata,
+            count_tokens
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

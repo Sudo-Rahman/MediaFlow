@@ -13,7 +13,7 @@
   import { recentFilesStore } from '$lib/stores/recentFiles.svelte';
   import { uiStore } from '$lib/stores/ui.svelte';
   import { createRenameFile, buildNewPath } from '$lib/services/rename';
-  import { logAndToast } from '$lib/utils/log-toast';
+  import { logAndToast, log } from '$lib/utils/log-toast';
   import type { RuleType, RuleConfig, RenameMode } from '$lib/types/rename';
 
   import { Button } from '$lib/components/ui/button';
@@ -34,6 +34,7 @@
   import Search from 'lucide-svelte/icons/search';
   import FolderOpen from 'lucide-svelte/icons/folder-open';
   import Play from 'lucide-svelte/icons/play';
+  import Square from 'lucide-svelte/icons/square';
   import RefreshCw from 'lucide-svelte/icons/refresh-cw';
   import AlertTriangle from 'lucide-svelte/icons/alert-triangle';
   import X from 'lucide-svelte/icons/x';
@@ -182,16 +183,24 @@
       return;
     }
 
+    // Start processing with new AbortController
+    renameStore.startProcessing();
     renameStore.updateProgress({
-      status: 'processing',
       current: 0,
       total: selectedFiles.length,
     });
 
     let successCount = 0;
     let errorCount = 0;
+    let cancelledCount = 0;
 
     for (let i = 0; i < selectedFiles.length; i++) {
+      // Check for cancellation before each file
+      if (renameStore.isCancelled) {
+        cancelledCount = selectedFiles.length - i;
+        break;
+      }
+      
       const file = selectedFiles[i];
       
       renameStore.updateProgress({
@@ -221,16 +230,32 @@
 
         renameStore.markFileComplete(file.id, true);
         successCount++;
+        
+        // Log success for this file
+        log('success', 'rename', 
+          `${renameStore.mode === 'rename' ? 'Renamed' : 'Copied'}: ${file.originalName}`,
+          `${file.originalName} → ${file.newName}`,
+          { filePath: file.originalPath, outputPath: newPath }
+        );
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         renameStore.markFileComplete(file.id, false, errorMsg);
         errorCount++;
+        
+        // Log error for this file
+        log('error', 'rename',
+          `Failed to ${renameStore.mode}: ${file.originalName}`,
+          errorMsg,
+          { filePath: file.originalPath }
+        );
       }
     }
 
-    renameStore.updateProgress({ status: 'completed' });
+    renameStore.updateProgress({ status: renameStore.isCancelled ? 'cancelled' : 'completed' });
 
-    if (errorCount === 0) {
+    if (renameStore.isCancelled) {
+      toast.warning(`Cancelled: ${successCount} completed, ${cancelledCount} skipped`);
+    } else if (errorCount === 0) {
       toast.success(`${successCount} file(s) ${renameStore.mode === 'rename' ? 'renamed' : 'copied'} successfully`);
     } else {
       toast.warning(`${successCount} success, ${errorCount} error(s)`);
@@ -586,22 +611,29 @@
       {/if}
 
       <!-- Execute button -->
-      <Button
-        class="w-full"
-        size="lg"
-        disabled={!canExecute}
-        onclick={handleExecute}
-      >
-        {#if isProcessing}
-          <RefreshCw class="size-4 mr-2 animate-spin" />
-          Processing...
-        {:else}
+      {#if isProcessing}
+        <Button
+          class="w-full"
+          size="lg"
+          variant="destructive"
+          onclick={() => renameStore.cancelProcessing()}
+        >
+          <Square class="size-4 mr-2" />
+          Cancel
+        </Button>
+      {:else}
+        <Button
+          class="w-full"
+          size="lg"
+          disabled={!canExecute}
+          onclick={handleExecute}
+        >
           <Play class="size-4 mr-2" />
           {mode === 'rename' ? 'Rename' : 'Copy'} {selectedCount} file{selectedCount !== 1 ? 's' : ''}
-        {/if}
-      </Button>
+        </Button>
+      {/if}
 
-      {#if progress.status === 'completed'}
+      {#if progress.status === 'completed' || progress.status === 'cancelled'}
         <Button
           variant="outline"
           class="w-full"

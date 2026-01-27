@@ -13,7 +13,7 @@
   import { translationStore, settingsStore } from '$lib/stores';
   import { translateSubtitle, detectSubtitleFormat, getSubtitleExtension, buildFullPromptForTokenCount, type BatchProgressInfo } from '$lib/services/translation';
   import { countTokens } from '$lib/services/tokenizer';
-  import { logAndToast } from '$lib/utils/log-toast';
+  import { logAndToast, log } from '$lib/utils/log-toast';
   import type { SubtitleFile, TranslationJob } from '$lib/types';
 
   import { Button } from '$lib/components/ui/button';
@@ -22,8 +22,8 @@
   import { Progress } from '$lib/components/ui/progress';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
-  import { ScrollArea } from '$lib/components/ui/scroll-area';
   import * as Resizable from '$lib/components/ui/resizable';
+  import * as Tooltip from "$lib/components/ui/tooltip/index.js";
 
   import { SubtitleDropZone, TranslationConfigPanel } from '$lib/components/translation';
 
@@ -235,8 +235,18 @@
       });
 
       if (result.success) {
+        log('success', 'translation',
+          `Translated: ${job.file.name}`,
+          `${translationStore.config.sourceLanguage} → ${translationStore.config.targetLanguage} (${batchCount} batch${batchCount > 1 ? 'es' : ''})`,
+          { filePath: job.file.path, provider: translationStore.config.provider }
+        );
         toast.success(`Translation completed: ${job.file.name}`);
       } else {
+        log('error', 'translation',
+          `Translation failed: ${job.file.name}`,
+          result.error || 'Unknown error',
+          { filePath: job.file.path, provider: translationStore.config.provider }
+        );
         toast.error(result.error || 'Translation failed');
       }
     } catch (error) {
@@ -368,6 +378,20 @@
 
   function handleRemoveJob(jobId: string) {
     translationStore.removeJob(jobId);
+  }
+
+  async function retryWithMoreBatches(job: TranslationJob) {
+    // Double the batch count (minimum +1)
+    const currentBatchCount = translationStore.config.batchCount;
+    const newBatchCount = Math.max(currentBatchCount + 1, currentBatchCount * 2);
+    
+    // Temporarily set the higher batch count
+    translationStore.setBatchCount(newBatchCount);
+    
+    toast.info(`Retrying with ${newBatchCount} batches...`);
+    
+    // Retry the job
+    await translateJob(job);
   }
 
   async function handleSaveResult(job: TranslationJob) {
@@ -674,9 +698,21 @@
             <div class="h-full flex flex-col">
               <div class="p-2 bg-muted/30 border-b flex items-center justify-between">
                 <span class="text-sm font-medium">Translation</span>
-                {#if selectedJob.result?.translatedContent}
-                  <span class="text-xs text-muted-foreground">{selectedJob.result.translatedContent.split('\n').length} lines</span>
-                {/if}
+                <span class="text-xs text-muted-foreground">
+                  {#if selectedJob.result?.translatedContent}
+                    {selectedJob.result.translatedContent.split('\n').length} lines
+                  {/if}
+                  {#if selectedJob.result?.usage}
+                    <Tooltip.Root>
+                      <Tooltip.Trigger>· {selectedJob.result.usage.totalTokens.toLocaleString()} tokens</Tooltip.Trigger>
+                      <Tooltip.Content>
+                        <span>
+                          {selectedJob.result.usage.promptTokens.toLocaleString()} in / {selectedJob.result.usage.completionTokens.toLocaleString()} out
+                        </span>
+                      </Tooltip.Content>
+                    </Tooltip.Root>
+                  {/if}
+                </span>
               </div>
               <div class="flex-1 overflow-y-scroll">
                 {#if selectedJob.status === 'translating'}
@@ -712,6 +748,20 @@
                       <p class="font-medium text-destructive">Translation failed</p>
                       <p class="text-sm text-muted-foreground mt-2">{selectedJob.error}</p>
                     </div>
+                    {#if selectedJob.result?.truncated}
+                      <div class="flex flex-col items-center gap-2 mt-2">
+                        <p class="text-xs text-muted-foreground">Response was truncated due to token limits</p>
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          onclick={() => retryWithMoreBatches(selectedJob)}
+                          disabled={isTranslating}
+                        >
+                          <RotateCw class="size-4 mr-2" />
+                          Retry with more batches
+                        </Button>
+                      </div>
+                    {/if}
                   </div>
                 {:else if selectedJob.status === 'cancelled'}
                   <div class="flex flex-col items-center justify-center h-full p-8 gap-4">

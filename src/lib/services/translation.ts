@@ -233,9 +233,18 @@ function parseTranslationResponse(responseText: string, provider: string = 'unkn
 // LLM API CALLS
 // ============================================================================
 
+interface LLMUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
 interface LLMResponse {
   content: string;
   error?: string;
+  truncated?: boolean;
+  finishReason?: string;
+  usage?: LLMUsage;
 }
 
 async function callOpenAI(apiKey: string, model: string, systemPrompt: string, userPrompt: string, signal?: AbortSignal): Promise<LLMResponse> {
@@ -269,7 +278,22 @@ async function callOpenAI(apiKey: string, model: string, systemPrompt: string, u
     }
 
     const data = await response.json();
-    return { content: data.choices[0]?.message?.content || '' };
+    
+    // Extract finish_reason and usage
+    const finishReason = data.choices[0]?.finish_reason;
+    const truncated = finishReason === 'length';
+    const usage: LLMUsage | undefined = data.usage ? {
+      promptTokens: data.usage.prompt_tokens || 0,
+      completionTokens: data.usage.completion_tokens || 0,
+      totalTokens: data.usage.total_tokens || 0
+    } : undefined;
+    
+    return { 
+      content: data.choices[0]?.message?.content || '',
+      finishReason,
+      truncated,
+      usage
+    };
   } catch (error: any) {
     if (error.name === 'AbortError') {
       return { content: '', error: 'Request cancelled' };
@@ -313,7 +337,22 @@ async function callAnthropic(apiKey: string, model: string, systemPrompt: string
     }
 
     const data = await response.json();
-    return { content: data.content[0]?.text || '' };
+    
+    // Extract stop_reason and usage (Anthropic uses different names)
+    const finishReason = data.stop_reason;
+    const truncated = finishReason === 'max_tokens';
+    const usage: LLMUsage | undefined = data.usage ? {
+      promptTokens: data.usage.input_tokens || 0,
+      completionTokens: data.usage.output_tokens || 0,
+      totalTokens: (data.usage.input_tokens || 0) + (data.usage.output_tokens || 0)
+    } : undefined;
+    
+    return { 
+      content: data.content[0]?.text || '',
+      finishReason,
+      truncated,
+      usage
+    };
   } catch (error: any) {
     if (error.name === 'AbortError') {
       return { content: '', error: 'Request cancelled' };
@@ -362,7 +401,22 @@ async function callGoogle(apiKey: string, model: string, systemPrompt: string, u
     }
 
     const data = await response.json();
-    return { content: data.candidates[0]?.content?.parts[0]?.text || '' };
+    
+    // Extract finishReason and usage (Google uses different structure)
+    const finishReason = data.candidates?.[0]?.finishReason;
+    const truncated = finishReason === 'MAX_TOKENS';
+    const usage: LLMUsage | undefined = data.usageMetadata ? {
+      promptTokens: data.usageMetadata.promptTokenCount || 0,
+      completionTokens: data.usageMetadata.candidatesTokenCount || 0,
+      totalTokens: data.usageMetadata.totalTokenCount || 0
+    } : undefined;
+    
+    return { 
+      content: data.candidates[0]?.content?.parts[0]?.text || '',
+      finishReason,
+      truncated,
+      usage
+    };
   } catch (error: any) {
     if (error.name === 'AbortError') {
       return { content: '', error: 'Request cancelled' };
@@ -408,7 +462,22 @@ async function callOpenRouter(apiKey: string, model: string, systemPrompt: strin
     }
 
     const data = await response.json();
-    return { content: data.choices[0]?.message?.content || '' };
+    
+    // Extract finish_reason and usage (OpenRouter uses OpenAI format)
+    const finishReason = data.choices[0]?.finish_reason;
+    const truncated = finishReason === 'length';
+    const usage: LLMUsage | undefined = data.usage ? {
+      promptTokens: data.usage.prompt_tokens || 0,
+      completionTokens: data.usage.completion_tokens || 0,
+      totalTokens: data.usage.total_tokens || 0
+    } : undefined;
+    
+    return { 
+      content: data.choices[0]?.message?.content || '',
+      finishReason,
+      truncated,
+      usage
+    };
   } catch (error: any) {
     if (error.name === 'AbortError') {
       return { content: '', error: 'Request cancelled' };
@@ -548,6 +617,8 @@ export async function translateSubtitle(
     batchIndex: number;
     cues: TranslatedCue[];
     error?: string;
+    truncated?: boolean;
+    usage?: LLMUsage;
   }
 
   const translateBatch = async (batch: Cue[], batchIndex: number): Promise<BatchResult> => {
@@ -578,6 +649,22 @@ export async function translateSubtitle(
       return { batchIndex, cues: [], error: `Batch ${batchIndex + 1}/${totalBatches} failed: ${llmResponse.error}` };
     }
 
+    // Check for truncated response (finish_reason === "length")
+    if (llmResponse.truncated) {
+      const errorMsg = `Batch ${batchIndex + 1}/${totalBatches}: Response truncated (increase batch count)`;
+      log('warning', 'translation', 'Response truncated', 
+        `The API response was truncated (finish_reason: ${llmResponse.finishReason}). Try increasing the number of batches.`,
+        { provider }
+      );
+      return { 
+        batchIndex, 
+        cues: [], 
+        error: errorMsg, 
+        truncated: true,
+        usage: llmResponse.usage 
+      };
+    }
+
     // Check for empty content before parsing
     if (!llmResponse.content || !llmResponse.content.trim()) {
       const errorMsg = `Batch ${batchIndex + 1}/${totalBatches}: ${provider} returned empty content`;
@@ -585,17 +672,26 @@ export async function translateSubtitle(
         `The translation request succeeded but ${provider} returned no content. This may be caused by rate limits, content filtering, or API issues.`,
         { provider }
       );
-      return { batchIndex, cues: [], error: errorMsg };
+      return { batchIndex, cues: [], error: errorMsg, usage: llmResponse.usage };
     }
 
     // Parse LLM response with provider context for better error logging
     const translationResponse = parseTranslationResponse(llmResponse.content, provider);
 
     if (!translationResponse) {
-      return { batchIndex, cues: [], error: `Batch ${batchIndex + 1}/${totalBatches}: Failed to parse ${provider} response (check Logs for details)` };
+      return { 
+        batchIndex, 
+        cues: [], 
+        error: `Batch ${batchIndex + 1}/${totalBatches}: Failed to parse ${provider} response (check Logs for details)`,
+        usage: llmResponse.usage
+      };
     }
 
-    return { batchIndex, cues: translationResponse.cues };
+    return { 
+      batchIndex, 
+      cues: translationResponse.cues,
+      usage: llmResponse.usage
+    };
   };
 
   // Launch all batch translations in parallel
@@ -621,14 +717,30 @@ export async function translateSubtitle(
   );
 
   // Collect results and check for errors
+  let totalUsage: LLMUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  let hasTruncation = false;
+  
   for (const result of results) {
     if (result.status === 'fulfilled') {
+      // Accumulate usage from this batch
+      if (result.value.usage) {
+        totalUsage.promptTokens += result.value.usage.promptTokens;
+        totalUsage.completionTokens += result.value.usage.completionTokens;
+        totalUsage.totalTokens += result.value.usage.totalTokens;
+      }
+      
       if (result.value.error) {
+        // Check if this was a truncation error
+        if (result.value.truncated) {
+          hasTruncation = true;
+        }
         return {
           originalFile: file,
           translatedContent: '',
           success: false,
-          error: result.value.error
+          error: result.value.error,
+          truncated: result.value.truncated,
+          usage: totalUsage.totalTokens > 0 ? totalUsage : undefined
         };
       }
       batchResults.push(result.value);
@@ -637,7 +749,8 @@ export async function translateSubtitle(
         originalFile: file,
         translatedContent: '',
         success: false,
-        error: `Batch translation failed: ${result.reason}`
+        error: `Batch translation failed: ${result.reason}`,
+        usage: totalUsage.totalTokens > 0 ? totalUsage : undefined
       };
     }
   }
@@ -672,7 +785,8 @@ export async function translateSubtitle(
     originalFile: file,
     translatedContent,
     success: true,
-    error: validation.valid ? undefined : `Warning: ${validation.errors.length} validation issue(s) detected`
+    error: validation.valid ? undefined : `Warning: ${validation.errors.length} validation issue(s) detected`,
+    usage: totalUsage.totalTokens > 0 ? totalUsage : undefined
   };
 }
 

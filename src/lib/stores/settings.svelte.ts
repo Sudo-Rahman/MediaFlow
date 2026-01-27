@@ -9,6 +9,7 @@ export interface AppSettings {
   outputPathHistory: string[];
   llmApiKeys: LLMApiKeys;
   translationSettings: TranslationSettings;
+  openRouterModels: string[]; // Saved OpenRouter model IDs
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -25,7 +26,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   translationSettings: {
     maxParallelFiles: 1,
     defaultBatchCount: 1
-  }
+  },
+  openRouterModels: []
 };
 
 // Persistent store
@@ -54,6 +56,7 @@ export const settingsStore = {
       const outputPathHistory = await s.get<string[]>('outputPathHistory');
       const llmApiKeys = await s.get<LLMApiKeys>('llmApiKeys');
       const translationSettings = await s.get<TranslationSettings>('translationSettings');
+      const openRouterModels = await s.get<string[]>('openRouterModels');
 
       settings = {
         ffmpegPath: ffmpegPath ?? DEFAULT_SETTINGS.ffmpegPath,
@@ -61,7 +64,8 @@ export const settingsStore = {
         theme: theme ?? DEFAULT_SETTINGS.theme,
         outputPathHistory: outputPathHistory ?? DEFAULT_SETTINGS.outputPathHistory,
         llmApiKeys: llmApiKeys ?? DEFAULT_SETTINGS.llmApiKeys,
-        translationSettings: translationSettings ?? DEFAULT_SETTINGS.translationSettings
+        translationSettings: translationSettings ?? DEFAULT_SETTINGS.translationSettings,
+        openRouterModels: openRouterModels ?? DEFAULT_SETTINGS.openRouterModels
       };
 
       isLoaded = true;
@@ -123,6 +127,21 @@ export const settingsStore = {
     settings = { ...settings, outputPathHistory: newHistory };
     const s = await getStore();
     await s.set('outputPathHistory', newHistory);
+  },
+
+  async addOpenRouterModel(modelId: string) {
+    if (!modelId.trim() || settings.openRouterModels.includes(modelId)) return;
+    const newModels = [modelId, ...settings.openRouterModels].slice(0, 20); // Keep last 20
+    settings = { ...settings, openRouterModels: newModels };
+    const s = await getStore();
+    await s.set('openRouterModels', newModels);
+  },
+
+  async removeOpenRouterModel(modelId: string) {
+    const newModels = settings.openRouterModels.filter(m => m !== modelId);
+    settings = { ...settings, openRouterModels: newModels };
+    const s = await getStore();
+    await s.set('openRouterModels', newModels);
   },
 
   async reset() {

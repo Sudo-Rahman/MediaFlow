@@ -1,6 +1,8 @@
 <script lang="ts">
   import * as Card from '$lib/components/ui/card';
   import * as Select from '$lib/components/ui/select';
+  import * as Popover from '$lib/components/ui/popover';
+  import * as Command from '$lib/components/ui/command';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Button } from '$lib/components/ui/button';
@@ -13,6 +15,10 @@
   import ArrowRight from 'lucide-svelte/icons/arrow-right';
   import Bot from 'lucide-svelte/icons/bot';
   import Key from 'lucide-svelte/icons/key';
+  import ChevronsUpDown from 'lucide-svelte/icons/chevrons-up-down';
+  import Check from 'lucide-svelte/icons/check';
+  import X from 'lucide-svelte/icons/x';
+  import Plus from 'lucide-svelte/icons/plus';
 
   interface TranslationConfigPanelProps {
     onNavigateToSettings?: () => void;
@@ -32,8 +38,22 @@
   const currentApiKey = $derived(settingsStore.getLLMApiKey(translationStore.config.provider));
   const hasApiKey = $derived(!!currentApiKey);
 
-  // OpenRouter custom model input
-  let customModel = $state('');
+  // OpenRouter combobox state
+  let openRouterOpen = $state(false);
+  let openRouterSearch = $state('');
+
+  // Saved OpenRouter models from settings
+  const savedModels = $derived(settingsStore.settings.openRouterModels);
+
+  // Filter models based on search
+  const filteredModels = $derived(
+    savedModels.filter(m => m.toLowerCase().includes(openRouterSearch.toLowerCase()))
+  );
+
+  // Check if search matches an existing model
+  const searchMatchesExisting = $derived(
+    savedModels.some(m => m.toLowerCase() === openRouterSearch.toLowerCase())
+  );
 
   function getProviderApiKey(provider: LLMProvider): string {
     return settingsStore.getLLMApiKey(provider);
@@ -51,7 +71,9 @@
     if (provider.models.length > 0) {
       translationStore.setModel(provider.models[0].id);
     } else {
-      translationStore.setModel(customModel);
+      // For OpenRouter, use the first saved model or empty
+      const firstSaved = settingsStore.settings.openRouterModels[0];
+      translationStore.setModel(firstSaved || '');
     }
   }
 
@@ -59,10 +81,30 @@
     translationStore.setModel(value);
   }
 
-  function handleCustomModelChange(e: Event) {
-    const value = (e.target as HTMLInputElement).value;
-    customModel = value;
-    translationStore.setModel(value);
+  function handleOpenRouterModelSelect(modelId: string) {
+    translationStore.setModel(modelId);
+    openRouterOpen = false;
+    openRouterSearch = '';
+  }
+
+  async function handleAddNewModel() {
+    const trimmed = openRouterSearch.trim();
+    if (!trimmed) return;
+    
+    await settingsStore.addOpenRouterModel(trimmed);
+    translationStore.setModel(trimmed);
+    openRouterOpen = false;
+    openRouterSearch = '';
+  }
+
+  async function handleRemoveModel(e: MouseEvent, modelId: string) {
+    e.stopPropagation();
+    await settingsStore.removeOpenRouterModel(modelId);
+    // If we removed the currently selected model, clear it
+    if (translationStore.config.model === modelId) {
+      const firstRemaining = settingsStore.settings.openRouterModels[0];
+      translationStore.setModel(firstRemaining || '');
+    }
   }
 
   function handleSourceLangChange(value: string) {
@@ -181,14 +223,89 @@
           </Select.Content>
         </Select.Root>
       {:else}
-        <!-- OpenRouter: manual model input -->
-        <Input
-          placeholder="Enter model name (e.g., anthropic/claude-3-opus)"
-          value={customModel}
-          oninput={handleCustomModelChange}
-        />
+        <!-- OpenRouter: Combobox with saved models -->
+        <Popover.Root bind:open={openRouterOpen}>
+          <Popover.Trigger>
+            {#snippet child({ props })}
+              <Button
+                {...props}
+                variant="outline"
+                role="combobox"
+                aria-expanded={openRouterOpen}
+                class="w-full justify-between font-normal"
+              >
+                <span class="truncate">
+                  {translationStore.config.model || 'Select or enter model...'}
+                </span>
+                <ChevronsUpDown class="ml-2 size-4 shrink-0 opacity-50" />
+              </Button>
+            {/snippet}
+          </Popover.Trigger>
+          <Popover.Content class="w-[var(--bits-popover-anchor-width)] p-0" align="start">
+            <Command.Root shouldFilter={false}>
+              <Command.Input 
+                placeholder="Search or enter model ID..." 
+                bind:value={openRouterSearch}
+              />
+              <Command.List>
+                <Command.Empty>
+                  {#if openRouterSearch.trim()}
+                    <button
+                      type="button"
+                      class="w-full flex items-center gap-2 px-2 py-1.5 text-sm hover:bg-accent rounded cursor-pointer"
+                      onclick={handleAddNewModel}
+                    >
+                      <Plus class="size-4" />
+                      <span>Add "{openRouterSearch.trim()}"</span>
+                    </button>
+                  {:else}
+                    <span class="text-muted-foreground">No saved models</span>
+                  {/if}
+                </Command.Empty>
+                <Command.Group>
+                  {#each filteredModels as model (model)}
+                    <Command.Item
+                      value={model}
+                      onSelect={() => handleOpenRouterModelSelect(model)}
+                      class="flex items-center justify-between"
+                    >
+                      <div class="flex items-center gap-2 min-w-0 flex-1">
+                        {#if translationStore.config.model === model}
+                          <Check class="size-4 shrink-0" />
+                        {:else}
+                          <div class="size-4 shrink-0"></div>
+                        {/if}
+                        <span class="truncate">{model}</span>
+                      </div>
+                      <button
+                        type="button"
+                        class="size-6 flex items-center justify-center rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive shrink-0"
+                        onclick={(e) => handleRemoveModel(e, model)}
+                        title="Remove model"
+                      >
+                        <X class="size-3" />
+                      </button>
+                    </Command.Item>
+                  {/each}
+                </Command.Group>
+                {#if openRouterSearch.trim() && !searchMatchesExisting}
+                  <Command.Group>
+                    <Command.Item
+                      value={`add-${openRouterSearch}`}
+                      onSelect={handleAddNewModel}
+                      class="flex items-center gap-2"
+                    >
+                      <Plus class="size-4" />
+                      <span>Add "{openRouterSearch.trim()}"</span>
+                    </Command.Item>
+                  </Command.Group>
+                {/if}
+              </Command.List>
+            </Command.Root>
+          </Popover.Content>
+        </Popover.Root>
         <p class="text-xs text-muted-foreground">
-          Enter the full model ID from OpenRouter
+          Type a model ID and press Enter to save it
         </p>
       {/if}
     </div>

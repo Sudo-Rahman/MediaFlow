@@ -6,6 +6,9 @@
   import { Badge } from '$lib/components/ui/badge';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import FileVideo from 'lucide-svelte/icons/file-video';
+  import Film from 'lucide-svelte/icons/film';
+  import Volume2 from 'lucide-svelte/icons/volume-2';
+  import Subtitles from 'lucide-svelte/icons/subtitles';
   import Loader2 from 'lucide-svelte/icons/loader-2';
   import XCircle from 'lucide-svelte/icons/x-circle';
   import Trash2 from 'lucide-svelte/icons/trash-2';
@@ -61,18 +64,21 @@
         {#if file.status === 'ready'}
           <div class="flex flex-wrap gap-1.5 mt-1.5">
             {#if counts.video > 0}
-              <Badge variant="secondary" class="text-xs">
-                🎬 {counts.video}
+              <Badge variant="secondary" class="text-xs gap-1">
+                <Film class="size-3" />
+                {counts.video}
               </Badge>
             {/if}
             {#if counts.audio > 0}
-              <Badge variant="secondary" class="text-xs">
-                🔊 {counts.audio}
+              <Badge variant="secondary" class="text-xs gap-1">
+                <Volume2 class="size-3" />
+                {counts.audio}
               </Badge>
             {/if}
             {#if counts.subtitle > 0}
-              <Badge variant="secondary" class="text-xs">
-                💬 {counts.subtitle}
+              <Badge variant="secondary" class="text-xs gap-1">
+                <Subtitles class="size-3" />
+                {counts.subtitle}
               </Badge>
             {/if}
           </div>

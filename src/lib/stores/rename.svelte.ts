@@ -41,6 +41,9 @@ let progress = $state<RenameProgress>({
   total: 0,
 });
 
+// AbortController for cancelling rename operations
+let abortController = $state<AbortController | null>(null);
+
 // Presets state
 let userPresets = $state<RulePreset[]>([]);
 let presetsLoaded = $state(false);
@@ -365,6 +368,39 @@ export const renameStore = {
   
   updateProgress(updates: Partial<RenameProgress>) {
     progress = { ...progress, ...updates };
+  },
+  
+  /**
+   * Start processing and create a new AbortController
+   */
+  startProcessing() {
+    abortController = new AbortController();
+    progress = { ...progress, status: 'processing' };
+  },
+  
+  /**
+   * Cancel the current processing operation
+   */
+  cancelProcessing() {
+    if (abortController) {
+      abortController.abort();
+      abortController = null;
+    }
+    progress = { ...progress, status: 'cancelled' };
+  },
+  
+  /**
+   * Check if the current operation has been cancelled
+   */
+  get isCancelled(): boolean {
+    return abortController?.signal?.aborted ?? false;
+  },
+  
+  /**
+   * Get the abort signal for the current operation
+   */
+  get signal(): AbortSignal | undefined {
+    return abortController?.signal;
   },
   
   setFileStatus(id: string, status: RenameFile['status'], error?: string) {

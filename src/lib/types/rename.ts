@@ -146,7 +146,7 @@ export type RenameMode = 'rename' | 'copy';
  * Progress tracking
  */
 export interface RenameProgress {
-  status: 'idle' | 'processing' | 'completed' | 'error';
+  status: 'idle' | 'processing' | 'completed' | 'error' | 'cancelled';
   current: number;
   total: number;
   currentFile?: string;

@@ -96,12 +96,20 @@ export interface TranslationProgress {
   error?: string;
 }
 
+export interface TranslationUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
 export interface TranslationResult {
   originalFile: SubtitleFile;
   translatedContent: string;
   outputPath?: string;
   success: boolean;
   error?: string;
+  truncated?: boolean;
+  usage?: TranslationUsage;
 }
 
 // File translation job for multi-file support

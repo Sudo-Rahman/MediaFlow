@@ -29,6 +29,7 @@
   import FileAudio from 'lucide-svelte/icons/file-audio';
   import Subtitles from 'lucide-svelte/icons/subtitles';
   import Video from 'lucide-svelte/icons/video';
+  import Film from 'lucide-svelte/icons/film';
   import Volume2 from 'lucide-svelte/icons/volume-2';
   import Trash2 from 'lucide-svelte/icons/trash-2';
   import Plus from 'lucide-svelte/icons/plus';
@@ -450,6 +451,17 @@
     }
   }
 
+  // Get track counts by type for a video
+  function getTrackCounts(tracks: MergeTrack[]) {
+    const counts = { video: 0, audio: 0, subtitle: 0 };
+    for (const track of tracks) {
+      if (track.type in counts) {
+        counts[track.type as keyof typeof counts]++;
+      }
+    }
+    return counts;
+  }
+
   // Group source tracks by type
   function groupTracksByType(tracks: MergeTrack[]) {
     const groups: Record<string, MergeTrack[]> = { video: [], audio: [], subtitle: [] };
@@ -467,11 +479,11 @@
 <div class="h-full flex overflow-hidden">
   <!-- Left panel: Video files -->
   <div class="w-80 border-r flex flex-col overflow-hidden">
-    <div class="p-3 border-b flex items-center justify-between">
-      <span class="text-sm font-semibold">Videos ({mergeStore.videoFiles.length})</span>
+    <div class="p-3 border-b shrink-0 flex items-center justify-between">
+      <h2 class="font-semibold">Videos ({mergeStore.videoFiles.length})</h2>
       <div class="flex gap-1">
         {#if mergeStore.videoFiles.length > 0}
-          <Button variant="ghost" size="icon-sm" onclick={handleClearAll} class="text-muted-foreground hover:text-destructive">
+          <Button variant="ghost" size="icon-sm" onclick={handleClearAll} class="text-muted-foreground hover:text-destructive hover:bg-destructive/10">
             <Trash2 class="size-4" />
           </Button>
         {/if}
@@ -482,34 +494,50 @@
       </div>
     </div>
 
-    <div class="flex-1 min-h-0 overflow-auto p-2 space-y-1">
+    <div class="flex-1 min-h-0 overflow-auto p-2 space-y-2">
       {#each mergeStore.videoFiles as video (video.id)}
         {@const FileIcon = getFileIcon(video.path)}
         {@const attachedCount = video.attachedTracks.length}
         {@const isSelected = mergeStore.selectedVideoId === video.id}
         {@const seriesInfo = formatSeriesInfo(video.seasonNumber, video.episodeNumber)}
+        {@const counts = getTrackCounts(video.tracks)}
         <button
-          class="w-full flex items-start gap-2 rounded-lg border p-2.5 text-left transition-colors hover:bg-accent {isSelected ? 'border-primary bg-primary/5' : ''}"
+          class="w-full flex items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-accent {isSelected ? 'border-primary bg-primary/5' : ''}"
           onclick={() => mergeStore.selectVideo(video.id)}
         >
           <div class="shrink-0 mt-0.5">
             {#if video.status === 'scanning'}
-              <Loader2 class="size-4 text-muted-foreground animate-spin" />
+              <Loader2 class="size-5 text-muted-foreground animate-spin" />
             {:else if video.status === 'error'}
-              <XCircle class="size-4 text-destructive" />
+              <XCircle class="size-5 text-destructive" />
             {:else}
-              <FileIcon class="size-4 text-primary" />
+              <FileIcon class="size-5 text-primary" />
             {/if}
           </div>
 
           <div class="flex-1 min-w-0">
-            <p class="text-sm font-medium truncate">{video.name}</p>
-            <div class="flex items-center gap-2 mt-1 flex-wrap">
+            <p class="font-medium truncate">{video.name}</p>
+            <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
               {#if seriesInfo}
                 <Badge variant="outline" class="text-xs">{seriesInfo}</Badge>
               {/if}
-              {#if video.tracks.length > 0}
-                <Badge variant="secondary" class="text-xs">{video.tracks.length} tracks</Badge>
+              {#if counts.video > 0}
+                <Badge variant="secondary" class="text-xs gap-1">
+                  <Film class="size-3" />
+                  {counts.video}
+                </Badge>
+              {/if}
+              {#if counts.audio > 0}
+                <Badge variant="secondary" class="text-xs gap-1">
+                  <Volume2 class="size-3" />
+                  {counts.audio}
+                </Badge>
+              {/if}
+              {#if counts.subtitle > 0}
+                <Badge variant="secondary" class="text-xs gap-1">
+                  <Subtitles class="size-3" />
+                  {counts.subtitle}
+                </Badge>
               {/if}
               {#if attachedCount > 0}
                 <Badge class="text-xs">+{attachedCount}</Badge>
@@ -519,10 +547,10 @@
 
           <Button
             variant="ghost" size="icon-sm"
-            class="shrink-0 text-muted-foreground hover:text-destructive"
+            class="shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
             onclick={(e: MouseEvent) => { e.stopPropagation(); mergeStore.removeVideoFile(video.id); }}
           >
-            <Trash2 class="size-3" />
+            <Trash2 class="size-4" />
           </Button>
         </button>
       {:else}

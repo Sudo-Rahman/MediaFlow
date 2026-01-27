@@ -7,6 +7,7 @@
 <script lang="ts">
   import { open } from '@tauri-apps/plugin-dialog';
   import { toast } from 'svelte-sonner';
+  import { log } from '$lib/utils/log-toast';
 
   import { fileListStore } from '$lib/stores/files.svelte';
   import { mergeStore, infoStore } from '$lib/stores';
@@ -107,12 +108,27 @@
           rawData: scanned.rawData
         });
 
+        // Log success for this file
+        log('success', 'system',
+          `Scanned: ${name}`,
+          `${scanned.tracks.length} track(s) found`,
+          { filePath: path }
+        );
+
         added++;
       } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
         infoStore.updateFile(fileId, {
           status: 'error' as const,
-          error: error instanceof Error ? error.message : String(error)
+          error: errorMsg
         });
+        
+        // Log error for this file
+        log('error', 'system',
+          `Scan failed: ${name}`,
+          errorMsg,
+          { filePath: path }
+        );
       }
     }
 

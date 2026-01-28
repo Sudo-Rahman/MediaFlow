@@ -14,7 +14,7 @@
   import { extractionStore } from '$lib/stores/extraction.svelte';
   import { recentFilesStore } from '$lib/stores/recentFiles.svelte';
   import { uiStore } from '$lib/stores/ui.svelte';
-  import { scanFile } from '$lib/services/ffprobe';
+  import { scanFiles } from '$lib/services/ffprobe';
   import { extractTrack, buildOutputPath } from '$lib/services/ffmpeg';
   import { logAndToast, log } from '$lib/utils/log-toast';
   import type { VideoFile, Track } from '$lib/types';
@@ -61,15 +61,20 @@
       fileListStore.selectFile(videoPaths[0]);
     }
 
-    for (const path of videoPaths) {
-      try {
-        const scannedFile = await scanFile(path);
-        fileListStore.updateFile(path, scannedFile);
-      } catch (error) {
-        fileListStore.updateFile(path, {
+    // Scan files in parallel with progress callback
+    const scannedFiles = await scanFiles(videoPaths, 3, (completed, total) => {
+      // Progress callback - could be used for UI feedback in the future
+    });
+
+    // Update the store with scanned results
+    for (const scannedFile of scannedFiles) {
+      if (scannedFile.status === 'error') {
+        fileListStore.updateFile(scannedFile.path, {
           status: 'error',
-          error: error instanceof Error ? error.message : String(error)
+          error: scannedFile.error
         });
+      } else {
+        fileListStore.updateFile(scannedFile.path, scannedFile);
       }
     }
 

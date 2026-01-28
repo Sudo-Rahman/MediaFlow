@@ -1,7 +1,33 @@
 use serde::{Deserialize, Serialize};
-use std::process::Command;
+use std::path::Path;
+use std::time::Duration;
 use tiktoken_rs::o200k_base_singleton;
+use tokio::process::Command;
+use tokio::time::timeout;
 use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+/// Timeout for FFprobe operations (30 seconds)
+const FFPROBE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Timeout for FFmpeg extraction operations (5 minutes)
+const FFMPEG_EXTRACT_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Timeout for FFmpeg merge operations (10 minutes)
+const FFMPEG_MERGE_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Allowed media file extensions
+const ALLOWED_MEDIA_EXTENSIONS: &[&str] = &[
+    "mkv", "mp4", "avi", "mov", "webm", "m4v", "mks", "mka", "m4a", "mp3", 
+    "flac", "wav", "ogg", "aac", "ac3", "dts", "srt", "ass", "ssa", "vtt", "sub", "sup", "opus"
+];
+
+// ============================================================================
+// ERROR TYPES
+// ============================================================================
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExtractionError {
@@ -28,20 +54,103 @@ impl std::fmt::Display for ExtractionError {
     }
 }
 
+// ============================================================================
+// PATH VALIDATION
+// ============================================================================
+
+/// Validate that a path exists and is a file with an allowed extension
+fn validate_media_path(path: &str) -> Result<(), String> {
+    let path = Path::new(path);
+    
+    // Check if path exists
+    if !path.exists() {
+        return Err(format!("File not found: {}", path.display()));
+    }
+    
+    // Check if it's a file (not a directory)
+    if !path.is_file() {
+        return Err(format!("Not a file: {}", path.display()));
+    }
+    
+    // Check extension
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    
+    if !ALLOWED_MEDIA_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(format!("Unsupported file type: .{}", ext));
+    }
+    
+    Ok(())
+}
+
+/// Validate that a path is safe (no path traversal) and parent directory exists
+fn validate_output_path(path: &str) -> Result<(), String> {
+    let path = Path::new(path);
+    
+    // Check for path traversal attempts
+    let path_str = path.to_string_lossy();
+    if path_str.contains("..") {
+        return Err("Path traversal not allowed".to_string());
+    }
+    
+    // Check that parent directory exists
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            return Err(format!("Output directory does not exist: {}", parent.display()));
+        }
+    }
+    
+    Ok(())
+}
+
+/// Validate that a directory path exists
+fn validate_directory_path(path: &str) -> Result<(), String> {
+    let path = Path::new(path);
+    
+    if !path.exists() {
+        return Err(format!("Directory not found: {}", path.display()));
+    }
+    
+    if !path.is_dir() {
+        return Err(format!("Not a directory: {}", path.display()));
+    }
+    
+    Ok(())
+}
+
+// ============================================================================
+// FFPROBE COMMAND
+// ============================================================================
+
 /// Probe a video file using ffprobe and return JSON output
+/// Uses async tokio::process::Command with timeout
 #[tauri::command]
 async fn probe_file(path: String) -> Result<String, String> {
-    let output = Command::new("ffprobe")
-        .args([
-            "-v",
-            "quiet",
-            "-print_format",
-            "json",
-            "-show_streams",
-            "-show_format",
-            &path,
-        ])
-        .output()
+    // Validate input path
+    validate_media_path(&path)?;
+    
+    let probe_future = async {
+        Command::new("ffprobe")
+            .args([
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
+                "-show_streams",
+                "-show_format",
+                &path,
+            ])
+            .output()
+            .await
+    };
+    
+    // Execute with timeout
+    let output = timeout(FFPROBE_TIMEOUT, probe_future)
+        .await
+        .map_err(|_| format!("FFprobe timeout after {} seconds", FFPROBE_TIMEOUT.as_secs()))?
         .map_err(|e| {
             format!(
                 "Failed to execute ffprobe: {}. Make sure FFmpeg is installed.",
@@ -57,7 +166,12 @@ async fn probe_file(path: String) -> Result<String, String> {
     String::from_utf8(output.stdout).map_err(|e| format!("Invalid UTF-8 output: {}", e))
 }
 
+// ============================================================================
+// FFMPEG EXTRACTION COMMAND
+// ============================================================================
+
 /// Extract a track from a video file using ffmpeg
+/// Uses async tokio::process::Command with timeout
 #[tauri::command]
 async fn extract_track(
     input_path: String,
@@ -66,6 +180,10 @@ async fn extract_track(
     track_type: String,
     codec: String,
 ) -> Result<(), String> {
+    // Validate paths
+    validate_media_path(&input_path)?;
+    validate_output_path(&output_path)?;
+    
     // Build the map argument based on track type
     let map_arg = format!("0:{}", track_index);
 
@@ -116,12 +234,23 @@ async fn extract_track(
 
     args.push(output_path.clone());
 
-    let output = Command::new("ffmpeg").args(&args).output().map_err(|e| {
-        format!(
-            "Failed to execute ffmpeg: {}. Make sure FFmpeg is installed.",
-            e
-        )
-    })?;
+    let extract_future = async {
+        Command::new("ffmpeg")
+            .args(&args)
+            .output()
+            .await
+    };
+    
+    // Execute with timeout
+    let output = timeout(FFMPEG_EXTRACT_TIMEOUT, extract_future)
+        .await
+        .map_err(|_| format!("FFmpeg extraction timeout after {} seconds", FFMPEG_EXTRACT_TIMEOUT.as_secs()))?
+        .map_err(|e| {
+            format!(
+                "Failed to execute ffmpeg: {}. Make sure FFmpeg is installed.",
+                e
+            )
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -131,9 +260,16 @@ async fn extract_track(
     Ok(())
 }
 
+// ============================================================================
+// FILE SYSTEM COMMANDS
+// ============================================================================
+
 /// Open a folder in the system file manager
 #[tauri::command]
 async fn open_folder(path: String) -> Result<(), String> {
+    // Validate directory path
+    validate_directory_path(&path)?;
+    
     #[cfg(target_os = "macos")]
     {
         Command::new("open")
@@ -161,12 +297,15 @@ async fn open_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+// ============================================================================
+// FFMPEG UTILITIES
+// ============================================================================
+
 /// Check if ffmpeg and ffprobe are available
 #[tauri::command]
 async fn check_ffmpeg() -> Result<bool, String> {
-    let ffprobe_check = Command::new("ffprobe").arg("-version").output();
-
-    let ffmpeg_check = Command::new("ffmpeg").arg("-version").output();
+    let ffprobe_check = Command::new("ffprobe").arg("-version").output().await;
+    let ffmpeg_check = Command::new("ffmpeg").arg("-version").output().await;
 
     match (ffprobe_check, ffmpeg_check) {
         (Ok(probe), Ok(mpeg)) if probe.status.success() && mpeg.status.success() => Ok(true),
@@ -180,6 +319,7 @@ async fn get_ffmpeg_version() -> Result<String, String> {
     let output = Command::new("ffmpeg")
         .arg("-version")
         .output()
+        .await
         .map_err(|e| format!("Failed to get FFmpeg version: {}", e))?;
 
     if output.status.success() {
@@ -197,9 +337,30 @@ async fn get_ffmpeg_version() -> Result<String, String> {
     }
 }
 
+// ============================================================================
+// FILE OPERATIONS
+// ============================================================================
+
 /// Rename a file on disk
 #[tauri::command]
 async fn rename_file(old_path: String, new_path: String) -> Result<(), String> {
+    // Validate paths
+    let old = Path::new(&old_path);
+    if !old.exists() {
+        return Err(format!("Source file not found: {}", old_path));
+    }
+    if !old.is_file() {
+        return Err(format!("Source is not a file: {}", old_path));
+    }
+    
+    validate_output_path(&new_path)?;
+    
+    // Check if destination already exists
+    let new = Path::new(&new_path);
+    if new.exists() {
+        return Err(format!("Destination already exists: {}", new_path));
+    }
+    
     std::fs::rename(&old_path, &new_path)
         .map_err(|e| format!("Failed to rename file: {}", e))
 }
@@ -207,6 +368,17 @@ async fn rename_file(old_path: String, new_path: String) -> Result<(), String> {
 /// Copy a file to a new location
 #[tauri::command]
 async fn copy_file(source_path: String, dest_path: String) -> Result<(), String> {
+    // Validate paths
+    let source = Path::new(&source_path);
+    if !source.exists() {
+        return Err(format!("Source file not found: {}", source_path));
+    }
+    if !source.is_file() {
+        return Err(format!("Source is not a file: {}", source_path));
+    }
+    
+    validate_output_path(&dest_path)?;
+    
     std::fs::copy(&source_path, &dest_path)
         .map_err(|e| format!("Failed to copy file: {}", e))?;
     Ok(())
@@ -257,7 +429,12 @@ async fn count_tokens(text: String) -> Result<usize, String> {
     .map_err(|e| format!("Token counting failed: {}", e))
 }
 
+// ============================================================================
+// FFMPEG MERGE COMMAND
+// ============================================================================
+
 /// Merge tracks into a video file
+/// Uses async tokio::process::Command with timeout
 #[tauri::command]
 async fn merge_tracks(
     video_path: String,
@@ -265,17 +442,35 @@ async fn merge_tracks(
     source_track_configs: Option<Vec<serde_json::Value>>,
     output_path: String,
 ) -> Result<(), String> {
+    // Validate input paths
+    validate_media_path(&video_path)?;
+    validate_output_path(&output_path)?;
+    
+    // Validate all track input paths
+    for track in &tracks {
+        if let Some(input_path) = track.get("inputPath").and_then(|v| v.as_str()) {
+            validate_media_path(input_path)?;
+        }
+    }
+    
     // First, probe the video to count streams and get their types
-    let probe_output = Command::new("ffprobe")
-        .args([
-            "-v",
-            "quiet",
-            "-print_format",
-            "json",
-            "-show_streams",
-            &video_path,
-        ])
-        .output()
+    let probe_future = async {
+        Command::new("ffprobe")
+            .args([
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
+                "-show_streams",
+                &video_path,
+            ])
+            .output()
+            .await
+    };
+    
+    let probe_output = timeout(FFPROBE_TIMEOUT, probe_future)
+        .await
+        .map_err(|_| format!("FFprobe timeout after {} seconds", FFPROBE_TIMEOUT.as_secs()))?
         .map_err(|e| format!("Failed to probe video: {}", e))?;
 
     if !probe_output.status.success() {
@@ -461,11 +656,19 @@ async fn merge_tracks(
     }
 
     // Output file
-    args.push(output_path);
+    args.push(output_path.clone());
 
-    let output = Command::new("ffmpeg")
-        .args(&args)
-        .output()
+    let merge_future = async {
+        Command::new("ffmpeg")
+            .args(&args)
+            .output()
+            .await
+    };
+    
+    // Execute with timeout
+    let output = timeout(FFMPEG_MERGE_TIMEOUT, merge_future)
+        .await
+        .map_err(|_| format!("FFmpeg merge timeout after {} seconds", FFMPEG_MERGE_TIMEOUT.as_secs()))?
         .map_err(|e| format!("Failed to execute ffmpeg: {}", e))?;
 
     if !output.status.success() {

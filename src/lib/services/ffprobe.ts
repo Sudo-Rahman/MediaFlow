@@ -4,6 +4,11 @@ import { getFileName } from '$lib/utils/format';
 import { log } from '$lib/utils/log-toast';
 
 /**
+ * Default concurrency limit for parallel file scanning
+ */
+const DEFAULT_SCAN_CONCURRENCY = 3;
+
+/**
  * Parse FFprobe output and convert to our Track format
  */
 function parseStream(stream: FFprobeStream): Track | null {
@@ -57,7 +62,7 @@ function parseStream(stream: FFprobeStream): Track | null {
 /**
  * Scan a video file using ffprobe (via Tauri command)
  */
-export async function scanFile(filePath: string): Promise<VideoFile & { rawData?: any; format?: string; bitrate?: number }> {
+export async function scanFile(filePath: string): Promise<ScannedFile> {
   const name = getFileName(filePath);
 
   try {
@@ -118,16 +123,56 @@ export async function scanFile(filePath: string): Promise<VideoFile & { rawData?
 }
 
 /**
- * Scan multiple files
+ * Extended VideoFile with additional metadata from ffprobe
  */
-export async function scanFiles(filePaths: string[]): Promise<VideoFile[]> {
-  const results: VideoFile[] = [];
+export type ScannedFile = VideoFile & { 
+  rawData?: any; 
+  format?: string; 
+  bitrate?: number;
+};
 
-  for (const path of filePaths) {
-    const file = await scanFile(path);
-    results.push(file);
+/**
+ * Split array into chunks of specified size
+ */
+function chunk<T>(array: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < array.length; i += size) {
+    chunks.push(array.slice(i, i + size));
   }
+  return chunks;
+}
 
+/**
+ * Scan multiple files with parallel processing
+ * @param filePaths - Array of file paths to scan
+ * @param concurrency - Maximum number of concurrent scans (default: 3)
+ * @param onProgress - Optional callback for progress updates
+ */
+export async function scanFiles(
+  filePaths: string[],
+  concurrency: number = DEFAULT_SCAN_CONCURRENCY,
+  onProgress?: (completed: number, total: number) => void
+): Promise<ScannedFile[]> {
+  if (filePaths.length === 0) return [];
+  
+  const results: ScannedFile[] = [];
+  const batches = chunk(filePaths, concurrency);
+  let completed = 0;
+  
+  for (const batch of batches) {
+    // Process each batch in parallel
+    const batchResults = await Promise.all(
+      batch.map(async (path) => {
+        const file = await scanFile(path);
+        completed++;
+        onProgress?.(completed, filePaths.length);
+        return file;
+      })
+    );
+    
+    results.push(...batchResults);
+  }
+  
   return results;
 }
 

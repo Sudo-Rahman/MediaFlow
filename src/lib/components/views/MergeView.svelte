@@ -12,7 +12,7 @@
 
   import { mergeStore } from '$lib/stores';
   import { recentFilesStore } from '$lib/stores/recentFiles.svelte';
-  import { scanFile } from '$lib/services/ffprobe';
+  import { scanFiles } from '$lib/services/ffprobe';
   import { dndzone } from '$lib/utils/dnd';
   import { logAndToast } from '$lib/utils/log-toast';
   import type { MergeVideoFile, ImportedTrack, MergeTrack, MergeTrackConfig } from '$lib/types';
@@ -166,6 +166,10 @@
 
     let videosAdded = 0, tracksAdded = 0, skipped = 0;
 
+    // Separate video files from track files, filtering duplicates
+    const videoPaths: string[] = [];
+    const videoFileIds: Map<string, string> = new Map(); // path -> fileId
+
     for (const path of paths) {
       if (mergeStore.isFileAlreadyImported(path)) {
         skipped++;
@@ -176,12 +180,38 @@
       const ext = path.toLowerCase().substring(path.lastIndexOf('.'));
 
       if (VIDEO_EXTENSIONS.includes(ext)) {
+        // Add video file to store with 'scanning' status
         const fileId = mergeStore.addVideoFile({
           path, name, size: 0, tracks: [], status: 'scanning'
         });
+        videoPaths.push(path);
+        videoFileIds.set(path, fileId);
+      } else {
+        // Handle track files immediately (no scanning needed)
+        const type = SUBTITLE_EXTENSIONS.includes(ext) ? 'subtitle' : 'audio';
+        const codec = getCodecFromExtension(ext);
 
-        try {
-          const scanned = await scanFile(path);
+        mergeStore.addImportedTrack({
+          path, name, type, codec, language: undefined, title: name
+        });
+        tracksAdded++;
+      }
+    }
+
+    // Scan all video files in parallel
+    if (videoPaths.length > 0) {
+      const scannedFiles = await scanFiles(videoPaths, 3);
+
+      for (const scanned of scannedFiles) {
+        const fileId = videoFileIds.get(scanned.path);
+        if (!fileId) continue;
+
+        if (scanned.status === 'error') {
+          mergeStore.updateVideoFile(fileId, {
+            status: 'error',
+            error: scanned.error
+          });
+        } else {
           const tracks: MergeTrack[] = scanned.tracks.map(t => ({
             id: `${fileId}-track-${t.id}`,
             sourceFileId: fileId,
@@ -214,20 +244,7 @@
           }
 
           videosAdded++;
-        } catch (error) {
-          mergeStore.updateVideoFile(fileId, {
-            status: 'error',
-            error: error instanceof Error ? error.message : String(error)
-          });
         }
-      } else {
-        const type = SUBTITLE_EXTENSIONS.includes(ext) ? 'subtitle' : 'audio';
-        const codec = getCodecFromExtension(ext);
-
-        mergeStore.addImportedTrack({
-          path, name, type, codec, language: undefined, title: name
-        });
-        tracksAdded++;
       }
     }
 

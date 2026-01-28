@@ -245,36 +245,203 @@ interface LLMResponse {
   truncated?: boolean;
   finishReason?: string;
   usage?: LLMUsage;
+  /** Whether the request can be retried (e.g., rate limit, temporary error) */
+  retryable?: boolean;
+  /** Suggested retry delay in milliseconds (from Retry-After header) */
+  retryAfter?: number;
+}
+
+// API request timeout in milliseconds ( 10 minutes )
+const API_REQUEST_TIMEOUT = 600_000;
+
+/**
+ * Error categories for API responses
+ */
+type APIErrorCategory = 
+  | 'rate_limit'      // 429 - Too many requests
+  | 'quota_exceeded'  // 402/429 with quota message
+  | 'auth_error'      // 401 - Invalid API key
+  | 'forbidden'       // 403 - Permission denied
+  | 'not_found'       // 404 - Invalid endpoint/model
+  | 'bad_request'     // 400 - Malformed request
+  | 'server_error'    // 5xx - Server issues
+  | 'timeout'         // Request timeout
+  | 'network_error'   // Network connectivity issues
+  | 'unknown';        // Unknown error
+
+interface ParsedAPIError {
+  category: APIErrorCategory;
+  message: string;
+  retryable: boolean;
+  retryAfter?: number;
+}
+
+/**
+ * Parse HTTP error response into structured error info
+ */
+function parseAPIError(
+  status: number, 
+  errorBody: string, 
+  provider: string,
+  retryAfterHeader?: string | null
+): ParsedAPIError {
+  // Parse retry-after header (can be seconds or date)
+  let retryAfter: number | undefined;
+  if (retryAfterHeader) {
+    const seconds = parseInt(retryAfterHeader, 10);
+    if (!isNaN(seconds)) {
+      retryAfter = seconds * 1000; // Convert to milliseconds
+    }
+  }
+
+  // Check for quota-related messages in error body
+  const lowerBody = errorBody.toLowerCase();
+  const isQuotaError = lowerBody.includes('quota') || 
+                       lowerBody.includes('billing') ||
+                       lowerBody.includes('insufficient_quota') ||
+                       lowerBody.includes('credit');
+
+  switch (status) {
+    case 400:
+      return {
+        category: 'bad_request',
+        message: `${provider}: Bad request - ${errorBody}`,
+        retryable: false
+      };
+    
+    case 401:
+      return {
+        category: 'auth_error',
+        message: `${provider}: Invalid API key or authentication failed`,
+        retryable: false
+      };
+    
+    case 402:
+      return {
+        category: 'quota_exceeded',
+        message: `${provider}: Payment required - Check your billing/quota`,
+        retryable: false
+      };
+    
+    case 403:
+      return {
+        category: 'forbidden',
+        message: `${provider}: Access forbidden - Check API key permissions`,
+        retryable: false
+      };
+    
+    case 404:
+      return {
+        category: 'not_found',
+        message: `${provider}: Model or endpoint not found - Check model name`,
+        retryable: false
+      };
+    
+    case 429:
+      if (isQuotaError) {
+        return {
+          category: 'quota_exceeded',
+          message: `${provider}: Quota exceeded - Check your billing/usage limits`,
+          retryable: false
+        };
+      }
+      return {
+        category: 'rate_limit',
+        message: `${provider}: Rate limit exceeded - Please wait before retrying`,
+        retryable: true,
+        retryAfter: retryAfter || 60_000 // Default to 1 minute
+      };
+    
+    case 500:
+    case 502:
+    case 503:
+    case 504:
+      return {
+        category: 'server_error',
+        message: `${provider}: Server error (${status}) - Try again later`,
+        retryable: true,
+        retryAfter: retryAfter || 30_000 // Default to 30 seconds
+      };
+    
+    default:
+      return {
+        category: 'unknown',
+        message: `${provider}: API error ${status} - ${errorBody}`,
+        retryable: status >= 500 // Retry on 5xx errors
+      };
+  }
+}
+
+/**
+ * Wrap fetch with timeout
+ */
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeoutMs: number = API_REQUEST_TIMEOUT
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  
+  // Merge signals if one was provided
+  const originalSignal = options.signal;
+  if (originalSignal) {
+    originalSignal.addEventListener('abort', () => controller.abort());
+  }
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function callOpenAI(apiKey: string, model: string, systemPrompt: string, userPrompt: string, signal?: AbortSignal): Promise<LLMResponse> {
+  const provider = 'OpenAI';
+  
   try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
+    const response = await fetchWithTimeout(
+      'https://api.openai.com/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          temperature: 0.3,
+          response_format: { type: 'json_object' }
+        }),
+        signal
       },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: 0.3,
-        response_format: { type: 'json_object' }
-      }),
-      signal
-    });
+      API_REQUEST_TIMEOUT
+    );
 
     if (!response.ok) {
-      const error = await response.text();
-      const errorMsg = `OpenAI API error: ${response.status} - ${error}`;
-      log('error', 'translation', 'OpenAI API error', errorMsg, {
+      const errorBody = await response.text();
+      const retryAfterHeader = response.headers.get('Retry-After');
+      const parsedError = parseAPIError(response.status, errorBody, provider, retryAfterHeader);
+      
+      log('error', 'translation', `${provider} API error`, parsedError.message, {
         provider: 'openai',
-        apiError: error
+        apiError: errorBody
       });
-      return { content: '', error: errorMsg };
+      
+      return { 
+        content: '', 
+        error: parsedError.message,
+        retryable: parsedError.retryable,
+        retryAfter: parsedError.retryAfter
+      };
     }
 
     const data = await response.json();
@@ -296,44 +463,83 @@ async function callOpenAI(apiKey: string, model: string, systemPrompt: string, u
     };
   } catch (error: any) {
     if (error.name === 'AbortError') {
-      return { content: '', error: 'Request cancelled' };
+      // Check if it was a timeout or user cancellation
+      if (signal?.aborted) {
+        return { content: '', error: 'Request cancelled', retryable: false };
+      }
+      return { 
+        content: '', 
+        error: `${provider}: Request timeout (>${API_REQUEST_TIMEOUT / 1000}s)`,
+        retryable: true,
+        retryAfter: 5000
+      };
     }
-    const errorMsg = `OpenAI request failed: ${error}`;
-    log('error', 'translation', 'OpenAI request failed', errorMsg, {
+    
+    // Network errors
+    const isNetworkError = error.message?.includes('fetch') || 
+                           error.message?.includes('network') ||
+                           error.message?.includes('ECONNREFUSED') ||
+                           error.message?.includes('ENOTFOUND');
+    
+    const errorMsg = isNetworkError 
+      ? `${provider}: Network error - Check your internet connection`
+      : `${provider}: ${error.message || error}`;
+    
+    log('error', 'translation', `${provider} request failed`, errorMsg, {
       provider: 'openai',
       apiError: String(error)
     });
-    return { content: '', error: errorMsg };
+    
+    return { 
+      content: '', 
+      error: errorMsg,
+      retryable: isNetworkError,
+      retryAfter: isNetworkError ? 5000 : undefined
+    };
   }
 }
 
 async function callAnthropic(apiKey: string, model: string, systemPrompt: string, userPrompt: string, signal?: AbortSignal): Promise<LLMResponse> {
+  const provider = 'Anthropic';
+  
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
+    const response = await fetchWithTimeout(
+      'https://api.anthropic.com/v1/messages',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model,
+          system: systemPrompt,
+          messages: [
+            { role: 'user', content: userPrompt }
+          ]
+        }),
+        signal
       },
-      body: JSON.stringify({
-        model,
-        system: systemPrompt,
-        messages: [
-          { role: 'user', content: userPrompt }
-        ]
-      }),
-      signal
-    });
+      API_REQUEST_TIMEOUT
+    );
 
     if (!response.ok) {
-      const error = await response.text();
-      const errorMsg = `Anthropic API error: ${response.status} - ${error}`;
-      log('error', 'translation', 'Anthropic API error', errorMsg, {
+      const errorBody = await response.text();
+      const retryAfterHeader = response.headers.get('Retry-After');
+      const parsedError = parseAPIError(response.status, errorBody, provider, retryAfterHeader);
+      
+      log('error', 'translation', `${provider} API error`, parsedError.message, {
         provider: 'anthropic',
-        apiError: error
+        apiError: errorBody
       });
-      return { content: '', error: errorMsg };
+      
+      return { 
+        content: '', 
+        error: parsedError.message,
+        retryable: parsedError.retryable,
+        retryAfter: parsedError.retryAfter
+      };
     }
 
     const data = await response.json();
@@ -355,49 +561,88 @@ async function callAnthropic(apiKey: string, model: string, systemPrompt: string
     };
   } catch (error: any) {
     if (error.name === 'AbortError') {
-      return { content: '', error: 'Request cancelled' };
+      // Check if it was a timeout or user cancellation
+      if (signal?.aborted) {
+        return { content: '', error: 'Request cancelled', retryable: false };
+      }
+      return { 
+        content: '', 
+        error: `${provider}: Request timeout (>${API_REQUEST_TIMEOUT / 1000}s)`,
+        retryable: true,
+        retryAfter: 5000
+      };
     }
-    const errorMsg = `Anthropic request failed: ${error}`;
-    log('error', 'translation', 'Anthropic request failed', errorMsg, {
+    
+    // Network errors
+    const isNetworkError = error.message?.includes('fetch') || 
+                           error.message?.includes('network') ||
+                           error.message?.includes('ECONNREFUSED') ||
+                           error.message?.includes('ENOTFOUND');
+    
+    const errorMsg = isNetworkError 
+      ? `${provider}: Network error - Check your internet connection`
+      : `${provider}: ${error.message || error}`;
+    
+    log('error', 'translation', `${provider} request failed`, errorMsg, {
       provider: 'anthropic',
       apiError: String(error)
     });
-    return { content: '', error: errorMsg };
+    
+    return { 
+      content: '', 
+      error: errorMsg,
+      retryable: isNetworkError,
+      retryAfter: isNetworkError ? 5000 : undefined
+    };
   }
 }
 
 async function callGoogle(apiKey: string, model: string, systemPrompt: string, userPrompt: string, signal?: AbortSignal): Promise<LLMResponse> {
+  const provider = 'Google AI';
+  
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [{ text: systemPrompt }]
+    const response = await fetchWithTimeout(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
         },
-        contents: [
-          {
-            parts: [{ text: userPrompt }]
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: systemPrompt }]
+          },
+          contents: [
+            {
+              parts: [{ text: userPrompt }]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.3,
+            responseMimeType: 'application/json'
           }
-        ],
-        generationConfig: {
-          temperature: 0.3,
-          responseMimeType: 'application/json'
-        }
-      }),
-      signal
-    });
+        }),
+        signal
+      },
+      API_REQUEST_TIMEOUT
+    );
 
     if (!response.ok) {
-      const error = await response.text();
-      const errorMsg = `Google AI API error: ${response.status} - ${error}`;
-      log('error', 'translation', 'Google AI API error', errorMsg, {
+      const errorBody = await response.text();
+      const retryAfterHeader = response.headers.get('Retry-After');
+      const parsedError = parseAPIError(response.status, errorBody, provider, retryAfterHeader);
+      
+      log('error', 'translation', `${provider} API error`, parsedError.message, {
         provider: 'google',
-        apiError: error
+        apiError: errorBody
       });
-      return { content: '', error: errorMsg };
+      
+      return { 
+        content: '', 
+        error: parsedError.message,
+        retryable: parsedError.retryable,
+        retryAfter: parsedError.retryAfter
+      };
     }
 
     const data = await response.json();
@@ -419,46 +664,85 @@ async function callGoogle(apiKey: string, model: string, systemPrompt: string, u
     };
   } catch (error: any) {
     if (error.name === 'AbortError') {
-      return { content: '', error: 'Request cancelled' };
+      // Check if it was a timeout or user cancellation
+      if (signal?.aborted) {
+        return { content: '', error: 'Request cancelled', retryable: false };
+      }
+      return { 
+        content: '', 
+        error: `${provider}: Request timeout (>${API_REQUEST_TIMEOUT / 1000}s)`,
+        retryable: true,
+        retryAfter: 5000
+      };
     }
-    const errorMsg = `Google AI request failed: ${error}`;
-    log('error', 'translation', 'Google AI request failed', errorMsg, {
+    
+    // Network errors
+    const isNetworkError = error.message?.includes('fetch') || 
+                           error.message?.includes('network') ||
+                           error.message?.includes('ECONNREFUSED') ||
+                           error.message?.includes('ENOTFOUND');
+    
+    const errorMsg = isNetworkError 
+      ? `${provider}: Network error - Check your internet connection`
+      : `${provider}: ${error.message || error}`;
+    
+    log('error', 'translation', `${provider} request failed`, errorMsg, {
       provider: 'google',
       apiError: String(error)
     });
-    return { content: '', error: errorMsg };
+    
+    return { 
+      content: '', 
+      error: errorMsg,
+      retryable: isNetworkError,
+      retryAfter: isNetworkError ? 5000 : undefined
+    };
   }
 }
 
 async function callOpenRouter(apiKey: string, model: string, systemPrompt: string, userPrompt: string, signal?: AbortSignal): Promise<LLMResponse> {
+  const provider = 'OpenRouter';
+  
   try {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-        'HTTP-Referer': 'https://rsextractor.app',
-        'X-Title': 'RsExtractor'
+    const response = await fetchWithTimeout(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': 'https://rsextractor.app',
+          'X-Title': 'RsExtractor'
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          temperature: 0.3,
+        }),
+        signal
       },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: 0.3,
-      }),
-      signal
-    });
+      API_REQUEST_TIMEOUT
+    );
 
     if (!response.ok) {
-      const error = await response.text();
-      const errorMsg = `OpenRouter API error: ${response.status} - ${error}`;
-      log('error', 'translation', 'OpenRouter API error', errorMsg, {
+      const errorBody = await response.text();
+      const retryAfterHeader = response.headers.get('Retry-After');
+      const parsedError = parseAPIError(response.status, errorBody, provider, retryAfterHeader);
+      
+      log('error', 'translation', `${provider} API error`, parsedError.message, {
         provider: 'openrouter',
-        apiError: error
+        apiError: errorBody
       });
-      return { content: '', error: errorMsg };
+      
+      return { 
+        content: '', 
+        error: parsedError.message,
+        retryable: parsedError.retryable,
+        retryAfter: parsedError.retryAfter
+      };
     }
 
     const data = await response.json();
@@ -480,14 +764,39 @@ async function callOpenRouter(apiKey: string, model: string, systemPrompt: strin
     };
   } catch (error: any) {
     if (error.name === 'AbortError') {
-      return { content: '', error: 'Request cancelled' };
+      // Check if it was a timeout or user cancellation
+      if (signal?.aborted) {
+        return { content: '', error: 'Request cancelled', retryable: false };
+      }
+      return { 
+        content: '', 
+        error: `${provider}: Request timeout (>${API_REQUEST_TIMEOUT / 1000}s)`,
+        retryable: true,
+        retryAfter: 5000
+      };
     }
-    const errorMsg = `OpenRouter request failed: ${error}`;
-    log('error', 'translation', 'OpenRouter request failed', errorMsg, {
+    
+    // Network errors
+    const isNetworkError = error.message?.includes('fetch') || 
+                           error.message?.includes('network') ||
+                           error.message?.includes('ECONNREFUSED') ||
+                           error.message?.includes('ENOTFOUND');
+    
+    const errorMsg = isNetworkError 
+      ? `${provider}: Network error - Check your internet connection`
+      : `${provider}: ${error.message || error}`;
+    
+    log('error', 'translation', `${provider} request failed`, errorMsg, {
       provider: 'openrouter',
       apiError: String(error)
     });
-    return { content: '', error: errorMsg };
+    
+    return { 
+      content: '', 
+      error: errorMsg,
+      retryable: isNetworkError,
+      retryAfter: isNetworkError ? 5000 : undefined
+    };
   }
 }
 

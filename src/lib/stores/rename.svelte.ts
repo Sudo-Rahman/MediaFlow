@@ -48,10 +48,49 @@ let abortController = $state<AbortController | null>(null);
 let userPresets = $state<RulePreset[]>([]);
 let presetsLoaded = $state(false);
 
+// ============================================================================
+// DEBOUNCED RECALCULATION
+// ============================================================================
+
+const RECALCULATE_DEBOUNCE_MS = 50;
+let recalculateTimeoutId: ReturnType<typeof setTimeout> | null = null;
+let isRecalculating = false;
+
 /**
- * Recalculate new names for all files based on current rules
+ * Schedule a debounced recalculation of new names
+ * Multiple calls within the debounce window will only trigger one recalculation
  */
-function recalculateNewNames(): void {
+function scheduleRecalculation(): void {
+  // Clear any pending recalculation
+  if (recalculateTimeoutId !== null) {
+    clearTimeout(recalculateTimeoutId);
+  }
+  
+  recalculateTimeoutId = setTimeout(() => {
+    recalculateTimeoutId = null;
+    performRecalculation();
+  }, RECALCULATE_DEBOUNCE_MS);
+}
+
+/**
+ * Perform immediate recalculation (bypasses debounce)
+ * Use this when you need results immediately (e.g., before starting a rename operation)
+ */
+function performRecalculation(): void {
+  if (isRecalculating) return;
+  isRecalculating = true;
+  
+  try {
+    recalculateNewNamesInternal();
+  } finally {
+    isRecalculating = false;
+  }
+}
+
+/**
+ * Internal recalculation logic
+ */
+function recalculateNewNamesInternal(): void {
   const enabledRules = rules.filter(r => r.enabled);
   
   // Get sorted selected files for proper numbering (respects current sort config)
@@ -206,46 +245,46 @@ export const renameStore = {
     const uniqueFiles = newFiles.filter(f => !existingPaths.has(f.originalPath));
     
     files = [...files, ...uniqueFiles];
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   removeFile(id: string) {
     files = files.filter(f => f.id !== id);
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   removeSelected() {
     files = files.filter(f => !f.selected);
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   toggleFileSelection(id: string) {
     files = files.map(f => 
       f.id === id ? { ...f, selected: !f.selected } : f
     );
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   setFileSelection(id: string, selected: boolean) {
     files = files.map(f => 
       f.id === id ? { ...f, selected } : f
     );
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   selectAll() {
     files = files.map(f => ({ ...f, selected: true }));
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   deselectAll() {
     files = files.map(f => ({ ...f, selected: false }));
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   invertSelection() {
     files = files.map(f => ({ ...f, selected: !f.selected }));
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   clear() {
@@ -259,7 +298,7 @@ export const renameStore = {
   
   setSort(field: SortField, direction: SortDirection) {
     sortConfig = { field, direction };
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   toggleSortDirection() {
@@ -267,7 +306,7 @@ export const renameStore = {
       ...sortConfig, 
       direction: sortConfig.direction === 'asc' ? 'desc' : 'asc' 
     };
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   // ============ Rule Management ============
@@ -281,33 +320,33 @@ export const renameStore = {
     };
     
     rules = [...rules, newRule];
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   removeRule(id: string) {
     rules = rules.filter(r => r.id !== id);
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   updateRule(id: string, updates: Partial<RenameRule>) {
     rules = rules.map(r => 
       r.id === id ? { ...r, ...updates } : r
     );
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   updateRuleConfig(id: string, config: RuleConfig) {
     rules = rules.map(r => 
       r.id === id ? { ...r, config } : r
     );
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   toggleRule(id: string) {
     rules = rules.map(r => 
       r.id === id ? { ...r, enabled: !r.enabled } : r
     );
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   moveRule(fromIndex: number, toIndex: number) {
@@ -320,7 +359,7 @@ export const renameStore = {
     newRules.splice(toIndex, 0, removed);
     
     rules = newRules;
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   /**
@@ -328,7 +367,7 @@ export const renameStore = {
    */
   reorderRules(newRules: RenameRule[]) {
     rules = newRules;
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   duplicateRule(id: string) {
@@ -346,12 +385,12 @@ export const renameStore = {
     newRules.splice(index + 1, 0, newRule);
     
     rules = newRules;
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   clearRules() {
     rules = [];
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   // ============ Mode & Output ============
@@ -384,7 +423,9 @@ export const renameStore = {
   cancelProcessing() {
     if (abortController) {
       abortController.abort();
-      abortController = null;
+      // Note: Don't set abortController to null here!
+      // The loop needs to check isCancelled which reads from the signal.
+      // abortController will be reset in startProcessing() or resetProgress()
     }
     progress = { ...progress, status: 'cancelled' };
   },
@@ -393,7 +434,9 @@ export const renameStore = {
    * Check if the current operation has been cancelled
    */
   get isCancelled(): boolean {
-    return abortController?.signal?.aborted ?? false;
+    // Check both the abort signal AND the progress status
+    // The status check is a fallback in case abortController was reset
+    return abortController?.signal?.aborted || progress.status === 'cancelled';
   },
   
   /**
@@ -421,8 +464,24 @@ export const renameStore = {
   
   // ============ Recalculate ============
   
+  /**
+   * Schedule a debounced recalculation (default behavior)
+   */
   recalculate() {
-    recalculateNewNames();
+    scheduleRecalculation();
+  },
+  
+  /**
+   * Force immediate recalculation, bypassing debounce
+   * Use before operations that need up-to-date new names
+   */
+  recalculateImmediate() {
+    // Clear any pending debounced recalculation
+    if (recalculateTimeoutId !== null) {
+      clearTimeout(recalculateTimeoutId);
+      recalculateTimeoutId = null;
+    }
+    performRecalculation();
   },
   
   // ============ Reset ============
@@ -437,6 +496,7 @@ export const renameStore = {
   },
   
   resetProgress() {
+    abortController = null;
     progress = { status: 'idle', current: 0, total: 0 };
     files = files.map(f => ({ ...f, status: 'pending' as const, error: undefined }));
   },
@@ -466,7 +526,7 @@ export const renameStore = {
     
     // Clear existing files and replace with new ones
     files = newFiles;
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   // ============ Presets ============
@@ -519,7 +579,7 @@ export const renameStore = {
       config: { ...rule.config },
     }));
     
-    recalculateNewNames();
+    scheduleRecalculation();
   },
   
   /**

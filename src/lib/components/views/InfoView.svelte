@@ -11,7 +11,7 @@
 
   import { fileListStore } from '$lib/stores/files.svelte';
   import { mergeStore, infoStore } from '$lib/stores';
-  import { scanFile } from '$lib/services/ffprobe';
+  import { scanFiles } from '$lib/services/ffprobe';
   import type { Track } from '$lib/types';
   import type { FileInfo } from '$lib/stores/info.svelte';
 
@@ -74,6 +74,9 @@
     let added = 0;
     let skipped = 0;
 
+    // Filter duplicates and prepare files for scanning
+    const fileInfoMap = new Map<string, { name: string; fileId: string }>();
+
     for (const path of paths) {
       // Check duplicates
       if (infoStore.hasFile(path)) {
@@ -94,41 +97,49 @@
       };
 
       infoStore.addFile(newFile);
+      fileInfoMap.set(path, { name, fileId });
+    }
 
-      try {
-        const scanned = await scanFile(path);
+    // Scan all files in parallel
+    if (fileInfoMap.size > 0) {
+      const scannedFiles = await scanFiles([...fileInfoMap.keys()], 3);
 
-        infoStore.updateFile(fileId, {
-          size: scanned.size,
-          duration: scanned.duration,
-          bitrate: scanned.bitrate,
-          format: scanned.format,
-          tracks: scanned.tracks,
-          status: 'ready' as const,
-          rawData: scanned.rawData
-        });
+      for (const scanned of scannedFiles) {
+        const fileInfo = fileInfoMap.get(scanned.path);
+        if (!fileInfo) continue;
 
-        // Log success for this file
-        log('success', 'system',
-          `Scanned: ${name}`,
-          `${scanned.tracks.length} track(s) found`,
-          { filePath: path }
-        );
+        if (scanned.status === 'error') {
+          infoStore.updateFile(fileInfo.fileId, {
+            status: 'error' as const,
+            error: scanned.error
+          });
 
-        added++;
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        infoStore.updateFile(fileId, {
-          status: 'error' as const,
-          error: errorMsg
-        });
-        
-        // Log error for this file
-        log('error', 'system',
-          `Scan failed: ${name}`,
-          errorMsg,
-          { filePath: path }
-        );
+          // Log error for this file
+          log('error', 'system',
+            `Scan failed: ${fileInfo.name}`,
+            scanned.error || 'Unknown error',
+            { filePath: scanned.path }
+          );
+        } else {
+          infoStore.updateFile(fileInfo.fileId, {
+            size: scanned.size,
+            duration: scanned.duration,
+            bitrate: scanned.bitrate,
+            format: scanned.format,
+            tracks: scanned.tracks,
+            status: 'ready' as const,
+            rawData: scanned.rawData
+          });
+
+          // Log success for this file
+          log('success', 'system',
+            `Scanned: ${fileInfo.name}`,
+            `${scanned.tracks.length} track(s) found`,
+            { filePath: scanned.path }
+          );
+
+          added++;
+        }
       }
     }
 

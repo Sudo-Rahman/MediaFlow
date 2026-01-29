@@ -8,7 +8,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Alert, AlertTitle, AlertDescription, ThemeToggle } from '$lib/components';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
-  import { ExtractView, MergeView, SettingsView, InfoView, TranslationView, RenameView } from '$lib/components/views';
+  import { ExtractView, MergeView, SettingsView, InfoView, TranslationView, RenameView, AudioToSubsView } from '$lib/components/views';
   import { LogsSheet } from '$lib/components/logs';
   import AlertCircle from 'lucide-svelte/icons/alert-circle';
   import ScrollText from 'lucide-svelte/icons/scroll-text';
@@ -18,7 +18,7 @@
   import { logAndToast } from '$lib/utils/log-toast';
 
   // Current view state
-  let currentView = $state<'extract' | 'merge' | 'translate' | 'rename' | 'info' | 'settings'>('extract');
+  let currentView = $state<'extract' | 'merge' | 'translate' | 'rename' | 'audio-to-subs' | 'info' | 'settings'>('extract');
   let ffmpegAvailable = $state<boolean | null>(null);
   let unlistenDragDrop: (() => void) | null = null;
 
@@ -28,12 +28,14 @@
   let infoViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let translateViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let renameViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let audioToSubsViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
 
   const isMacOS = OS() === 'MacOS';
 
   const viewTitles: Record<string, string> = {
     extract: 'Track Extraction',
     merge: 'Track Merge',
+    'audio-to-subs': 'Audio to Subs',
     translate: 'AI Translation',
     rename: 'Batch Rename',
     info: 'File Information',
@@ -83,12 +85,14 @@
         await translateViewRef.handleFileDrop(event.payload.paths);
       } else if (currentView === 'rename' && renameViewRef) {
         await renameViewRef.handleFileDrop(event.payload.paths);
+      } else if (currentView === 'audio-to-subs' && audioToSubsViewRef) {
+        await audioToSubsViewRef.handleFileDrop(event.payload.paths);
       }
     });
   }
 
   function handleNavigate(viewId: string) {
-    currentView = viewId as 'extract' | 'merge' | 'translate' | 'rename' | 'info' | 'settings';
+    currentView = viewId as 'extract' | 'merge' | 'translate' | 'rename' | 'audio-to-subs' | 'info' | 'settings';
   }
 </script>
 
@@ -144,6 +148,8 @@
         <ExtractView bind:this={extractViewRef} />
       {:else if currentView === 'merge'}
         <MergeView bind:this={mergeViewRef} />
+      {:else if currentView === 'audio-to-subs'}
+        <AudioToSubsView bind:this={audioToSubsViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
       {:else if currentView === 'translate'}
         <TranslationView bind:this={translateViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
       {:else if currentView === 'rename'}

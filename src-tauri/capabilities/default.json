@@ -10,10 +10,18 @@
     "dialog:default",
     "dialog:allow-open",
     "fs:default",
+    "fs:allow-app-meta",
+    "fs:allow-app-meta-recursive",
     "fs:allow-read",
     "fs:allow-write",
     "fs:allow-app-write",
     "fs:allow-app-write-recursive",
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [
+        { "path": "$TEMP/**" }
+      ]
+    },
     "shell:default",
     "store:default",
     "http:default",

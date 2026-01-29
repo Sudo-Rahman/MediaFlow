@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { open } from '@tauri-apps/plugin-dialog';
+  import { openUrl } from '@tauri-apps/plugin-opener';
   import { mode, setMode } from 'mode-watcher';
   import { toast } from 'svelte-sonner';
 
@@ -13,6 +14,7 @@
   import * as RadioGroup from '$lib/components/ui/radio-group';
   import { Separator } from '$lib/components/ui/separator';
   import { Badge } from '$lib/components/ui/badge';
+  import { Progress } from '$lib/components/ui/progress';
 
   import Sun from 'lucide-svelte/icons/sun';
   import Moon from 'lucide-svelte/icons/moon';
@@ -29,11 +31,52 @@
   import Eye from 'lucide-svelte/icons/eye';
   import EyeOff from 'lucide-svelte/icons/eye-off';
   import Languages from 'lucide-svelte/icons/languages';
+  import AudioLines from 'lucide-svelte/icons/audio-lines';
+  import Trash2 from 'lucide-svelte/icons/trash-2';
+  import Loader2 from 'lucide-svelte/icons/loader-2';
+  import ExternalLink from 'lucide-svelte/icons/external-link';
 
-  import { LLM_PROVIDERS, type LLMProvider } from '$lib/types';
+  import { LLM_PROVIDERS, type LLMProvider, WHISPER_MODELS } from '$lib/types';
+  import { 
+    checkWhisperInstalled, 
+    getWhisperVersion, 
+    listDownloadedModels,
+    downloadModel,
+    deleteModel
+  } from '$lib/services/whisper';
 
   let ffmpegStatus = $state<'checking' | 'found' | 'not-found'>('checking');
   let ffmpegVersion = $state<string | null>(null);
+
+  // OS detection (simple approach using navigator)
+  let currentPlatform = $state<'macos' | 'windows' | 'linux'>('macos');
+
+  // Whisper state
+  let whisperStatus = $state<'checking' | 'found' | 'not-found'>('checking');
+  let whisperVersion = $state<string | null>(null);
+  let whisperDownloadedModels = $state<string[]>([]);
+  let whisperIsRefreshing = $state(false);
+  let whisperIsDownloading = $state(false);
+  let whisperDownloadProgress = $state(0);
+  let whisperSelectedModel = $state<string>('small');
+  let whisperDeletingModel = $state<string | null>(null);
+
+  // Detect platform on mount
+  function detectPlatform(): 'macos' | 'windows' | 'linux' {
+    const userAgent = navigator.userAgent.toLowerCase();
+    if (userAgent.includes('mac')) return 'macos';
+    if (userAgent.includes('win')) return 'windows';
+    return 'linux';
+  }
+
+  async function openWhisperGitHub() {
+    try {
+      await openUrl('https://github.com/ggerganov/whisper.cpp');
+    } catch {
+      // Fallback to window.open
+      window.open('https://github.com/ggerganov/whisper.cpp', '_blank');
+    }
+  }
 
   const themeOptions = [
     { value: 'system', label: 'System', icon: Monitor, description: 'Follow system preferences' },
@@ -58,9 +101,78 @@
   }
 
   onMount(async () => {
+    currentPlatform = detectPlatform();
     await settingsStore.load();
     await checkFFmpeg();
+    await checkWhisper();
   });
+
+  // Whisper functions
+  async function checkWhisper() {
+    whisperStatus = 'checking';
+    try {
+      const installed = await checkWhisperInstalled();
+      if (installed) {
+        whisperStatus = 'found';
+        try {
+          whisperVersion = await getWhisperVersion();
+        } catch {
+          whisperVersion = null;
+        }
+        await refreshWhisperModels();
+      } else {
+        whisperStatus = 'not-found';
+        whisperVersion = null;
+      }
+    } catch {
+      whisperStatus = 'not-found';
+      whisperVersion = null;
+    }
+  }
+
+  async function refreshWhisperModels() {
+    whisperIsRefreshing = true;
+    try {
+      whisperDownloadedModels = await listDownloadedModels();
+    } catch (e) {
+      console.error('Failed to list whisper models:', e);
+    } finally {
+      whisperIsRefreshing = false;
+    }
+  }
+
+  async function handleDownloadWhisperModel() {
+    if (!whisperSelectedModel || whisperIsDownloading) return;
+    
+    whisperIsDownloading = true;
+    whisperDownloadProgress = 0;
+    
+    try {
+      await downloadModel(whisperSelectedModel, (progress) => {
+        whisperDownloadProgress = progress;
+      });
+      toast.success(`Model ${whisperSelectedModel} downloaded successfully`);
+      await refreshWhisperModels();
+    } catch (e) {
+      toast.error(`Failed to download model: ${e}`);
+    } finally {
+      whisperIsDownloading = false;
+      whisperDownloadProgress = 0;
+    }
+  }
+
+  async function handleDeleteWhisperModel(modelFile: string) {
+    whisperDeletingModel = modelFile;
+    try {
+      await deleteModel(modelFile);
+      toast.success('Model deleted');
+      await refreshWhisperModels();
+    } catch (e) {
+      toast.error(`Failed to delete model: ${e}`);
+    } finally {
+      whisperDeletingModel = null;
+    }
+  }
 
   async function checkFFmpeg() {
     ffmpegStatus = 'checking';
@@ -210,6 +322,172 @@
             Download FFmpeg
           </Button>
         {/if}
+      </Card.Content>
+    </Card.Root>
+
+    <!-- Whisper Configuration -->
+    <Card.Root>
+      <Card.Header>
+        <div class="flex items-center gap-2">
+          <AudioLines class="size-5 text-primary" />
+          <Card.Title>Whisper Configuration</Card.Title>
+        </div>
+        <Card.Description>
+          Configure whisper.cpp for local audio transcription
+        </Card.Description>
+      </Card.Header>
+      <Card.Content class="space-y-4">
+        <!-- Status -->
+        <div class="flex items-center justify-between p-3 rounded-md bg-muted/50">
+          <div class="flex items-center gap-2">
+            {#if whisperStatus === 'checking'}
+              <RefreshCw class="size-4 animate-spin text-muted-foreground" />
+              <span class="text-sm">Checking whisper.cpp...</span>
+            {:else if whisperStatus === 'found'}
+              <CheckCircle class="size-4 text-green-500" />
+              <span class="text-sm">whisper.cpp found</span>
+              {#if whisperVersion}
+                <Badge variant="secondary" class="text-xs">{whisperVersion}</Badge>
+              {/if}
+            {:else}
+              <XCircle class="size-4 text-destructive" />
+              <span class="text-sm text-destructive">whisper.cpp not found</span>
+            {/if}
+          </div>
+          <Button variant="ghost" size="sm" onclick={() => checkWhisper()}>
+            <RefreshCw class="size-4" />
+          </Button>
+        </div>
+
+        <!-- Installation instructions if not found -->
+        {#if whisperStatus === 'not-found'}
+          <div class="p-3 rounded-md border border-amber-500/30 bg-amber-500/10">
+            <p class="text-sm font-medium text-amber-600 dark:text-amber-400 mb-2">
+              whisper.cpp is required for audio transcription
+            </p>
+            
+            {#if currentPlatform === 'macos'}
+              <p class="text-xs text-muted-foreground mb-2">
+                Install via Homebrew (macOS):
+              </p>
+              <code class="block text-xs bg-muted p-2 rounded font-mono">
+                brew install whisper-cpp
+              </code>
+            {:else}
+              <p class="text-xs text-muted-foreground mb-2">
+                Please compile whisper.cpp from source or download pre-built binaries from GitHub.
+              </p>
+            {/if}
+            
+            <Button 
+              variant="outline" 
+              size="sm" 
+              class="mt-3 w-full"
+              onclick={openWhisperGitHub}
+            >
+              <ExternalLink class="size-4 mr-2" />
+              View whisper.cpp on GitHub
+            </Button>
+          </div>
+        {/if}
+
+        <!-- Downloaded Models -->
+        {#if whisperStatus === 'found'}
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <Label>Downloaded Models</Label>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onclick={() => refreshWhisperModels()}
+                disabled={whisperIsRefreshing}
+              >
+                <RefreshCw class={`size-4 ${whisperIsRefreshing ? 'animate-spin' : ''}`} />
+              </Button>
+            </div>
+            
+            {#if whisperDownloadedModels.length === 0}
+              <p class="text-sm text-muted-foreground py-2">
+                No models downloaded yet. Download a model to start transcribing.
+              </p>
+            {:else}
+              <div class="space-y-2">
+                {#each whisperDownloadedModels as model (model)}
+                  {@const modelId = model.replace('ggml-', '').replace('.bin', '')}
+                  {@const modelInfo = WHISPER_MODELS.find((m) => m.id === modelId)}
+                  <div class="flex items-center justify-between p-2 rounded-md bg-muted/50">
+                    <div class="flex items-center gap-2">
+                      <CheckCircle class="size-4 text-green-500" />
+                      <span class="text-sm font-medium">
+                        {modelInfo?.name || model}
+                      </span>
+                      {#if modelInfo}
+                        <Badge variant="outline" class="text-xs">{modelInfo.size}</Badge>
+                      {/if}
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      class="size-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                      onclick={() => handleDeleteWhisperModel(model)}
+                      disabled={whisperDeletingModel === model}
+                    >
+                      {#if whisperDeletingModel === model}
+                        <Loader2 class="size-4 animate-spin" />
+                      {:else}
+                        <Trash2 class="size-4" />
+                      {/if}
+                    </Button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+
+          <!-- Download new model -->
+          {@const availableModels = WHISPER_MODELS.filter((m) => !whisperDownloadedModels.includes(`ggml-${m.id}.bin`))}
+          <div class="space-y-2">
+            <Label>Download Model</Label>
+            <div class="flex gap-2">
+              <select
+                class="flex-1 h-9 rounded-md border border-input bg-background px-3 text-sm"
+                bind:value={whisperSelectedModel}
+              >
+                {#each availableModels as model (model.id)}
+                  <option value={model.id}>
+                    {model.name} ({model.size}) - {model.speed}
+                  </option>
+                {/each}
+              </select>
+              <Button
+                variant="outline"
+                size="icon"
+                onclick={() => handleDownloadWhisperModel()}
+                disabled={whisperIsDownloading || !whisperSelectedModel || availableModels.length === 0}
+              >
+                {#if whisperIsDownloading}
+                  <Loader2 class="size-4 animate-spin" />
+                {:else}
+                  <Download class="size-4" />
+                {/if}
+              </Button>
+            </div>
+            
+            {#if whisperIsDownloading}
+              <div class="space-y-1">
+                <Progress value={whisperDownloadProgress} class="h-2" />
+                <p class="text-xs text-muted-foreground text-center">
+                  Downloading... {whisperDownloadProgress}%
+                </p>
+              </div>
+            {/if}
+          </div>
+        {/if}
+
+        <div class="pt-2 text-xs text-muted-foreground">
+          <p>Models are stored in <code class="bg-muted px-1 rounded">~/.cache/whisper/</code></p>
+          <p class="mt-1">Larger models are more accurate but slower. Recommended: <strong>small</strong> or <strong>medium</strong> for most use cases.</p>
+        </div>
       </Card.Content>
     </Card.Root>
 

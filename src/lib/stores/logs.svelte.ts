@@ -4,7 +4,7 @@
  */
 
 export type LogLevel = 'info' | 'success' | 'warning' | 'error';
-export type LogSource = 'ffmpeg' | 'ffprobe' | 'translation' | 'merge' | 'extraction' | 'rename' | 'system';
+export type LogSource = 'ffmpeg' | 'ffprobe' | 'translation' | 'merge' | 'extraction' | 'rename' | 'whisper' | 'system';
 
 export interface LogContext {
   filePath?: string;
@@ -200,6 +200,7 @@ export function getSourceColor(source: LogSource): string {
     merge: 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/30',
     extraction: 'bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/30',
     rename: 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border-yellow-500/30',
+    whisper: 'bg-pink-500/10 text-pink-600 dark:text-pink-400 border-pink-500/30',
     system: 'bg-gray-500/10 text-gray-600 dark:text-gray-400 border-gray-500/30'
   };
   return colors[source] || colors.system;

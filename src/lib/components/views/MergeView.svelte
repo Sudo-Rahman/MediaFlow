@@ -33,6 +33,7 @@
   import Volume2 from 'lucide-svelte/icons/volume-2';
   import Trash2 from 'lucide-svelte/icons/trash-2';
   import Plus from 'lucide-svelte/icons/plus';
+  import Upload from 'lucide-svelte/icons/upload';
   import Loader2 from 'lucide-svelte/icons/loader-2';
   import XCircle from 'lucide-svelte/icons/x-circle';
   import Wand2 from 'lucide-svelte/icons/wand-2';
@@ -505,7 +506,7 @@
           </Button>
         {/if}
         <Button size="sm" onclick={handleAddVideoFiles}>
-          <Plus class="size-4 mr-1" />
+          <Upload class="size-4 mr-1" />
           Add
         </Button>
       </div>

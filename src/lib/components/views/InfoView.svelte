@@ -25,7 +25,7 @@
   import Subtitles from 'lucide-svelte/icons/subtitles';
   import Video from 'lucide-svelte/icons/video';
   import Volume2 from 'lucide-svelte/icons/volume-2';
-  import Clock from 'lucide-svelte/icons/clock';
+  import Upload from 'lucide-svelte/icons/upload';
   import Film from 'lucide-svelte/icons/film';
   import Plus from 'lucide-svelte/icons/plus';
   import Trash2 from 'lucide-svelte/icons/trash-2';
@@ -259,7 +259,7 @@
           </Button>
         {/if}
         <Button size="sm" onclick={handleAddFiles}>
-          <Plus class="size-4 mr-1" />
+          <Upload class="size-4 mr-1" />
           Add
         </Button>
       </div>

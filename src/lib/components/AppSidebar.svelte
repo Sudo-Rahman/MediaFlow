@@ -7,6 +7,7 @@
   import Settings from 'lucide-svelte/icons/settings';
   import Languages from 'lucide-svelte/icons/languages';
   import PenLine from 'lucide-svelte/icons/pen-line';
+  import AudioLines from 'lucide-svelte/icons/audio-lines';
   import type { ComponentProps } from 'svelte';
   import {OS} from "$lib/utils";
 
@@ -27,6 +28,11 @@
       id: 'merge',
       title: 'Merge',
       icon: Merge,
+    },
+    {
+      id: 'audio-to-subs',
+      title: 'Audio to Subs',
+      icon: AudioLines,
     },
     {
       id: 'translate',

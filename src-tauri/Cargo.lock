@@ -3328,6 +3328,7 @@ name = "rsextractor"
 version = "0.1.0"
 dependencies = [
  "cocoa",
+ "libc",
  "serde",
  "serde_json",
  "tauri",

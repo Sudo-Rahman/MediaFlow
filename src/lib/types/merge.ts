@@ -173,10 +173,23 @@ export function extractSeriesInfo(filename: string): { season?: number; episode:
   if (brMatch) {
     const num = parseInt(brMatch[1]);
     // Extra safety: 19xx and 20xx are likely years, skip them
-    // (regex is 2-3 digits so 4 digits years are already excluded by regex, 
+    // (regex is 2-3 digits so 4 digits years are already excluded by regex,
     // but just in case of logic change)
     if (![480, 576, 720, 1080].includes(num)) {
        return { episode: num };
+    }
+  }
+
+  // 7. Simple number at end of filename (e.g., "High School DxD 01")
+  // Matches: "Name 01", "Name 01 " (before extension was removed)
+  // The number must be preceded by whitespace and at the end or followed by metadata
+  // Excludes common video resolutions to avoid false positives
+  const simpleEnd = /\s(\d{2,3})(?:\s*$|\s+(?=\[|$))/;
+  const simpleMatch = cleanName.match(simpleEnd);
+  if (simpleMatch) {
+    const num = parseInt(simpleMatch[1]);
+    if (![480, 576, 720, 1080, 2160].includes(num)) {
+      return { episode: num };
     }
   }
 

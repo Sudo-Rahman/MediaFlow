@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Download, FolderOpen, Loader2, CheckCircle } from '@lucide/svelte';
   import { open } from '@tauri-apps/plugin-dialog';
   import { writeTextFile } from '@tauri-apps/plugin-fs';
   import { join } from '@tauri-apps/api/path';
@@ -11,10 +12,10 @@
   import * as Select from '$lib/components/ui/select';
   import { Input } from '$lib/components/ui/input';
   import { toast } from 'svelte-sonner';
-  import Download from 'lucide-svelte/icons/download';
-  import FolderOpen from 'lucide-svelte/icons/folder-open';
-  import Loader2 from 'lucide-svelte/icons/loader-2';
-  import CheckCircle from 'lucide-svelte/icons/check-circle';
+  ;
+  ;
+  ;
+  ;
 
   interface ExportAllPanelProps {
     files: AudioFile[];
@@ -42,7 +43,7 @@
     const selected = await open({
       directory: true,
       multiple: false,
-      title: 'Selectionner le dossier de sortie'
+      title: 'Select output folder'
     });
     if (selected && typeof selected === 'string') {
       outputDir = selected;
@@ -106,10 +107,10 @@
       }
 
       if (successCount > 0) {
-        toast.success(`${successCount} fichier(s) exporte(s)`);
+        toast.success(`${successCount} file(s) exported`);
       }
       if (failCount > 0) {
-        toast.error(`${failCount} fichier(s) echoue(s)`);
+        toast.error(`${failCount} file(s) failed`);
       }
     } finally {
       isExporting = false;
@@ -121,10 +122,10 @@
   <Card.Header class="pb-3">
     <Card.Title class="text-sm flex items-center gap-2">
       <CheckCircle class="size-4 text-green-500" />
-      Exporter tout
+      Export All
     </Card.Title>
     <Card.Description class="text-xs">
-      {completedFiles.length} fichier(s), {totalVersions} version(s)
+      {completedFiles.length} file(s), {totalVersions} version(s)
     </Card.Description>
   </Card.Header>
   <Card.Content class="space-y-4">
@@ -143,18 +144,18 @@
         <Select.Content>
           <Select.Item value="srt" label="SRT">SRT - SubRip</Select.Item>
           <Select.Item value="vtt" label="VTT">VTT - WebVTT</Select.Item>
-          <Select.Item value="json" label="JSON">JSON - Donnees structurees</Select.Item>
+          <Select.Item value="json" label="JSON">JSON - Structured data</Select.Item>
         </Select.Content>
       </Select.Root>
     </div>
 
     <!-- Output directory -->
     <div class="space-y-2">
-      <Label class="text-sm">Dossier de sortie</Label>
+      <Label class="text-sm">Output folder</Label>
       <div class="flex gap-2">
         <Input
           value={outputDir}
-          placeholder="Selectionner..."
+          placeholder="Select..."
           readonly
           class="flex-1 text-xs"
         />
@@ -177,10 +178,10 @@
     >
       {#if isExporting}
         <Loader2 class="size-4 mr-2 animate-spin" />
-        Export en cours...
+        Exporting...
       {:else}
         <Download class="size-4 mr-2" />
-        Exporter ({totalVersions})
+        Export ({totalVersions})
       {/if}
     </Button>
   </Card.Content>

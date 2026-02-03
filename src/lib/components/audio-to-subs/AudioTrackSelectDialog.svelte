@@ -1,12 +1,13 @@
 <script lang="ts">
+  import { AudioLines, Check, Languages } from '@lucide/svelte';
   import type { AudioTrackInfo } from '$lib/types';
   import * as Dialog from '$lib/components/ui/dialog';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { cn } from '$lib/utils';
-  import AudioLines from 'lucide-svelte/icons/audio-lines';
-  import Check from 'lucide-svelte/icons/check';
-  import Languages from 'lucide-svelte/icons/languages';
+  ;
+  ;
+  ;
 
   interface AudioTrackSelectDialogProps {
     open: boolean;

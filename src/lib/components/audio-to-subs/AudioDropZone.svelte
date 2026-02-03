@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { AudioLines } from '@lucide/svelte';
   import { cn } from '$lib/utils';
-  import AudioLines from 'lucide-svelte/icons/audio-lines';
+  ;
 
   interface AudioDropZoneProps {
     onFilesSelected?: (paths: string[]) => void;

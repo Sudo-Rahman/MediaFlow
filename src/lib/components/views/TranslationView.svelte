@@ -1,4 +1,5 @@
 <script lang="ts" module>
+  import { Upload, Play, Trash2, FileText, Languages, X, Square, Check, AlertCircle, Download, Copy, Loader2, RotateCw } from '@lucide/svelte';
   export interface TranslationViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -27,19 +28,19 @@
 
   import { SubtitleDropZone, TranslationConfigPanel } from '$lib/components/translation';
 
-  import Upload from 'lucide-svelte/icons/upload';
-  import Play from 'lucide-svelte/icons/play';
-  import Trash2 from 'lucide-svelte/icons/trash-2';
-  import FileText from 'lucide-svelte/icons/file-text';
-  import Languages from 'lucide-svelte/icons/languages';
-  import X from 'lucide-svelte/icons/x';
-  import Square from 'lucide-svelte/icons/square';
-  import Check from 'lucide-svelte/icons/check';
-  import AlertCircle from 'lucide-svelte/icons/alert-circle';
-  import Download from 'lucide-svelte/icons/download';
-  import Copy from 'lucide-svelte/icons/copy';
-  import Loader2 from 'lucide-svelte/icons/loader-2';
-  import RotateCw from 'lucide-svelte/icons/rotate-cw';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
 
   import { Textarea } from '$lib/components/ui/textarea';
 

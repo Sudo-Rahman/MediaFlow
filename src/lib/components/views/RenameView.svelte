@@ -1,4 +1,5 @@
 <script lang="ts" module>
+  import { Upload, Trash2, Search, FolderOpen, Play, Square, RefreshCw, AlertTriangle, X, ChevronDown, FileDown, Combine, ArrowUpDown, ArrowUp, ArrowDown } from '@lucide/svelte';
   export interface RenameViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -29,21 +30,21 @@
     RenameRuleEditor,
   } from '$lib/components/rename';
 
-  import Upload from 'lucide-svelte/icons/upload';
-  import Trash2 from 'lucide-svelte/icons/trash-2';
-  import Search from 'lucide-svelte/icons/search';
-  import FolderOpen from 'lucide-svelte/icons/folder-open';
-  import Play from 'lucide-svelte/icons/play';
-  import Square from 'lucide-svelte/icons/square';
-  import RefreshCw from 'lucide-svelte/icons/refresh-cw';
-  import AlertTriangle from 'lucide-svelte/icons/alert-triangle';
-  import X from 'lucide-svelte/icons/x';
-  import ChevronDown from 'lucide-svelte/icons/chevron-down';
-  import FileDown from 'lucide-svelte/icons/file-down';
-  import Combine from 'lucide-svelte/icons/combine';
-  import ArrowUpDown from 'lucide-svelte/icons/arrow-up-down';
-  import ArrowUp from 'lucide-svelte/icons/arrow-up';
-  import ArrowDown from 'lucide-svelte/icons/arrow-down';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
   import type { SortField, SortDirection } from '$lib/types/rename';
 
   interface FileMetadata {

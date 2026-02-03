@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { FileText, ChevronLeft, ChevronRight, Download, Copy, Check, Trash2, Calendar, Clock } from '@lucide/svelte';
   import { save } from '@tauri-apps/plugin-dialog';
   import { writeTextFile } from '@tauri-apps/plugin-fs';
   import type { AudioFile, TranscriptionVersion, TranscriptionOutputFormat } from '$lib/types';
@@ -11,15 +12,15 @@
   import { Separator } from '$lib/components/ui/separator';
   import { cn } from '$lib/utils';
   import { formatDuration } from '$lib/utils/format';
-  import FileText from 'lucide-svelte/icons/file-text';
-  import ChevronLeft from 'lucide-svelte/icons/chevron-left';
-  import ChevronRight from 'lucide-svelte/icons/chevron-right';
-  import Download from 'lucide-svelte/icons/download';
-  import Copy from 'lucide-svelte/icons/copy';
-  import Check from 'lucide-svelte/icons/check';
-  import Trash2 from 'lucide-svelte/icons/trash-2';
-  import Calendar from 'lucide-svelte/icons/calendar';
-  import Clock from 'lucide-svelte/icons/clock';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
   import { toast } from 'svelte-sonner';
 
   interface TranscriptionResultDialogProps {

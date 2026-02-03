@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { CheckCircle, AlertCircle, AlertTriangle, Info, Copy, Check, FileText, Terminal } from '@lucide/svelte';
   import type { LogEntry } from '$lib/stores/logs.svelte';
   import { getSourceColor, getLevelColor } from '$lib/stores/logs.svelte';
   import * as Dialog from '$lib/components/ui/dialog';
@@ -6,14 +7,14 @@
   import { Button } from '$lib/components/ui/button';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
 
-  import CheckCircle from 'lucide-svelte/icons/check-circle';
-  import AlertCircle from 'lucide-svelte/icons/alert-circle';
-  import AlertTriangle from 'lucide-svelte/icons/alert-triangle';
-  import Info from 'lucide-svelte/icons/info';
-  import Copy from 'lucide-svelte/icons/copy';
-  import Check from 'lucide-svelte/icons/check';
-  import FileText from 'lucide-svelte/icons/file-text';
-  import Terminal from 'lucide-svelte/icons/terminal';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
   import { toast } from 'svelte-sonner';
 
   interface LogDetailDialogProps {
@@ -37,7 +38,7 @@
   }
 
   function formatDateTime(date: Date): string {
-    return date.toLocaleString('fr-FR', {
+    return date.toLocaleString('en-US', {
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',

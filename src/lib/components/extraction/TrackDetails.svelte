@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Video, Volume2, Subtitles, Database } from '@lucide/svelte';
   import { cn } from '$lib/utils';
   import type { Track, VideoFile } from '$lib/types';
   import { formatBitrate, formatLanguage, formatChannels, formatResolution } from '$lib/utils/format';
@@ -7,10 +8,10 @@
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
   import { Separator } from '$lib/components/ui/separator';
-  import Video from 'lucide-svelte/icons/video';
-  import Volume2 from 'lucide-svelte/icons/volume-2';
-  import Subtitles from 'lucide-svelte/icons/subtitles';
-  import Database from 'lucide-svelte/icons/database';
+  ;
+  ;
+  ;
+  ;
 
   interface TrackDetailsProps {
     file: VideoFile;

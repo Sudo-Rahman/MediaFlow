@@ -1,7 +1,7 @@
 import { getExtensionForCodec } from '$lib/types/media';
 
 /**
- * Formatage du bitrate pour affichage
+ * Format bitrate for display
  */
 export function formatBitrate(bitrate?: number): string {
   if (!bitrate) return 'N/A';
@@ -16,7 +16,7 @@ export function formatBitrate(bitrate?: number): string {
 }
 
 /**
- * Formatage de la taille de fichier
+ * Format file size
  */
 export function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -29,7 +29,7 @@ export function formatFileSize(bytes: number): string {
 }
 
 /**
- * Formatage de la durée en hh:mm:ss
+ * Format duration in hh:mm:ss
  */
 export function formatDuration(seconds?: number): string {
   if (!seconds) return 'N/A';
@@ -45,11 +45,11 @@ export function formatDuration(seconds?: number): string {
 }
 
 /**
- * Obtenir le nom de la langue à partir du code ISO 639-2/B
+ * Get language name from ISO 639-2/B code
  */
 const languageNames: Record<string, string> = {
-  fra: 'Français',
-  fre: 'Français',
+  fra: 'French',
+  fre: 'French',
   eng: 'English',
   spa: 'Español',
   ger: 'Deutsch',
@@ -72,7 +72,7 @@ export function formatLanguage(code?: string): string {
 }
 
 /**
- * Formatage du nombre de canaux audio
+ * Format audio channel count
  */
 export function formatChannels(channels?: number): string {
   if (!channels) return 'N/A';
@@ -87,7 +87,7 @@ export function formatChannels(channels?: number): string {
 }
 
 /**
- * Formatage de la résolution vidéo
+ * Format video resolution
  */
 export function formatResolution(width?: number, height?: number): string {
   if (!width || !height) return 'N/A';
@@ -103,7 +103,7 @@ export function formatResolution(width?: number, height?: number): string {
 }
 
 /**
- * Obtenir l'icône appropriée pour le type de piste
+ * Get appropriate icon for track type
  */
 export function getTrackTypeIcon(type: string): string {
   switch (type) {
@@ -116,14 +116,14 @@ export function getTrackTypeIcon(type: string): string {
 }
 
 /**
- * Extraire le nom de fichier d'un chemin
+ * Extract filename from path
  */
 export function getFileName(path: string): string {
   return path.split('/').pop() || path.split('\\').pop() || path;
 }
 
 /**
- * Extraire l'extension d'un fichier
+ * Extract file extension
  */
 export function getFileExtension(path: string): string {
   const name = getFileName(path);
@@ -132,8 +132,8 @@ export function getFileExtension(path: string): string {
 }
 
 /**
- * Construire le nom de fichier de sortie pour l'extraction
- * Utilise le mapping centralisé depuis $lib/types/media
+ * Build output filename for extraction
+ * Uses centralized mapping from $lib/types/media
  */
 export function buildOutputFileName(
   inputPath: string,

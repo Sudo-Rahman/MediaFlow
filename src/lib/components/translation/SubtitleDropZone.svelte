@@ -1,7 +1,8 @@
 <script lang="ts">
+  import { Upload, Languages } from '@lucide/svelte';
   import { cn } from '$lib/utils';
-  import Upload from 'lucide-svelte/icons/upload';
-  import Languages from 'lucide-svelte/icons/languages';
+  ;
+  ;
 
   interface SubtitleDropZoneProps {
     isDragging?: boolean;

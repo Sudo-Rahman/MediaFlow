@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { AudioLines, Check, Languages, ListOrdered, FileStack } from '@lucide/svelte';
   import type { BatchTrackStrategy } from '$lib/types';
   import * as Dialog from '$lib/components/ui/dialog';
   import { Button } from '$lib/components/ui/button';
@@ -6,11 +7,11 @@
   import { Label } from '$lib/components/ui/label';
   import * as Select from '$lib/components/ui/select';
   import { cn } from '$lib/utils';
-  import AudioLines from 'lucide-svelte/icons/audio-lines';
-  import Check from 'lucide-svelte/icons/check';
-  import Languages from 'lucide-svelte/icons/languages';
-  import ListOrdered from 'lucide-svelte/icons/list-ordered';
-  import FileStack from 'lucide-svelte/icons/files';
+  ;
+  ;
+  ;
+  ;
+  ;
 
   interface BatchTrackSelectDialogProps {
     open: boolean;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { FolderOpen, Save, Star, Trash2, ChevronDown, Check, Pencil } from '@lucide/svelte';
   import type { RulePreset } from '$lib/types/rename';
   import { renameStore } from '$lib/stores/rename.svelte';
   import { toast } from 'svelte-sonner';
@@ -11,13 +12,13 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as AlertDialog from '$lib/components/ui/alert-dialog';
 
-  import FolderOpen from 'lucide-svelte/icons/folder-open';
-  import Save from 'lucide-svelte/icons/save';
-  import Star from 'lucide-svelte/icons/star';
-  import Trash2 from 'lucide-svelte/icons/trash-2';
-  import ChevronDown from 'lucide-svelte/icons/chevron-down';
-  import Check from 'lucide-svelte/icons/check';
-  import Pencil from 'lucide-svelte/icons/pencil';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
 
   interface RenamePresetsProps {
     class?: string;

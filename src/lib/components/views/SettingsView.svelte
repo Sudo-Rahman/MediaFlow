@@ -14,23 +14,7 @@
   import { Separator } from '$lib/components/ui/separator';
   import { Badge } from '$lib/components/ui/badge';
 
-  import Sun from 'lucide-svelte/icons/sun';
-  import Moon from 'lucide-svelte/icons/moon';
-  import Monitor from 'lucide-svelte/icons/monitor';
-  import Palette from 'lucide-svelte/icons/palette';
-  import Terminal from 'lucide-svelte/icons/terminal';
-  import FolderOpen from 'lucide-svelte/icons/folder-open';
-  import Download from 'lucide-svelte/icons/download';
-  import CheckCircle from 'lucide-svelte/icons/check-circle';
-  import XCircle from 'lucide-svelte/icons/x-circle';
-  import RefreshCw from 'lucide-svelte/icons/refresh-cw';
-  import Info from 'lucide-svelte/icons/info';
-  import Key from 'lucide-svelte/icons/key';
-  import Eye from 'lucide-svelte/icons/eye';
-  import EyeOff from 'lucide-svelte/icons/eye-off';
-  import Languages from 'lucide-svelte/icons/languages';
-  import AudioLines from 'lucide-svelte/icons/audio-lines';
-  import ExternalLink from 'lucide-svelte/icons/external-link';
+  import { Sun, Moon, Monitor, Palette, Terminal, FolderOpen, Download, CheckCircle, XCircle, RefreshCw, Info, Key, Eye, EyeOff, Languages, AudioLines, ExternalLink } from '@lucide/svelte';
 
   import { LLM_PROVIDERS, type LLMProvider } from '$lib/types';
 
@@ -41,9 +25,9 @@
   let showDeepgramApiKey = $state(false);
 
   const themeOptions = [
-    { value: 'system', label: 'Systeme', icon: Monitor, description: 'Suivre les preferences systeme' },
-    { value: 'light', label: 'Clair', icon: Sun, description: 'Theme clair' },
-    { value: 'dark', label: 'Sombre', icon: Moon, description: 'Theme sombre' },
+    { value: 'system', label: 'System', icon: Monitor, description: 'Follow system preferences' },
+    { value: 'light', label: 'Light', icon: Sun, description: 'Light theme' },
+    { value: 'dark', label: 'Dark', icon: Moon, description: 'Dark theme' },
   ] as const;
 
   // API Key visibility states
@@ -82,7 +66,7 @@
           const version = await invoke<string>('get_ffmpeg_version');
           ffmpegVersion = version;
         } catch {
-          ffmpegVersion = 'Version inconnue';
+          ffmpegVersion = 'Unknown version';
         }
       } else {
         ffmpegStatus = 'not-found';
@@ -103,11 +87,11 @@
   async function handleBrowseFFmpeg() {
     const selected = await open({
       multiple: false,
-      title: 'Selectionner l\'executable FFmpeg'
+      title: 'Select FFmpeg executable'
     });
     if (selected && typeof selected === 'string') {
       await settingsStore.setFFmpegPath(selected);
-      toast.success('Chemin FFmpeg mis a jour');
+      toast.success('FFmpeg path updated');
       await checkFFmpeg();
     }
   }
@@ -115,11 +99,11 @@
   async function handleBrowseFFprobe() {
     const selected = await open({
       multiple: false,
-      title: 'Selectionner l\'executable FFprobe'
+      title: 'Select FFprobe executable'
     });
     if (selected && typeof selected === 'string') {
       await settingsStore.setFFprobePath(selected);
-      toast.success('Chemin FFprobe mis a jour');
+      toast.success('FFprobe path updated');
     }
   }
 
@@ -141,8 +125,8 @@
   <div class="max-w-2xl mx-auto space-y-6">
     <!-- Header -->
     <div>
-      <h1 class="text-2xl font-bold">Parametres</h1>
-      <p class="text-muted-foreground mt-1">Personnaliser l'apparence et la configuration</p>
+      <h1 class="text-2xl font-bold">Settings</h1>
+      <p class="text-muted-foreground mt-1">Customize appearance and configuration</p>
     </div>
 
     <Separator />
@@ -155,7 +139,7 @@
           <Card.Title>Deepgram</Card.Title>
         </div>
         <Card.Description>
-          Configuration de l'API Deepgram Nova pour la transcription audio
+          Configure Deepgram Nova API for audio transcription
         </Card.Description>
       </Card.Header>
       <Card.Content class="space-y-4">
@@ -164,23 +148,23 @@
           <div class="flex items-center gap-2">
             {#if deepgramApiKeyConfigured}
               <CheckCircle class="size-4 text-green-500" />
-              <span class="text-sm">Cle API configuree</span>
+              <span class="text-sm">API key configured</span>
             {:else}
               <XCircle class="size-4 text-amber-500" />
-              <span class="text-sm text-amber-600 dark:text-amber-400">Cle API non configuree</span>
+              <span class="text-sm text-amber-600 dark:text-amber-400">API key not configured</span>
             {/if}
           </div>
         </div>
 
         <!-- API Key input -->
         <div class="space-y-2">
-          <Label for="deepgram-api-key">Cle API Deepgram</Label>
+          <Label for="deepgram-api-key">Deepgram API Key</Label>
           <div class="flex gap-2">
             <div class="relative flex-1">
               <Input
                 id="deepgram-api-key"
                 type={showDeepgramApiKey ? 'text' : 'password'}
-                placeholder="Entrez votre cle API Deepgram"
+                placeholder="Enter your Deepgram API key"
                 value={settingsStore.settings.deepgramApiKey}
                 oninput={(e) => handleDeepgramApiKeyChange(e.currentTarget.value)}
                 class="pr-10"
@@ -203,7 +187,7 @@
         <!-- Info and link -->
         <div class="p-3 rounded-md border border-muted bg-muted/30">
           <p class="text-sm text-muted-foreground mb-2">
-            Deepgram Nova offre une transcription audio de haute qualite avec support multilingue.
+            Deepgram Nova offers high-quality audio transcription with multilingual support.
           </p>
           <Button 
             variant="outline" 
@@ -212,13 +196,13 @@
             onclick={handleOpenDeepgramConsole}
           >
             <ExternalLink class="size-4 mr-2" />
-            Obtenir une cle API sur Deepgram
+            Get API key on Deepgram
           </Button>
         </div>
 
         <div class="pt-2 text-xs text-muted-foreground">
-          <p>La cle API est stockee localement et n'est jamais partagee.</p>
-          <p class="mt-1">Deepgram offre 200$ de credits gratuits pour commencer.</p>
+          <p>The API key is stored locally and is never shared.</p>
+          <p class="mt-1">Deepgram offers $200 in free credits to get started.</p>
         </div>
       </Card.Content>
     </Card.Root>
@@ -231,7 +215,7 @@
           <Card.Title>FFmpeg</Card.Title>
         </div>
         <Card.Description>
-          Configurer les chemins FFmpeg et FFprobe pour le traitement multimedia
+          Configure FFmpeg and FFprobe paths for multimedia processing
         </Card.Description>
       </Card.Header>
       <Card.Content class="space-y-4">
@@ -240,16 +224,16 @@
           <div class="flex items-center gap-2">
             {#if ffmpegStatus === 'checking'}
               <RefreshCw class="size-4 animate-spin text-muted-foreground" />
-              <span class="text-sm">Verification de FFmpeg...</span>
+              <span class="text-sm">Checking FFmpeg...</span>
             {:else if ffmpegStatus === 'found'}
               <CheckCircle class="size-4 text-green-500" />
-              <span class="text-sm">FFmpeg trouve</span>
+              <span class="text-sm">FFmpeg found</span>
               {#if ffmpegVersion}
                 <Badge variant="secondary" class="text-xs">{ffmpegVersion}</Badge>
               {/if}
             {:else}
               <XCircle class="size-4 text-destructive" />
-              <span class="text-sm text-destructive">FFmpeg non trouve</span>
+              <span class="text-sm text-destructive">FFmpeg not found</span>
             {/if}
           </div>
           <Button variant="ghost" size="sm" onclick={checkFFmpeg}>
@@ -259,11 +243,11 @@
 
         <!-- FFmpeg path -->
         <div class="space-y-2">
-          <Label for="ffmpeg-path">Chemin FFmpeg (optionnel)</Label>
+          <Label for="ffmpeg-path">FFmpeg Path (optional)</Label>
           <div class="flex gap-2">
             <Input
               id="ffmpeg-path"
-              placeholder="Laisser vide pour utiliser le PATH systeme"
+              placeholder="Leave empty to use system PATH"
               value={settingsStore.settings.ffmpegPath}
               oninput={(e) => settingsStore.setFFmpegPath(e.currentTarget.value)}
               class="flex-1"
@@ -273,17 +257,17 @@
             </Button>
           </div>
           <p class="text-xs text-muted-foreground">
-            Si vide, l'application utilisera FFmpeg depuis le PATH systeme
+            If empty, the application will use FFmpeg from system PATH
           </p>
         </div>
 
         <!-- FFprobe path -->
         <div class="space-y-2">
-          <Label for="ffprobe-path">Chemin FFprobe (optionnel)</Label>
+          <Label for="ffprobe-path">FFprobe Path (optional)</Label>
           <div class="flex gap-2">
             <Input
               id="ffprobe-path"
-              placeholder="Laisser vide pour utiliser le PATH systeme"
+              placeholder="Leave empty to use system PATH"
               value={settingsStore.settings.ffprobePath}
               oninput={(e) => settingsStore.setFFprobePath(e.currentTarget.value)}
               class="flex-1"
@@ -298,7 +282,7 @@
         {#if ffmpegStatus === 'not-found'}
           <Button variant="outline" class="w-full" onclick={handleDownloadFFmpeg}>
             <Download class="size-4 mr-2" />
-            Telecharger FFmpeg
+            Download FFmpeg
           </Button>
         {/if}
       </Card.Content>
@@ -309,23 +293,23 @@
       <Card.Header>
         <div class="flex items-center gap-2">
           <Key class="size-5 text-primary" />
-          <Card.Title>Cles API LLM</Card.Title>
+          <Card.Title>LLM API Keys</Card.Title>
         </div>
         <Card.Description>
-          Configurer les cles API pour la traduction de sous-titres par IA
+          Configure API keys for AI subtitle translation
         </Card.Description>
       </Card.Header>
       <Card.Content class="space-y-4">
         {#each Object.entries(LLM_PROVIDERS) as [key, provider] (key)}
           {@const providerKey = key as LLMProvider}
           <div class="space-y-2">
-            <Label for={`api-key-${key}`}>Cle API {provider.name}</Label>
+            <Label for={`api-key-${key}`}>{provider.name} API Key</Label>
             <div class="flex gap-2">
               <div class="relative flex-1">
                 <Input
                   id={`api-key-${key}`}
                   type={showApiKeys[providerKey] ? 'text' : 'password'}
-                  placeholder={`Entrez votre cle API ${provider.name}`}
+                  placeholder={`Enter your ${provider.name} API key`}
                   value={settingsStore.settings.llmApiKeys[providerKey]}
                   oninput={(e) => handleApiKeyChange(providerKey, e.currentTarget.value)}
                   class="pr-10"
@@ -345,14 +329,14 @@
             </div>
             {#if providerKey === 'openrouter'}
               <p class="text-xs text-muted-foreground">
-                OpenRouter permet d'acceder a plusieurs modeles de differents fournisseurs
+                OpenRouter allows access to multiple models from different providers
               </p>
             {/if}
           </div>
         {/each}
 
         <div class="pt-2 text-xs text-muted-foreground">
-          <p>Les cles API sont stockees localement et ne sont jamais partagees. Obtenez vos cles:</p>
+          <p>API keys are stored locally and are never shared. Get your keys:</p>
           <ul class="mt-1 space-y-1 list-disc list-inside">
             <li><a href="https://platform.openai.com/api-keys" target="_blank" class="text-primary hover:underline">OpenAI Platform</a></li>
             <li><a href="https://console.anthropic.com/" target="_blank" class="text-primary hover:underline">Anthropic Console</a></li>
@@ -368,15 +352,15 @@
       <Card.Header>
         <div class="flex items-center gap-2">
           <Languages class="size-5 text-primary" />
-          <Card.Title>Parametres de traduction</Card.Title>
+          <Card.Title>Translation Settings</Card.Title>
         </div>
         <Card.Description>
-          Configurer le traitement parallele et le batching
+          Configure parallel processing and batching
         </Card.Description>
       </Card.Header>
       <Card.Content class="space-y-4">
         <div class="space-y-2">
-          <Label for="max-parallel">Fichiers paralleles maximum</Label>
+          <Label for="max-parallel">Maximum parallel files</Label>
           <Input
             id="max-parallel"
             type="number"
@@ -386,12 +370,12 @@
             oninput={(e) => settingsStore.setMaxParallelFiles(parseInt(e.currentTarget.value) || 1)}
           />
           <p class="text-xs text-muted-foreground">
-            Nombre de fichiers a traduire simultanement (1-10)
+            Number of files to translate simultaneously (1-10)
           </p>
         </div>
 
         <div class="space-y-2">
-          <Label for="default-batch">Nombre de lots par defaut</Label>
+          <Label for="default-batch">Default batch count</Label>
           <Input
             id="default-batch"
             type="number"
@@ -401,7 +385,7 @@
             oninput={(e) => settingsStore.setDefaultBatchCount(parseInt(e.currentTarget.value) || 1)}
           />
           <p class="text-xs text-muted-foreground">
-            Nombre de parties pour diviser les fichiers (1 = pas de division)
+            Number of parts to divide files into (1 = no division)
           </p>
         </div>
       </Card.Content>
@@ -412,10 +396,10 @@
       <Card.Header>
         <div class="flex items-center gap-2">
           <Palette class="size-5 text-primary" />
-          <Card.Title>Apparence</Card.Title>
+          <Card.Title>Appearance</Card.Title>
         </div>
         <Card.Description>
-          Choisir le theme de l'interface
+          Choose the interface theme
         </Card.Description>
       </Card.Header>
       <Card.Content>
@@ -447,7 +431,7 @@
       <Card.Header>
         <div class="flex items-center gap-2">
           <Info class="size-5 text-primary" />
-          <Card.Title>A propos</Card.Title>
+          <Card.Title>About</Card.Title>
         </div>
       </Card.Header>
       <Card.Content class="space-y-4">
@@ -457,8 +441,8 @@
         </div>
         <Separator />
         <div class="text-sm text-muted-foreground">
-          <p>RsExtractor est un outil pour extraire et fusionner des pistes multimedia (audio, video, sous-titres) depuis des fichiers MKV et autres conteneurs.</p>
-          <p class="mt-2">Construit avec Tauri, Svelte, et FFmpeg.</p>
+          <p>RsExtractor is a tool to extract and merge multimedia tracks (audio, video, subtitles) from MKV files and other containers.</p>
+          <p class="mt-2">Built with Tauri, Svelte, and FFmpeg.</p>
         </div>
       </Card.Content>
     </Card.Root>

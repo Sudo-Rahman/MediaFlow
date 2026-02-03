@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Languages, ArrowRight, Bot, Key, ChevronsUpDown, Check, X, Plus } from '@lucide/svelte';
   import * as Card from '$lib/components/ui/card';
   import * as Select from '$lib/components/ui/select';
   import * as Popover from '$lib/components/ui/popover';
@@ -11,14 +12,14 @@
   import { translationStore, settingsStore } from '$lib/stores';
   import { LLM_PROVIDERS, SUPPORTED_LANGUAGES, type LLMProvider, type LanguageCode, type ProviderModel } from '$lib/types';
 
-  import Languages from 'lucide-svelte/icons/languages';
-  import ArrowRight from 'lucide-svelte/icons/arrow-right';
-  import Bot from 'lucide-svelte/icons/bot';
-  import Key from 'lucide-svelte/icons/key';
-  import ChevronsUpDown from 'lucide-svelte/icons/chevrons-up-down';
-  import Check from 'lucide-svelte/icons/check';
-  import X from 'lucide-svelte/icons/x';
-  import Plus from 'lucide-svelte/icons/plus';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
 
   interface TranslationConfigPanelProps {
     onNavigateToSettings?: () => void;

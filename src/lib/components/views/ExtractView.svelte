@@ -27,8 +27,7 @@
     ExtractionPanel,
     BatchTrackSelector
   } from '$lib/components';
-  import Trash2 from 'lucide-svelte/icons/trash-2';
-  import Upload from 'lucide-svelte/icons/upload';
+  import { Trash2, Upload } from '@lucide/svelte';
 
   export async function handleFileDrop(paths: string[]) {
     const videoExtensions = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];
@@ -109,7 +108,7 @@
       const selected = await open({
         directory: true,
         multiple: false,
-        title: 'Sélectionner le dossier de destination'
+        title: 'Select output folder'
       });
 
       if (selected && typeof selected === 'string') {
@@ -165,7 +164,7 @@
   async function handleExtract() {
     const outputDir = extractionStore.outputDir;
     if (!outputDir) {
-      toast.error('Veuillez sélectionner un dossier de destination');
+      toast.error('Please select an output folder');
       return;
     }
 
@@ -185,7 +184,7 @@
     }
 
     if (extractions.length === 0) {
-      toast.warning('Aucune piste sélectionnée');
+      toast.warning('No tracks selected');
       return;
     }
 
@@ -276,7 +275,7 @@
   <!-- Left panel: File list -->
   <div class="w-80 border-r flex flex-col overflow-hidden">
     <div class="p-3 border-b shrink-0 flex items-center justify-between">
-      <h2 class="font-semibold">Fichiers ({fileListStore.files.length})</h2>
+      <h2 class="font-semibold">Files ({fileListStore.files.length})</h2>
       <div class="flex items-center gap-1">
         {#if fileListStore.files.length > 0}
           <Button

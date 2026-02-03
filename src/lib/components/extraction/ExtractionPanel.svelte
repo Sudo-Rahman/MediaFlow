@@ -1,15 +1,16 @@
 <script lang="ts">
+  import { Folder, Play, FolderOpen, Loader2, CheckCircle } from '@lucide/svelte';
   import { Button } from '$lib/components/ui/button';
   import { Progress } from '$lib/components/ui/progress';
   import { Badge } from '$lib/components/ui/badge';
   import * as Card from '$lib/components/ui/card';
   import * as Alert from '$lib/components/ui/alert';
   import type { ExtractionProgress } from '$lib/types';
-  import Folder from 'lucide-svelte/icons/folder';
-  import Play from 'lucide-svelte/icons/play';
-  import FolderOpen from 'lucide-svelte/icons/folder-open';
-  import Loader2 from 'lucide-svelte/icons/loader-2';
-  import CheckCircle from 'lucide-svelte/icons/check-circle';
+  ;
+  ;
+  ;
+  ;
+  ;
 
   interface ExtractionPanelProps {
     outputDir: string;

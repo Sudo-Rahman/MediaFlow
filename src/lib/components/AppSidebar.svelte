@@ -1,13 +1,7 @@
 <script lang="ts">
   import * as Sidebar from '$lib/components/ui/sidebar';
   import { Badge } from '$lib/components/ui/badge';
-  import FileOutput from 'lucide-svelte/icons/file-output';
-  import Merge from 'lucide-svelte/icons/git-merge';
-  import Info from 'lucide-svelte/icons/info';
-  import Settings from 'lucide-svelte/icons/settings';
-  import Languages from 'lucide-svelte/icons/languages';
-  import PenLine from 'lucide-svelte/icons/pen-line';
-  import AudioLines from 'lucide-svelte/icons/audio-lines';
+  import { FileOutput, GitMerge, Info, Settings, Languages, PenLine, AudioLines } from '@lucide/svelte';
   import type { ComponentProps } from 'svelte';
   import {OS} from "$lib/utils";
 
@@ -27,7 +21,7 @@
     {
       id: 'merge',
       title: 'Merge',
-      icon: Merge,
+      icon: GitMerge,
     },
     {
       id: 'audio-to-subs',
@@ -88,7 +82,7 @@
 
   <Sidebar.Content>
     <Sidebar.Group>
-      <Sidebar.GroupLabel>Outils</Sidebar.GroupLabel>
+      <Sidebar.GroupLabel>Tools</Sidebar.GroupLabel>
       <Sidebar.GroupContent>
         <Sidebar.Menu>
           {#each navItems as item (item.id)}
@@ -129,7 +123,7 @@
           {#snippet child({ props })}
             <button {...props} class="flex items-center gap-2 w-full p-2 rounded-lg" class:bg-accent={isActive}>
               <Settings class="size-4" />
-              <span>Paramètres</span>
+              <span>Settings</span>
             </button>
           {/snippet}
         </Sidebar.MenuButton>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Play, Loader2, Settings2, Users, Key, Download, FolderOpen, CheckCircle } from '@lucide/svelte';
   import { open } from '@tauri-apps/plugin-dialog';
   import { writeTextFile } from '@tauri-apps/plugin-fs';
   import { join } from '@tauri-apps/api/path';
@@ -17,14 +18,14 @@
   import { toast } from 'svelte-sonner';
   import ModelSelector from './ModelSelector.svelte';
   import LanguageSelector from './LanguageSelector.svelte';
-  import Play from 'lucide-svelte/icons/play';
-  import Loader2 from 'lucide-svelte/icons/loader-2';
-  import Settings2 from 'lucide-svelte/icons/settings-2';
-  import Users from 'lucide-svelte/icons/users';
-  import Key from 'lucide-svelte/icons/key';
-  import Download from 'lucide-svelte/icons/download';
-  import FolderOpen from 'lucide-svelte/icons/folder-open';
-  import CheckCircle from 'lucide-svelte/icons/check-circle';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
 
   interface TranscriptionPanelProps {
     config: TranscriptionConfig;

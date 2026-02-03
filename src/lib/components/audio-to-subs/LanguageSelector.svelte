@@ -3,8 +3,7 @@
   import { cn } from '$lib/utils';
   import * as Select from '$lib/components/ui/select';
   import { Label } from '$lib/components/ui/label';
-  import Languages from 'lucide-svelte/icons/languages';
-  import Globe from 'lucide-svelte/icons/globe';
+  import { Languages, Globe } from '@lucide/svelte';
 
   interface LanguageSelectorProps {
     value: string;
@@ -24,7 +23,7 @@
 </script>
 
 <div class={cn("space-y-2", className)}>
-  <Label class="text-sm font-medium">Langue source</Label>
+  <Label class="text-sm font-medium">Source Language</Label>
   
   <Select.Root 
     type="single"
@@ -68,7 +67,7 @@
 
   {#if value === 'multi'}
     <p class="text-xs text-muted-foreground">
-      Deepgram detectera automatiquement la langue
+      Deepgram will automatically detect the language
     </p>
   {/if}
 </div>

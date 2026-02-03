@@ -1,15 +1,16 @@
 <script lang="ts">
+  import { ArrowRight, Trash2, CheckCircle, XCircle, AlertTriangle, Loader2 } from '@lucide/svelte';
   import { cn } from '$lib/utils';
   import type { RenameFile } from '$lib/types/rename';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Button } from '$lib/components/ui/button';
   import * as Tooltip from '$lib/components/ui/tooltip';
-  import ArrowRight from 'lucide-svelte/icons/arrow-right';
-  import Trash2 from 'lucide-svelte/icons/trash-2';
-  import CheckCircle from 'lucide-svelte/icons/check-circle';
-  import XCircle from 'lucide-svelte/icons/x-circle';
-  import AlertTriangle from 'lucide-svelte/icons/alert-triangle';
-  import Loader2 from 'lucide-svelte/icons/loader-2';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
 
   interface RenameTableProps {
     files: RenameFile[];

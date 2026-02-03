@@ -4,9 +4,7 @@
   import * as Select from '$lib/components/ui/select';
   import { Label } from '$lib/components/ui/label';
   import { Badge } from '$lib/components/ui/badge';
-  import Cpu from 'lucide-svelte/icons/cpu';
-  import Sparkles from 'lucide-svelte/icons/sparkles';
-  import Zap from 'lucide-svelte/icons/zap';
+  import { Cpu, Sparkles, Zap } from '@lucide/svelte';
 
   interface ModelSelectorProps {
     value: DeepgramModel;
@@ -27,7 +25,7 @@
   function getTierBadge(tier: string): { variant: 'default' | 'secondary' | 'outline'; text: string } {
     switch (tier) {
       case 'latest':
-        return { variant: 'default', text: 'Nouveau' };
+        return { variant: 'default', text: 'New' };
       case 'stable':
         return { variant: 'secondary', text: 'Stable' };
       default:
@@ -37,7 +35,7 @@
 </script>
 
 <div class={cn("space-y-2", className)}>
-  <Label class="text-sm font-medium">Modele Deepgram</Label>
+  <Label class="text-sm font-medium">Deepgram Model</Label>
   
   <Select.Root 
     type="single"
@@ -54,7 +52,7 @@
         {/if}
         <span>{selectedModel?.name ?? value}</span>
         {#if selectedModel?.tier === 'latest'}
-          <Badge variant="default" class="text-[10px] ml-auto">Nouveau</Badge>
+          <Badge variant="default" class="text-[10px] ml-auto">New</Badge>
         {/if}
       </div>
     </Select.Trigger>

@@ -1,16 +1,17 @@
 <script lang="ts">
+  import { CheckCircle, AlertCircle, AlertTriangle, Info, ExternalLink, Circle } from '@lucide/svelte';
   import type { LogEntry } from '$lib/stores/logs.svelte';
   import { logStore, getSourceColor, getLevelColor, getLevelBgColor } from '$lib/stores/logs.svelte';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
 
-  import CheckCircle from 'lucide-svelte/icons/check-circle';
-  import AlertCircle from 'lucide-svelte/icons/alert-circle';
-  import AlertTriangle from 'lucide-svelte/icons/alert-triangle';
-  import Info from 'lucide-svelte/icons/info';
-  import ExternalLink from 'lucide-svelte/icons/external-link';
-  import Circle from 'lucide-svelte/icons/circle';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
 
   interface LogListProps {
     logs: LogEntry[];
@@ -37,7 +38,7 @@
   }
 
   function formatTime(date: Date): string {
-    return date.toLocaleTimeString('fr-FR', {
+    return date.toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit'
@@ -52,7 +53,7 @@
       return formatTime(date);
     }
     
-    return date.toLocaleDateString('fr-FR', {
+    return date.toLocaleDateString('en-US', {
       day: '2-digit',
       month: '2-digit',
       hour: '2-digit',

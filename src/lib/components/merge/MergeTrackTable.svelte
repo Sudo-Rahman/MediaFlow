@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Video, Volume2, Subtitles, Table, Clock } from '@lucide/svelte';
   import type { MergeTrack, ImportedTrack, MergeTrackConfig } from '$lib/types';
   import { mergeStore } from '$lib/stores/merge.svelte';
   import { COMMON_LANGUAGES } from '$lib/types';
@@ -9,11 +10,11 @@
   import { Badge } from '$lib/components/ui/badge';
   import * as Select from '$lib/components/ui/select';
   import { cn } from '$lib/utils';
-  import Video from 'lucide-svelte/icons/video';
-  import Volume2 from 'lucide-svelte/icons/volume-2';
-  import Subtitles from 'lucide-svelte/icons/subtitles';
-  import Table from 'lucide-svelte/icons/table';
-  import Clock from 'lucide-svelte/icons/clock';
+  ;
+  ;
+  ;
+  ;
+  ;
 
   interface MergeTrackTableProps {
     class?: string;

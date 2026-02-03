@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Plus, Trash2, TextCursorInput, Type, Replace, Regex, Eraser, CaseSensitive, Hash, MoveHorizontal, Clock, CircleOff, Text } from '@lucide/svelte';
   import { cn } from '$lib/utils';
   import type { RenameRule, RuleType, RuleConfig } from '$lib/types/rename';
   import { RULE_TYPE_LABELS, RULE_TYPE_DESCRIPTIONS } from '$lib/types/rename';
@@ -21,19 +22,19 @@
   import { dndzone, type DndEvent } from 'svelte-dnd-action';
   import { flip } from 'svelte/animate';
   
-  import Plus from 'lucide-svelte/icons/plus';
-  import Trash2 from 'lucide-svelte/icons/trash-2';
-  import TextCursorInput from 'lucide-svelte/icons/text-cursor-input';
-  import Type from 'lucide-svelte/icons/type';
-  import Replace from 'lucide-svelte/icons/replace';
-  import Regex from 'lucide-svelte/icons/regex';
-  import Eraser from 'lucide-svelte/icons/eraser';
-  import CaseSensitive from 'lucide-svelte/icons/case-sensitive';
-  import Hash from 'lucide-svelte/icons/hash';
-  import MoveHorizontal from 'lucide-svelte/icons/move-horizontal';
-  import Clock from 'lucide-svelte/icons/clock';
-  import CircleOff from 'lucide-svelte/icons/circle-off';
-  import Text from 'lucide-svelte/icons/text';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
 
   interface RenameRuleEditorProps {
     rules: RenameRule[];

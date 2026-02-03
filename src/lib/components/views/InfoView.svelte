@@ -1,4 +1,5 @@
 <script lang="ts" module>
+  import { FileVideo, Subtitles, Video, Volume2, Upload, Film, Plus, Trash2, Loader2, XCircle, X, Import, Layers, Copy, Check } from '@lucide/svelte';
   export interface InfoViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -21,21 +22,21 @@
   import * as Card from '$lib/components/ui/card';
   import * as Tabs from '$lib/components/ui/tabs';
 
-  import FileVideo from 'lucide-svelte/icons/file-video';
-  import Subtitles from 'lucide-svelte/icons/subtitles';
-  import Video from 'lucide-svelte/icons/video';
-  import Volume2 from 'lucide-svelte/icons/volume-2';
-  import Upload from 'lucide-svelte/icons/upload';
-  import Film from 'lucide-svelte/icons/film';
-  import Plus from 'lucide-svelte/icons/plus';
-  import Trash2 from 'lucide-svelte/icons/trash-2';
-  import Loader2 from 'lucide-svelte/icons/loader-2';
-  import XCircle from 'lucide-svelte/icons/x-circle';
-  import X from 'lucide-svelte/icons/x';
-  import Import from 'lucide-svelte/icons/import';
-  import Layers from 'lucide-svelte/icons/layers';
-  import Copy from 'lucide-svelte/icons/copy';
-  import Check from 'lucide-svelte/icons/check';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
 
   const SUPPORTED_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];
 

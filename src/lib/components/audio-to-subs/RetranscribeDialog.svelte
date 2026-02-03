@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { RotateCw, Settings2, Users } from '@lucide/svelte';
   import type { AudioFile, DeepgramConfig } from '$lib/types';
   import { DEFAULT_DEEPGRAM_CONFIG } from '$lib/types';
   import * as Dialog from '$lib/components/ui/dialog';
@@ -10,9 +11,9 @@
   import LanguageSelector from './LanguageSelector.svelte';
   import { Switch } from '$lib/components/ui/switch';
   import { Slider } from '$lib/components/ui/slider';
-  import RotateCw from 'lucide-svelte/icons/rotate-cw';
-  import Settings2 from 'lucide-svelte/icons/settings-2';
-  import Users from 'lucide-svelte/icons/users';
+  ;
+  ;
+  ;
 
   interface RetranscribeDialogProps {
     open: boolean;

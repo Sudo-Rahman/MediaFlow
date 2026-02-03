@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Video, Volume2, Subtitles, GripVertical, Settings2, Clock } from '@lucide/svelte';
   import { cn } from '$lib/utils';
   import type { MergeTrack, MergeTrackConfig } from '$lib/types';
   import { formatLanguage, formatBitrate, formatChannels, formatResolution } from '$lib/utils/format';
@@ -6,12 +7,12 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import * as Card from '$lib/components/ui/card';
-  import Video from 'lucide-svelte/icons/video';
-  import Volume2 from 'lucide-svelte/icons/volume-2';
-  import Subtitles from 'lucide-svelte/icons/subtitles';
-  import GripVertical from 'lucide-svelte/icons/grip-vertical';
-  import Settings2 from 'lucide-svelte/icons/settings-2';
-  import Clock from 'lucide-svelte/icons/clock';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
 
   interface MergeTrackEditorProps {
     tracks: MergeTrack[];

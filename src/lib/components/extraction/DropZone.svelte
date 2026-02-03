@@ -1,7 +1,8 @@
 <script lang="ts">
+  import { Upload, File } from '@lucide/svelte';
   import { cn } from '$lib/utils';
-  import Upload from 'lucide-svelte/icons/upload';
-  import File from 'lucide-svelte/icons/file';
+  ;
+  ;
 
   interface DropZoneProps {
     isDragging?: boolean;
@@ -34,14 +35,14 @@
 
   <p class="text-lg font-medium mb-2">
     {#if isDragging}
-      Déposez les fichiers ici
+      Drop files here
     {:else}
-      Glissez-déposez vos fichiers MKV
+      Drag and drop your MKV files
     {/if}
   </p>
 
   <p class="text-sm text-muted-foreground">
-    ou cliquez sur "Importer" pour sélectionner des fichiers
+    or click on "Importer" to select files
   </p>
 </div>
 

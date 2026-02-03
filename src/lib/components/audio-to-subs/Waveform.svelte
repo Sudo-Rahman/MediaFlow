@@ -1,18 +1,19 @@
 <script lang="ts">
+  import { Loader2, AlertCircle, Play, Pause, ZoomIn, ZoomOut, RotateCcw, FileAudio } from '@lucide/svelte';
   import { onDestroy, untrack } from 'svelte';
   import { cn } from '$lib/utils';
   import { readFile, stat } from '@tauri-apps/plugin-fs';
   import { invoke } from '@tauri-apps/api/core';
   import WaveSurfer from 'wavesurfer.js';
   import TimelinePlugin from 'wavesurfer.js/dist/plugins/timeline.esm.js';
-  import Loader2 from 'lucide-svelte/icons/loader-2';
-  import AlertCircle from 'lucide-svelte/icons/alert-circle';
-  import Play from 'lucide-svelte/icons/play';
-  import Pause from 'lucide-svelte/icons/pause';
-  import ZoomIn from 'lucide-svelte/icons/zoom-in';
-  import ZoomOut from 'lucide-svelte/icons/zoom-out';
-  import RotateCcw from 'lucide-svelte/icons/rotate-ccw';
-  import FileAudio from 'lucide-svelte/icons/file-audio';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
   import { Button } from '$lib/components/ui/button';
   import { Progress } from '$lib/components/ui/progress';
   import { formatFileSize } from '$lib/utils/format';

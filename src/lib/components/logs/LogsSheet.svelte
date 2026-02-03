@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ScrollText, Trash2, Search, X, Filter, CheckCheck } from '@lucide/svelte';
   import { logStore, type LogLevel, type LogSource } from '$lib/stores/logs.svelte';
   import * as Sheet from '$lib/components/ui/sheet';
   import { Button } from '$lib/components/ui/button';
@@ -8,12 +9,12 @@
   import LogList from './LogList.svelte';
   import LogDetailDialog from './LogDetailDialog.svelte';
 
-  import ScrollText from 'lucide-svelte/icons/scroll-text';
-  import Trash2 from 'lucide-svelte/icons/trash-2';
-  import Search from 'lucide-svelte/icons/search';
-  import X from 'lucide-svelte/icons/x';
-  import Filter from 'lucide-svelte/icons/filter';
-  import CheckCheck from 'lucide-svelte/icons/check-check';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
 
   // Dialog for detail view
   let detailDialogOpen = $state(false);

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Video, Volume2, Subtitles, Clock, Languages, Save, Bookmark } from '@lucide/svelte';
   import type { TrackGroup, MergeTrackConfig, TrackPreset } from '$lib/types';
   import { COMMON_LANGUAGES } from '$lib/types';
   import { mergeStore } from '$lib/stores/merge.svelte';
@@ -11,13 +12,13 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import * as Select from '$lib/components/ui/select';
   import * as Tabs from '$lib/components/ui/tabs';
-  import Video from 'lucide-svelte/icons/video';
-  import Volume2 from 'lucide-svelte/icons/volume-2';
-  import Subtitles from 'lucide-svelte/icons/subtitles';
-  import Clock from 'lucide-svelte/icons/clock';
-  import Languages from 'lucide-svelte/icons/languages';
-  import Save from 'lucide-svelte/icons/save';
-  import Bookmark from 'lucide-svelte/icons/bookmark';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
 
   interface MergeGroupEditorProps {
     open: boolean;

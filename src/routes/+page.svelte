@@ -10,11 +10,7 @@
   import AppSidebar from '$lib/components/AppSidebar.svelte';
   import { ExtractView, MergeView, SettingsView, InfoView, TranslationView, RenameView, AudioToSubsView } from '$lib/components/views';
   import { LogsSheet } from '$lib/components/logs';
-  import AlertCircle from 'lucide-svelte/icons/alert-circle';
-  import ScrollText from 'lucide-svelte/icons/scroll-text';
-  import Home from 'lucide-svelte/icons/home';
-  import LayoutGrid from 'lucide-svelte/icons/layout-grid';
-  import Table from 'lucide-svelte/icons/table';
+  import { AlertCircle, ScrollText, Home, LayoutGrid, Table } from '@lucide/svelte';
   import { OS } from '$lib/utils';
   import { useSidebar } from "$lib/components/ui/sidebar";
   import { logStore } from '$lib/stores/logs.svelte';

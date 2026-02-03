@@ -1,17 +1,18 @@
 <script lang="ts">
+  import { FileVideo, Film, Volume2, Subtitles, Loader2, XCircle, Trash2 } from '@lucide/svelte';
   import { cn } from '$lib/utils';
   import type { VideoFile } from '$lib/types';
   import { formatFileSize, formatDuration } from '$lib/utils/format';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
-  import FileVideo from 'lucide-svelte/icons/file-video';
-  import Film from 'lucide-svelte/icons/film';
-  import Volume2 from 'lucide-svelte/icons/volume-2';
-  import Subtitles from 'lucide-svelte/icons/subtitles';
-  import Loader2 from 'lucide-svelte/icons/loader-2';
-  import XCircle from 'lucide-svelte/icons/x-circle';
-  import Trash2 from 'lucide-svelte/icons/trash-2';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
 
   interface FileListProps {
     files: VideoFile[];
@@ -108,7 +109,7 @@
     </button>
   {:else}
     <p class="text-center text-muted-foreground py-8">
-      Aucun fichier importé
+      No files importé
     </p>
   {/each}
 </div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { FileText, Check, X, Loader2, Download, Copy } from '@lucide/svelte';
   import * as Card from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Progress } from '$lib/components/ui/progress';
@@ -7,12 +8,12 @@
 
   import { translationStore } from '$lib/stores';
 
-  import FileText from 'lucide-svelte/icons/file-text';
-  import Check from 'lucide-svelte/icons/check';
-  import X from 'lucide-svelte/icons/x';
-  import Loader2 from 'lucide-svelte/icons/loader-2';
-  import Download from 'lucide-svelte/icons/download';
-  import Copy from 'lucide-svelte/icons/copy';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
   import { toast } from 'svelte-sonner';
 
   interface TranslationResultPanelProps {

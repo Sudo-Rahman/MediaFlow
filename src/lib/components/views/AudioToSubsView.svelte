@@ -1,4 +1,5 @@
 <script lang="ts" module>
+  import { Trash2, Upload, Download, X } from '@lucide/svelte';
   export interface AudioToSubsViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -37,10 +38,10 @@
     BatchTrackSelectDialog
   } from '$lib/components/audio-to-subs';
   
-  import Trash2 from 'lucide-svelte/icons/trash-2';
-  import Upload from 'lucide-svelte/icons/upload';
-  import Download from 'lucide-svelte/icons/download';
-  import X from 'lucide-svelte/icons/x';
+  ;
+  ;
+  ;
+  ;
 
   interface AudioToSubsViewProps {
     onNavigateToSettings?: () => void;

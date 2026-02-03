@@ -1,8 +1,8 @@
 import type { TrackType } from './media';
 
-// Types pour le Merge Batch
+// Types for Batch Merge
 
-// Fichier vidéo source (épisode)
+// Source video file (episode)
 export interface MergeVideoFile {
   id: string;
   path: string;
@@ -19,7 +19,7 @@ export interface MergeVideoFile {
   attachedTracks: AttachedTrack[];
 }
 
-// Piste importée (à merger)
+// Imported track (to merge)
 export interface ImportedTrack {
   id: string;
   path: string;
@@ -35,13 +35,13 @@ export interface ImportedTrack {
   config: MergeTrackConfig;
 }
 
-// Piste attachée à un fichier vidéo
+// Track attached to a video file
 export interface AttachedTrack {
   trackId: string; // Reference to ImportedTrack.id
   order: number;
 }
 
-// Track existant dans un fichier source
+// Existing track in a source file
 export interface MergeTrack {
   id: string;
   sourceFileId: string;
@@ -89,16 +89,16 @@ export interface BatchMergeJob {
   error?: string;
 }
 
-// Groupe de tracks pour l'édition bulk (par langue + type)
+// Track group for bulk editing (by language + type)
 export interface TrackGroup {
   id: string;
   type: TrackType;
   language: string | null;
-  trackIds: string[]; // IDs des tracks dans ce groupe
+  trackIds: string[]; // Track IDs in this group
   collapsed: boolean;
 }
 
-// Préréglage de propriétés pour les tracks
+// Property preset for tracks
 export interface TrackPreset {
   id: string;
   name: string;
@@ -111,10 +111,10 @@ export interface TrackPreset {
   createdAt: number;
 }
 
-// Type union pour les tracks éditables
+// Union type for editable tracks
 export type EditableTrack = MergeTrack | ImportedTrack;
 
-// Languages communes pour le dropdown
+// Common languages for dropdown
 export const COMMON_LANGUAGES = [
   { code: 'und', label: 'Undefined' },
   { code: 'fra', label: 'French' },

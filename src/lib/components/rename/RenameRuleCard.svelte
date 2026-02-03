@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { GripVertical, MoreVertical, Copy, Trash2, Pencil, TextCursorInput, Type, Replace, Regex, Eraser, CaseSensitive, Hash, MoveHorizontal, Clock, CircleOff, Text } from '@lucide/svelte';
   import { cn } from '$lib/utils';
   import type { RenameRule, RuleType } from '$lib/types/rename';
   import { RULE_TYPE_LABELS } from '$lib/types/rename';
@@ -6,24 +7,24 @@
   import { Button } from '$lib/components/ui/button';
   import { Switch } from '$lib/components/ui/switch';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-  import GripVertical from 'lucide-svelte/icons/grip-vertical';
-  import MoreVertical from 'lucide-svelte/icons/more-vertical';
-  import Copy from 'lucide-svelte/icons/copy';
-  import Trash2 from 'lucide-svelte/icons/trash-2';
-  import Pencil from 'lucide-svelte/icons/pencil';
+  ;
+  ;
+  ;
+  ;
+  ;
   
   // Rule type icons
-  import TextCursorInput from 'lucide-svelte/icons/text-cursor-input';
-  import Type from 'lucide-svelte/icons/type';
-  import Replace from 'lucide-svelte/icons/replace';
-  import Regex from 'lucide-svelte/icons/regex';
-  import Eraser from 'lucide-svelte/icons/eraser';
-  import CaseSensitive from 'lucide-svelte/icons/case-sensitive';
-  import Hash from 'lucide-svelte/icons/hash';
-  import MoveHorizontal from 'lucide-svelte/icons/move-horizontal';
-  import Clock from 'lucide-svelte/icons/clock';
-  import CircleOff from 'lucide-svelte/icons/circle-off';
-  import Text from 'lucide-svelte/icons/text';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
 
   interface RenameRuleCardProps {
     rule: RenameRule;

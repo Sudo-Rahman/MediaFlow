@@ -1,15 +1,16 @@
 <script lang="ts">
+  import { FileVideo, FileAudio, Subtitles, Loader2, XCircle, Trash2, Plus } from '@lucide/svelte';
   import { cn } from '$lib/utils';
   import type { MergeVideoFile } from '$lib/types';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
-  import FileVideo from 'lucide-svelte/icons/file-video';
-  import FileAudio from 'lucide-svelte/icons/file-audio';
-  import Subtitles from 'lucide-svelte/icons/subtitles';
-  import Loader2 from 'lucide-svelte/icons/loader-2';
-  import XCircle from 'lucide-svelte/icons/x-circle';
-  import Trash2 from 'lucide-svelte/icons/trash-2';
-  import Plus from 'lucide-svelte/icons/plus';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
 
   interface MergeFileListProps {
     files: MergeVideoFile[];
@@ -95,7 +96,7 @@
               {/if}
             </div>
           {:else if file.status === 'scanning'}
-            <p class="text-xs text-muted-foreground mt-1">Analyse...</p>
+            <p class="text-xs text-muted-foreground mt-1">Scanning...</p>
           {:else if file.status === 'error'}
             <p class="text-xs text-destructive mt-1 truncate">{file.error}</p>
           {/if}
@@ -109,17 +110,17 @@
           onclick={(e: MouseEvent) => { e.stopPropagation(); onRemove?.(file.id); }}
         >
           <Trash2 class="size-3" />
-          <span class="sr-only">Supprimer</span>
+          <span class="sr-only">Remove</span>
         </Button>
       </button>
     {:else}
       {#if showAddButton}
         <div class="flex flex-col items-center justify-center py-8 text-center">
           <FileVideo class="size-10 text-muted-foreground/30 mb-2" />
-          <p class="text-sm text-muted-foreground">Aucun fichier</p>
+          <p class="text-sm text-muted-foreground">No files</p>
           <Button variant="outline" size="sm" class="mt-3" onclick={onAddFiles}>
             <Plus class="size-4 mr-1" />
-            Ajouter des fichiers
+            Add files
           </Button>
         </div>
       {/if}

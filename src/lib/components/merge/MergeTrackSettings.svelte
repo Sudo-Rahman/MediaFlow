@@ -9,11 +9,7 @@
   import { Separator } from '$lib/components/ui/separator';
   import * as Dialog from '$lib/components/ui/dialog';
   import * as Select from '$lib/components/ui/select';
-  import Video from 'lucide-svelte/icons/video';
-  import Volume2 from 'lucide-svelte/icons/volume-2';
-  import Subtitles from 'lucide-svelte/icons/subtitles';
-  import Clock from 'lucide-svelte/icons/clock';
-  import Languages from 'lucide-svelte/icons/languages';
+  import { Video, Volume2, Subtitles, Clock, Languages } from '@lucide/svelte';
 
   interface MergeTrackSettingsProps {
     open: boolean;
@@ -71,13 +67,13 @@
           {#if Icon}
             <Icon class="size-5" />
           {/if}
-          Paramètres de la piste #{track.originalIndex}
+          Track Settings #{track.originalIndex}
         {:else}
-          Paramètres de la piste
+          Track Settings
         {/if}
       </Dialog.Title>
       <Dialog.Description>
-        Configurez les propriétés de cette piste pour le fichier de sortie.
+        Configure the properties of this track for the output file.
       </Dialog.Description>
     </Dialog.Header>
 
@@ -98,17 +94,17 @@
         <Separator />
 
         <div class="space-y-2">
-          <Label for="track-title">Titre</Label>
+          <Label for="track-title">Title</Label>
           <Input
             id="track-title"
-            placeholder="Titre de la piste (optionnel)"
+            placeholder="Track title (optional)"
             value={localConfig.title || ''}
             oninput={(e) => localConfig.title = e.currentTarget.value}
           />
         </div>
 
         <div class="space-y-2">
-          <Label>Langue</Label>
+          <Label>Language</Label>
           <Select.Root
             type="single"
             value={localConfig.language || 'und'}
@@ -129,7 +125,7 @@
         <div class="space-y-2">
           <Label for="track-delay" class="flex items-center gap-2">
             <Clock class="size-4" />
-            Décalage (ms)
+            Delay (ms)
           </Label>
           <div class="flex items-center gap-2">
             <Input
@@ -140,10 +136,10 @@
               oninput={(e) => handleDelayChange(e.currentTarget.value)}
               class="w-32"
             />
-            <span class="text-sm text-muted-foreground">millisecondes</span>
+            <span class="text-sm text-muted-foreground">milliseconds</span>
           </div>
           <p class="text-xs text-muted-foreground">
-            Valeur positive = retarder la piste, négative = avancer
+            Positive value = delay track, negative = advance
           </p>
         </div>
 
@@ -159,7 +155,7 @@
               onCheckedChange={(checked) => localConfig.default = !!checked}
             />
             <Label for="track-default" class="font-normal cursor-pointer">
-              Piste par défaut
+              Default track
             </Label>
           </div>
 
@@ -171,7 +167,7 @@
                 onCheckedChange={(checked) => localConfig.forced = !!checked}
               />
               <Label for="track-forced" class="font-normal cursor-pointer">
-                Sous-titres forcés
+                Forced subtitles
               </Label>
             </div>
           {/if}
@@ -180,10 +176,10 @@
 
       <Dialog.Footer>
         <Button variant="outline" onclick={onClose}>
-          Annuler
+          Cancel
         </Button>
         <Button onclick={handleSave}>
-          Appliquer
+          Apply
         </Button>
       </Dialog.Footer>
     {/if}

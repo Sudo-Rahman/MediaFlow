@@ -1,4 +1,4 @@
-// Types partagés pour les pistes multimédia
+// Shared types for multimedia tracks
 
 export type TrackType = 'subtitle' | 'audio' | 'video' | 'data';
 
@@ -115,7 +115,7 @@ export interface FFprobeOutput {
 
 // ============================================================================
 // CODEC TO EXTENSION MAPPING
-// Source unique de vérité pour tous les mappings codec/extension
+// Single source of truth for all codec/extension mappings
 // ============================================================================
 
 export const codecExtensions: Record<string, string> = {
@@ -184,15 +184,15 @@ export const codecExtensions: Record<string, string> = {
 };
 
 /**
- * Récupère l'extension de fichier pour un codec donné
- * Fallback: si le codec n'est pas mappé, retourne .{codec}
+ * Get file extension for a given codec
+ * Fallback: if codec is not mapped, returns .{codec}
  */
 export function getExtensionForCodec(codec: string): string {
   return codecExtensions[codec.toLowerCase()] || `.${codec}`;
 }
 
 // ============================================================================
-// INVERSE MAPPING: Extension vers codec (pour l'import de pistes)
+// INVERSE MAPPING: Extension to codec (for track import)
 // ============================================================================
 
 export const extensionToCodec: Record<string, string> = {
@@ -228,8 +228,8 @@ export const extensionToCodec: Record<string, string> = {
 };
 
 /**
- * Récupère le codec à partir de l'extension de fichier
- * Fallback: si l'extension n'est pas mappée, retourne l'extension sans le point
+ * Get codec from file extension
+ * Fallback: if extension is not mapped, returns extension without the dot
  */
 export function getCodecFromExtension(ext: string): string {
   const normalized = ext.toLowerCase();

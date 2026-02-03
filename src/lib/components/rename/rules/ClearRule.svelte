@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { AlertTriangle } from '@lucide/svelte';
   import type { ClearConfig } from '$lib/types/rename';
-  import AlertTriangle from 'lucide-svelte/icons/alert-triangle';
+  ;
 
   interface ClearRuleProps {
     config: ClearConfig;

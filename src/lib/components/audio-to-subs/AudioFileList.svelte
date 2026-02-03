@@ -1,20 +1,21 @@
 <script lang="ts">
+  import { AudioLines, Trash2, CheckCircle, Loader2, AlertCircle, Clock, FileAudio, FileText, RotateCw, X } from '@lucide/svelte';
   import type { AudioFile } from '$lib/types';
   import { cn } from '$lib/utils';
   import { formatDuration, formatFileSize, formatChannels } from '$lib/utils/format';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import { Progress } from '$lib/components/ui/progress';
-  import AudioLines from 'lucide-svelte/icons/audio-lines';
-  import Trash2 from 'lucide-svelte/icons/trash-2';
-  import CheckCircle from 'lucide-svelte/icons/check-circle';
-  import Loader2 from 'lucide-svelte/icons/loader-2';
-  import AlertCircle from 'lucide-svelte/icons/alert-circle';
-  import Clock from 'lucide-svelte/icons/clock';
-  import FileAudio from 'lucide-svelte/icons/file-audio';
-  import FileText from 'lucide-svelte/icons/file-text';
-  import RotateCw from 'lucide-svelte/icons/rotate-cw';
-  import X from 'lucide-svelte/icons/x';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
 
   interface AudioFileListProps {
     files: AudioFile[];

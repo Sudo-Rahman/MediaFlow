@@ -5,12 +5,7 @@
   import { Separator } from '$lib/components/ui/separator';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { formatLanguage } from '$lib/utils/format';
-  import ChevronDown from 'lucide-svelte/icons/chevron-down';
-  import Subtitles from 'lucide-svelte/icons/subtitles';
-  import Volume2 from 'lucide-svelte/icons/volume-2';
-  import Video from 'lucide-svelte/icons/video';
-  import Check from 'lucide-svelte/icons/check';
-  import X from 'lucide-svelte/icons/x';
+  import { ChevronDown, Subtitles, Volume2, Video, Check, X } from '@lucide/svelte';
 
   interface BatchTrackSelectorProps {
     files: VideoFile[];
@@ -180,10 +175,10 @@
 
 <div class="flex flex-col gap-3 p-4 rounded-lg border bg-card {className}">
   <div class="flex items-center justify-between">
-    <h3 class="text-sm font-semibold">Sélection rapide</h3>
+    <h3 class="text-sm font-semibold">Quick Selection</h3>
     {#if totalSelectedCount() > 0}
       <Badge variant="secondary">
-        {totalSelectedCount()} piste{totalSelectedCount() > 1 ? 's' : ''}
+        {totalSelectedCount()} track{totalSelectedCount() > 1 ? 's' : ''}
       </Badge>
     {/if}
   </div>
@@ -195,17 +190,17 @@
         {#snippet child({ props })}
           <Button variant="outline" size="sm" {...props}>
             <Subtitles class="size-4 mr-1.5" />
-            Sous-titres
+            Subtitles
             <ChevronDown class="size-3 ml-1" />
           </Button>
         {/snippet}
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="start">
         <DropdownMenu.Item onclick={() => applyPreset('all-subs')}>
-          Tous les sous-titres
+          All subtitles
         </DropdownMenu.Item>
         <DropdownMenu.Separator />
-        <DropdownMenu.Label>Par langue</DropdownMenu.Label>
+        <DropdownMenu.Label>By language</DropdownMenu.Label>
         {#each Array.from(trackStats().subtitleLanguages) as lang}
           {@const isSelected = isLanguageFullySelected('subtitle', lang)}
           <DropdownMenu.Item onclick={() => toggleLanguage('subtitle', lang)}>
@@ -234,10 +229,10 @@
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="start">
         <DropdownMenu.Item onclick={() => applyPreset('all-audio')}>
-          Toutes les pistes audio
+          All audio tracks
         </DropdownMenu.Item>
         <DropdownMenu.Separator />
-        <DropdownMenu.Label>Par langue</DropdownMenu.Label>
+        <DropdownMenu.Label>By language</DropdownMenu.Label>
         {#each Array.from(trackStats().audioLanguages) as lang}
           {@const isSelected = isLanguageFullySelected('audio', lang)}
           <DropdownMenu.Item onclick={() => toggleLanguage('audio', lang)}>
@@ -256,13 +251,13 @@
 
     <Button variant="outline" size="sm" onclick={() => applyPreset('all-video')}>
       <Video class="size-4 mr-1.5" />
-      Vidéo
+      Video
     </Button>
 
     {#if totalSelectedCount() > 0}
       <Button variant="ghost" size="sm" onclick={() => applyPreset('clear')}>
         <X class="size-4 mr-1.5" />
-        Effacer
+        Clear
       </Button>
     {/if}
   </div>

@@ -1,4 +1,5 @@
 <script lang="ts" module>
+  import { FileVideo, FileAudio, Subtitles, Video, Film, Volume2, Trash2, Plus, Upload, Loader2, XCircle, Wand2, Link, Unlink, Settings2, GripVertical, Clock, Layers } from '@lucide/svelte';
   export interface MergeViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -32,24 +33,24 @@
   import * as Tabs from '$lib/components/ui/tabs';
   import { MergeTrackSettings, MergeOutputPanel, MergeTrackGroups, MergeTrackTable } from '$lib/components/merge';
 
-  import FileVideo from 'lucide-svelte/icons/file-video';
-  import FileAudio from 'lucide-svelte/icons/file-audio';
-  import Subtitles from 'lucide-svelte/icons/subtitles';
-  import Video from 'lucide-svelte/icons/video';
-  import Film from 'lucide-svelte/icons/film';
-  import Volume2 from 'lucide-svelte/icons/volume-2';
-  import Trash2 from 'lucide-svelte/icons/trash-2';
-  import Plus from 'lucide-svelte/icons/plus';
-  import Upload from 'lucide-svelte/icons/upload';
-  import Loader2 from 'lucide-svelte/icons/loader-2';
-  import XCircle from 'lucide-svelte/icons/x-circle';
-  import Wand2 from 'lucide-svelte/icons/wand-2';
-  import Link from 'lucide-svelte/icons/link';
-  import Unlink from 'lucide-svelte/icons/unlink';
-  import Settings2 from 'lucide-svelte/icons/settings-2';
-  import GripVertical from 'lucide-svelte/icons/grip-vertical';
-  import Clock from 'lucide-svelte/icons/clock';
-  import Layers from 'lucide-svelte/icons/layers';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
 
   // Constants
   const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];

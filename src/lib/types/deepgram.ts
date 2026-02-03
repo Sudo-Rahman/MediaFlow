@@ -11,25 +11,25 @@ export const DEEPGRAM_MODELS = [
   { 
     id: 'nova-3', 
     name: 'Nova 3', 
-    description: 'Dernière génération, meilleure qualité',
+    description: 'Latest generation, best quality',
     tier: 'latest'
   },
   { 
     id: 'nova-3-general', 
     name: 'Nova 3 General', 
-    description: 'Nova 3 optimisé multilingue',
+    description: 'Nova 3 optimized multilingual',
     tier: 'latest'
   },
   { 
     id: 'nova-2', 
     name: 'Nova 2', 
-    description: 'Modèle stable et performant',
+    description: 'Stable and performant model',
     tier: 'stable'
   },
   { 
     id: 'nova-2-general', 
     name: 'Nova 2 General', 
-    description: 'Nova 2 optimisé multilingue',
+    description: 'Nova 2 optimized multilingual',
     tier: 'stable'
   },
 ] as const;
@@ -49,8 +49,8 @@ export interface DeepgramLanguage {
 }
 
 export const DEEPGRAM_LANGUAGES: DeepgramLanguage[] = [
-  { code: 'multi', name: 'Détection automatique', flag: '🌐' },
-  { code: 'fr', name: 'Français', flag: '🇫🇷' },
+  { code: 'multi', name: 'Auto-detection', flag: '🌐' },
+  { code: 'fr', name: 'French', flag: '🇫🇷' },
   { code: 'en', name: 'English', flag: '🇬🇧' },
   { code: 'es', name: 'Español', flag: '🇪🇸' },
   { code: 'de', name: 'Deutsch', flag: '🇩🇪' },

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Folder, FolderOpen, Play, Loader2, CheckCircle } from '@lucide/svelte';
   import type { MergeOutputConfig } from '$lib/types';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
@@ -8,11 +9,11 @@
   import { Checkbox } from '$lib/components/ui/checkbox';
   import * as Card from '$lib/components/ui/card';
   import * as Alert from '$lib/components/ui/alert';
-  import Folder from 'lucide-svelte/icons/folder';
-  import FolderOpen from 'lucide-svelte/icons/folder-open';
-  import Play from 'lucide-svelte/icons/play';
-  import Loader2 from 'lucide-svelte/icons/loader-2';
-  import CheckCircle from 'lucide-svelte/icons/check-circle';
+  ;
+  ;
+  ;
+  ;
+  ;
 
   interface MergeOutputPanelProps {
     outputConfig: MergeOutputConfig;

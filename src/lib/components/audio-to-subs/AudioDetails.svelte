@@ -1,16 +1,17 @@
 <script lang="ts">
+  import { AudioLines, Clock, Radio, Volume2, HardDrive, Disc3 } from '@lucide/svelte';
   import type { AudioFile } from '$lib/types';
   import { cn } from '$lib/utils';
   import { formatDuration, formatFileSize, formatChannels, formatBitrate } from '$lib/utils/format';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
-  import AudioLines from 'lucide-svelte/icons/audio-lines';
-  import Clock from 'lucide-svelte/icons/clock';
-  import Radio from 'lucide-svelte/icons/radio';
-  import Volume2 from 'lucide-svelte/icons/volume-2';
-  import HardDrive from 'lucide-svelte/icons/hard-drive';
-  import Disc3 from 'lucide-svelte/icons/disc-3';
+  ;
+  ;
+  ;
+  ;
+  ;
+  ;
   import Waveform from './Waveform.svelte';
   import { audioToSubsStore } from '$lib/stores/audio-to-subs.svelte';
 

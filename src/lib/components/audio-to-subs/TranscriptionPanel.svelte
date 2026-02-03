@@ -292,13 +292,13 @@
             type="multiple"
             value={[config.deepgramConfig.uttSplit]}
             onValueChange={(values: number[]) => onDeepgramConfigChange({ uttSplit: values[0] })}
-            min={0.5}
+            min={0.1}
             max={2.0}
             step={0.1}
             disabled={isTranscribing}
           />
           <div class="flex justify-between text-xs text-muted-foreground">
-            <span>0.5s (short phrases)</span>
+            <span>0.1s (short phrases)</span>
             <span>2.0s (long phrases)</span>
           </div>
         </div>

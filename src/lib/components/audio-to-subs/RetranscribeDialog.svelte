@@ -60,7 +60,7 @@
       </Dialog.Description>
     </Dialog.Header>
 
-    <div class="flex-1 overflow-auto py-4 space-y-6">
+    <div class="flex-1 overflow-auto p-4 space-y-6">
       <!-- Version name -->
       <div class="space-y-2">
         <Label>Version name</Label>
@@ -160,12 +160,12 @@
             type="multiple"
             value={[config.uttSplit]}
             onValueChange={(values: number[]) => config = { ...config, uttSplit: values[0] }}
-            min={0.5}
+            min={0.1}
             max={2.0}
             step={0.1}
           />
           <div class="flex justify-between text-xs text-muted-foreground">
-            <span>0.5s</span>
+            <span>0.1s</span>
             <span>2.0s</span>
           </div>
         </div>

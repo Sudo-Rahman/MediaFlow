@@ -5,9 +5,10 @@
   import { cn } from '$lib/utils';
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { Button } from '$lib/components/ui/button';
-  import { Maximize2, Minimize2, RotateCcw } from '@lucide/svelte';
+  import { Maximize2, Minimize2, RotateCcw, Frame } from '@lucide/svelte';
   import SubtitleOverlay from './SubtitleOverlay.svelte';
   import RegionSelector from './RegionSelector.svelte';
+  import { Tooltip, TooltipContent, TooltipTrigger } from '$lib/components/ui/tooltip';
 
   interface VideoPreviewProps {
     file?: OcrVideoFile;
@@ -235,13 +236,21 @@
           Clear Region
         </Button>
       {:else}
-        <Button
-          variant="ghost"
-          size="sm"
-          onclick={setDefaultRegion}
-        >
-          Use Default (Bottom 25%)
-        </Button>
+        <Tooltip>
+          <TooltipTrigger>
+            <Button
+              variant="ghost"
+              size="sm"
+              onclick={setDefaultRegion}
+            >
+              <Frame class="size-4 mr-2" />
+              Default
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>Use default region (bottom 25%)</p>
+          </TooltipContent>
+        </Tooltip>
       {/if}
     </div>
   {/if}

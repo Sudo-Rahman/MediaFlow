@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
+use rayon::prelude::*;
 use tauri::{Emitter, Manager};
 use tiktoken_rs::o200k_base_singleton;
 use tokio::process::Command;
@@ -931,13 +933,12 @@ fn get_charset_for_language(language: &str) -> &'static str {
 }
 
 /// Create an OCR engine for the given language with specified options
-/// Note: Not cached since GPU/thread options may vary between calls
+/// Thread count for MNN is fixed to num_cpus/2 for optimal performance
 fn create_ocr_engine(
     models_dir: &Path,
     language: &str,
     use_gpu: bool,
-    thread_count: u32,
-) -> Result<Arc<OcrEngine>, String> {
+) -> Result<OcrEngine, String> {
     // Build model paths
     let det_path = models_dir.join(OCR_DET_MODEL);
     let rec_model = get_rec_model_for_language(language);
@@ -965,24 +966,27 @@ fn create_ocr_engine(
         ));
     }
     
+    // Fixed thread count for MNN: num_cpus / 2 (optimal for inference)
+    let mnn_threads = std::cmp::max(1, num_cpus::get() as i32);
+    
     // Create OCR engine config based on GPU option
     let config = if use_gpu {
         #[cfg(target_os = "macos")]
         {
             OcrEngineConfig::new()
                 .with_backend(Backend::Metal)
-                .with_threads(thread_count as i32)
+                .with_threads(mnn_threads)
         }
         #[cfg(not(target_os = "macos"))]
         {
             OcrEngineConfig::new()
                 .with_backend(Backend::Vulkan)
-                .with_threads(thread_count as i32)
+                .with_threads(mnn_threads)
         }
     } else {
         // CPU-only mode: no GPU backend
         OcrEngineConfig::new()
-            .with_threads(thread_count as i32)
+            .with_threads(mnn_threads)
     };
     
     // Create the engine
@@ -993,7 +997,7 @@ fn create_ocr_engine(
         Some(config),
     ).map_err(|e| format!("Failed to create OCR engine: {}", e))?;
     
-    Ok(Arc::new(engine))
+    Ok(engine)
 }
 
 /// Get the OCR models directory, checking app resources first, then user config
@@ -1363,7 +1367,8 @@ async fn extract_ocr_frames(
     Ok((temp_dir.to_string_lossy().to_string(), frame_count))
 }
 
-/// Perform OCR on extracted frames using PP-OCRv5 with batch processing
+/// Perform OCR on extracted frames using PP-OCRv5 with rayon parallel processing
+/// Each parallel worker creates its own OcrEngine instance for thread-safety
 #[tauri::command]
 async fn perform_ocr(
     app: tauri::AppHandle,
@@ -1372,7 +1377,7 @@ async fn perform_ocr(
     language: String,
     frame_interval_ms: u32,
     use_gpu: bool,
-    thread_count: u32,
+    num_workers: u32,
 ) -> Result<Vec<OcrFrameResult>, String> {
     validate_directory_path(&frames_dir)?;
     
@@ -1413,147 +1418,177 @@ async fn perform_ocr(
         return Ok(Vec::new());
     }
     
-    // Calculate batch size: 1% of frames, min 1, max 100
-    let batch_size = ((total_frames as f64 * 0.01).ceil() as usize).clamp(1, 100);
+    let num_workers = std::cmp::max(1, num_workers) as usize;
     
-    // Emit start - loading engine
+    // Emit start - initializing workers
     let _ = app.emit("ocr-progress", serde_json::json!({
         "fileId": file_id,
         "phase": "ocr",
         "current": 0,
         "total": total_frames,
-        "message": "Loading OCR engine..."
+        "message": format!("Starting OCR with {} parallel workers...", num_workers)
     }));
     
-    // Create OCR engine with specified options
-    let engine = {
-        let models_dir_clone = models_dir.clone();
-        let language_clone = language.clone();
-        tokio::task::spawn_blocking(move || {
-            create_ocr_engine(&models_dir_clone, &language_clone, use_gpu, thread_count)
-        })
-        .await
-        .map_err(|e| {
-            cleanup();
-            format!("Failed to spawn OCR engine task: {}", e)
-        })??
-    };
+    // Collect frame paths with their original indices
+    let frame_data: Vec<(u32, std::path::PathBuf)> = frames
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (i as u32, f.path()))
+        .collect();
     
-    // Emit start - processing
-    let _ = app.emit("ocr-progress", serde_json::json!({
-        "fileId": file_id,
-        "phase": "ocr",
-        "current": 0,
-        "total": total_frames,
-        "message": format!("Processing {} frames in batches of {}...", total_frames, batch_size)
-    }));
+    // Divide frames into chunks for parallel workers
+    let chunk_size = (frame_data.len() + num_workers - 1) / num_workers;
+    let chunks: Vec<Vec<(u32, std::path::PathBuf)>> = frame_data
+        .chunks(chunk_size)
+        .map(|c| c.to_vec())
+        .collect();
     
-    let mut results = Vec::with_capacity(frames.len());
-    let frame_paths: Vec<_> = frames.iter().map(|f| f.path()).collect();
+    // Shared progress counter for smooth progress updates
+    let progress_counter = Arc::new(AtomicU32::new(0));
     
-    // Process frames in batches
-    for (batch_idx, batch) in frame_paths.chunks(batch_size).enumerate() {
-        // Check for cancellation before processing batch
-        let is_cancelled = {
-            if let Ok(guard) = OCR_PROCESS_IDS.lock() {
-                !guard.contains_key(&file_id)
-            } else {
-                false
-            }
-        };
+    // Clone values for the blocking task
+    let models_dir_clone = models_dir.clone();
+    let language_clone = language.clone();
+    let file_id_clone = file_id.clone();
+    let app_clone = app.clone();
+    let progress_counter_clone = Arc::clone(&progress_counter);
+    
+    // Run parallel OCR in a blocking task
+    let results = tokio::task::spawn_blocking(move || {
+        // Configure rayon thread pool for this operation
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(chunks.len())
+            .build()
+            .map_err(|e| format!("Failed to create thread pool: {}", e))?;
         
-        if is_cancelled {
-            cleanup();
-            return Err("OCR cancelled".to_string());
-        }
-        
-        let batch_start_idx = batch_idx * batch_size;
-        let batch_end_idx = batch_start_idx + batch.len();
-        
-        // Emit progress for batch start
-        let _ = app.emit("ocr-progress", serde_json::json!({
-            "fileId": file_id,
-            "phase": "ocr",
-            "current": batch_start_idx,
-            "total": total_frames,
-            "message": format!("Processing frames {}-{}/{}...", batch_start_idx + 1, batch_end_idx, total_frames)
-        }));
-        
-        // Process batch in blocking task
-        let engine_clone = Arc::clone(&engine);
-        let batch_paths: Vec<_> = batch.to_vec();
-        let frame_interval = frame_interval_ms;
-        let batch_start = batch_start_idx as u32;
-        
-        let batch_results = tokio::task::spawn_blocking(move || {
-            let mut batch_results = Vec::with_capacity(batch_paths.len());
-            
-            for (i, frame_path) in batch_paths.iter().enumerate() {
-                let frame_index = batch_start + i as u32;
-                let time_ms = (frame_index as u64) * (frame_interval as u64);
-                
-                // Load the image
-                let image = match image::open(frame_path) {
-                    Ok(img) => img,
-                    Err(e) => {
-                        // Skip frames that fail to load
-                        eprintln!("Failed to open frame {}: {}", frame_path.display(), e);
-                        continue;
+        pool.install(|| {
+            // Process chunks in parallel - each worker creates its own engine
+            let all_results: Result<Vec<Vec<OcrFrameResult>>, String> = chunks
+                .into_par_iter()
+                .map(|chunk_paths| {
+                    // Check for cancellation before starting this worker
+                    let is_cancelled = OCR_PROCESS_IDS
+                        .lock()
+                        .map(|guard| !guard.contains_key(&file_id_clone))
+                        .unwrap_or(false);
+                    
+                    if is_cancelled {
+                        return Err("OCR cancelled".to_string());
                     }
-                };
-                
-                // Run OCR detection and recognition
-                let ocr_results = match engine_clone.recognize(&image) {
-                    Ok(results) => results,
-                    Err(e) => {
-                        eprintln!("OCR failed on frame {}: {}", frame_path.display(), e);
-                        continue;
+                    
+                    // Create engine for this worker (each worker has its own engine)
+                    let engine = create_ocr_engine(&models_dir_clone, &language_clone, use_gpu)?;
+                    
+                    let mut worker_results = Vec::with_capacity(chunk_paths.len());
+                    
+                    for (frame_index, frame_path) in chunk_paths {
+                        // Check for cancellation periodically
+                        let is_cancelled = OCR_PROCESS_IDS
+                            .lock()
+                            .map(|guard| !guard.contains_key(&file_id_clone))
+                            .unwrap_or(false);
+                        
+                        if is_cancelled {
+                            return Err("OCR cancelled".to_string());
+                        }
+                        
+                        let time_ms = (frame_index as u64) * (frame_interval_ms as u64);
+                        
+                        // Load the image
+                        let image = match image::open(&frame_path) {
+                            Ok(img) => img,
+                            Err(e) => {
+                                eprintln!("Failed to open frame {}: {}", frame_path.display(), e);
+                                // Update progress even for failed frames
+                                let current = progress_counter_clone.fetch_add(1, Ordering::Relaxed) + 1;
+                                let _ = app_clone.emit("ocr-progress", serde_json::json!({
+                                    "fileId": file_id_clone,
+                                    "phase": "ocr",
+                                    "current": current,
+                                    "total": total_frames,
+                                    "message": format!("Processing frame {}/{}...", current, total_frames)
+                                }));
+                                continue;
+                            }
+                        };
+                        
+                        // Run OCR detection and recognition
+                        let ocr_results = match engine.recognize(&image) {
+                            Ok(results) => results,
+                            Err(e) => {
+                                eprintln!("OCR failed on frame {}: {}", frame_path.display(), e);
+                                // Update progress even for failed frames
+                                let current = progress_counter_clone.fetch_add(1, Ordering::Relaxed) + 1;
+                                let _ = app_clone.emit("ocr-progress", serde_json::json!({
+                                    "fileId": file_id_clone,
+                                    "phase": "ocr",
+                                    "current": current,
+                                    "total": total_frames,
+                                    "message": format!("Processing frame {}/{}...", current, total_frames)
+                                }));
+                                continue;
+                            }
+                        };
+                        
+                        // Sort results by vertical position (top to bottom) for subtitle ordering
+                        let mut sorted_results: Vec<_> = ocr_results.iter().collect();
+                        sorted_results.sort_by(|a, b| {
+                            let a_top = a.bbox.rect.top();
+                            let b_top = b.bbox.rect.top();
+                            a_top.partial_cmp(&b_top).unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                        
+                        // Combine text from all detected regions
+                        let combined_text: String = sorted_results
+                            .iter()
+                            .map(|r| r.text.trim())
+                            .filter(|t| !t.is_empty())
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        
+                        // Calculate average confidence
+                        let avg_confidence = if sorted_results.is_empty() {
+                            0.0
+                        } else {
+                            sorted_results.iter().map(|r| r.confidence).sum::<f32>() as f64 
+                                / sorted_results.len() as f64
+                        };
+                        
+                        worker_results.push(OcrFrameResult {
+                            frame_index,
+                            time_ms,
+                            text: combined_text,
+                            confidence: avg_confidence,
+                        });
+                        
+                        // Emit progress for each frame (smooth progress bar)
+                        let current = progress_counter_clone.fetch_add(1, Ordering::Relaxed) + 1;
+                        let _ = app_clone.emit("ocr-progress", serde_json::json!({
+                            "fileId": file_id_clone,
+                            "phase": "ocr",
+                            "current": current,
+                            "total": total_frames,
+                            "message": format!("Processing frame {}/{}...", current, total_frames)
+                        }));
                     }
-                };
-                
-                // Combine all detected text from the frame
-                // Sort results by vertical position (top to bottom) for subtitle ordering
-                let mut sorted_results: Vec<_> = ocr_results.iter().collect();
-                sorted_results.sort_by(|a, b| {
-                    let a_top = a.bbox.rect.top();
-                    let b_top = b.bbox.rect.top();
-                    a_top.partial_cmp(&b_top).unwrap_or(std::cmp::Ordering::Equal)
-                });
-                
-                // Combine text from all detected regions
-                let combined_text: String = sorted_results
-                    .iter()
-                    .map(|r| r.text.trim())
-                    .filter(|t| !t.is_empty())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                
-                // Calculate average confidence
-                let avg_confidence = if sorted_results.is_empty() {
-                    0.0
-                } else {
-                    sorted_results.iter().map(|r| r.confidence).sum::<f32>() as f64 
-                        / sorted_results.len() as f64
-                };
-                
-                batch_results.push(OcrFrameResult {
-                    frame_index,
-                    time_ms,
-                    text: combined_text,
-                    confidence: avg_confidence,
-                });
-            }
+                    
+                    Ok(worker_results)
+                })
+                .collect();
             
-            batch_results
+            // Flatten results and sort by frame index
+            all_results.map(|chunk_results| {
+                let mut results: Vec<OcrFrameResult> = chunk_results.into_iter().flatten().collect();
+                results.sort_by_key(|r| r.frame_index);
+                results
+            })
         })
-        .await
-        .map_err(|e| {
-            cleanup();
-            format!("OCR batch task failed: {}", e)
-        })?;
-        
-        results.extend(batch_results);
-    }
+    })
+    .await
+    .map_err(|e| {
+        cleanup();
+        format!("OCR task failed: {}", e)
+    })??;
     
     // Emit completion
     let _ = app.emit("ocr-progress", serde_json::json!({

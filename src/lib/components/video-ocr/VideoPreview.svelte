@@ -160,7 +160,6 @@
         onloadedmetadata={updateVideoBounds}
         onresize={updateVideoBounds}
       >
-        <track kind="captions" />
       </video>
 
       <!-- Subtitle overlay -->

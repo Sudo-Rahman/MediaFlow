@@ -1,40 +1,52 @@
 <script lang="ts">
-  import type { OcrConfig, OcrLanguage, OcrOutputFormat } from '$lib/types/video-ocr';
+  import type { OcrConfig, OcrLanguage, OcrOutputFormat, OcrVideoFile } from '$lib/types/video-ocr';
   import { OCR_LANGUAGES, OCR_OUTPUT_FORMATS } from '$lib/types/video-ocr';
   import { Button } from '$lib/components/ui/button';
   import { Label } from '$lib/components/ui/label';
   import { Switch } from '$lib/components/ui/switch';
+  import { Input } from '$lib/components/ui/input';
   import * as Select from '$lib/components/ui/select';
   import { Slider } from '$lib/components/ui/slider';
-  import { Play, Square, FolderOpen, Settings } from '@lucide/svelte';
+  import { Play, Square, Settings, Download, FolderOpen, CheckCircle, Loader2 } from '@lucide/svelte';
+  import { open } from '@tauri-apps/plugin-dialog';
+  import { invoke } from '@tauri-apps/api/core';
+  import { join } from '@tauri-apps/api/path';
+  import { toast } from 'svelte-sonner';
 
   interface OcrOptionsPanelProps {
     config: OcrConfig;
-    outputDir: string;
     canStart: boolean;
     isProcessing: boolean;
+    allCompleted: boolean;
+    filesWithSubtitles: OcrVideoFile[];
+    totalSubtitles: number;
     availableLanguages?: string[];  // Languages with installed models
     maxThreads?: number;            // Max available threads
     onConfigChange: (updates: Partial<OcrConfig>) => void;
-    onOutputDirChange: (dir: string) => void;
     onStart: () => void;
     onCancel: () => void;
-    onSelectOutputDir: () => void;
   }
 
   let {
     config,
-    outputDir,
     canStart,
     isProcessing,
+    allCompleted,
+    filesWithSubtitles,
+    totalSubtitles,
     availableLanguages = [],
     maxThreads = navigator.hardwareConcurrency || 4,
     onConfigChange,
-    onOutputDirChange,
     onStart,
     onCancel,
-    onSelectOutputDir,
   }: OcrOptionsPanelProps = $props();
+
+  // Export All state
+  let exportFormat = $state<OcrOutputFormat>('srt');
+  let exportDir = $state('');
+  let isExporting = $state(false);
+
+  const canExport = $derived(filesWithSubtitles.length > 0 && exportDir.length > 0 && !isExporting);
 
   // Filter languages to only show those with installed models
   // If no availableLanguages provided, show all (fallback)
@@ -62,6 +74,54 @@
 
   function handleThreadCountChange(value: number) {
     onConfigChange({ threadCount: value });
+  }
+
+  async function handleBrowseExportDir() {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: 'Select export folder'
+    });
+    if (selected && typeof selected === 'string') {
+      exportDir = selected;
+    }
+  }
+
+  async function handleExportAll() {
+    if (!canExport) return;
+
+    isExporting = true;
+    let successCount = 0;
+    let failCount = 0;
+
+    try {
+      for (const file of filesWithSubtitles) {
+        try {
+          const baseName = file.name.replace(/\.[^/.]+$/, '');
+          const fileName = `${baseName}.${exportFormat}`;
+          const outputPath = await join(exportDir, fileName);
+
+          await invoke('export_ocr_subtitles', {
+            subtitles: file.subtitles,
+            outputPath,
+            format: exportFormat,
+          });
+          successCount++;
+        } catch (error) {
+          console.error(`Failed to export ${file.name}:`, error);
+          failCount++;
+        }
+      }
+
+      if (successCount > 0) {
+        toast.success(`${successCount} file(s) exported`);
+      }
+      if (failCount > 0) {
+        toast.error(`${failCount} file(s) failed`);
+      }
+    } finally {
+      isExporting = false;
+    }
   }
 </script>
 
@@ -133,25 +193,10 @@
     </p>
   </div>
 
-  <!-- Output Format -->
-  <div class="space-y-2">
-    <Label>Output Format</Label>
-    <Select.Root type="single" value={config.outputFormat} onValueChange={handleFormatChange}>
-      <Select.Trigger class="w-full">
-        {OCR_OUTPUT_FORMATS.find(f => f.value === config.outputFormat)?.label ?? 'Select format'}
-      </Select.Trigger>
-      <Select.Content>
-        {#each OCR_OUTPUT_FORMATS as format}
-          <Select.Item value={format.value}>{format.label}</Select.Item>
-        {/each}
-      </Select.Content>
-    </Select.Root>
-  </div>
-
-  <!-- Thread Count -->
+  <!-- Parallel Workers -->
   <div class="space-y-2">
     <div class="flex justify-between">
-      <Label>Threads</Label>
+      <Label>Parallel Workers</Label>
       <span class="text-sm text-muted-foreground">{config.threadCount} / {maxThreads}</span>
     </div>
     <Slider
@@ -163,7 +208,7 @@
       step={1}
     />
     <p class="text-xs text-muted-foreground">
-      More threads = faster, but uses more CPU
+      More workers = faster, but uses more memory
     </p>
   </div>
 
@@ -176,21 +221,6 @@
         onCheckedChange={(checked) => onConfigChange({ useGpu: checked })}
       />
     </div>
-  </div>
-
-  <!-- Output Directory -->
-  <div class="space-y-2">
-    <Label>Output Directory</Label>
-    <Button
-      variant="outline"
-      class="w-full justify-start"
-      onclick={onSelectOutputDir}
-    >
-      <FolderOpen class="size-4 mr-2" />
-      <span class="truncate flex-1 text-left">
-        {outputDir || 'Select output folder...'}
-      </span>
-    </Button>
   </div>
 
   <!-- Action Buttons -->
@@ -217,12 +247,77 @@
 
     {#if !canStart && !isProcessing}
       <p class="text-xs text-muted-foreground text-center">
-        {#if !outputDir}
-          Select an output directory to start
-        {:else}
-          Add videos and wait for transcoding to complete
-        {/if}
+        Add videos and wait for transcoding to complete
       </p>
     {/if}
   </div>
+
+  <!-- Export All Section - only when all files are completed -->
+  {#if allCompleted && filesWithSubtitles.length > 0}
+    <div class="pt-4 border-t space-y-4">
+      <div class="flex items-center gap-2">
+        <CheckCircle class="size-4 text-green-500" />
+        <h4 class="text-sm font-medium">Export All</h4>
+        <span class="text-xs text-muted-foreground ml-auto">
+          {filesWithSubtitles.length} file(s), {totalSubtitles} subtitles
+        </span>
+      </div>
+
+      <!-- Export Format -->
+      <div class="space-y-2">
+        <Label class="text-sm">Format</Label>
+        <Select.Root
+          type="single"
+          value={exportFormat}
+          onValueChange={(v) => v && (exportFormat = v as OcrOutputFormat)}
+          disabled={isExporting}
+        >
+          <Select.Trigger class="w-full">
+            {OCR_OUTPUT_FORMATS.find(f => f.value === exportFormat)?.label ?? 'Select format'}
+          </Select.Trigger>
+          <Select.Content>
+            {#each OCR_OUTPUT_FORMATS as format}
+              <Select.Item value={format.value}>{format.label}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
+
+      <!-- Export directory -->
+      <div class="space-y-2">
+        <Label class="text-sm">Output folder</Label>
+        <div class="flex gap-2">
+          <Input
+            value={exportDir}
+            placeholder="Select..."
+            readonly
+            class="flex-1 text-xs"
+          />
+          <Button 
+            variant="outline" 
+            size="icon"
+            onclick={handleBrowseExportDir}
+            disabled={isExporting}
+          >
+            <FolderOpen class="size-4" />
+          </Button>
+        </div>
+      </div>
+
+      <!-- Export button -->
+      <Button
+        class="w-full"
+        disabled={!canExport}
+        onclick={handleExportAll}
+      >
+        {#if isExporting}
+          <Loader2 class="size-4 mr-2 animate-spin" />
+          Exporting...
+        {:else}
+          <Download class="size-4 mr-2" />
+          Export All ({filesWithSubtitles.length})
+        {/if}
+      </Button>
+    </div>
+  {/if}
 </div>

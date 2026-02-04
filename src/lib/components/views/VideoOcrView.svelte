@@ -12,7 +12,7 @@
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { toast } from 'svelte-sonner';
 
-  import type { OcrVideoFile, OcrRegion, OcrOutputFormat, OcrProgressEvent, OcrModelsStatus } from '$lib/types';
+  import type { OcrVideoFile, OcrRegion, OcrProgressEvent, OcrModelsStatus } from '$lib/types';
   import { VIDEO_EXTENSIONS } from '$lib/types';
   import { videoOcrStore } from '$lib/stores';
   import { logAndToast } from '$lib/utils/log-toast';
@@ -166,17 +166,6 @@
     }
   }
 
-  async function handleSelectOutputDir() {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-    });
-
-    if (selected) {
-      videoOcrStore.setOutputDir(selected);
-    }
-  }
-
   async function handleStartOcr() {
     if (!videoOcrStore.canStartOcr) return;
     
@@ -237,7 +226,7 @@
         language: videoOcrStore.config.language,
         frameIntervalMs: Math.round(1000 / videoOcrStore.config.frameRate),
         useGpu: videoOcrStore.config.useGpu,
-        threadCount: videoOcrStore.config.threadCount,
+        numWorkers: videoOcrStore.config.threadCount,
       });
       
       videoOcrStore.addLog('info', `OCR processed ${ocrResults.length} frames with text`, file.id);
@@ -343,30 +332,6 @@
     }
   }
 
-  async function handleExportSubtitles(format: OcrOutputFormat) {
-    if (!resultDialogFile || resultDialogFile.subtitles.length === 0) return;
-    
-    try {
-      const outputPath = `${videoOcrStore.outputDir}/${resultDialogFile.name.replace(/\.[^/.]+$/, '')}.${format}`;
-      
-      await invoke('export_ocr_subtitles', {
-        subtitles: resultDialogFile.subtitles,
-        outputPath,
-        format,
-      });
-      
-      toast.success(`Exported to ${outputPath}`);
-      resultDialogOpen = false;
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Export failed';
-      logAndToast.error({
-        source: 'system',
-        title: 'Export failed',
-        details: errorMsg
-      });
-    }
-  }
-
   const transcodingCount = $derived(videoOcrStore.videoFiles.filter(f => f.status === 'transcoding').length);
 </script>
 
@@ -377,23 +342,22 @@
     <div class="p-3 border-b shrink-0 flex items-center justify-between">
       <h2 class="font-semibold">Video Files ({videoOcrStore.videoFiles.length})</h2>
       <div class="flex items-center gap-1">
-        {#if !videoOcrStore.isProcessing}
-          {#if videoOcrStore.videoFiles.length > 0}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onclick={() => videoOcrStore.clear()}
-              class="text-muted-foreground hover:text-destructive"
-            >
-              <Trash2 class="size-4" />
-              <span class="sr-only">Clear list</span>
-            </Button>
-          {/if}
-          <Button size="sm" onclick={handleAddFiles}>
-            <Upload class="size-4 mr-1" />
-            Add
+        {#if videoOcrStore.videoFiles.length > 0}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onclick={() => videoOcrStore.clear()}
+            class="text-muted-foreground hover:text-destructive"
+            disabled={videoOcrStore.isProcessing}
+          >
+            <Trash2 class="size-4" />
+            <span class="sr-only">Clear list</span>
           </Button>
         {/if}
+        <Button size="sm" onclick={handleAddFiles} disabled={videoOcrStore.isProcessing}>
+          <Upload class="size-4 mr-1" />
+          Add
+        </Button>
       </div>
     </div>
 
@@ -447,15 +411,15 @@
   <div class="w-80 border-l overflow-auto flex flex-col p-4">
     <OcrOptionsPanel
       config={videoOcrStore.config}
-      outputDir={videoOcrStore.outputDir}
       canStart={videoOcrStore.canStartOcr}
       isProcessing={videoOcrStore.isProcessing}
+      allCompleted={videoOcrStore.allCompleted}
+      filesWithSubtitles={videoOcrStore.filesWithSubtitles}
+      totalSubtitles={videoOcrStore.totalSubtitles}
       availableLanguages={videoOcrStore.availableLanguages}
       onConfigChange={(updates) => videoOcrStore.updateConfig(updates)}
-      onOutputDirChange={(dir) => videoOcrStore.setOutputDir(dir)}
       onStart={handleStartOcr}
       onCancel={handleCancelAll}
-      onSelectOutputDir={handleSelectOutputDir}
     />
   </div>
 </div>
@@ -466,5 +430,4 @@
   subtitles={resultDialogFile?.subtitles ?? []}
   videoName={resultDialogFile?.name}
   onClose={() => { resultDialogOpen = false; resultDialogFile = null; }}
-  onExport={handleExportSubtitles}
 />

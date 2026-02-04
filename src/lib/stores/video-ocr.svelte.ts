@@ -107,6 +107,16 @@ export const videoOcrStore = {
     return videoFiles.filter(f => f.subtitles.length > 0);
   },
 
+  get allCompleted(): boolean {
+    return videoFiles.length > 0 && 
+      videoFiles.every(f => f.status === 'completed' || f.status === 'error') &&
+      videoFiles.some(f => f.subtitles.length > 0);
+  },
+
+  get totalSubtitles(): number {
+    return videoFiles.reduce((sum, f) => sum + f.subtitles.length, 0);
+  },
+
   // -------------------------------------------------------------------------
   // Getters - Config
   // -------------------------------------------------------------------------
@@ -143,8 +153,7 @@ export const videoOcrStore = {
 
   get canStartOcr(): boolean {
     return videoFiles.some(f => f.status === 'ready' || f.status === 'completed') &&
-      !isProcessing &&
-      outputDir.length > 0;
+      !isProcessing;
   },
 
   isFileCancelled(id: string): boolean {

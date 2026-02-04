@@ -7,13 +7,14 @@
   import * as Select from '$lib/components/ui/select';
   import { Copy, Download, X } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
+  import { save } from '@tauri-apps/plugin-dialog';
+  import { invoke } from '@tauri-apps/api/core';
 
   interface OcrResultDialogProps {
     open: boolean;
     subtitles: OcrSubtitle[];
     videoName?: string;
     onClose: () => void;
-    onExport: (format: OcrOutputFormat) => void;
   }
 
   let {
@@ -21,10 +22,12 @@
     subtitles,
     videoName = 'Video',
     onClose,
-    onExport,
   }: OcrResultDialogProps = $props();
 
   let selectedFormat = $state<OcrOutputFormat>('srt');
+
+  // Get base name without extension
+  const baseName = $derived(videoName.replace(/\.[^/.]+$/, ''));
 
   function formatTime(ms: number): string {
     const hours = Math.floor(ms / 3_600_000);
@@ -46,8 +49,34 @@
     toast.success('Copied to clipboard');
   }
 
-  function handleExport() {
-    onExport(selectedFormat);
+  async function handleExport() {
+    if (subtitles.length === 0) return;
+
+    try {
+      // Open save dialog
+      const outputPath = await save({
+        title: 'Export subtitles',
+        defaultPath: `${baseName}.${selectedFormat}`,
+        filters: [{
+          name: OCR_OUTPUT_FORMATS.find(f => f.value === selectedFormat)?.label ?? 'Subtitle file',
+          extensions: [selectedFormat]
+        }]
+      });
+
+      if (!outputPath) return; // User cancelled
+
+      await invoke('export_ocr_subtitles', {
+        subtitles,
+        outputPath,
+        format: selectedFormat,
+      });
+
+      toast.success(`Exported to ${outputPath}`);
+      onClose();
+    } catch (error) {
+      console.error('Export failed:', error);
+      toast.error(error instanceof Error ? error.message : 'Export failed');
+    }
   }
 </script>
 

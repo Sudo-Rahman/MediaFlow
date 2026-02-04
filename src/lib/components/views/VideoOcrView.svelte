@@ -245,9 +245,10 @@
       videoOcrStore.setPhase(file.id, 'generating', 0, 1);
       
       const subtitles = await invoke<Array<{ id: string; text: string; startTime: number; endTime: number; confidence: number }>>('generate_subtitles_from_ocr', {
-        ocrResults,
-        confidenceThreshold: videoOcrStore.config.confidenceThreshold,
-        fps: videoOcrStore.config.frameRate,
+        fileId: file.id,
+        frameResults: ocrResults,
+        frameIntervalMs: Math.round(1000 / videoOcrStore.config.frameRate),
+        minConfidence: videoOcrStore.config.confidenceThreshold,
       });
       
       videoOcrStore.setSubtitles(file.id, subtitles);
@@ -434,16 +435,16 @@
   </div>
 
   <!-- Center Panel: Video Preview -->
-  <div class="flex-1 flex flex-col overflow-hidden p-4">
+  <div class="flex-1 flex flex-col overflow-hidden p-4 ">
     <VideoPreview 
       file={videoOcrStore.selectedFile}
       showSubtitles={videoOcrStore.config.showSubtitlePreview}
       onRegionChange={handleRegionChange}
-      class="flex-1"
+      class="flex-1 max-h-[calc(100vh-12rem)]"
     />
     
     <!-- Log Panel at bottom of center -->
-    <div class="mt-4">
+    <div class="pt-4 max-h-32">
       <OcrLogPanel 
         logs={videoOcrStore.logs}
         onClear={() => videoOcrStore.clearLogs()}

@@ -81,7 +81,7 @@
     "overflow-hidden transition-all",
     isExpanded ? "max-h-64" : "max-h-32"
   )}>
-    <ScrollArea class="h-full">
+    <div class="h-full overflow-auto">
       <div class="p-2 space-y-1">
         {#if displayLogs.length === 0}
           <p class="text-xs text-muted-foreground text-center py-4">
@@ -106,6 +106,6 @@
           {/each}
         {/if}
       </div>
-    </ScrollArea>
+    </div>
   </div>
 </div>

@@ -10,11 +10,9 @@
   import { open } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-  import { tempDir } from '@tauri-apps/api/path';
-  import { mkdir, exists } from '@tauri-apps/plugin-fs';
   import { toast } from 'svelte-sonner';
 
-  import type { OcrVideoFile, OcrRegion, OcrOutputFormat, OcrProgressEvent } from '$lib/types';
+  import type { OcrVideoFile, OcrRegion, OcrOutputFormat, OcrProgressEvent, OcrModelsStatus } from '$lib/types';
   import { VIDEO_EXTENSIONS } from '$lib/types';
   import { videoOcrStore } from '$lib/stores';
   import { logAndToast } from '$lib/utils/log-toast';
@@ -42,6 +40,20 @@
 
   // Initialize on mount
   onMount(async () => {
+    // Check OCR models status
+    if (!videoOcrStore.modelsChecked) {
+      try {
+        const status = await invoke<OcrModelsStatus>('check_ocr_models');
+        videoOcrStore.setModelsStatus(status);
+        
+        if (!status.installed) {
+          toast.warning('OCR models not found. Some languages may not be available.');
+        }
+      } catch (error) {
+        console.error('Failed to check OCR models:', error);
+      }
+    }
+
     // Set up event listener for OCR progress (includes transcoding phase)
     unlistenOcrProgress = await listen<OcrProgressEvent>(
       'ocr-progress',
@@ -198,24 +210,20 @@
     videoOcrStore.startProcessing(file.id);
     videoOcrStore.setFileStatus(file.id, 'extracting_frames');
     
-    const framesDir = `${await tempDir()}rsextractor_ocr_frames/${file.id}`;
+    let framesDir = '';
     
     try {
-      // Ensure frames directory exists
-      const framesDirExists = await exists(framesDir);
-      if (!framesDirExists) {
-        await mkdir(framesDir, { recursive: true });
-      }
-      
       // Extract frames
       videoOcrStore.setPhase(file.id, 'extracting', 0, 100);
       
-      const frameCount = await invoke<number>('extract_ocr_frames', {
-        inputPath: file.previewPath || file.path,
-        outputDir: framesDir,
+      const result = await invoke<[string, number]>('extract_ocr_frames', {
+        videoPath: file.previewPath || file.path,
+        fileId: file.id,
         fps: videoOcrStore.config.frameRate,
         region: file.ocrRegion ?? null,
       });
+      [framesDir] = result;
+      const frameCount = result[1];
       
       videoOcrStore.addLog('info', `Extracted ${frameCount} frames`, file.id);
       
@@ -450,6 +458,7 @@
       outputDir={videoOcrStore.outputDir}
       canStart={videoOcrStore.canStartOcr}
       isProcessing={videoOcrStore.isProcessing}
+      availableLanguages={videoOcrStore.availableLanguages}
       onConfigChange={(updates) => videoOcrStore.updateConfig(updates)}
       onOutputDirChange={(dir) => videoOcrStore.setOutputDir(dir)}
       onStart={handleStartOcr}

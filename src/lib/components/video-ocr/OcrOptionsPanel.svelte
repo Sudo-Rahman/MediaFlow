@@ -13,6 +13,7 @@
     outputDir: string;
     canStart: boolean;
     isProcessing: boolean;
+    availableLanguages?: string[];  // Languages with installed models
     onConfigChange: (updates: Partial<OcrConfig>) => void;
     onOutputDirChange: (dir: string) => void;
     onStart: () => void;
@@ -25,12 +26,21 @@
     outputDir,
     canStart,
     isProcessing,
+    availableLanguages = [],
     onConfigChange,
     onOutputDirChange,
     onStart,
     onCancel,
     onSelectOutputDir,
   }: OcrOptionsPanelProps = $props();
+
+  // Filter languages to only show those with installed models
+  // If no availableLanguages provided, show all (fallback)
+  const filteredLanguages = $derived(
+    availableLanguages.length > 0
+      ? OCR_LANGUAGES.filter(lang => availableLanguages.includes(lang.value))
+      : OCR_LANGUAGES
+  );
 
   function handleLanguageChange(value: string) {
     onConfigChange({ language: value as OcrLanguage });
@@ -61,10 +71,10 @@
     <Label>Language</Label>
     <Select.Root type="single" value={config.language} onValueChange={handleLanguageChange}>
       <Select.Trigger class="w-full">
-        {OCR_LANGUAGES.find(l => l.value === config.language)?.label ?? 'Select language'}
+        {filteredLanguages.find(l => l.value === config.language)?.label ?? 'Select language'}
       </Select.Trigger>
       <Select.Content>
-        {#each OCR_LANGUAGES as lang}
+        {#each filteredLanguages as lang}
           <Select.Item value={lang.value}>
             <span>{lang.label}</span>
             <span class="text-xs text-muted-foreground ml-2">{lang.description}</span>
@@ -72,6 +82,11 @@
         {/each}
       </Select.Content>
     </Select.Root>
+    {#if availableLanguages.length > 0 && availableLanguages.length < OCR_LANGUAGES.length}
+      <p class="text-xs text-muted-foreground">
+        {availableLanguages.length} of {OCR_LANGUAGES.length} language models installed
+      </p>
+    {/if}
   </div>
 
   <!-- Frame Rate -->

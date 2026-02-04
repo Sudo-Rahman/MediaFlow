@@ -1300,18 +1300,16 @@ async fn extract_ocr_frames(
         tokio::spawn(async move {
             let reader = BufReader::new(&mut stdout);
             let mut lines = reader.lines();
-            let mut frame_count = 0u32;
             
             while let Ok(Some(line)) = lines.next_line().await {
                 if line.starts_with("frame=") {
                     if let Ok(frame) = line.trim_start_matches("frame=").trim().parse::<u32>() {
-                        frame_count = frame;
                         let _ = app_clone.emit("ocr-progress", serde_json::json!({
                             "fileId": file_id_clone,
                             "phase": "extracting",
-                            "current": frame_count,
+                            "current": frame,
                             "total": estimated_frames,
-                            "message": format!("Extracting frame {}...", frame_count)
+                            "message": format!("Extracting frame {}...", frame)
                         }));
                     }
                 }

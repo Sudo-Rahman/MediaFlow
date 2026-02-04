@@ -346,10 +346,6 @@ export const videoOcrStore = {
     outputDir = dir;
   },
 
-  toggleSubtitlePreview() {
-    config = { ...config, showSubtitlePreview: !config.showSubtitlePreview };
-  },
-
   toggleGpu() {
     config = { ...config, useGpu: !config.useGpu };
   },

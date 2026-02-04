@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { OcrConfig, OcrLanguage, OcrOutputFormat } from '$lib/types/video-ocr';
-  import { OCR_LANGUAGES, OCR_OUTPUT_FORMATS, DEFAULT_OCR_CONFIG } from '$lib/types/video-ocr';
+  import { OCR_LANGUAGES, OCR_OUTPUT_FORMATS } from '$lib/types/video-ocr';
   import { Button } from '$lib/components/ui/button';
   import { Label } from '$lib/components/ui/label';
   import { Switch } from '$lib/components/ui/switch';
@@ -14,6 +14,7 @@
     canStart: boolean;
     isProcessing: boolean;
     availableLanguages?: string[];  // Languages with installed models
+    maxThreads?: number;            // Max available threads
     onConfigChange: (updates: Partial<OcrConfig>) => void;
     onOutputDirChange: (dir: string) => void;
     onStart: () => void;
@@ -27,6 +28,7 @@
     canStart,
     isProcessing,
     availableLanguages = [],
+    maxThreads = navigator.hardwareConcurrency || 4,
     onConfigChange,
     onOutputDirChange,
     onStart,
@@ -56,6 +58,10 @@
 
   function handleConfidenceChange(value: number) {
     onConfigChange({ confidenceThreshold: value / 100 });
+  }
+
+  function handleThreadCountChange(value: number) {
+    onConfigChange({ threadCount: value });
   }
 </script>
 
@@ -142,16 +148,27 @@
     </Select.Root>
   </div>
 
-  <!-- Options Toggles -->
-  <div class="space-y-3">
-    <div class="flex items-center justify-between">
-      <Label>Show subtitle preview</Label>
-      <Switch
-        checked={config.showSubtitlePreview}
-        onCheckedChange={(checked) => onConfigChange({ showSubtitlePreview: checked })}
-      />
+  <!-- Thread Count -->
+  <div class="space-y-2">
+    <div class="flex justify-between">
+      <Label>Threads</Label>
+      <span class="text-sm text-muted-foreground">{config.threadCount} / {maxThreads}</span>
     </div>
+    <Slider
+      type="single"
+      value={config.threadCount}
+      onValueChange={handleThreadCountChange}
+      min={1}
+      max={maxThreads}
+      step={1}
+    />
+    <p class="text-xs text-muted-foreground">
+      More threads = faster, but uses more CPU
+    </p>
+  </div>
 
+  <!-- GPU Acceleration -->
+  <div class="space-y-3">
     <div class="flex items-center justify-between">
       <Label>Use GPU acceleration</Label>
       <Switch

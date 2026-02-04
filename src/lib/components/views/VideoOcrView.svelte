@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { Trash2, Upload, X } from '@lucide/svelte';
+  import { Trash2, Upload } from '@lucide/svelte';
   export interface VideoOcrViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -231,11 +231,13 @@
       videoOcrStore.setFileStatus(file.id, 'ocr_processing');
       videoOcrStore.setPhase(file.id, 'ocr', 0, frameCount);
       
-      const ocrResults = await invoke<Array<{ frameIndex: number; timeMs: number; texts: Array<{ text: string; confidence: number }> }>>('perform_ocr', {
+      const ocrResults = await invoke<Array<{ frameIndex: number; timeMs: number; text: string; confidence: number }>>('perform_ocr', {
         framesDir,
         fileId: file.id,
         language: videoOcrStore.config.language,
         frameIntervalMs: Math.round(1000 / videoOcrStore.config.frameRate),
+        useGpu: videoOcrStore.config.useGpu,
+        threadCount: videoOcrStore.config.threadCount,
       });
       
       videoOcrStore.addLog('info', `OCR processed ${ocrResults.length} frames with text`, file.id);
@@ -375,17 +377,7 @@
     <div class="p-3 border-b shrink-0 flex items-center justify-between">
       <h2 class="font-semibold">Video Files ({videoOcrStore.videoFiles.length})</h2>
       <div class="flex items-center gap-1">
-        {#if videoOcrStore.isProcessing}
-          <Button
-            variant="destructive"
-            size="sm"
-            onclick={handleCancelAll}
-            title="Cancel all processing"
-          >
-            <X class="size-4 mr-1" />
-            Cancel
-          </Button>
-        {:else}
+        {#if !videoOcrStore.isProcessing}
           {#if videoOcrStore.videoFiles.length > 0}
             <Button
               variant="ghost"
@@ -438,7 +430,6 @@
   <div class="flex-1 flex flex-col overflow-hidden p-4 ">
     <VideoPreview 
       file={videoOcrStore.selectedFile}
-      showSubtitles={videoOcrStore.config.showSubtitlePreview}
       onRegionChange={handleRegionChange}
       class="flex-1 max-h-[calc(100vh-12rem)]"
     />

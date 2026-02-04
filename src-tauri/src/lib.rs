@@ -884,11 +884,6 @@ const VIDEO_PREVIEW_TRANSCODE_TIMEOUT: Duration = Duration::from_secs(600);
 /// Timeout for frame extraction (30 minutes for long videos)
 const FRAME_EXTRACTION_TIMEOUT: Duration = Duration::from_secs(1800);
 
-/// Global OCR engine storage keyed by language
-/// Using Arc<Mutex<>> for thread-safe lazy initialization
-static OCR_ENGINES: LazyLock<Mutex<HashMap<String, Arc<OcrEngine>>>> = 
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
 /// OCR model paths configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrModelPaths {
@@ -935,19 +930,14 @@ fn get_charset_for_language(language: &str) -> &'static str {
     }
 }
 
-/// Get or create an OCR engine for the given language
-fn get_or_create_ocr_engine(
+/// Create an OCR engine for the given language with specified options
+/// Note: Not cached since GPU/thread options may vary between calls
+fn create_ocr_engine(
     models_dir: &Path,
     language: &str,
+    use_gpu: bool,
+    thread_count: u32,
 ) -> Result<Arc<OcrEngine>, String> {
-    let mut engines = OCR_ENGINES.lock()
-        .map_err(|e| format!("Failed to lock OCR engines: {}", e))?;
-    
-    // Check if engine already exists for this language
-    if let Some(engine) = engines.get(language) {
-        return Ok(Arc::clone(engine));
-    }
-    
     // Build model paths
     let det_path = models_dir.join(OCR_DET_MODEL);
     let rec_model = get_rec_model_for_language(language);
@@ -975,15 +965,25 @@ fn get_or_create_ocr_engine(
         ));
     }
     
-    // Create OCR engine config with GPU acceleration on macOS
-    #[cfg(target_os = "macos")]
-    let config = OcrEngineConfig::new()
-        .with_backend(Backend::Metal)
-        .with_threads(4);
-    
-    #[cfg(not(target_os = "macos"))]
-    let config = OcrEngineConfig::new()
-        .with_threads(4);
+    // Create OCR engine config based on GPU option
+    let config = if use_gpu {
+        #[cfg(target_os = "macos")]
+        {
+            OcrEngineConfig::new()
+                .with_backend(Backend::Metal)
+                .with_threads(thread_count as i32)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            OcrEngineConfig::new()
+                .with_backend(Backend::Vulkan)
+                .with_threads(thread_count as i32)
+        }
+    } else {
+        // CPU-only mode: no GPU backend
+        OcrEngineConfig::new()
+            .with_threads(thread_count as i32)
+    };
     
     // Create the engine
     let engine = OcrEngine::new(
@@ -993,10 +993,7 @@ fn get_or_create_ocr_engine(
         Some(config),
     ).map_err(|e| format!("Failed to create OCR engine: {}", e))?;
     
-    let engine = Arc::new(engine);
-    engines.insert(language.to_string(), Arc::clone(&engine));
-    
-    Ok(engine)
+    Ok(Arc::new(engine))
 }
 
 /// Get the OCR models directory, checking app resources first, then user config
@@ -1366,7 +1363,7 @@ async fn extract_ocr_frames(
     Ok((temp_dir.to_string_lossy().to_string(), frame_count))
 }
 
-/// Perform OCR on extracted frames using PP-OCRv5
+/// Perform OCR on extracted frames using PP-OCRv5 with batch processing
 #[tauri::command]
 async fn perform_ocr(
     app: tauri::AppHandle,
@@ -1374,14 +1371,23 @@ async fn perform_ocr(
     file_id: String,
     language: String,
     frame_interval_ms: u32,
+    use_gpu: bool,
+    thread_count: u32,
 ) -> Result<Vec<OcrFrameResult>, String> {
     validate_directory_path(&frames_dir)?;
     
     // Register this OCR operation for cancellation support
-    // Use 0 as PID since this is not a subprocess
     if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
         guard.insert(file_id.clone(), 0);
     }
+    
+    // Helper to cleanup on exit
+    let file_id_cleanup = file_id.clone();
+    let cleanup = || {
+        if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
+            guard.remove(&file_id_cleanup);
+        }
+    };
     
     // Get OCR models directory
     let models_dir = get_ocr_models_dir(&app)?;
@@ -1403,8 +1409,12 @@ async fn perform_ocr(
     let total_frames = frames.len() as u32;
     
     if total_frames == 0 {
+        cleanup();
         return Ok(Vec::new());
     }
+    
+    // Calculate batch size: 1% of frames, min 1, max 100
+    let batch_size = ((total_frames as f64 * 0.01).ceil() as usize).clamp(1, 100);
     
     // Emit start - loading engine
     let _ = app.emit("ocr-progress", serde_json::json!({
@@ -1415,16 +1425,18 @@ async fn perform_ocr(
         "message": "Loading OCR engine..."
     }));
     
-    // Get or create OCR engine for the language
-    // This is done in a blocking context since OcrEngine creation is CPU-intensive
+    // Create OCR engine with specified options
     let engine = {
         let models_dir_clone = models_dir.clone();
         let language_clone = language.clone();
         tokio::task::spawn_blocking(move || {
-            get_or_create_ocr_engine(&models_dir_clone, &language_clone)
+            create_ocr_engine(&models_dir_clone, &language_clone, use_gpu, thread_count)
         })
         .await
-        .map_err(|e| format!("Failed to spawn OCR engine task: {}", e))??
+        .map_err(|e| {
+            cleanup();
+            format!("Failed to spawn OCR engine task: {}", e)
+        })??
     };
     
     // Emit start - processing
@@ -1433,81 +1445,114 @@ async fn perform_ocr(
         "phase": "ocr",
         "current": 0,
         "total": total_frames,
-        "message": "Starting OCR processing..."
+        "message": format!("Processing {} frames in batches of {}...", total_frames, batch_size)
     }));
     
-    let mut results = Vec::new();
+    let mut results = Vec::with_capacity(frames.len());
+    let frame_paths: Vec<_> = frames.iter().map(|f| f.path()).collect();
     
-    for (i, frame) in frames.iter().enumerate() {
-        let frame_index = i as u32;
-        let time_ms = (frame_index as u64) * (frame_interval_ms as u64);
-        let frame_path = frame.path();
-        
-        // Check for cancellation before processing
-        if let Ok(guard) = OCR_PROCESS_IDS.lock() {
-            if !guard.contains_key(&file_id) {
-                return Err("OCR cancelled".to_string());
+    // Process frames in batches
+    for (batch_idx, batch) in frame_paths.chunks(batch_size).enumerate() {
+        // Check for cancellation before processing batch
+        let is_cancelled = {
+            if let Ok(guard) = OCR_PROCESS_IDS.lock() {
+                !guard.contains_key(&file_id)
+            } else {
+                false
             }
+        };
+        
+        if is_cancelled {
+            cleanup();
+            return Err("OCR cancelled".to_string());
         }
         
-        // Emit progress
+        let batch_start_idx = batch_idx * batch_size;
+        let batch_end_idx = batch_start_idx + batch.len();
+        
+        // Emit progress for batch start
         let _ = app.emit("ocr-progress", serde_json::json!({
             "fileId": file_id,
             "phase": "ocr",
-            "current": frame_index + 1,
+            "current": batch_start_idx,
             "total": total_frames,
-            "message": format!("Processing frame {}/{}...", frame_index + 1, total_frames)
+            "message": format!("Processing frames {}-{}/{}...", batch_start_idx + 1, batch_end_idx, total_frames)
         }));
         
-        // Run OCR on this frame in a blocking task
+        // Process batch in blocking task
         let engine_clone = Arc::clone(&engine);
-        let frame_path_clone = frame_path.clone();
+        let batch_paths: Vec<_> = batch.to_vec();
+        let frame_interval = frame_interval_ms;
+        let batch_start = batch_start_idx as u32;
         
-        let ocr_result = tokio::task::spawn_blocking(move || {
-            // Load the image
-            let image = image::open(&frame_path_clone)
-                .map_err(|e| format!("Failed to open frame {}: {}", frame_path_clone.display(), e))?;
+        let batch_results = tokio::task::spawn_blocking(move || {
+            let mut batch_results = Vec::with_capacity(batch_paths.len());
             
-            // Run OCR detection and recognition
-            let ocr_results = engine_clone.recognize(&image)
-                .map_err(|e| format!("OCR failed on frame {}: {}", frame_path_clone.display(), e))?;
+            for (i, frame_path) in batch_paths.iter().enumerate() {
+                let frame_index = batch_start + i as u32;
+                let time_ms = (frame_index as u64) * (frame_interval as u64);
+                
+                // Load the image
+                let image = match image::open(frame_path) {
+                    Ok(img) => img,
+                    Err(e) => {
+                        // Skip frames that fail to load
+                        eprintln!("Failed to open frame {}: {}", frame_path.display(), e);
+                        continue;
+                    }
+                };
+                
+                // Run OCR detection and recognition
+                let ocr_results = match engine_clone.recognize(&image) {
+                    Ok(results) => results,
+                    Err(e) => {
+                        eprintln!("OCR failed on frame {}: {}", frame_path.display(), e);
+                        continue;
+                    }
+                };
+                
+                // Combine all detected text from the frame
+                // Sort results by vertical position (top to bottom) for subtitle ordering
+                let mut sorted_results: Vec<_> = ocr_results.iter().collect();
+                sorted_results.sort_by(|a, b| {
+                    let a_top = a.bbox.rect.top();
+                    let b_top = b.bbox.rect.top();
+                    a_top.partial_cmp(&b_top).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                
+                // Combine text from all detected regions
+                let combined_text: String = sorted_results
+                    .iter()
+                    .map(|r| r.text.trim())
+                    .filter(|t| !t.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                
+                // Calculate average confidence
+                let avg_confidence = if sorted_results.is_empty() {
+                    0.0
+                } else {
+                    sorted_results.iter().map(|r| r.confidence).sum::<f32>() as f64 
+                        / sorted_results.len() as f64
+                };
+                
+                batch_results.push(OcrFrameResult {
+                    frame_index,
+                    time_ms,
+                    text: combined_text,
+                    confidence: avg_confidence,
+                });
+            }
             
-            // Combine all detected text from the frame
-            // Sort results by vertical position (top to bottom) for subtitle ordering
-            let mut sorted_results: Vec<_> = ocr_results.iter().collect();
-            sorted_results.sort_by(|a, b| {
-                let a_top = a.bbox.rect.top();
-                let b_top = b.bbox.rect.top();
-                a_top.partial_cmp(&b_top).unwrap_or(std::cmp::Ordering::Equal)
-            });
-            
-            // Combine text from all detected regions
-            let combined_text: String = sorted_results
-                .iter()
-                .map(|r| r.text.trim())
-                .filter(|t| !t.is_empty())
-                .collect::<Vec<_>>()
-                .join(" ");
-            
-            // Calculate average confidence
-            let avg_confidence = if sorted_results.is_empty() {
-                0.0
-            } else {
-                sorted_results.iter().map(|r| r.confidence).sum::<f32>() as f64 
-                    / sorted_results.len() as f64
-            };
-            
-            Ok::<(String, f64), String>((combined_text, avg_confidence))
+            batch_results
         })
         .await
-        .map_err(|e| format!("OCR task failed: {}", e))??;
+        .map_err(|e| {
+            cleanup();
+            format!("OCR batch task failed: {}", e)
+        })?;
         
-        results.push(OcrFrameResult {
-            frame_index,
-            time_ms,
-            text: ocr_result.0,
-            confidence: ocr_result.1,
-        });
+        results.extend(batch_results);
     }
     
     // Emit completion
@@ -1520,9 +1565,7 @@ async fn perform_ocr(
     }));
     
     // Clean up cancellation tracking
-    if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
-        guard.remove(&file_id);
-    }
+    cleanup();
     
     Ok(results)
 }

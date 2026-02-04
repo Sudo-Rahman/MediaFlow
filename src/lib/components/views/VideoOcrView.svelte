@@ -235,7 +235,7 @@
         framesDir,
         fileId: file.id,
         language: videoOcrStore.config.language,
-        useGpu: videoOcrStore.config.useGpu,
+        frameIntervalMs: Math.round(1000 / videoOcrStore.config.frameRate),
       });
       
       videoOcrStore.addLog('info', `OCR processed ${ocrResults.length} frames with text`, file.id);

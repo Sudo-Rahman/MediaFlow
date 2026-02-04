@@ -391,18 +391,19 @@
   </div>
 
   <!-- Center Panel: Video Preview -->
-  <div class="flex-1 flex flex-col overflow-hidden p-4 ">
+  <div class="flex-1 flex flex-col overflow-hidden p-4">
     <VideoPreview 
       file={videoOcrStore.selectedFile}
       onRegionChange={handleRegionChange}
-      class="flex-1 max-h-[calc(100vh-12rem)]"
+      class="shrink-0"
     />
     
     <!-- Log Panel at bottom of center -->
-    <div class="pt-4 max-h-32">
+    <div class="pt-4 flex-1 min-h-36 flex flex-col overflow-hidden">
       <OcrLogPanel 
         logs={videoOcrStore.logs}
         onClear={() => videoOcrStore.clearLogs()}
+        class="flex-1 flex flex-col"
       />
     </div>
   </div>

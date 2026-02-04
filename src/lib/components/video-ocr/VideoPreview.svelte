@@ -148,23 +148,23 @@
   }
 </script>
 
-<div class={cn("relative flex flex-col h-full", className)}>
-  <!-- Video container -->
-  <div bind:this={containerEl} class="relative flex-1 bg-black rounded-lg overflow-hidden">
+<div class={cn("relative flex flex-col", className)}>
+  <!-- Video container - maintains aspect ratio -->
+  <div bind:this={containerEl} class="relative bg-black rounded-lg overflow-hidden" style="aspect-ratio: 16/9;">
     {#if videoSrc}
       <video
         bind:this={videoEl}
         src={videoSrc}
         class="w-full h-full object-contain"
-        controls
+        controls={!isRegionMode}
         ontimeupdate={handleTimeUpdate}
         onloadedmetadata={updateVideoBounds}
         onresize={updateVideoBounds}
       >
       </video>
 
-      <!-- Subtitle overlay -->
-      {#if showSubtitles && currentSubtitle}
+      <!-- Subtitle overlay - hidden in region mode -->
+      {#if showSubtitles && currentSubtitle && !isRegionMode}
         <SubtitleOverlay subtitle={currentSubtitle} />
       {/if}
 

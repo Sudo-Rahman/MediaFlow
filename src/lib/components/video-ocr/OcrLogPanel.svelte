@@ -17,8 +17,6 @@
     class: className = '',
   }: OcrLogPanelProps = $props();
 
-  let isExpanded = $state(false);
-
   function getIcon(level: OcrLogEntry['level']) {
     switch (level) {
       case 'error':
@@ -40,10 +38,10 @@
   }
 
   const errorCount = $derived(logs.filter(l => l.level === 'error').length);
-  const displayLogs = $derived(isExpanded ? logs : logs.slice(-5));
+  const displayLogs = $derived(logs);
 </script>
 
-<div class={cn("border rounded-lg", className)}>
+<div class={cn("border rounded-lg flex flex-col", className)}>
   <!-- Header -->
   <div class="flex items-center justify-between px-3 py-2 border-b bg-muted/50">
     <div
@@ -71,7 +69,7 @@
   
   <!-- Log entries -->
   <div class={cn(
-    "overflow-auto h-12 transition-all",
+    "overflow-auto flex-1 min-h-0 transition-all",
   )}>
       <div class="p-2 space-y-1">
         {#if displayLogs.length === 0}

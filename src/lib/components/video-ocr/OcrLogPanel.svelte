@@ -1,8 +1,7 @@
 <script lang="ts">
   import type { OcrLogEntry } from '$lib/types/video-ocr';
-  import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { Button } from '$lib/components/ui/button';
-  import { AlertCircle, Info, AlertTriangle, Trash2, ChevronDown, ChevronUp } from '@lucide/svelte';
+  import { AlertCircle, Info, AlertTriangle, Trash2 } from '@lucide/svelte';
   import { cn } from '$lib/utils';
 
   interface OcrLogPanelProps {
@@ -41,7 +40,7 @@
   const displayLogs = $derived(logs);
 </script>
 
-<div class={cn("border rounded-lg flex flex-col", className)}>
+<div class={cn("border rounded-lg flex flex-col min-h-0", className)}>
   <!-- Header -->
   <div class="flex items-center justify-between px-3 py-2 border-b bg-muted/50">
     <div
@@ -69,7 +68,7 @@
   
   <!-- Log entries -->
   <div class={cn(
-    "overflow-auto flex-1 min-h-0 transition-all",
+    "overflow-y-auto flex-1 min-h-0 transition-all",
   )}>
       <div class="p-2 space-y-1">
         {#if displayLogs.length === 0}

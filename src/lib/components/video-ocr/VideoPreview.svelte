@@ -148,9 +148,9 @@
   }
 </script>
 
-<div class={cn("relative flex flex-col", className)}>
-  <!-- Video container - maintains aspect ratio -->
-  <div bind:this={containerEl} class="relative bg-black rounded-lg overflow-hidden" style="aspect-ratio: 16/9;">
+<div class={cn("relative flex flex-col min-h-0 h-full", className)}>
+  <!-- Video container - scales to available space -->
+  <div bind:this={containerEl} class="relative bg-black rounded-lg overflow-hidden flex-1 min-h-0">
     {#if videoSrc}
       <video
         bind:this={videoEl}

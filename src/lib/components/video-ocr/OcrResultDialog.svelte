@@ -29,7 +29,7 @@
   // Get base name without extension
   const baseName = $derived(videoName.replace(/\.[^/.]+$/, ''));
 
-  function formatTime(ms: number): string {
+  function formatSrtTime(ms: number): string {
     const hours = Math.floor(ms / 3_600_000);
     const minutes = Math.floor((ms % 3_600_000) / 60_000);
     const seconds = Math.floor((ms % 60_000) / 1000);
@@ -37,15 +37,39 @@
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(millis).padStart(3, '0')}`;
   }
 
-  function generateSrt(): string {
-    return subtitles.map((sub, i) => 
-      `${i + 1}\n${formatTime(sub.startTime)} --> ${formatTime(sub.endTime)}\n${sub.text}\n`
+  function formatVttTime(ms: number): string {
+    const hours = Math.floor(ms / 3_600_000);
+    const minutes = Math.floor((ms % 3_600_000) / 60_000);
+    const seconds = Math.floor((ms % 60_000) / 1000);
+    const millis = ms % 1000;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
+  }
+
+  function buildFormattedPreview(format: OcrOutputFormat, items: OcrSubtitle[]): string {
+    if (items.length === 0) return '';
+
+    if (format === 'txt') {
+      return items.map((sub) => sub.text).join('\n');
+    }
+
+    if (format === 'vtt') {
+      const body = items.map((sub) => 
+        `${formatVttTime(sub.startTime)} --> ${formatVttTime(sub.endTime)}\n${sub.text}\n`
+      ).join('\n');
+      return `WEBVTT\n\n${body}`;
+    }
+
+    // Default: SRT
+    return items.map((sub, i) => 
+      `${i + 1}\n${formatSrtTime(sub.startTime)} --> ${formatSrtTime(sub.endTime)}\n${sub.text}\n`
     ).join('\n');
   }
 
+  const previewText = $derived.by(() => buildFormattedPreview(selectedFormat, subtitles));
+
   async function copyToClipboard() {
-    const text = generateSrt();
-    await navigator.clipboard.writeText(text);
+    if (!previewText) return;
+    await navigator.clipboard.writeText(previewText);
     toast.success('Copied to clipboard');
   }
 
@@ -89,28 +113,15 @@
       </Dialog.Description>
     </Dialog.Header>
 
-    <!-- Subtitle list -->
+    <!-- Subtitle preview -->
     <ScrollArea class="flex-1 h-[calc(80vh-200px)] border rounded-lg">
-      <div class="p-4 space-y-3">
+      <div class="p-4">
         {#if subtitles.length === 0}
           <p class="text-center text-muted-foreground py-8">
             No subtitles detected in this video
           </p>
         {:else}
-          {#each subtitles as sub, i (sub.id)}
-            <div class="flex gap-3 p-2 rounded hover:bg-muted/50">
-              <span class="text-xs text-muted-foreground shrink-0 w-8 pt-1">
-                {i + 1}
-              </span>
-              <div class="flex-1 min-w-0">
-                <p class="text-sm">{sub.text}</p>
-                <p class="text-xs text-muted-foreground mt-1">
-                  {formatTime(sub.startTime)} → {formatTime(sub.endTime)}
-                  <span class="ml-2">({Math.round(sub.confidence * 100)}% confidence)</span>
-                </p>
-              </div>
-            </div>
-          {/each}
+          <pre class="font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">{previewText}</pre>
         {/if}
       </div>
     </ScrollArea>
@@ -138,7 +149,7 @@
       <div class="flex items-center gap-2 pl-2">
         <Button variant="outline" onclick={copyToClipboard} disabled={subtitles.length === 0}>
           <Copy class="size-4 mr-2" />
-          Copy SRT
+          Copy {selectedFormat.toUpperCase()}
         </Button>
         
         <Button variant="ghost" onclick={onClose}>

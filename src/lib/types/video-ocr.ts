@@ -110,6 +110,13 @@ export interface OcrConfig {
   useGpu: boolean;                // Use GPU acceleration
   confidenceThreshold: number;    // Min confidence to keep (0-1)
   threadCount: number;            // Number of threads for OCR processing
+
+  // Subtitle cleanup / stabilization
+  mergeSimilar: boolean;          // Merge similar consecutive subtitles (recommended)
+  similarityThreshold: number;    // Similarity threshold for merging (0-1)
+  maxGapMs: number;               // Max gap to merge (ms)
+  minCueDurationMs: number;       // Minimum cue duration (ms) for stabilization heuristics
+  filterUrlLike: boolean;         // Filter URL/domain-like watermarks
 }
 
 export type OcrOutputFormat = 'srt' | 'vtt' | 'txt';
@@ -128,6 +135,12 @@ export const DEFAULT_OCR_CONFIG: OcrConfig = {
   useGpu: true,
   confidenceThreshold: 0.5,
   threadCount: Math.max(1, Math.floor((navigator.hardwareConcurrency || 4) * 2 / 3)),
+
+  mergeSimilar: true,
+  similarityThreshold: 0.92,
+  maxGapMs: 250,
+  minCueDurationMs: 500,
+  filterUrlLike: true,
 };
 
 // ============================================================================

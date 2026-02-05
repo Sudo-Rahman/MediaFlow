@@ -1,17 +1,18 @@
 <script lang="ts">
+  import { toast } from 'svelte-sonner';
+  import { join } from '@tauri-apps/api/path';
+  import { invoke } from '@tauri-apps/api/core';
+  import { open } from '@tauri-apps/plugin-dialog';
+  import { CheckCircle, Download, FolderOpen, Loader2, Play, Settings, Square } from '@lucide/svelte';
+
   import type { OcrConfig, OcrLanguage, OcrOutputFormat, OcrVideoFile } from '$lib/types/video-ocr';
   import { OCR_LANGUAGES, OCR_OUTPUT_FORMATS } from '$lib/types/video-ocr';
   import { Button } from '$lib/components/ui/button';
-  import { Label } from '$lib/components/ui/label';
-  import { Switch } from '$lib/components/ui/switch';
   import { Input } from '$lib/components/ui/input';
+  import { Label } from '$lib/components/ui/label';
   import * as Select from '$lib/components/ui/select';
   import { Slider } from '$lib/components/ui/slider';
-  import { Play, Square, Settings, Download, FolderOpen, CheckCircle, Loader2 } from '@lucide/svelte';
-  import { open } from '@tauri-apps/plugin-dialog';
-  import { invoke } from '@tauri-apps/api/core';
-  import { join } from '@tauri-apps/api/path';
-  import { toast } from 'svelte-sonner';
+  import { Switch } from '$lib/components/ui/switch';
 
   interface OcrOptionsPanelProps {
     config: OcrConfig;
@@ -74,6 +75,18 @@
 
   function handleThreadCountChange(value: number) {
     onConfigChange({ threadCount: value });
+  }
+
+  function handleSimilarityThresholdChange(value: number) {
+    onConfigChange({ similarityThreshold: value / 100 });
+  }
+
+  function handleMaxGapChange(value: number) {
+    onConfigChange({ maxGapMs: value });
+  }
+
+  function handleMinCueDurationChange(value: number) {
+    onConfigChange({ minCueDurationMs: value });
   }
 
   async function handleBrowseExportDir() {
@@ -220,6 +233,85 @@
         checked={config.useGpu}
         onCheckedChange={(checked) => onConfigChange({ useGpu: checked })}
       />
+    </div>
+  </div>
+
+  <!-- Advanced Cleanup -->
+  <div class="pt-4 border-t space-y-4">
+    <h4 class="text-sm font-medium">Advanced Cleanup</h4>
+
+    <div class="space-y-3">
+      <div class="flex items-center justify-between">
+        <Label>Merge similar subtitles</Label>
+        <Switch
+          checked={config.mergeSimilar}
+          onCheckedChange={(checked) => onConfigChange({ mergeSimilar: checked })}
+        />
+      </div>
+
+      <div class="space-y-2">
+        <div class="flex justify-between">
+          <Label>Similarity threshold</Label>
+          <span class="text-sm text-muted-foreground">{Math.round(config.similarityThreshold * 100)}%</span>
+        </div>
+        <Slider
+          type="single"
+          value={Math.round(config.similarityThreshold * 100)}
+          onValueChange={handleSimilarityThresholdChange}
+          min={85}
+          max={98}
+          step={1}
+          disabled={!config.mergeSimilar}
+        />
+        <p class="text-xs text-muted-foreground">
+          Higher = stricter merging
+        </p>
+      </div>
+
+      <div class="space-y-2">
+        <div class="flex justify-between">
+          <Label>Max gap to merge</Label>
+          <span class="text-sm text-muted-foreground">{config.maxGapMs} ms</span>
+        </div>
+        <Slider
+          type="single"
+          value={config.maxGapMs}
+          onValueChange={handleMaxGapChange}
+          min={0}
+          max={1000}
+          step={50}
+          disabled={!config.mergeSimilar}
+        />
+        <p class="text-xs text-muted-foreground">
+          Bridge brief OCR dropouts
+        </p>
+      </div>
+
+      <div class="space-y-2">
+        <div class="flex justify-between">
+          <Label>Minimum cue duration</Label>
+          <span class="text-sm text-muted-foreground">{config.minCueDurationMs} ms</span>
+        </div>
+        <Slider
+          type="single"
+          value={config.minCueDurationMs}
+          onValueChange={handleMinCueDurationChange}
+          min={0}
+          max={2000}
+          step={50}
+        />
+        <p class="text-xs text-muted-foreground">
+          Helps reduce micro-cues
+        </p>
+      </div>
+
+      <div class="flex items-center justify-between">
+        <Label>Filter URL-like watermarks</Label>
+        <Switch
+          checked={config.filterUrlLike}
+          onCheckedChange={(checked) => onConfigChange({ filterUrlLike: checked })}
+        />
+      </div>
     </div>
   </div>
 

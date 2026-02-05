@@ -23,3 +23,6 @@ export function OS(): OSType {
 
 	return "Unknown";
 }
+
+export { analyzeOcrSubtitles, formatOcrSubtitleAnalysis } from "./utils/ocr-subtitle-analysis";
+export type { OcrSubtitleAnalysis } from "./utils/ocr-subtitle-analysis";

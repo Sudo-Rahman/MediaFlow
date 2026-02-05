@@ -15,6 +15,7 @@
   import type { OcrVideoFile, OcrRegion, OcrProgressEvent, OcrModelsStatus } from '$lib/types';
   import { VIDEO_EXTENSIONS } from '$lib/types';
   import { videoOcrStore } from '$lib/stores';
+  import { analyzeOcrSubtitles, formatOcrSubtitleAnalysis } from '$lib/utils';
   import { logAndToast } from '$lib/utils/log-toast';
   import { scanFile } from '$lib/services/ffprobe';
 
@@ -224,7 +225,7 @@
         framesDir,
         fileId: file.id,
         language: videoOcrStore.config.language,
-        frameIntervalMs: Math.round(1000 / videoOcrStore.config.frameRate),
+        fps: videoOcrStore.config.frameRate,
         useGpu: videoOcrStore.config.useGpu,
         numWorkers: videoOcrStore.config.threadCount,
       });
@@ -238,12 +239,22 @@
       const subtitles = await invoke<Array<{ id: string; text: string; startTime: number; endTime: number; confidence: number }>>('generate_subtitles_from_ocr', {
         fileId: file.id,
         frameResults: ocrResults,
-        frameIntervalMs: Math.round(1000 / videoOcrStore.config.frameRate),
+        fps: videoOcrStore.config.frameRate,
         minConfidence: videoOcrStore.config.confidenceThreshold,
+        cleanup: {
+          mergeSimilar: videoOcrStore.config.mergeSimilar,
+          similarityThreshold: videoOcrStore.config.similarityThreshold,
+          maxGapMs: videoOcrStore.config.maxGapMs,
+          minCueDurationMs: videoOcrStore.config.minCueDurationMs,
+          filterUrlLike: videoOcrStore.config.filterUrlLike,
+        }
       });
       
       videoOcrStore.setSubtitles(file.id, subtitles);
       videoOcrStore.addLog('info', `Generated ${subtitles.length} subtitles`, file.id);
+
+      const analysis = analyzeOcrSubtitles(subtitles);
+      videoOcrStore.addLog('info', formatOcrSubtitleAnalysis(analysis), file.id);
       
       // Clean up frames directory
       await invoke('cleanup_ocr_frames', { framesDir });

@@ -14,7 +14,7 @@ import type {
   OcrLogEntry,
   OcrModelsStatus,
 } from '$lib/types';
-import { DEFAULT_OCR_CONFIG } from '$lib/types';
+import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_REGION } from '$lib/types';
 
 // ============================================================================
 // STATE
@@ -67,6 +67,7 @@ function createEmptyVideoFile(path: string, id?: string): OcrVideoFile {
     name: getFileName(path),
     size: 0,
     status: 'pending',
+    ocrRegion: { ...DEFAULT_OCR_REGION },
     subtitles: [],
   };
 }

@@ -253,5 +253,8 @@
         </Tooltip>
       {/if}
     </div>
+    <p class="text-xs text-muted-foreground mt-2 px-2">
+      Tip: Adjust OCR Region to exclude logos/watermarks.
+    </p>
   {/if}
 </div>

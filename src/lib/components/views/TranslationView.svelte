@@ -29,20 +29,6 @@
 
   import { TranslationConfigPanel } from '$lib/components/translation';
 
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-
   import { Textarea } from '$lib/components/ui/textarea';
 
   interface TranslationViewProps {

@@ -274,7 +274,7 @@
 
 <div class="h-full flex overflow-hidden">
   <!-- Left panel: File list -->
-  <div class="w-80 border-r flex flex-col overflow-hidden">
+  <div class="w-[max(20rem,25vw)] max-w-lg border-r flex flex-col overflow-hidden">
     <div class="p-3 border-b shrink-0 flex items-center justify-between">
       <h2 class="font-semibold">Files ({fileListStore.files.length})</h2>
       <div class="flex items-center gap-1">

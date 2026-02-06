@@ -28,22 +28,6 @@
     RenameTable,
     RenameRuleEditor,
   } from '$lib/components/rename';
-
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
   import type { SortField, SortDirection } from '$lib/types/rename';
 
   interface FileMetadata {

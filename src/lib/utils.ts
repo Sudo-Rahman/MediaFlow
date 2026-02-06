@@ -26,3 +26,10 @@ export function OS(): OSType {
 
 export { analyzeOcrSubtitles, formatOcrSubtitleAnalysis } from "./utils/ocr-subtitle-analysis";
 export type { OcrSubtitleAnalysis } from "./utils/ocr-subtitle-analysis";
+export {
+  normalizeOcrSubtitle,
+  normalizeOcrSubtitles,
+  toRustOcrSubtitle,
+  toRustOcrSubtitles,
+} from "./utils/ocr-subtitle-adapter";
+export type { OcrSubtitleLike, RustOcrSubtitle } from "./utils/ocr-subtitle-adapter";

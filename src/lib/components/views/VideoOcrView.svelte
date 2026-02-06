@@ -12,10 +12,12 @@
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { toast } from 'svelte-sonner';
 
-  import type { OcrVideoFile, OcrRegion, OcrProgressEvent, OcrModelsStatus } from '$lib/types';
+  import type { OcrModelsStatus, OcrProgressEvent, OcrRegion, OcrSubtitle, OcrVideoFile } from '$lib/types';
+  import type { OcrSubtitleLike } from '$lib/utils';
   import { VIDEO_EXTENSIONS } from '$lib/types';
-  import { videoOcrStore } from '$lib/stores';
-  import { analyzeOcrSubtitles, formatOcrSubtitleAnalysis } from '$lib/utils';
+  import { settingsStore, videoOcrStore } from '$lib/stores';
+  import { cleanupOcrSubtitlesWithAi } from '$lib/services/ocr-ai-cleanup';
+  import { analyzeOcrSubtitles, formatOcrSubtitleAnalysis, normalizeOcrSubtitles } from '$lib/utils';
   import { logAndToast } from '$lib/utils/log-toast';
   import { scanFile } from '$lib/services/ffprobe';
 
@@ -30,8 +32,13 @@
   } from '$lib/components/video-ocr';
 
   // Constants
-  const MAX_CONCURRENT_TRANSCODES = 1; // Sequential for video transcoding
   const VIDEO_FORMATS = 'MP4, MKV, AVI, MOV';
+
+  interface VideoOcrViewProps {
+    onNavigateToSettings?: () => void;
+  }
+
+  let { onNavigateToSettings }: VideoOcrViewProps = $props();
 
   // State for result dialog
   let resultDialogOpen = $state(false);
@@ -39,9 +46,18 @@
 
   // Event listener cleanup
   let unlistenOcrProgress: UnlistenFn | null = null;
+  const aiCleanupControllers = new Map<string, AbortController>();
 
   // Initialize on mount
   onMount(async () => {
+    if (!settingsStore.isLoaded) {
+      try {
+        await settingsStore.load();
+      } catch (error) {
+        console.error('Failed to load settings:', error);
+      }
+    }
+
     // Check OCR models status
     if (!videoOcrStore.modelsChecked) {
       try {
@@ -80,6 +96,10 @@
 
   // Cleanup on destroy
   onDestroy(() => {
+    for (const controller of aiCleanupControllers.values()) {
+      controller.abort();
+    }
+    aiCleanupControllers.clear();
     unlistenOcrProgress?.();
   });
 
@@ -180,12 +200,15 @@
         await processFileOcr(file);
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'OCR failed';
-        videoOcrStore.failFile(file.id, errorMsg);
-        logAndToast.error({
-          source: 'system',
-          title: `OCR failed: ${file.name}`,
-          details: errorMsg
-        });
+        const cancelled = videoOcrStore.isFileCancelled(file.id) || errorMsg.toLowerCase().includes('cancel');
+        if (!cancelled) {
+          videoOcrStore.failFile(file.id, errorMsg);
+          logAndToast.error({
+            source: 'system',
+            title: `OCR failed: ${file.name}`,
+            details: errorMsg
+          });
+        }
       }
     }
     
@@ -238,7 +261,7 @@
       videoOcrStore.setFileStatus(file.id, 'generating_subs');
       videoOcrStore.setPhase(file.id, 'generating', 0, 1);
       
-      const subtitles = await invoke<Array<{ id: string; text: string; startTime: number; endTime: number; confidence: number }>>('generate_subtitles_from_ocr', {
+      const rawSubtitles = await invoke<OcrSubtitleLike[]>('generate_subtitles_from_ocr', {
         fileId: file.id,
         frameResults: ocrResults,
         fps: videoOcrStore.config.frameRate,
@@ -251,11 +274,56 @@
           filterUrlLike: videoOcrStore.config.filterUrlLike,
         }
       });
-      
-      videoOcrStore.setSubtitles(file.id, subtitles);
-      videoOcrStore.addLog('info', `Generated ${subtitles.length} subtitles`, file.id);
 
-      const analysis = analyzeOcrSubtitles(subtitles);
+      const subtitles = normalizeOcrSubtitles(rawSubtitles);
+      if (rawSubtitles.length > 0 && subtitles.length === 0) {
+        throw new Error('Failed to parse OCR subtitle timing data');
+      }
+      if (subtitles.length !== rawSubtitles.length) {
+        videoOcrStore.addLog(
+          'warning',
+          `Dropped ${rawSubtitles.length - subtitles.length} subtitle(s) with invalid timing`,
+          file.id
+        );
+      }
+
+      let finalSubtitles: OcrSubtitle[] = subtitles;
+      if (videoOcrStore.config.aiCleanupEnabled) {
+        const controller = new AbortController();
+        aiCleanupControllers.set(file.id, controller);
+        videoOcrStore.addLog('info', 'Running AI subtitle cleanup...', file.id);
+
+        const cleanupResult = await cleanupOcrSubtitlesWithAi(subtitles, {
+          provider: videoOcrStore.config.aiCleanupProvider,
+          model: videoOcrStore.config.aiCleanupModel,
+          maxGapMs: videoOcrStore.config.maxGapMs,
+          signal: controller.signal,
+        });
+
+        if (cleanupResult.cancelled || controller.signal.aborted || videoOcrStore.isFileCancelled(file.id)) {
+          throw new Error('OCR cancelled');
+        }
+
+        if (cleanupResult.success) {
+          finalSubtitles = cleanupResult.subtitles;
+          videoOcrStore.addLog(
+            'info',
+            `AI cleanup completed (${cleanupResult.batchesProcessed}/${cleanupResult.totalBatches} batches, ${subtitles.length} -> ${finalSubtitles.length} subtitles)`,
+            file.id
+          );
+        } else {
+          videoOcrStore.addLog(
+            'warning',
+            `AI cleanup failed, using heuristic subtitles: ${cleanupResult.error ?? 'Unknown error'}`,
+            file.id
+          );
+        }
+      }
+      
+      videoOcrStore.setSubtitles(file.id, finalSubtitles);
+      videoOcrStore.addLog('info', `Generated ${finalSubtitles.length} subtitles`, file.id);
+
+      const analysis = analyzeOcrSubtitles(finalSubtitles);
       videoOcrStore.addLog('info', formatOcrSubtitleAnalysis(analysis), file.id);
       
       // Clean up frames directory
@@ -273,12 +341,17 @@
         // Ignore cleanup errors
       }
       throw error;
+    } finally {
+      aiCleanupControllers.delete(file.id);
     }
   }
 
   async function handleCancelFile(id: string) {
     const file = videoOcrStore.videoFiles.find(f => f.id === id);
     if (!file) return;
+
+    aiCleanupControllers.get(id)?.abort();
+    aiCleanupControllers.delete(id);
 
     // Both transcoding and OCR operations use OCR_PROCESS_IDS keyed by fileId
     try {
@@ -297,6 +370,11 @@
   }
 
   async function handleCancelAll() {
+    for (const controller of aiCleanupControllers.values()) {
+      controller.abort();
+    }
+    aiCleanupControllers.clear();
+
     try {
       await invoke('cancel_transcode');
     } catch (error) {
@@ -444,6 +522,7 @@
       onConfigChange={(updates) => videoOcrStore.updateConfig(updates)}
       onStart={handleStartOcr}
       onCancel={handleCancelAll}
+      onNavigateToSettings={onNavigateToSettings}
     />
   </div>
 </div>

@@ -37,5 +37,8 @@ export * from './merge';
 // Translation components
 export * from './translation';
 
+// Shared LLM components
+export * from './llm';
+
 // Rename components
 export * from './rename';

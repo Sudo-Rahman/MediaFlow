@@ -3,3 +3,4 @@ export * from './cn';
 export * from './dnd';
 export * from './log-toast';
 export * from './ocr-subtitle-analysis';
+export * from './ocr-subtitle-adapter';

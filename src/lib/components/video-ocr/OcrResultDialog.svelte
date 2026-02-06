@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { OcrSubtitle, OcrOutputFormat } from '$lib/types/video-ocr';
   import { OCR_OUTPUT_FORMATS } from '$lib/types/video-ocr';
+  import { normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils/ocr-subtitle-adapter';
   import * as Dialog from '$lib/components/ui/dialog';
   import { Button } from '$lib/components/ui/button';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
@@ -65,7 +66,8 @@
     ).join('\n');
   }
 
-  const previewText = $derived.by(() => buildFormattedPreview(selectedFormat, subtitles));
+  const normalizedSubtitles = $derived.by(() => normalizeOcrSubtitles(subtitles));
+  const previewText = $derived.by(() => buildFormattedPreview(selectedFormat, normalizedSubtitles));
 
   async function copyToClipboard() {
     if (!previewText) return;
@@ -74,7 +76,7 @@
   }
 
   async function handleExport() {
-    if (subtitles.length === 0) return;
+    if (normalizedSubtitles.length === 0) return;
 
     try {
       // Open save dialog
@@ -90,7 +92,7 @@
       if (!outputPath) return; // User cancelled
 
       await invoke('export_ocr_subtitles', {
-        subtitles,
+        subtitles: toRustOcrSubtitles(normalizedSubtitles),
         outputPath,
         format: selectedFormat,
       });
@@ -109,14 +111,14 @@
     <Dialog.Header class="px-2">
       <Dialog.Title >OCR Results - {videoName}</Dialog.Title>
       <Dialog.Description>
-        {subtitles.length} subtitle{subtitles.length !== 1 ? 's' : ''} detected
+        {normalizedSubtitles.length} subtitle{normalizedSubtitles.length !== 1 ? 's' : ''} detected
       </Dialog.Description>
     </Dialog.Header>
 
     <!-- Subtitle preview -->
     <ScrollArea class="flex-1 h-[calc(80vh-200px)] border rounded-lg">
       <div class="p-4">
-        {#if subtitles.length === 0}
+        {#if normalizedSubtitles.length === 0}
           <p class="text-center text-muted-foreground py-8">
             No subtitles detected in this video
           </p>
@@ -140,14 +142,14 @@
           </Select.Content>
         </Select.Root>
         
-        <Button onclick={handleExport} disabled={subtitles.length === 0}>
+        <Button onclick={handleExport} disabled={normalizedSubtitles.length === 0}>
           <Download class="size-4 mr-2" />
           Export
         </Button>
       </div>
 
       <div class="flex items-center gap-2 pl-2">
-        <Button variant="outline" onclick={copyToClipboard} disabled={subtitles.length === 0}>
+        <Button variant="outline" onclick={copyToClipboard} disabled={normalizedSubtitles.length === 0}>
           <Copy class="size-4 mr-2" />
           Copy {selectedFormat.toUpperCase()}
         </Button>

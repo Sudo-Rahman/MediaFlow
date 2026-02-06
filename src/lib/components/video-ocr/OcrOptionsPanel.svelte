@@ -7,12 +7,14 @@
 
   import type { OcrConfig, OcrLanguage, OcrOutputFormat, OcrVideoFile } from '$lib/types/video-ocr';
   import { OCR_LANGUAGES, OCR_OUTPUT_FORMATS } from '$lib/types/video-ocr';
+  import { LlmProviderModelSelector } from '$lib/components/llm';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import * as Select from '$lib/components/ui/select';
   import { Slider } from '$lib/components/ui/slider';
   import { Switch } from '$lib/components/ui/switch';
+  import { normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils/ocr-subtitle-adapter';
 
   interface OcrOptionsPanelProps {
     config: OcrConfig;
@@ -26,6 +28,7 @@
     onConfigChange: (updates: Partial<OcrConfig>) => void;
     onStart: () => void;
     onCancel: () => void;
+    onNavigateToSettings?: () => void;
   }
 
   let {
@@ -40,6 +43,7 @@
     onConfigChange,
     onStart,
     onCancel,
+    onNavigateToSettings,
   }: OcrOptionsPanelProps = $props();
 
   // Export All state
@@ -113,9 +117,14 @@
           const baseName = file.name.replace(/\.[^/.]+$/, '');
           const fileName = `${baseName}.${exportFormat}`;
           const outputPath = await join(exportDir, fileName);
+          const normalizedSubtitles = normalizeOcrSubtitles(file.subtitles);
+
+          if (normalizedSubtitles.length === 0) {
+            throw new Error('No valid subtitles to export');
+          }
 
           await invoke('export_ocr_subtitles', {
-            subtitles: file.subtitles,
+            subtitles: toRustOcrSubtitles(normalizedSubtitles),
             outputPath,
             format: exportFormat,
           });
@@ -313,6 +322,35 @@
         />
       </div>
     </div>
+  </div>
+
+  <!-- AI Cleanup -->
+  <div class="pt-4 border-t space-y-4">
+    <div class="flex items-start justify-between gap-3">
+      <div class="space-y-1">
+        <Label>AI subtitle cleanup</Label>
+        <p class="text-xs text-muted-foreground">
+          Correct OCR mistakes with AI and merge duplicate consecutive lines
+        </p>
+      </div>
+      <Switch
+        checked={config.aiCleanupEnabled}
+        onCheckedChange={(checked) => onConfigChange({ aiCleanupEnabled: checked })}
+      />
+    </div>
+
+    {#if config.aiCleanupEnabled}
+      <LlmProviderModelSelector
+        provider={config.aiCleanupProvider}
+        model={config.aiCleanupModel}
+        onProviderChange={(provider) => onConfigChange({ aiCleanupProvider: provider })}
+        onModelChange={(model) => onConfigChange({ aiCleanupModel: model })}
+        onNavigateToSettings={onNavigateToSettings}
+      />
+      <p class="text-xs text-muted-foreground">
+        If cleanup fails, OCR subtitles from heuristic cleanup are kept automatically.
+      </p>
+    {/if}
   </div>
 
   <!-- Action Buttons -->

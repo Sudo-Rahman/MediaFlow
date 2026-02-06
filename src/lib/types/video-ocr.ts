@@ -3,6 +3,9 @@
  * Uses rust-paddle-ocr for text detection and recognition
  */
 
+import { LLM_PROVIDERS } from './translation';
+import type { LLMProvider } from './translation';
+
 // ============================================================================
 // VIDEO FILE TYPES
 // ============================================================================
@@ -117,6 +120,11 @@ export interface OcrConfig {
   maxGapMs: number;               // Max gap to merge (ms)
   minCueDurationMs: number;       // Minimum cue duration (ms) for stabilization heuristics
   filterUrlLike: boolean;         // Filter URL/domain-like watermarks
+
+  // Optional AI post-cleanup
+  aiCleanupEnabled: boolean;      // Enable AI correction + dedupe after heuristic cleanup
+  aiCleanupProvider: LLMProvider; // LLM provider for OCR cleanup
+  aiCleanupModel: string;         // LLM model for OCR cleanup
 }
 
 export type OcrOutputFormat = 'srt' | 'vtt' | 'txt';
@@ -141,6 +149,10 @@ export const DEFAULT_OCR_CONFIG: OcrConfig = {
   maxGapMs: 250,
   minCueDurationMs: 500,
   filterUrlLike: true,
+
+  aiCleanupEnabled: false,
+  aiCleanupProvider: 'google',
+  aiCleanupModel: LLM_PROVIDERS.google.models[0]?.id ?? '',
 };
 
 // ============================================================================

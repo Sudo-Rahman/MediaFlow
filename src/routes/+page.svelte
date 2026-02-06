@@ -201,7 +201,7 @@
       
       <!-- Video OCR View - persists when switching views -->
       <div class="absolute inset-0" style="display: {currentView === 'video-ocr' ? 'block' : 'none'}">
-        <VideoOcrView bind:this={videoOcrViewRef} />
+        <VideoOcrView bind:this={videoOcrViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
       </div>
       
       <!-- Translation View -->
@@ -229,4 +229,3 @@
 
 <!-- Logs Sheet (global overlay) -->
 <LogsSheet />
-

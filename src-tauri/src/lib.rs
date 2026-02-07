@@ -1764,9 +1764,17 @@ fn texts_are_similar(a_key: &str, b_key: &str, threshold: f64) -> bool {
     let min_len = a_len.min(b_len);
     let max_len = a_len.max(b_len);
 
-    // Avoid accidentally merging unrelated short cues (e.g., names or single words).
+    // Conservative short-text path:
+    // allow one-character OCR drift only when lengths are identical.
     if min_len < 6 {
-        return false;
+        if a_len != b_len {
+            return false;
+        }
+
+        return matches!(
+            levenshtein_distance_bounded(&a_chars, &b_chars, 1),
+            Some(dist) if dist <= 1
+        );
     }
 
     let threshold = clamp_f64(threshold, 0.0, 1.0);
@@ -1782,6 +1790,32 @@ fn texts_are_similar(a_key: &str, b_key: &str, threshold: f64) -> bool {
 
     let similarity = 1.0 - (dist as f64 / max_len as f64);
     similarity + 1e-9 >= threshold
+}
+
+#[cfg(test)]
+mod tests {
+    use super::texts_are_similar;
+
+    #[test]
+    fn texts_are_similar_merges_short_texts_with_single_char_difference() {
+        assert!(texts_are_similar("吴昊 菲菲", "昊昊 菲菲", 0.85));
+    }
+
+    #[test]
+    fn texts_are_similar_keeps_short_exact_matches() {
+        assert!(texts_are_similar("哥哥", "哥哥", 0.92));
+    }
+
+    #[test]
+    fn texts_are_similar_rejects_short_texts_with_multiple_char_differences() {
+        assert!(!texts_are_similar("吴昊 菲菲", "叶昊 爸爸", 0.85));
+    }
+
+    #[test]
+    fn texts_are_similar_preserves_long_text_similarity_behavior() {
+        assert!(texts_are_similar("today we fight together", "today we fight togather", 0.92));
+        assert!(!texts_are_similar("today we fight together", "tomorrow we run away", 0.92));
+    }
 }
 
 fn token_looks_like_domain(token: &str) -> bool {

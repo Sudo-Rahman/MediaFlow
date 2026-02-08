@@ -4,13 +4,6 @@
   import type { MergeVideoFile } from '$lib/types';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
 
   interface MergeFileListProps {
     files: MergeVideoFile[];

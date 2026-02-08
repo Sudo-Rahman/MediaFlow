@@ -7,11 +7,6 @@
   import { Label } from '$lib/components/ui/label';
   import * as Select from '$lib/components/ui/select';
   import { cn } from '$lib/utils';
-  ;
-  ;
-  ;
-  ;
-  ;
 
   interface BatchTrackSelectDialogProps {
     open: boolean;

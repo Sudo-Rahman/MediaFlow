@@ -1,17 +1,9 @@
 <script lang="ts">
   import { CheckCircle, AlertCircle, AlertTriangle, Info, ExternalLink, Circle } from '@lucide/svelte';
   import type { LogEntry } from '$lib/stores/logs.svelte';
-  import { logStore, getSourceColor, getLevelColor, getLevelBgColor } from '$lib/stores/logs.svelte';
+  import { getSourceColor, getLevelColor, getLevelBgColor } from '$lib/stores/logs.svelte';
   import { Badge } from '$lib/components/ui/badge';
-  import { Button } from '$lib/components/ui/button';
-  import { ScrollArea } from '$lib/components/ui/scroll-area';
 
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
 
   interface LogListProps {
     logs: LogEntry[];

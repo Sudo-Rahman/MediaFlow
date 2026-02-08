@@ -7,12 +7,6 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import * as Card from '$lib/components/ui/card';
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
 
   interface MergeTrackEditorProps {
     tracks: MergeTrack[];

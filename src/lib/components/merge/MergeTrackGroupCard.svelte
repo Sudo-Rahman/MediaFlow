@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Video, Volume2, Subtitles, ChevronDown, ChevronRight, Settings2, Check, X, Clock } from '@lucide/svelte';
+  import { Video, Volume2, Subtitles, ChevronDown, ChevronRight, Settings2, Check, Clock } from '@lucide/svelte';
   import type { TrackGroup, MergeTrackConfig, TrackType, ImportedTrack, MergeTrack } from '$lib/types';
   import { mergeStore } from '$lib/stores/merge.svelte';
   import { Card } from '$lib/components/ui/card';
@@ -8,15 +8,6 @@
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { cn } from '$lib/utils';
   import { formatLanguage } from '$lib/utils/format';
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
 
   interface MergeTrackGroupCardProps {
     group: TrackGroup;

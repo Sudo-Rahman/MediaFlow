@@ -18,14 +18,6 @@
   import { toast } from 'svelte-sonner';
   import ModelSelector from './ModelSelector.svelte';
   import LanguageSelector from './LanguageSelector.svelte';
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
 
   interface TranscriptionPanelProps {
     config: TranscriptionConfig;

@@ -2,18 +2,12 @@
   import { Folder, FolderOpen, Play, Loader2, CheckCircle, X } from '@lucide/svelte';
   import type { MergeOutputConfig } from '$lib/types';
   import { Button } from '$lib/components/ui/button';
-  import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import { Progress } from '$lib/components/ui/progress';
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import * as Card from '$lib/components/ui/card';
   import * as Alert from '$lib/components/ui/alert';
-  ;
-  ;
-  ;
-  ;
-  ;
 
   interface MergeOutputPanelProps {
     outputConfig: MergeOutputConfig;

@@ -12,10 +12,6 @@
   import * as Select from '$lib/components/ui/select';
   import { Input } from '$lib/components/ui/input';
   import { toast } from 'svelte-sonner';
-  ;
-  ;
-  ;
-  ;
 
   interface ExportAllPanelProps {
     files: AudioFile[];

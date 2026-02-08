@@ -1,18 +1,12 @@
 <script lang="ts">
-  import { LayoutGrid, ChevronDown, ChevronRight, RefreshCw, Wand2 } from '@lucide/svelte';
+  import { LayoutGrid, ChevronDown, ChevronRight, RefreshCw } from '@lucide/svelte';
   import type { TrackGroup } from '$lib/types';
   import { mergeStore } from '$lib/stores/merge.svelte';
   import { MergeTrackGroupCard } from '$lib/components/merge';
   import { MergeGroupEditor } from '$lib/components/merge';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
-  import { Separator } from '$lib/components/ui/separator';
   import { cn } from '$lib/utils';
-  ;
-  ;
-  ;
-  ;
-  ;
 
   interface MergeTrackGroupsProps {
     class?: string;

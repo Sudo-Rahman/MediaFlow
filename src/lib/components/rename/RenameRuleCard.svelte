@@ -7,24 +7,8 @@
   import { Button } from '$lib/components/ui/button';
   import { Switch } from '$lib/components/ui/switch';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-  ;
-  ;
-  ;
-  ;
-  ;
   
   // Rule type icons
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
 
   interface RenameRuleCardProps {
     rule: RenameRule;

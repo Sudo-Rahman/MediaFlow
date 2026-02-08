@@ -4,17 +4,11 @@
   import { mergeStore } from '$lib/stores/merge.svelte';
   import { COMMON_LANGUAGES } from '$lib/types';
   import { formatLanguage } from '$lib/utils/format';
-  import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Badge } from '$lib/components/ui/badge';
   import * as Select from '$lib/components/ui/select';
   import { cn } from '$lib/utils';
-  ;
-  ;
-  ;
-  ;
-  ;
 
   interface MergeTrackTableProps {
     class?: string;

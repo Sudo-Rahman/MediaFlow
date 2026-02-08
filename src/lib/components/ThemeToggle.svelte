@@ -2,8 +2,6 @@
   import { Sun, Moon } from '@lucide/svelte';
   import { toggleMode, mode } from 'mode-watcher';
   import { Button } from '$lib/components/ui/button';
-  ;
-  ;
 </script>
 
 <Button variant="ghost" size="icon" onclick={toggleMode}>

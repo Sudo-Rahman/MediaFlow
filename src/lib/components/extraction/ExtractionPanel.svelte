@@ -6,11 +6,6 @@
   import * as Card from '$lib/components/ui/card';
   import * as Alert from '$lib/components/ui/alert';
   import type { ExtractionProgress } from '$lib/types';
-  ;
-  ;
-  ;
-  ;
-  ;
 
   interface ExtractionPanelProps {
     outputDir: string;

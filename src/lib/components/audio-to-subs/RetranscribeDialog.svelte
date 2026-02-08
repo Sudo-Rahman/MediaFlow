@@ -11,9 +11,6 @@
   import LanguageSelector from './LanguageSelector.svelte';
   import { Switch } from '$lib/components/ui/switch';
   import { Slider } from '$lib/components/ui/slider';
-  ;
-  ;
-  ;
 
   interface RetranscribeDialogProps {
     open: boolean;

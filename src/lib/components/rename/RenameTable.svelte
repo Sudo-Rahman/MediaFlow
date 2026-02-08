@@ -5,12 +5,6 @@
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Button } from '$lib/components/ui/button';
   import * as Tooltip from '$lib/components/ui/tooltip';
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
 
   interface RenameTableProps {
     files: RenameFile[];

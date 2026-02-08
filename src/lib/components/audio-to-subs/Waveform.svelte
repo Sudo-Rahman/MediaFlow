@@ -6,14 +6,6 @@
   import { invoke } from '@tauri-apps/api/core';
   import WaveSurfer from 'wavesurfer.js';
   import TimelinePlugin from 'wavesurfer.js/dist/plugins/timeline.esm.js';
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
   import { Button } from '$lib/components/ui/button';
   import { Progress } from '$lib/components/ui/progress';
   import { formatFileSize } from '$lib/utils/format';

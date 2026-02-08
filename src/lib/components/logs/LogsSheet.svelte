@@ -9,12 +9,6 @@
   import LogList from './LogList.svelte';
   import LogDetailDialog from './LogDetailDialog.svelte';
 
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
 
   // Dialog for detail view
   let detailDialogOpen = $state(false);

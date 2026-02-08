@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { FolderOpen, Save, Star, Trash2, ChevronDown, Check, Pencil } from '@lucide/svelte';
+  import { FolderOpen, Save, Star, Trash2, ChevronDown, Check } from '@lucide/svelte';
   import type { RulePreset } from '$lib/types/rename';
   import { renameStore } from '$lib/stores/rename.svelte';
   import { toast } from 'svelte-sonner';
@@ -12,13 +12,6 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as AlertDialog from '$lib/components/ui/alert-dialog';
 
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
 
   interface RenamePresetsProps {
     class?: string;

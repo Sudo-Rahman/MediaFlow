@@ -3,17 +3,9 @@
   import * as Card from '$lib/components/ui/card';
   import { Button } from '$lib/components/ui/button';
   import { Progress } from '$lib/components/ui/progress';
-  import { Badge } from '$lib/components/ui/badge';
-  import { ScrollArea } from '$lib/components/ui/scroll-area';
 
   import { translationStore } from '$lib/stores';
 
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
   import { toast } from 'svelte-sonner';
 
   interface TranslationResultPanelProps {
@@ -117,4 +109,3 @@
     {/if}
   </Card.Content>
 </Card.Root>
-

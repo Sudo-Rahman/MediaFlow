@@ -22,19 +22,6 @@
   import { dndzone, type DndEvent } from 'svelte-dnd-action';
   import { flip } from 'svelte/animate';
   
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
-  ;
 
   interface RenameRuleEditorProps {
     rules: RenameRule[];

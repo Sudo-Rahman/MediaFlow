@@ -34,6 +34,12 @@ window-vibrancy = "0.7.1"
 image = "0.25"
 rayon = "1.10"
 num_cpus = "1.16"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+futures-util = "0.3"
+zip = "0.6"
+tar = "0.4"
+xz2 = "0.1"
+walkdir = "2.5"
 
 #windows or linux ocr
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
@@ -48,6 +54,5 @@ ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git", branch = "n
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-
 
 

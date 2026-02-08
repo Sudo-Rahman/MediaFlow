@@ -1,14 +1,20 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 use std::time::Duration;
+use futures_util::StreamExt;
 use rayon::prelude::*;
 use tauri::{Emitter, Manager};
+use tauri_plugin_store::StoreExt;
 use tiktoken_rs::o200k_base_singleton;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
+use walkdir::WalkDir;
 use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
 
 // OCR library
@@ -42,6 +48,18 @@ const FFMPEG_EXTRACT_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Timeout for FFmpeg merge operations (10 minutes)
 const FFMPEG_MERGE_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Settings store filename
+const SETTINGS_STORE_FILE: &str = "settings.json";
+
+/// Store keys for custom FFmpeg/FFprobe paths
+const FFMPEG_PATH_KEY: &str = "ffmpegPath";
+const FFPROBE_PATH_KEY: &str = "ffprobePath";
+
+/// Official download sources
+const BTBN_LATEST_URL: &str = "https://github.com/BtbN/FFmpeg-Builds/wiki/Latest";
+const EVERMEET_RELEASE_FFMPEG_URL: &str = "https://evermeet.cx/ffmpeg/getrelease/zip";
+const EVERMEET_RELEASE_FFPROBE_URL: &str = "https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip";
 
 /// Allowed media file extensions
 const ALLOWED_MEDIA_EXTENSIONS: &[&str] = &[
@@ -146,18 +164,333 @@ fn validate_directory_path(path: &str) -> Result<(), String> {
 }
 
 // ============================================================================
+// SETTINGS STORE HELPERS
+// ============================================================================
+
+fn read_store_path(app: &tauri::AppHandle, key: &str) -> Result<Option<String>, String> {
+    let store = app
+        .store(SETTINGS_STORE_FILE)
+        .map_err(|e| format!("Failed to open settings store: {}", e))?;
+
+    Ok(store
+        .get(key)
+        .and_then(|value| value.as_str().map(|s| s.to_string())))
+}
+
+fn resolve_binary_path(
+    app: &tauri::AppHandle,
+    key: &str,
+    fallback_cmd: &str,
+    label: &str,
+) -> Result<String, String> {
+    let custom = read_store_path(app, key)?.unwrap_or_default();
+    let trimmed = custom.trim();
+    if trimmed.is_empty() {
+        return Ok(fallback_cmd.to_string());
+    }
+
+    let path = Path::new(trimmed);
+    if !path.exists() {
+        return Err(format!("Custom {} path does not exist: {}", label, path.display()));
+    }
+    if !path.is_file() {
+        return Err(format!("Custom {} path is not a file: {}", label, path.display()));
+    }
+
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn resolve_ffmpeg_path(app: &tauri::AppHandle) -> Result<String, String> {
+    resolve_binary_path(app, FFMPEG_PATH_KEY, "ffmpeg", "FFmpeg")
+}
+
+fn resolve_ffprobe_path(app: &tauri::AppHandle) -> Result<String, String> {
+    resolve_binary_path(app, FFPROBE_PATH_KEY, "ffprobe", "FFprobe")
+}
+
+// ============================================================================
+// FFMPEG DOWNLOAD HELPERS
+// ============================================================================
+
+#[derive(Clone, Copy)]
+enum ArchiveType {
+    Zip,
+    TarXz,
+}
+
+#[derive(Serialize)]
+struct DownloadResult {
+    #[serde(rename = "ffmpegPath")]
+    ffmpeg_path: String,
+    #[serde(rename = "ffprobePath")]
+    ffprobe_path: String,
+    warning: Option<String>,
+}
+
+fn binary_file_name(base: &str) -> String {
+    if cfg!(windows) {
+        format!("{}.exe", base)
+    } else {
+        base.to_string()
+    }
+}
+
+fn create_temp_dir(app: &tauri::AppHandle, prefix: &str) -> Result<PathBuf, String> {
+    let base = app
+        .path()
+        .temp_dir()
+        .map_err(|e| format!("Failed to access temp directory: {}", e))?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis().to_string())
+        .unwrap_or_else(|_| "0".to_string());
+    let dir = base.join(format!("{}_{}", prefix, nonce));
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("Failed to create temp directory: {}", e))?;
+    Ok(dir)
+}
+
+fn http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .user_agent("RsExtractor/1.0")
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))
+}
+
+async fn download_to_file(
+    app: &tauri::AppHandle,
+    client: &reqwest::Client,
+    url: &str,
+    dest: &Path,
+    tracker: &mut DownloadTracker,
+    stage: &str,
+) -> Result<(), String> {
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to download FFmpeg: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Download failed with status: {}",
+            response.status()
+        ));
+    }
+
+    let content_length = response.content_length();
+    if let Some(len) = content_length {
+        tracker.total_bytes = tracker.total_bytes.saturating_add(len);
+    }
+
+    let mut file = tokio::fs::File::create(dest)
+        .await
+        .map_err(|e| format!("Failed to create download file: {}", e))?;
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|e| format!("Failed to read download stream: {}", e))?;
+        tracker.downloaded_bytes = tracker
+            .downloaded_bytes
+            .saturating_add(bytes.len() as u64);
+        file.write_all(&bytes)
+            .await
+            .map_err(|e| format!("Failed to write download file: {}", e))?;
+
+        let progress = if tracker.total_bytes > 0 {
+            (tracker.downloaded_bytes as f64 / tracker.total_bytes as f64) * 90.0
+        } else {
+            0.0
+        };
+        emit_download_progress(app, progress.min(90.0), stage);
+    }
+
+    Ok(())
+}
+
+fn archive_type_from_url(url: &str) -> Result<ArchiveType, String> {
+    if url.ends_with(".zip") {
+        Ok(ArchiveType::Zip)
+    } else if url.ends_with(".tar.xz") {
+        Ok(ArchiveType::TarXz)
+    } else {
+        Err(format!("Unsupported archive type: {}", url))
+    }
+}
+
+async fn extract_archive(
+    archive_path: PathBuf,
+    extract_dir: PathBuf,
+    archive_type: ArchiveType,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        std::fs::create_dir_all(&extract_dir)
+            .map_err(|e| format!("Failed to create extract directory: {}", e))?;
+
+        match archive_type {
+            ArchiveType::Zip => {
+                let file = std::fs::File::open(&archive_path)
+                    .map_err(|e| format!("Failed to open zip archive: {}", e))?;
+                let mut archive = zip::ZipArchive::new(file)
+                    .map_err(|e| format!("Failed to read zip archive: {}", e))?;
+                archive
+                    .extract(&extract_dir)
+                    .map_err(|e| format!("Failed to extract zip archive: {}", e))?;
+            }
+            ArchiveType::TarXz => {
+                let file = std::fs::File::open(&archive_path)
+                    .map_err(|e| format!("Failed to open tar.xz archive: {}", e))?;
+                let decompressor = xz2::read::XzDecoder::new(file);
+                let mut archive = tar::Archive::new(decompressor);
+                archive
+                    .unpack(&extract_dir)
+                    .map_err(|e| format!("Failed to extract tar.xz archive: {}", e))?;
+            }
+        }
+
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Failed to extract archive: {}", e))?
+}
+
+fn find_binary_path(root: &Path, binary_name: &str) -> Result<PathBuf, String> {
+    for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if entry.file_name().to_string_lossy() == binary_name {
+            return Ok(entry.path().to_path_buf());
+        }
+    }
+
+    Err(format!(
+        "Failed to locate {} in extracted archive",
+        binary_name
+    ))
+}
+
+async fn install_binaries(
+    app: &tauri::AppHandle,
+    ffmpeg_src: &Path,
+    ffprobe_src: &Path,
+) -> Result<(PathBuf, PathBuf), String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to access app data directory: {}", e))?;
+    let bin_dir = app_data_dir.join("ffmpeg").join("bin");
+
+    tokio::fs::create_dir_all(&bin_dir)
+        .await
+        .map_err(|e| format!("Failed to create FFmpeg install directory: {}", e))?;
+
+    let ffmpeg_dest = bin_dir.join(binary_file_name("ffmpeg"));
+    let ffprobe_dest = bin_dir.join(binary_file_name("ffprobe"));
+
+    if ffmpeg_dest.exists() {
+        let _ = tokio::fs::remove_file(&ffmpeg_dest).await;
+    }
+    if ffprobe_dest.exists() {
+        let _ = tokio::fs::remove_file(&ffprobe_dest).await;
+    }
+
+    tokio::fs::copy(ffmpeg_src, &ffmpeg_dest)
+        .await
+        .map_err(|e| format!("Failed to install ffmpeg: {}", e))?;
+    tokio::fs::copy(ffprobe_src, &ffprobe_dest)
+        .await
+        .map_err(|e| format!("Failed to install ffprobe: {}", e))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut ffmpeg_perms = std::fs::metadata(&ffmpeg_dest)
+            .map_err(|e| format!("Failed to read ffmpeg permissions: {}", e))?
+            .permissions();
+        ffmpeg_perms.set_mode(0o755);
+        tokio::fs::set_permissions(&ffmpeg_dest, ffmpeg_perms)
+            .await
+            .map_err(|e| format!("Failed to set ffmpeg permissions: {}", e))?;
+
+        let mut ffprobe_perms = std::fs::metadata(&ffprobe_dest)
+            .map_err(|e| format!("Failed to read ffprobe permissions: {}", e))?
+            .permissions();
+        ffprobe_perms.set_mode(0o755);
+        tokio::fs::set_permissions(&ffprobe_dest, ffprobe_perms)
+            .await
+            .map_err(|e| format!("Failed to set ffprobe permissions: {}", e))?;
+    }
+
+    Ok((ffmpeg_dest, ffprobe_dest))
+}
+
+fn resolve_btbn_variant(os: &str, arch: &str) -> Result<&'static str, String> {
+    match (os, arch) {
+        ("windows", "x86_64") => Ok("win64-gpl-8.0"),
+        ("windows", "aarch64") => Ok("winarm64-gpl-8.0"),
+        ("linux", "x86_64") => Ok("linux64-gpl-8.0"),
+        ("linux", "aarch64") => Ok("linuxarm64-gpl-8.0"),
+        _ => Err(format!("Unsupported platform: {} {}", os, arch)),
+    }
+}
+
+fn find_btbn_url(page: &str, variant: &str, preferred_ext: &str, fallback_ext: &str) -> Option<String> {
+    let preferred = find_btbn_url_with_ext(page, variant, preferred_ext);
+    if preferred.is_some() {
+        return preferred;
+    }
+    find_btbn_url_with_ext(page, variant, fallback_ext)
+}
+
+fn find_btbn_url_with_ext(page: &str, variant: &str, ext: &str) -> Option<String> {
+    for token in page.split('"') {
+        if !token.contains("releases/download/") {
+            continue;
+        }
+        if !token.contains(variant) || !token.ends_with(ext) {
+            continue;
+        }
+        if token.starts_with("http") {
+            return Some(token.to_string());
+        }
+        if token.starts_with('/') {
+            return Some(format!("https://github.com{}", token));
+        }
+    }
+    None
+}
+
+#[derive(Default)]
+struct DownloadTracker {
+    total_bytes: u64,
+    downloaded_bytes: u64,
+}
+
+fn emit_download_progress(app: &tauri::AppHandle, progress: f64, stage: &str) {
+    let _ = app.emit(
+        "ffmpeg-download-progress",
+        serde_json::json!({
+            "progress": progress,
+            "stage": stage
+        }),
+    );
+}
+
+// ============================================================================
 // FFPROBE COMMAND
 // ============================================================================
 
 /// Probe a video file using ffprobe and return JSON output
 /// Uses async tokio::process::Command with timeout
 #[tauri::command]
-async fn probe_file(path: String) -> Result<String, String> {
+async fn probe_file(app: tauri::AppHandle, path: String) -> Result<String, String> {
     // Validate input path
     validate_media_path(&path)?;
+    let ffprobe_path = resolve_ffprobe_path(&app)?;
     
-    let probe_future = async {
-        Command::new("ffprobe")
+    let probe_future = async move {
+        Command::new(ffprobe_path)
             .args([
                 "-v",
                 "quiet",
@@ -260,6 +593,7 @@ const KNOWN_EXTENSIONS: &[&str] = &[
 /// Automatically adds -f flag when codec requires explicit format specification
 #[tauri::command]
 async fn extract_track(
+    app: tauri::AppHandle,
     input_path: String,
     output_path: String,
     track_index: i32,
@@ -333,8 +667,9 @@ async fn extract_track(
 
     args.push(output_path.clone());
 
-    let extract_future = async {
-        Command::new("ffmpeg")
+    let ffmpeg_path = resolve_ffmpeg_path(&app)?;
+    let extract_future = async move {
+        Command::new(ffmpeg_path)
             .args(&args)
             .output()
             .await
@@ -402,9 +737,12 @@ async fn open_folder(path: String) -> Result<(), String> {
 
 /// Check if ffmpeg and ffprobe are available
 #[tauri::command]
-async fn check_ffmpeg() -> Result<bool, String> {
-    let ffprobe_check = Command::new("ffprobe").arg("-version").output().await;
-    let ffmpeg_check = Command::new("ffmpeg").arg("-version").output().await;
+async fn check_ffmpeg(app: tauri::AppHandle) -> Result<bool, String> {
+    let ffprobe_path = resolve_ffprobe_path(&app)?;
+    let ffmpeg_path = resolve_ffmpeg_path(&app)?;
+
+    let ffprobe_check = Command::new(&ffprobe_path).arg("-version").output().await;
+    let ffmpeg_check = Command::new(&ffmpeg_path).arg("-version").output().await;
 
     match (ffprobe_check, ffmpeg_check) {
         (Ok(probe), Ok(mpeg)) if probe.status.success() && mpeg.status.success() => Ok(true),
@@ -414,8 +752,9 @@ async fn check_ffmpeg() -> Result<bool, String> {
 
 /// Get FFmpeg version string
 #[tauri::command]
-async fn get_ffmpeg_version() -> Result<String, String> {
-    let output = Command::new("ffmpeg")
+async fn get_ffmpeg_version(app: tauri::AppHandle) -> Result<String, String> {
+    let ffmpeg_path = resolve_ffmpeg_path(&app)?;
+    let output = Command::new(&ffmpeg_path)
         .arg("-version")
         .output()
         .await
@@ -434,6 +773,150 @@ async fn get_ffmpeg_version() -> Result<String, String> {
     } else {
         Err("FFmpeg not found".to_string())
     }
+}
+
+/// Download and install FFmpeg + FFprobe for the current OS/arch
+#[tauri::command]
+async fn download_ffmpeg(app: tauri::AppHandle) -> Result<DownloadResult, String> {
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+
+    match os {
+        "macos" => download_from_evermeet(&app, arch).await,
+        "windows" | "linux" => download_from_btbn(&app, os, arch).await,
+        _ => Err(format!("Unsupported OS: {}", os)),
+    }
+}
+
+async fn download_from_btbn(
+    app: &tauri::AppHandle,
+    os: &str,
+    arch: &str,
+) -> Result<DownloadResult, String> {
+    let variant = resolve_btbn_variant(os, arch)?;
+    let client = http_client()?;
+    let mut tracker = DownloadTracker::default();
+
+    emit_download_progress(app, 0.0, "Preparing download...");
+
+    let response = client
+        .get(BTBN_LATEST_URL)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch FFmpeg build list: {}", e))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Failed to fetch FFmpeg build list: {}",
+            response.status()
+        ));
+    }
+    let page = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read FFmpeg build list: {}", e))?;
+
+    let preferred_ext = if os == "windows" { ".zip" } else { ".tar.xz" };
+    let url = find_btbn_url(&page, variant, preferred_ext, ".zip")
+        .ok_or_else(|| format!("Failed to locate FFmpeg build for {}", variant))?;
+    let archive_type = archive_type_from_url(&url)?;
+
+    let temp_dir = create_temp_dir(app, "ffmpeg_btbn")?;
+    let archive_path = match archive_type {
+        ArchiveType::Zip => temp_dir.join("ffmpeg.zip"),
+        ArchiveType::TarXz => temp_dir.join("ffmpeg.tar.xz"),
+    };
+    download_to_file(app, &client, &url, &archive_path, &mut tracker, "Downloading FFmpeg...").await?;
+
+    let extract_dir = temp_dir.join("extracted");
+    emit_download_progress(app, 92.0, "Extracting archive...");
+    extract_archive(archive_path, extract_dir.clone(), archive_type).await?;
+
+    let ffmpeg_name = binary_file_name("ffmpeg");
+    let ffprobe_name = binary_file_name("ffprobe");
+    let (ffmpeg_src, ffprobe_src) = tokio::task::spawn_blocking(move || {
+        let ffmpeg_src = find_binary_path(&extract_dir, &ffmpeg_name)?;
+        let ffprobe_src = find_binary_path(&extract_dir, &ffprobe_name)?;
+        Ok::<_, String>((ffmpeg_src, ffprobe_src))
+    })
+    .await
+    .map_err(|e| format!("Failed to locate FFmpeg binaries: {}", e))??;
+
+    emit_download_progress(app, 96.0, "Installing binaries...");
+    let (ffmpeg_dest, ffprobe_dest) = install_binaries(app, &ffmpeg_src, &ffprobe_src).await?;
+    emit_download_progress(app, 100.0, "FFmpeg installed");
+
+    Ok(DownloadResult {
+        ffmpeg_path: ffmpeg_dest.to_string_lossy().to_string(),
+        ffprobe_path: ffprobe_dest.to_string_lossy().to_string(),
+        warning: None,
+    })
+}
+
+async fn download_from_evermeet(
+    app: &tauri::AppHandle,
+    arch: &str,
+) -> Result<DownloadResult, String> {
+    let temp_dir = create_temp_dir(app, "ffmpeg_evermeet")?;
+    let client = http_client()?;
+    let mut tracker = DownloadTracker::default();
+
+    emit_download_progress(app, 0.0, "Preparing download...");
+
+    let ffmpeg_archive = temp_dir.join("ffmpeg.zip");
+    let ffprobe_archive = temp_dir.join("ffprobe.zip");
+    download_to_file(
+        app,
+        &client,
+        EVERMEET_RELEASE_FFMPEG_URL,
+        &ffmpeg_archive,
+        &mut tracker,
+        "Downloading FFmpeg...",
+    )
+    .await?;
+    download_to_file(
+        app,
+        &client,
+        EVERMEET_RELEASE_FFPROBE_URL,
+        &ffprobe_archive,
+        &mut tracker,
+        "Downloading FFprobe...",
+    )
+    .await?;
+
+    let ffmpeg_extract = temp_dir.join("ffmpeg");
+    let ffprobe_extract = temp_dir.join("ffprobe");
+    emit_download_progress(app, 92.0, "Extracting archives...");
+    extract_archive(ffmpeg_archive, ffmpeg_extract.clone(), ArchiveType::Zip).await?;
+    extract_archive(ffprobe_archive, ffprobe_extract.clone(), ArchiveType::Zip).await?;
+
+    let ffmpeg_name = binary_file_name("ffmpeg");
+    let ffprobe_name = binary_file_name("ffprobe");
+    let (ffmpeg_src, ffprobe_src) = tokio::task::spawn_blocking(move || {
+        let ffmpeg_src = find_binary_path(&ffmpeg_extract, &ffmpeg_name)?;
+        let ffprobe_src = find_binary_path(&ffprobe_extract, &ffprobe_name)?;
+        Ok::<_, String>((ffmpeg_src, ffprobe_src))
+    })
+    .await
+    .map_err(|e| format!("Failed to locate FFmpeg binaries: {}", e))??;
+
+    emit_download_progress(app, 96.0, "Installing binaries...");
+    let (ffmpeg_dest, ffprobe_dest) = install_binaries(app, &ffmpeg_src, &ffprobe_src).await?;
+    emit_download_progress(app, 100.0, "FFmpeg installed");
+
+    let warning = if arch == "aarch64" {
+        Some(
+            "Evermeet does not provide native Apple Silicon builds. The Intel binary may require Rosetta."
+                .to_string(),
+        )
+    } else {
+        None
+    };
+
+    Ok(DownloadResult {
+        ffmpeg_path: ffmpeg_dest.to_string_lossy().to_string(),
+        ffprobe_path: ffprobe_dest.to_string_lossy().to_string(),
+        warning,
+    })
 }
 
 // ============================================================================
@@ -540,8 +1023,9 @@ const AUDIO_CONVERT_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Get media duration in microseconds using ffprobe
 /// This is used to calculate progress percentage during transcoding
-async fn get_media_duration_us(path: &str) -> Result<u64, String> {
-    let output = Command::new("ffprobe")
+async fn get_media_duration_us(app: &tauri::AppHandle, path: &str) -> Result<u64, String> {
+    let ffprobe_path = resolve_ffprobe_path(app)?;
+    let output = Command::new(&ffprobe_path)
         .args([
             "-v", "error",
             "-show_entries", "format=duration",
@@ -580,7 +1064,7 @@ async fn transcode_to_opus(
     validate_output_path(&output_path)?;
     
     // Get media duration BEFORE starting FFmpeg for accurate progress
-    let duration_us = get_media_duration_us(&input_path).await.unwrap_or(0);
+    let duration_us = get_media_duration_us(&app, &input_path).await.unwrap_or(0);
     
     // Build FFmpeg command
     let map_arg = match track_index {
@@ -594,7 +1078,8 @@ async fn transcode_to_opus(
         "inputPath": input_path.clone()
     }));
     
-    let mut child = tokio::process::Command::new("ffmpeg")
+    let ffmpeg_path = resolve_ffmpeg_path(&app)?;
+    let mut child = tokio::process::Command::new(ffmpeg_path)
         .args([
             "-y",
             "-i", &input_path,
@@ -831,7 +1316,11 @@ fn get_rsext_data_path(media_path: &str) -> String {
 /// Converts to low-bitrate MP3 for small file size while maintaining playability
 /// Returns the path to the converted file in the system temp directory
 #[tauri::command]
-async fn convert_audio_for_waveform(audio_path: String, track_index: Option<i32>) -> Result<String, String> {
+async fn convert_audio_for_waveform(
+    app: tauri::AppHandle,
+    audio_path: String,
+    track_index: Option<i32>,
+) -> Result<String, String> {
     validate_media_path(&audio_path)?;
     
     let input = Path::new(&audio_path);
@@ -856,8 +1345,9 @@ async fn convert_audio_for_waveform(audio_path: String, track_index: Option<i32>
 
     // FFmpeg command to convert to low-bitrate MP3
     let audio_stream = format!("a:{}", track_idx);
+    let ffmpeg_path = resolve_ffmpeg_path(&app)?;
     let convert_future = async {
-        Command::new("ffmpeg")
+        Command::new(&ffmpeg_path)
             .args([
                 "-y",
                 "-i", &audio_path,
@@ -1105,7 +1595,7 @@ async fn transcode_for_preview(
     }
     
     // Get duration for progress
-    let duration_us = get_media_duration_us(&input_path).await.unwrap_or(0);
+    let duration_us = get_media_duration_us(&app, &input_path).await.unwrap_or(0);
     
     // Emit initial progress
     let _ = app.emit("ocr-progress", serde_json::json!({
@@ -1116,7 +1606,8 @@ async fn transcode_for_preview(
         "message": "Starting video transcoding..."
     }));
     
-    let mut child = tokio::process::Command::new("ffmpeg")
+    let ffmpeg_path = resolve_ffmpeg_path(&app)?;
+    let mut child = tokio::process::Command::new(ffmpeg_path)
         .args([
             "-y",
             "-i", &input_path,
@@ -1266,7 +1757,7 @@ async fn extract_ocr_frames(
     let output_pattern_str = output_pattern.to_str().unwrap();
     
     // Get video info for frame count estimation
-    let duration_us = get_media_duration_us(&video_path).await.unwrap_or(0);
+    let duration_us = get_media_duration_us(&app, &video_path).await.unwrap_or(0);
     let estimated_frames = if duration_us > 0 {
         ((duration_us as f64 / 1_000_000.0) * fps) as u32
     } else {
@@ -1296,7 +1787,8 @@ async fn extract_ocr_frames(
         "message": "Starting frame extraction..."
     }));
     
-    let mut child = tokio::process::Command::new("ffmpeg")
+    let ffmpeg_path = resolve_ffmpeg_path(&app)?;
+    let mut child = tokio::process::Command::new(ffmpeg_path)
         .args([
             "-y",
             "-i", &video_path,
@@ -2364,6 +2856,7 @@ async fn check_ocr_models(app: tauri::AppHandle) -> Result<OcrModelsStatus, Stri
 /// Uses async tokio::process::Command with timeout
 #[tauri::command]
 async fn merge_tracks(
+    app: tauri::AppHandle,
     video_path: String,
     tracks: Vec<serde_json::Value>,
     source_track_configs: Option<Vec<serde_json::Value>>,
@@ -2381,15 +2874,17 @@ async fn merge_tracks(
     }
     
     // First, probe the video to count streams and get their types
-    let probe_future = async {
-        Command::new("ffprobe")
+    let ffprobe_path = resolve_ffprobe_path(&app)?;
+    let video_path_for_probe = video_path.clone();
+    let probe_future = async move {
+        Command::new(ffprobe_path)
             .args([
                 "-v",
                 "quiet",
                 "-print_format",
                 "json",
                 "-show_streams",
-                &video_path,
+                &video_path_for_probe,
             ])
             .output()
             .await
@@ -2585,7 +3080,8 @@ async fn merge_tracks(
     // Output file
     args.push(output_path.clone());
 
-    let mut child = Command::new("ffmpeg")
+    let ffmpeg_path = resolve_ffmpeg_path(&app)?;
+    let mut child = Command::new(ffmpeg_path)
         .args(&args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -2746,6 +3242,7 @@ pub fn run() {
             open_folder,
             check_ffmpeg,
             get_ffmpeg_version,
+            download_ffmpeg,
             merge_tracks,
             cancel_merge,
             cancel_merge_file,

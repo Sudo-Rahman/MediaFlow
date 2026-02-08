@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
   import { mode, setMode } from 'mode-watcher';
   import { toast } from 'svelte-sonner';
@@ -9,6 +10,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
+  import { Progress } from '$lib/components/ui/progress';
   import * as Card from '$lib/components/ui/card';
   import * as RadioGroup from '$lib/components/ui/radio-group';
   import { Separator } from '$lib/components/ui/separator';
@@ -18,8 +20,24 @@
 
   import { LLM_PROVIDERS, type LLMProvider } from '$lib/types';
 
+  type DownloadResult = {
+    ffmpegPath: string;
+    ffprobePath: string;
+    warning?: string | null;
+  };
+
+  type DownloadProgressEvent = {
+    progress: number;
+    stage: string;
+  };
+
   let ffmpegStatus = $state<'checking' | 'found' | 'not-found'>('checking');
   let ffmpegVersion = $state<string | null>(null);
+  let ffmpegError = $state<string | null>(null);
+  let isDownloading = $state(false);
+  let downloadProgress = $state<number | null>(null);
+  let downloadStage = $state<string | null>(null);
+  let unlistenProgress: (() => void) | null = null;
 
   // Deepgram API key visibility
   let showDeepgramApiKey = $state(false);
@@ -50,13 +68,30 @@
     await settingsStore.setDeepgramApiKey(value);
   }
 
-  onMount(async () => {
-    await settingsStore.load();
-    await checkFFmpeg();
+  onMount(() => {
+    const setup = async () => {
+      await settingsStore.load();
+      await checkFFmpeg();
+
+      unlistenProgress = await listen<DownloadProgressEvent>('ffmpeg-download-progress', (event) => {
+        const next = Math.max(0, Math.min(100, event.payload.progress));
+        downloadProgress = next;
+        downloadStage = event.payload.stage;
+      });
+    };
+
+    void setup();
+
+    return () => {
+      if (unlistenProgress) {
+        unlistenProgress();
+      }
+    };
   });
 
   async function checkFFmpeg() {
     ffmpegStatus = 'checking';
+    ffmpegError = null;
     try {
       const available = await invoke<boolean>('check_ffmpeg');
       if (available) {
@@ -72,7 +107,9 @@
         ffmpegStatus = 'not-found';
         ffmpegVersion = null;
       }
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      ffmpegError = message;
       ffmpegStatus = 'not-found';
       ffmpegVersion = null;
     }
@@ -104,11 +141,55 @@
     if (selected && typeof selected === 'string') {
       await settingsStore.setFFprobePath(selected);
       toast.success('FFprobe path updated');
+      await checkFFmpeg();
     }
   }
 
-  function handleDownloadFFmpeg() {
-    window.open('https://ffmpeg.org/download.html', '_blank');
+  let checkTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  function scheduleCheckFFmpeg() {
+    if (checkTimeout) {
+      clearTimeout(checkTimeout);
+    }
+    checkTimeout = setTimeout(() => {
+      checkFFmpeg();
+    }, 400);
+  }
+
+  async function handleFFmpegPathInput(value: string) {
+    await settingsStore.setFFmpegPath(value);
+    scheduleCheckFFmpeg();
+  }
+
+  async function handleFFprobePathInput(value: string) {
+    await settingsStore.setFFprobePath(value);
+    scheduleCheckFFmpeg();
+  }
+
+  async function handleDownloadFFmpeg() {
+    if (isDownloading) return;
+    isDownloading = true;
+    downloadProgress = 0;
+    downloadStage = 'Starting download...';
+    try {
+      const result = await invoke<DownloadResult>('download_ffmpeg');
+      await settingsStore.setFFmpegPath(result.ffmpegPath);
+      await settingsStore.setFFprobePath(result.ffprobePath);
+      if (result.warning) {
+        toast.warning(result.warning);
+      }
+      toast.success('FFmpeg installed');
+      downloadProgress = 100;
+      downloadStage = 'FFmpeg installed';
+      await checkFFmpeg();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message);
+      downloadProgress = null;
+      downloadStage = null;
+    } finally {
+      isDownloading = false;
+    }
   }
 
   function handleOpenDeepgramConsole() {
@@ -249,7 +330,7 @@
               id="ffmpeg-path"
               placeholder="Leave empty to use system PATH"
               value={settingsStore.settings.ffmpegPath}
-              oninput={(e) => settingsStore.setFFmpegPath(e.currentTarget.value)}
+              oninput={(e) => void handleFFmpegPathInput(e.currentTarget.value)}
               class="flex-1"
             />
             <Button variant="outline" size="icon" onclick={handleBrowseFFmpeg}>
@@ -269,21 +350,43 @@
               id="ffprobe-path"
               placeholder="Leave empty to use system PATH"
               value={settingsStore.settings.ffprobePath}
-              oninput={(e) => settingsStore.setFFprobePath(e.currentTarget.value)}
+              oninput={(e) => void handleFFprobePathInput(e.currentTarget.value)}
               class="flex-1"
             />
             <Button variant="outline" size="icon" onclick={handleBrowseFFprobe}>
               <FolderOpen class="size-4" />
             </Button>
           </div>
+          {#if ffmpegError}
+            <p class="text-xs text-destructive">{ffmpegError}</p>
+          {/if}
         </div>
 
         <!-- Download button -->
         {#if ffmpegStatus === 'not-found'}
-          <Button variant="outline" class="w-full" onclick={handleDownloadFFmpeg}>
-            <Download class="size-4 mr-2" />
-            Download FFmpeg
+          <Button
+            variant="outline"
+            class="w-full"
+            onclick={handleDownloadFFmpeg}
+            disabled={isDownloading}
+          >
+            {#if isDownloading}
+              <RefreshCw class="size-4 mr-2 animate-spin" />
+              Downloading FFmpeg...
+            {:else}
+              <Download class="size-4 mr-2" />
+              Download FFmpeg
+            {/if}
           </Button>
+          {#if isDownloading || downloadProgress !== null}
+            <div class="space-y-2">
+              <div class="flex items-center justify-between text-xs text-muted-foreground">
+                <span>{downloadStage ?? 'Preparing...'}</span>
+                <span>{downloadProgress !== null ? `${Math.round(downloadProgress)}%` : ''}</span>
+              </div>
+              <Progress value={downloadProgress ?? 0} max={100} />
+            </div>
+          {/if}
         {/if}
       </Card.Content>
     </Card.Root>

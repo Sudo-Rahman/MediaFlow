@@ -297,7 +297,7 @@
     </div>
 
     {#if fileListStore.files.length === 0}
-      <div class="flex-1 p-4 overflow-auto">
+      <div class="flex-1 p-2 overflow-auto">
         <ImportDropZone
           icon={FileVideo}
           title="Drop media files here"

@@ -507,7 +507,7 @@
     <!-- Table or Drop Zone -->
     <div class="flex-1 min-h-0 overflow-hidden">
       {#if totalCount === 0}
-        <div class="h-full p-3">
+        <div class="h-full p-2">
           <ImportDropZone
             icon={FileText}
             title="Drop files here"

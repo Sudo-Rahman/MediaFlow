@@ -1,13 +1,13 @@
+use futures_util::StreamExt;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
-use std::time::Duration;
-use futures_util::StreamExt;
-use rayon::prelude::*;
 use tauri::{Emitter, Manager};
 use tauri_plugin_store::StoreExt;
 use tiktoken_rs::o200k_base_singleton;
@@ -15,17 +15,17 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 use walkdir::WalkDir;
-use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+use window_vibrancy::{NSVisualEffectMaterial, apply_vibrancy};
 
 // OCR library
-use ocr_rs::{OcrEngine, OcrEngineConfig, Backend};
+use ocr_rs::{Backend, OcrEngine, OcrEngineConfig};
 
 // ============================================================================
 // GLOBAL STATE FOR PROCESS MANAGEMENT
 // ============================================================================
 
 /// Store transcode process IDs keyed by input path for individual cancellation
-static TRANSCODE_PROCESS_IDS: LazyLock<Mutex<HashMap<String, u32>>> = 
+static TRANSCODE_PROCESS_IDS: LazyLock<Mutex<HashMap<String, u32>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Store merge process IDs keyed by video path for individual cancellation
@@ -63,8 +63,8 @@ const EVERMEET_RELEASE_FFPROBE_URL: &str = "https://evermeet.cx/ffmpeg/getreleas
 
 /// Allowed media file extensions
 const ALLOWED_MEDIA_EXTENSIONS: &[&str] = &[
-    "mkv", "mp4", "avi", "mov", "webm", "m4v", "mks", "mka", "m4a", "mp3", 
-    "flac", "wav", "ogg", "aac", "ac3", "dts", "srt", "ass", "ssa", "vtt", "sub", "sup", "opus", "wma"
+    "mkv", "mp4", "avi", "mov", "webm", "m4v", "mks", "mka", "m4a", "mp3", "flac", "wav", "ogg",
+    "aac", "ac3", "dts", "srt", "ass", "ssa", "vtt", "sub", "sup", "opus", "wma",
 ];
 
 // ============================================================================
@@ -103,63 +103,66 @@ impl std::fmt::Display for ExtractionError {
 /// Validate that a path exists and is a file with an allowed extension
 fn validate_media_path(path: &str) -> Result<(), String> {
     let path = Path::new(path);
-    
+
     // Check if path exists
     if !path.exists() {
         return Err(format!("File not found: {}", path.display()));
     }
-    
+
     // Check if it's a file (not a directory)
     if !path.is_file() {
         return Err(format!("Not a file: {}", path.display()));
     }
-    
+
     // Check extension
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
-    
+
     if !ALLOWED_MEDIA_EXTENSIONS.contains(&ext.as_str()) {
         return Err(format!("Unsupported file type: .{}", ext));
     }
-    
+
     Ok(())
 }
 
 /// Validate that a path is safe (no path traversal) and parent directory exists
 fn validate_output_path(path: &str) -> Result<(), String> {
     let path = Path::new(path);
-    
+
     // Check for path traversal attempts
     let path_str = path.to_string_lossy();
     if path_str.contains("..") {
         return Err("Path traversal not allowed".to_string());
     }
-    
+
     // Check that parent directory exists
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
-            return Err(format!("Output directory does not exist: {}", parent.display()));
+            return Err(format!(
+                "Output directory does not exist: {}",
+                parent.display()
+            ));
         }
     }
-    
+
     Ok(())
 }
 
 /// Validate that a directory path exists
 fn validate_directory_path(path: &str) -> Result<(), String> {
     let path = Path::new(path);
-    
+
     if !path.exists() {
         return Err(format!("Directory not found: {}", path.display()));
     }
-    
+
     if !path.is_dir() {
         return Err(format!("Not a directory: {}", path.display()));
     }
-    
+
     Ok(())
 }
 
@@ -191,10 +194,18 @@ fn resolve_binary_path(
 
     let path = Path::new(trimmed);
     if !path.exists() {
-        return Err(format!("Custom {} path does not exist: {}", label, path.display()));
+        return Err(format!(
+            "Custom {} path does not exist: {}",
+            label,
+            path.display()
+        ));
     }
     if !path.is_file() {
-        return Err(format!("Custom {} path is not a file: {}", label, path.display()));
+        return Err(format!(
+            "Custom {} path is not a file: {}",
+            label,
+            path.display()
+        ));
     }
 
     Ok(path.to_string_lossy().to_string())
@@ -245,8 +256,7 @@ fn create_temp_dir(app: &tauri::AppHandle, prefix: &str) -> Result<PathBuf, Stri
         .map(|d| d.as_millis().to_string())
         .unwrap_or_else(|_| "0".to_string());
     let dir = base.join(format!("{}_{}", prefix, nonce));
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("Failed to create temp directory: {}", e))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create temp directory: {}", e))?;
     Ok(dir)
 }
 
@@ -290,9 +300,7 @@ async fn download_to_file(
 
     while let Some(chunk) = stream.next().await {
         let bytes = chunk.map_err(|e| format!("Failed to read download stream: {}", e))?;
-        tracker.downloaded_bytes = tracker
-            .downloaded_bytes
-            .saturating_add(bytes.len() as u64);
+        tracker.downloaded_bytes = tracker.downloaded_bytes.saturating_add(bytes.len() as u64);
         file.write_all(&bytes)
             .await
             .map_err(|e| format!("Failed to write download file: {}", e))?;
@@ -435,7 +443,12 @@ fn resolve_btbn_variant(os: &str, arch: &str) -> Result<&'static str, String> {
     }
 }
 
-fn find_btbn_url(page: &str, variant: &str, preferred_ext: &str, fallback_ext: &str) -> Option<String> {
+fn find_btbn_url(
+    page: &str,
+    variant: &str,
+    preferred_ext: &str,
+    fallback_ext: &str,
+) -> Option<String> {
     let preferred = find_btbn_url_with_ext(page, variant, preferred_ext);
     if preferred.is_some() {
         return preferred;
@@ -488,7 +501,7 @@ async fn probe_file(app: tauri::AppHandle, path: String) -> Result<String, Strin
     // Validate input path
     validate_media_path(&path)?;
     let ffprobe_path = resolve_ffprobe_path(&app)?;
-    
+
     let probe_future = async move {
         Command::new(ffprobe_path)
             .args([
@@ -503,11 +516,16 @@ async fn probe_file(app: tauri::AppHandle, path: String) -> Result<String, Strin
             .output()
             .await
     };
-    
+
     // Execute with timeout
     let output = timeout(FFPROBE_TIMEOUT, probe_future)
         .await
-        .map_err(|_| format!("FFprobe timeout after {} seconds", FFPROBE_TIMEOUT.as_secs()))?
+        .map_err(|_| {
+            format!(
+                "FFprobe timeout after {} seconds",
+                FFPROBE_TIMEOUT.as_secs()
+            )
+        })?
         .map_err(|e| {
             format!(
                 "Failed to execute ffprobe: {}. Make sure FFmpeg is installed.",
@@ -532,11 +550,11 @@ async fn probe_file(app: tauri::AppHandle, path: String) -> Result<String, Strin
 /// Maps codec name to FFmpeg format name
 const CODEC_TO_FFMPEG_FORMAT: &[(&str, &str)] = &[
     // Windows Media Audio variants
-    ("wmav2", "asf"),      // WMA v2 -> ASF container
-    ("wmav1", "asf"),      // WMA v1 -> ASF container
-    ("wma", "asf"),        // Generic WMA -> ASF container
-    ("wmapro", "asf"),     // WMA Pro -> ASF container
-    ("wmavoice", "asf"),   // WMA Voice -> ASF container
+    ("wmav2", "asf"),    // WMA v2 -> ASF container
+    ("wmav1", "asf"),    // WMA v1 -> ASF container
+    ("wma", "asf"),      // Generic WMA -> ASF container
+    ("wmapro", "asf"),   // WMA Pro -> ASF container
+    ("wmavoice", "asf"), // WMA Voice -> ASF container
     // PCM variants
     ("pcm_s16le", "wav"),
     ("pcm_s24le", "wav"),
@@ -556,10 +574,10 @@ const CODEC_TO_FFMPEG_FORMAT: &[(&str, &str)] = &[
     ("adpcm_ms", "wav"),
     ("adpcm_yamaha", "wav"),
     // Other audio
-    ("mp2", "mp3"),        // MPEG-1 Audio Layer II
-    ("truehd", "mlp"),     // Dolby TrueHD
-    ("mlp", "mlp"),        // Meridian Lossless Packing
-    ("wavpack", "wv"),     // WavPack
+    ("mp2", "mp3"),    // MPEG-1 Audio Layer II
+    ("truehd", "mlp"), // Dolby TrueHD
+    ("mlp", "mlp"),    // Meridian Lossless Packing
+    ("wavpack", "wv"), // WavPack
 ];
 
 /// Get FFmpeg format for a given codec
@@ -579,9 +597,9 @@ fn has_recognized_extension(path: &str) -> bool {
 
 /// Extensions that FFmpeg recognizes for auto-detection
 const KNOWN_EXTENSIONS: &[&str] = &[
-    ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".m4a",
-    ".mp3", ".aac", ".ac3", ".eac3", ".dts", ".flac", ".ogg", ".opus", ".wav", ".wma",
-    ".ass", ".ssa", ".srt", ".vtt", ".sub", ".sup",
+    ".mp4", ".mkv", ".avi", ".mov", ".webm", ".m4v", ".m4a", ".mp3", ".aac", ".ac3", ".eac3",
+    ".dts", ".flac", ".ogg", ".opus", ".wav", ".wma", ".ass", ".ssa", ".srt", ".vtt", ".sub",
+    ".sup",
 ];
 
 // ============================================================================
@@ -603,7 +621,7 @@ async fn extract_track(
     // Validate paths
     validate_media_path(&input_path)?;
     validate_output_path(&output_path)?;
-    
+
     // Build the map argument based on track type
     let map_arg = format!("0:{}", track_index);
 
@@ -668,17 +686,17 @@ async fn extract_track(
     args.push(output_path.clone());
 
     let ffmpeg_path = resolve_ffmpeg_path(&app)?;
-    let extract_future = async move {
-        Command::new(ffmpeg_path)
-            .args(&args)
-            .output()
-            .await
-    };
-    
+    let extract_future = async move { Command::new(ffmpeg_path).args(&args).output().await };
+
     // Execute with timeout
     let output = timeout(FFMPEG_EXTRACT_TIMEOUT, extract_future)
         .await
-        .map_err(|_| format!("FFmpeg extraction timeout after {} seconds", FFMPEG_EXTRACT_TIMEOUT.as_secs()))?
+        .map_err(|_| {
+            format!(
+                "FFmpeg extraction timeout after {} seconds",
+                FFMPEG_EXTRACT_TIMEOUT.as_secs()
+            )
+        })?
         .map_err(|e| {
             format!(
                 "Failed to execute ffmpeg: {}. Make sure FFmpeg is installed.",
@@ -703,7 +721,7 @@ async fn extract_track(
 async fn open_folder(path: String) -> Result<(), String> {
     // Validate directory path
     validate_directory_path(&path)?;
-    
+
     #[cfg(target_os = "macos")]
     {
         Command::new("open")
@@ -825,7 +843,15 @@ async fn download_from_btbn(
         ArchiveType::Zip => temp_dir.join("ffmpeg.zip"),
         ArchiveType::TarXz => temp_dir.join("ffmpeg.tar.xz"),
     };
-    download_to_file(app, &client, &url, &archive_path, &mut tracker, "Downloading FFmpeg...").await?;
+    download_to_file(
+        app,
+        &client,
+        &url,
+        &archive_path,
+        &mut tracker,
+        "Downloading FFmpeg...",
+    )
+    .await?;
 
     let extract_dir = temp_dir.join("extracted");
     emit_download_progress(app, 92.0, "Extracting archive...");
@@ -934,17 +960,16 @@ async fn rename_file(old_path: String, new_path: String) -> Result<(), String> {
     if !old.is_file() {
         return Err(format!("Source is not a file: {}", old_path));
     }
-    
+
     validate_output_path(&new_path)?;
-    
+
     // Check if destination already exists
     let new = Path::new(&new_path);
     if new.exists() {
         return Err(format!("Destination already exists: {}", new_path));
     }
-    
-    std::fs::rename(&old_path, &new_path)
-        .map_err(|e| format!("Failed to rename file: {}", e))
+
+    std::fs::rename(&old_path, &new_path).map_err(|e| format!("Failed to rename file: {}", e))
 }
 
 /// Copy a file to a new location
@@ -958,11 +983,10 @@ async fn copy_file(source_path: String, dest_path: String) -> Result<(), String>
     if !source.is_file() {
         return Err(format!("Source is not a file: {}", source_path));
     }
-    
+
     validate_output_path(&dest_path)?;
-    
-    std::fs::copy(&source_path, &dest_path)
-        .map_err(|e| format!("Failed to copy file: {}", e))?;
+
+    std::fs::copy(&source_path, &dest_path).map_err(|e| format!("Failed to copy file: {}", e))?;
     Ok(())
 }
 
@@ -977,21 +1001,23 @@ pub struct FileMetadata {
 /// Get file metadata (size, created, modified dates)
 #[tauri::command]
 async fn get_file_metadata(path: String) -> Result<FileMetadata, String> {
-    let metadata = std::fs::metadata(&path)
-        .map_err(|e| format!("Failed to get file metadata: {}", e))?;
-    
+    let metadata =
+        std::fs::metadata(&path).map_err(|e| format!("Failed to get file metadata: {}", e))?;
+
     let size = metadata.len();
-    
-    let created_at = metadata.created()
+
+    let created_at = metadata
+        .created()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64);
-    
-    let modified_at = metadata.modified()
+
+    let modified_at = metadata
+        .modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64);
-    
+
     Ok(FileMetadata {
         size,
         created_at,
@@ -1027,26 +1053,29 @@ async fn get_media_duration_us(app: &tauri::AppHandle, path: &str) -> Result<u64
     let ffprobe_path = resolve_ffprobe_path(app)?;
     let output = Command::new(&ffprobe_path)
         .args([
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
             path,
         ])
         .output()
         .await
         .map_err(|e| format!("Failed to run ffprobe: {}", e))?;
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("ffprobe failed: {}", stderr));
     }
-    
+
     let duration_str = String::from_utf8_lossy(&output.stdout);
     let duration_secs: f64 = duration_str
         .trim()
         .parse()
         .map_err(|_| format!("Invalid duration: {}", duration_str.trim()))?;
-    
+
     Ok((duration_secs * 1_000_000.0) as u64)
 }
 
@@ -1062,81 +1091,92 @@ async fn transcode_to_opus(
 ) -> Result<String, String> {
     validate_media_path(&input_path)?;
     validate_output_path(&output_path)?;
-    
+
     // Get media duration BEFORE starting FFmpeg for accurate progress
     let duration_us = get_media_duration_us(&app, &input_path).await.unwrap_or(0);
-    
+
     // Build FFmpeg command
     let map_arg = match track_index {
         Some(idx) => format!("0:a:{}", idx),
         None => "0:a:0".to_string(),
     };
-    
+
     // Emit initial progress
-    let _ = app.emit("transcode-progress", serde_json::json!({ 
-        "progress": 0, 
-        "inputPath": input_path.clone()
-    }));
-    
+    let _ = app.emit(
+        "transcode-progress",
+        serde_json::json!({
+            "progress": 0,
+            "inputPath": input_path.clone()
+        }),
+    );
+
     let ffmpeg_path = resolve_ffmpeg_path(&app)?;
     let mut child = tokio::process::Command::new(ffmpeg_path)
         .args([
             "-y",
-            "-i", &input_path,
-            "-map", &map_arg,
-            "-c:a", "libopus",
-            "-b:a", "96k",
-            "-ac", "1",  // Mono
-            "-progress", "pipe:1",  // Progress to stdout
+            "-i",
+            &input_path,
+            "-map",
+            &map_arg,
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "96k",
+            "-ac",
+            "1", // Mono
+            "-progress",
+            "pipe:1", // Progress to stdout
             &output_path,
         ])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| format!("Failed to start ffmpeg: {}", e))?;
-    
+
     // Store process ID for cancellation (keyed by input path)
     if let Some(pid) = child.id() {
         if let Ok(mut guard) = TRANSCODE_PROCESS_IDS.lock() {
             guard.insert(input_path.clone(), pid);
         }
     }
-    
+
     // Read stdout for progress
     let stdout = child.stdout.take();
     let app_clone = app.clone();
     let input_path_clone = input_path.clone();
-    
+
     if let Some(mut stdout) = stdout {
         use tokio::io::AsyncBufReadExt;
         use tokio::io::BufReader;
-        
+
         tokio::spawn(async move {
             let reader = BufReader::new(&mut stdout);
             let mut lines = reader.lines();
-            
+
             while let Ok(Some(line)) = lines.next_line().await {
                 // Parse progress from FFmpeg's -progress output
                 if line.starts_with("out_time_us=") {
                     if let Ok(time_us) = line.trim_start_matches("out_time_us=").parse::<u64>() {
                         if duration_us > 0 {
-                            let progress = ((time_us as f64 / duration_us as f64) * 100.0).min(99.0) as i32;
-                            let _ = app_clone.emit("transcode-progress", serde_json::json!({ 
-                                "progress": progress, 
-                                "inputPath": input_path_clone 
-                            }));
+                            let progress =
+                                ((time_us as f64 / duration_us as f64) * 100.0).min(99.0) as i32;
+                            let _ = app_clone.emit(
+                                "transcode-progress",
+                                serde_json::json!({
+                                    "progress": progress,
+                                    "inputPath": input_path_clone
+                                }),
+                            );
                         }
                     }
                 }
             }
         });
     }
-    
+
     // Wait for completion with timeout
-    let wait_future = async {
-        child.wait_with_output().await
-    };
-    
+    let wait_future = async { child.wait_with_output().await };
+
     let input_path_for_cleanup = input_path.clone();
     let output = timeout(AUDIO_TRANSCODE_TIMEOUT, wait_future)
         .await
@@ -1144,7 +1184,10 @@ async fn transcode_to_opus(
             if let Ok(mut guard) = TRANSCODE_PROCESS_IDS.lock() {
                 guard.remove(&input_path_for_cleanup);
             }
-            format!("Transcode timeout after {} seconds", AUDIO_TRANSCODE_TIMEOUT.as_secs())
+            format!(
+                "Transcode timeout after {} seconds",
+                AUDIO_TRANSCODE_TIMEOUT.as_secs()
+            )
         })?
         .map_err(|e| {
             if let Ok(mut guard) = TRANSCODE_PROCESS_IDS.lock() {
@@ -1152,23 +1195,26 @@ async fn transcode_to_opus(
             }
             format!("FFmpeg error: {}", e)
         })?;
-    
+
     // Clear process ID for this file
     if let Ok(mut guard) = TRANSCODE_PROCESS_IDS.lock() {
         guard.remove(&input_path);
     }
-    
+
     // Emit completion
-    let _ = app.emit("transcode-progress", serde_json::json!({ 
-        "progress": 100, 
-        "inputPath": input_path 
-    }));
-    
+    let _ = app.emit(
+        "transcode-progress",
+        serde_json::json!({
+            "progress": 100,
+            "inputPath": input_path
+        }),
+    );
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("Transcode failed: {}", stderr));
     }
-    
+
     // Verify output exists
     if !Path::new(&output_path).exists() {
         return Err("Transcode failed: output file not created".to_string());
@@ -1187,7 +1233,7 @@ async fn cancel_transcode_file(input_path: String) -> Result<(), String> {
             Err(_) => return Err("Failed to acquire process lock".to_string()),
         }
     };
-    
+
     if let Some(pid) = pid {
         if pid != 0 {
             #[cfg(unix)]
@@ -1196,7 +1242,7 @@ async fn cancel_transcode_file(input_path: String) -> Result<(), String> {
                     libc::kill(pid as i32, libc::SIGTERM);
                 }
             }
-            
+
             #[cfg(windows)]
             {
                 let _ = std::process::Command::new("taskkill")
@@ -1205,7 +1251,7 @@ async fn cancel_transcode_file(input_path: String) -> Result<(), String> {
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -1218,11 +1264,11 @@ async fn cancel_transcode() -> Result<(), String> {
                 let pids: Vec<u32> = guard.values().copied().collect();
                 guard.clear();
                 pids
-            },
+            }
             Err(_) => return Err("Failed to acquire process lock".to_string()),
         }
     };
-    
+
     for pid in pids {
         #[cfg(unix)]
         {
@@ -1230,7 +1276,7 @@ async fn cancel_transcode() -> Result<(), String> {
                 libc::kill(pid as i32, libc::SIGTERM);
             }
         }
-        
+
         #[cfg(windows)]
         {
             let _ = std::process::Command::new("taskkill")
@@ -1238,7 +1284,7 @@ async fn cancel_transcode() -> Result<(), String> {
                 .output();
         }
     }
-    
+
     Ok(())
 }
 
@@ -1251,8 +1297,7 @@ async fn cancel_transcode() -> Result<(), String> {
 async fn save_rsext_data(media_path: String, data: String) -> Result<(), String> {
     let json_path = get_rsext_data_path(&media_path);
 
-    std::fs::write(&json_path, &data)
-        .map_err(|e| format!("Failed to save rsext data: {}", e))?;
+    std::fs::write(&json_path, &data).map_err(|e| format!("Failed to save rsext data: {}", e))?;
 
     Ok(())
 }
@@ -1308,8 +1353,11 @@ fn get_rsext_data_path(media_path: &str) -> String {
     let path = Path::new(media_path);
     let parent = path.parent().unwrap_or(Path::new("."));
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("media");
-    
-    parent.join(format!("{}.rsext.json", stem)).to_string_lossy().to_string()
+
+    parent
+        .join(format!("{}.rsext.json", stem))
+        .to_string_lossy()
+        .to_string()
 }
 
 /// Convert audio file to a lightweight format for waveform visualization
@@ -1322,22 +1370,30 @@ async fn convert_audio_for_waveform(
     track_index: Option<i32>,
 ) -> Result<String, String> {
     validate_media_path(&audio_path)?;
-    
+
     let input = Path::new(&audio_path);
-    let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("audio");
-    
+    let stem = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("audio");
+
     // Use system temp directory for waveform cache
     let temp_dir = std::env::temp_dir().join("rsextractor_waveform");
     std::fs::create_dir_all(&temp_dir)
         .map_err(|e| format!("Failed to create temp directory: {}", e))?;
-    
+
     // Create a unique filename based on the original path hash AND track index
     let track_idx = track_index.unwrap_or(0);
     let cache_key = format!("{}::track{}", audio_path, track_idx);
     let path_hash = format!("{:x}", md5_hash(&cache_key));
-    let output_path = temp_dir.join(format!("{}_track{}_{}.mp3", stem, track_idx, &path_hash[..8]));
+    let output_path = temp_dir.join(format!(
+        "{}_track{}_{}.mp3",
+        stem,
+        track_idx,
+        &path_hash[..8]
+    ));
     let output_str = output_path.to_str().unwrap().to_string();
-    
+
     // If already converted, return existing file
     if output_path.exists() {
         return Ok(output_str);
@@ -1350,30 +1406,39 @@ async fn convert_audio_for_waveform(
         Command::new(&ffmpeg_path)
             .args([
                 "-y",
-                "-i", &audio_path,
-                "-b:a", "128k",
-                "-ac", "1",
-                "-map", &audio_stream,  // Use specified audio stream
+                "-i",
+                &audio_path,
+                "-b:a",
+                "128k",
+                "-ac",
+                "1",
+                "-map",
+                &audio_stream, // Use specified audio stream
                 &output_str,
             ])
             .output()
             .await
     };
-    
+
     let output = timeout(AUDIO_CONVERT_TIMEOUT, convert_future)
         .await
-        .map_err(|_| format!("Waveform conversion timeout after {} seconds", AUDIO_CONVERT_TIMEOUT.as_secs()))?
+        .map_err(|_| {
+            format!(
+                "Waveform conversion timeout after {} seconds",
+                AUDIO_CONVERT_TIMEOUT.as_secs()
+            )
+        })?
         .map_err(|e| format!("Failed to convert for waveform: {}", e))?;
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("Waveform conversion failed: {}", stderr));
     }
-    
+
     if !output_path.exists() {
         return Err("Waveform conversion failed: output file not created".to_string());
     }
-    
+
     Ok(output_str)
 }
 
@@ -1391,11 +1456,11 @@ fn md5_hash(s: &str) -> u64 {
 // ============================================================================
 
 /// Store OCR process IDs and output paths for cancellation and cleanup
-static OCR_PROCESS_IDS: LazyLock<Mutex<HashMap<String, u32>>> = 
+static OCR_PROCESS_IDS: LazyLock<Mutex<HashMap<String, u32>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Store OCR transcode output paths for cleanup on cancel/error
-static OCR_TRANSCODE_PATHS: LazyLock<Mutex<HashMap<String, String>>> = 
+static OCR_TRANSCODE_PATHS: LazyLock<Mutex<HashMap<String, String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Timeout for video transcoding for preview (10 minutes)
@@ -1463,30 +1528,31 @@ fn create_ocr_engine(
     let rec_path = models_dir.join(rec_model);
     let charset_file = get_charset_for_language(language);
     let charset_path = models_dir.join(charset_file);
-    
+
     // Validate model files exist
     if !det_path.exists() {
         return Err(format!(
-            "Detection model not found: {}. Please download OCR models.", 
+            "Detection model not found: {}. Please download OCR models.",
             det_path.display()
         ));
     }
     if !rec_path.exists() {
         return Err(format!(
-            "Recognition model not found: {}. Please download OCR models for language '{}'.", 
-            rec_path.display(), language
+            "Recognition model not found: {}. Please download OCR models for language '{}'.",
+            rec_path.display(),
+            language
         ));
     }
     if !charset_path.exists() {
         return Err(format!(
-            "Charset file not found: {}. Please download OCR models.", 
+            "Charset file not found: {}. Please download OCR models.",
             charset_path.display()
         ));
     }
-    
+
     // Fixed thread count for MNN: num_cpus / 2 (optimal for inference)
     let mnn_threads = std::cmp::max(1, num_cpus::get() as i32);
-    
+
     // Create OCR engine config based on GPU option
     let config = if use_gpu {
         #[cfg(target_os = "macos")]
@@ -1503,18 +1569,18 @@ fn create_ocr_engine(
         }
     } else {
         // CPU-only mode: no GPU backend
-        OcrEngineConfig::new()
-            .with_threads(mnn_threads)
+        OcrEngineConfig::new().with_threads(mnn_threads)
     };
-    
+
     // Create the engine
     let engine = OcrEngine::new(
         det_path.to_str().ok_or("Invalid detection model path")?,
         rec_path.to_str().ok_or("Invalid recognition model path")?,
         charset_path.to_str().ok_or("Invalid charset path")?,
         Some(config),
-    ).map_err(|e| format!("Failed to create OCR engine: {}", e))?;
-    
+    )
+    .map_err(|e| format!("Failed to create OCR engine: {}", e))?;
+
     Ok(engine)
 }
 
@@ -1527,7 +1593,7 @@ fn get_ocr_models_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, Stri
             return Ok(models_dir);
         }
     }
-    
+
     // Check app data directory for user-downloaded models
     if let Ok(app_data) = app.path().app_data_dir() {
         let models_dir = app_data.join(DEFAULT_OCR_MODELS_DIR);
@@ -1535,14 +1601,14 @@ fn get_ocr_models_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, Stri
             return Ok(models_dir);
         }
     }
-    
+
     Err("OCR models not found. Please download the PP-OCRv5 models and place them in the app's ocr-models directory.".to_string())
 }
 
 /// OCR region for cropping frames
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrRegion {
-    x: f64,      // 0-1 relative position
+    x: f64, // 0-1 relative position
     y: f64,
     width: f64,
     height: f64,
@@ -1562,8 +1628,8 @@ pub struct OcrFrameResult {
 pub struct OcrSubtitleEntry {
     id: String,
     text: String,
-    start_time: u64,  // ms
-    end_time: u64,    // ms
+    start_time: u64, // ms
+    end_time: u64,   // ms
     confidence: f64,
 }
 
@@ -1576,100 +1642,119 @@ async fn transcode_for_preview(
     file_id: String,
 ) -> Result<String, String> {
     validate_media_path(&input_path)?;
-    
+
     // Create output path in temp directory
     let input = Path::new(&input_path);
-    let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("video");
+    let stem = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("video");
     let path_hash = format!("{:x}", md5_hash(&input_path));
-    
+
     let temp_dir = std::env::temp_dir().join("rsextractor_preview");
     std::fs::create_dir_all(&temp_dir)
         .map_err(|e| format!("Failed to create temp directory: {}", e))?;
-    
+
     let output_path = temp_dir.join(format!("{}_{}.mp4", stem, &path_hash[..8]));
     let output_str = output_path.to_str().unwrap().to_string();
-    
+
     // Check if already transcoded
     if output_path.exists() {
         return Ok(output_str);
     }
-    
+
     // Get duration for progress
     let duration_us = get_media_duration_us(&app, &input_path).await.unwrap_or(0);
-    
+
     // Emit initial progress
-    let _ = app.emit("ocr-progress", serde_json::json!({
-        "fileId": file_id,
-        "phase": "transcoding",
-        "current": 0,
-        "total": 100,
-        "message": "Starting video transcoding..."
-    }));
-    
+    let _ = app.emit(
+        "ocr-progress",
+        serde_json::json!({
+            "fileId": file_id,
+            "phase": "transcoding",
+            "current": 0,
+            "total": 100,
+            "message": "Starting video transcoding..."
+        }),
+    );
+
     let ffmpeg_path = resolve_ffmpeg_path(&app)?;
     let mut child = tokio::process::Command::new(ffmpeg_path)
         .args([
             "-y",
-            "-i", &input_path,
-            "-vf", "scale=-2:480",
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "28",
-            "-c:a", "aac",
-            "-b:a", "96k",
-            "-ac", "1",
-            "-progress", "pipe:1",
+            "-i",
+            &input_path,
+            "-vf",
+            "scale=-2:480",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "28",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "96k",
+            "-ac",
+            "1",
+            "-progress",
+            "pipe:1",
             &output_str,
         ])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| format!("Failed to start ffmpeg: {}", e))?;
-    
+
     // Store PID for cancellation
     if let Some(pid) = child.id() {
         if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
             guard.insert(file_id.clone(), pid);
         }
     }
-    
+
     // Store output path for cleanup on cancel/error
     if let Ok(mut guard) = OCR_TRANSCODE_PATHS.lock() {
         guard.insert(file_id.clone(), output_str.clone());
     }
-    
+
     // Read stdout for progress
     let stdout = child.stdout.take();
     let app_clone = app.clone();
     let file_id_clone = file_id.clone();
-    
+
     if let Some(mut stdout) = stdout {
         use tokio::io::AsyncBufReadExt;
         use tokio::io::BufReader;
-        
+
         tokio::spawn(async move {
             let reader = BufReader::new(&mut stdout);
             let mut lines = reader.lines();
-            
+
             while let Ok(Some(line)) = lines.next_line().await {
                 if line.starts_with("out_time_us=") {
                     if let Ok(time_us) = line.trim_start_matches("out_time_us=").parse::<u64>() {
                         if duration_us > 0 {
-                            let progress = ((time_us as f64 / duration_us as f64) * 100.0).min(99.0) as i32;
-                            let _ = app_clone.emit("ocr-progress", serde_json::json!({
-                                "fileId": file_id_clone,
-                                "phase": "transcoding",
-                                "current": progress,
-                                "total": 100,
-                                "message": format!("Transcoding video... {}%", progress)
-                            }));
+                            let progress =
+                                ((time_us as f64 / duration_us as f64) * 100.0).min(99.0) as i32;
+                            let _ = app_clone.emit(
+                                "ocr-progress",
+                                serde_json::json!({
+                                    "fileId": file_id_clone,
+                                    "phase": "transcoding",
+                                    "current": progress,
+                                    "total": 100,
+                                    "message": format!("Transcoding video... {}%", progress)
+                                }),
+                            );
                         }
                     }
                 }
             }
         });
     }
-    
+
     // Wait for completion
     let file_id_for_cleanup = file_id.clone();
     let output_path_for_cleanup = output_str.clone();
@@ -1684,7 +1769,10 @@ async fn transcode_for_preview(
             }
             // Clean up partial file on timeout
             let _ = std::fs::remove_file(&output_path_for_cleanup);
-            format!("Video transcoding timeout after {} seconds", VIDEO_PREVIEW_TRANSCODE_TIMEOUT.as_secs())
+            format!(
+                "Video transcoding timeout after {} seconds",
+                VIDEO_PREVIEW_TRANSCODE_TIMEOUT.as_secs()
+            )
         })?
         .map_err(|e| {
             if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
@@ -1697,7 +1785,7 @@ async fn transcode_for_preview(
             let _ = std::fs::remove_file(&output_path_for_cleanup);
             format!("FFmpeg error: {}", e)
         })?;
-    
+
     // Clear PID and path tracking
     if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
         guard.remove(&file_id);
@@ -1705,27 +1793,30 @@ async fn transcode_for_preview(
     if let Ok(mut guard) = OCR_TRANSCODE_PATHS.lock() {
         guard.remove(&file_id);
     }
-    
+
     // Emit completion
-    let _ = app.emit("ocr-progress", serde_json::json!({
-        "fileId": file_id,
-        "phase": "transcoding",
-        "current": 100,
-        "total": 100,
-        "message": "Transcoding complete"
-    }));
-    
+    let _ = app.emit(
+        "ocr-progress",
+        serde_json::json!({
+            "fileId": file_id,
+            "phase": "transcoding",
+            "current": 100,
+            "total": 100,
+            "message": "Transcoding complete"
+        }),
+    );
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         // Clean up partial file on FFmpeg failure
         let _ = std::fs::remove_file(&output_path);
         return Err(format!("Video transcoding failed: {}", stderr));
     }
-    
+
     if !output_path.exists() {
         return Err("Transcoding failed: output file not created".to_string());
     }
-    
+
     Ok(output_str)
 }
 
@@ -1740,11 +1831,13 @@ async fn extract_ocr_frames(
     region: Option<OcrRegion>,
 ) -> Result<(String, u32), String> {
     validate_media_path(&video_path)?;
-    
+
     // Create output directory
     let path_hash = format!("{:x}", md5_hash(&video_path));
-    let temp_dir = std::env::temp_dir().join("rsextractor_ocr_frames").join(&path_hash[..12]);
-    
+    let temp_dir = std::env::temp_dir()
+        .join("rsextractor_ocr_frames")
+        .join(&path_hash[..12]);
+
     // Clean previous extraction if exists
     if temp_dir.exists() {
         std::fs::remove_dir_all(&temp_dir)
@@ -1752,10 +1845,10 @@ async fn extract_ocr_frames(
     }
     std::fs::create_dir_all(&temp_dir)
         .map_err(|e| format!("Failed to create temp directory: {}", e))?;
-    
+
     let output_pattern = temp_dir.join("frame_%06d.png");
     let output_pattern_str = output_pattern.to_str().unwrap();
-    
+
     // Get video info for frame count estimation
     let duration_us = get_media_duration_us(&app, &video_path).await.unwrap_or(0);
     let estimated_frames = if duration_us > 0 {
@@ -1763,10 +1856,10 @@ async fn extract_ocr_frames(
     } else {
         1000 // Fallback
     };
-    
+
     // Build filter chain
     let mut filters = vec![format!("fps={}", fps)];
-    
+
     if let Some(ref r) = region {
         // Crop filter with relative coordinates
         // First scale to get dimensions, then crop
@@ -1775,69 +1868,79 @@ async fn extract_ocr_frames(
             r.width, r.height, r.x, r.y
         ));
     }
-    
+
     let filter_str = filters.join(",");
-    
+
     // Emit start
-    let _ = app.emit("ocr-progress", serde_json::json!({
-        "fileId": file_id,
-        "phase": "extracting",
-        "current": 0,
-        "total": estimated_frames,
-        "message": "Starting frame extraction..."
-    }));
-    
+    let _ = app.emit(
+        "ocr-progress",
+        serde_json::json!({
+            "fileId": file_id,
+            "phase": "extracting",
+            "current": 0,
+            "total": estimated_frames,
+            "message": "Starting frame extraction..."
+        }),
+    );
+
     let ffmpeg_path = resolve_ffmpeg_path(&app)?;
     let mut child = tokio::process::Command::new(ffmpeg_path)
         .args([
             "-y",
-            "-i", &video_path,
-            "-vf", &filter_str,
-            "-f", "image2",
-            "-progress", "pipe:1",
+            "-i",
+            &video_path,
+            "-vf",
+            &filter_str,
+            "-f",
+            "image2",
+            "-progress",
+            "pipe:1",
             output_pattern_str,
         ])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| format!("Failed to start ffmpeg: {}", e))?;
-    
+
     // Store PID
     if let Some(pid) = child.id() {
         if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
             guard.insert(file_id.clone(), pid);
         }
     }
-    
+
     // Progress tracking
     let stdout = child.stdout.take();
     let app_clone = app.clone();
     let file_id_clone = file_id.clone();
-    
+
     if let Some(mut stdout) = stdout {
         use tokio::io::AsyncBufReadExt;
         use tokio::io::BufReader;
-        
+
         tokio::spawn(async move {
             let reader = BufReader::new(&mut stdout);
             let mut lines = reader.lines();
-            
+
             while let Ok(Some(line)) = lines.next_line().await {
                 if line.starts_with("frame=") {
                     if let Ok(frame) = line.trim_start_matches("frame=").trim().parse::<u32>() {
-                        let _ = app_clone.emit("ocr-progress", serde_json::json!({
-                            "fileId": file_id_clone,
-                            "phase": "extracting",
-                            "current": frame,
-                            "total": estimated_frames,
-                            "message": format!("Extracting frame {}...", frame)
-                        }));
+                        let _ = app_clone.emit(
+                            "ocr-progress",
+                            serde_json::json!({
+                                "fileId": file_id_clone,
+                                "phase": "extracting",
+                                "current": frame,
+                                "total": estimated_frames,
+                                "message": format!("Extracting frame {}...", frame)
+                            }),
+                        );
                     }
                 }
             }
         });
     }
-    
+
     // Wait for completion
     let file_id_for_cleanup = file_id.clone();
     let output = timeout(FRAME_EXTRACTION_TIMEOUT, child.wait_with_output())
@@ -1846,7 +1949,10 @@ async fn extract_ocr_frames(
             if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
                 guard.remove(&file_id_for_cleanup);
             }
-            format!("Frame extraction timeout after {} seconds", FRAME_EXTRACTION_TIMEOUT.as_secs())
+            format!(
+                "Frame extraction timeout after {} seconds",
+                FRAME_EXTRACTION_TIMEOUT.as_secs()
+            )
         })?
         .map_err(|e| {
             if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
@@ -1854,36 +1960,45 @@ async fn extract_ocr_frames(
             }
             format!("FFmpeg error: {}", e)
         })?;
-    
+
     // Clear PID
     if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
         guard.remove(&file_id);
     }
-    
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("Frame extraction failed: {}", stderr));
     }
-    
+
     // Count extracted frames
     let frame_count = std::fs::read_dir(&temp_dir)
         .map_err(|e| format!("Failed to read frames directory: {}", e))?
         .filter(|entry| {
-            entry.as_ref()
-                .map(|e| e.path().extension().map(|ext| ext == "png").unwrap_or(false))
+            entry
+                .as_ref()
+                .map(|e| {
+                    e.path()
+                        .extension()
+                        .map(|ext| ext == "png")
+                        .unwrap_or(false)
+                })
                 .unwrap_or(false)
         })
         .count() as u32;
-    
+
     // Emit completion
-    let _ = app.emit("ocr-progress", serde_json::json!({
-        "fileId": file_id,
-        "phase": "extracting",
-        "current": frame_count,
-        "total": frame_count,
-        "message": format!("Extracted {} frames", frame_count)
-    }));
-    
+    let _ = app.emit(
+        "ocr-progress",
+        serde_json::json!({
+            "fileId": file_id,
+            "phase": "extracting",
+            "current": frame_count,
+            "total": frame_count,
+            "message": format!("Extracted {} frames", frame_count)
+        }),
+    );
+
     Ok((temp_dir.to_string_lossy().to_string(), frame_count))
 }
 
@@ -1904,12 +2019,12 @@ async fn perform_ocr(
     if fps <= 0.0 {
         return Err("FPS must be greater than 0".to_string());
     }
-    
+
     // Register this OCR operation for cancellation support
     if let Ok(mut guard) = OCR_PROCESS_IDS.lock() {
         guard.insert(file_id.clone(), 0);
     }
-    
+
     // Helper to cleanup on exit
     let file_id_cleanup = file_id.clone();
     let cleanup = || {
@@ -1917,66 +2032,69 @@ async fn perform_ocr(
             guard.remove(&file_id_cleanup);
         }
     };
-    
+
     // Get OCR models directory
     let models_dir = get_ocr_models_dir(&app)?;
-    
+
     // Get list of frame files
     let mut frames: Vec<_> = std::fs::read_dir(&frames_dir)
         .map_err(|e| format!("Failed to read frames directory: {}", e))?
         .filter_map(|entry| entry.ok())
         .filter(|entry| {
-            entry.path().extension()
+            entry
+                .path()
+                .extension()
                 .map(|ext| ext == "png")
                 .unwrap_or(false)
         })
         .collect();
-    
+
     // Sort by filename
     frames.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
-    
+
     let total_frames = frames.len() as u32;
-    
+
     if total_frames == 0 {
         cleanup();
         return Ok(Vec::new());
     }
-    
+
     let num_workers = std::cmp::max(1, num_workers) as usize;
-    
+
     // Emit start - initializing workers
-    let _ = app.emit("ocr-progress", serde_json::json!({
-        "fileId": file_id,
-        "phase": "ocr",
-        "current": 0,
-        "total": total_frames,
-        "message": format!("Starting OCR with {} parallel workers...", num_workers)
-    }));
-    
+    let _ = app.emit(
+        "ocr-progress",
+        serde_json::json!({
+            "fileId": file_id,
+            "phase": "ocr",
+            "current": 0,
+            "total": total_frames,
+            "message": format!("Starting OCR with {} parallel workers...", num_workers)
+        }),
+    );
+
     // Collect frame paths with their original indices
     let frame_data: Vec<(u32, std::path::PathBuf)> = frames
         .iter()
         .enumerate()
         .map(|(i, f)| (i as u32, f.path()))
         .collect();
-    
+
     // Divide frames into chunks for parallel workers
     let chunk_size = (frame_data.len() + num_workers - 1) / num_workers;
-    let chunks: Vec<Vec<(u32, std::path::PathBuf)>> = frame_data
-        .chunks(chunk_size)
-        .map(|c| c.to_vec())
-        .collect();
-    
+    let chunks: Vec<Vec<(u32, std::path::PathBuf)>> =
+        frame_data.chunks(chunk_size).map(|c| c.to_vec()).collect();
+
     // Shared progress counter for smooth progress updates
     let progress_counter = Arc::new(AtomicU32::new(0));
-    
+
     // Clone values for the blocking task
     let models_dir_clone = models_dir.clone();
     let language_clone = language.clone();
     let file_id_clone = file_id.clone();
     let app_clone = app.clone();
     let progress_counter_clone = Arc::clone(&progress_counter);
-    
+
     let frame_duration_ms = 1000.0 / fps;
 
     // Run parallel OCR in a blocking task
@@ -1986,7 +2104,7 @@ async fn perform_ocr(
             .num_threads(chunks.len())
             .build()
             .map_err(|e| format!("Failed to create thread pool: {}", e))?;
-        
+
         pool.install(|| {
             // Process chunks in parallel - each worker creates its own engine
             let all_results: Result<Vec<Vec<OcrFrameResult>>, String> = chunks
@@ -1997,29 +2115,29 @@ async fn perform_ocr(
                         .lock()
                         .map(|guard| !guard.contains_key(&file_id_clone))
                         .unwrap_or(false);
-                    
+
                     if is_cancelled {
                         return Err("OCR cancelled".to_string());
                     }
-                    
+
                     // Create engine for this worker (each worker has its own engine)
                     let engine = create_ocr_engine(&models_dir_clone, &language_clone, use_gpu)?;
-                    
+
                     let mut worker_results = Vec::with_capacity(chunk_paths.len());
-                    
+
                     for (frame_index, frame_path) in chunk_paths {
                         // Check for cancellation periodically
                         let is_cancelled = OCR_PROCESS_IDS
                             .lock()
                             .map(|guard| !guard.contains_key(&file_id_clone))
                             .unwrap_or(false);
-                        
+
                         if is_cancelled {
                             return Err("OCR cancelled".to_string());
                         }
-                        
+
                         let time_ms = ((frame_index as f64) * frame_duration_ms).round() as u64;
-                        
+
                         // Load the image
                         let image = match image::open(&frame_path) {
                             Ok(img) => img,
@@ -2037,7 +2155,7 @@ async fn perform_ocr(
                                 continue;
                             }
                         };
-                        
+
                         // Run OCR detection and recognition
                         let ocr_results = match engine.recognize(&image) {
                             Ok(results) => results,
@@ -2055,7 +2173,7 @@ async fn perform_ocr(
                                 continue;
                             }
                         };
-                        
+
                         // Sort results by vertical position (top to bottom) for subtitle ordering
                         let mut sorted_results: Vec<_> = ocr_results.iter().collect();
                         sorted_results.sort_by(|a, b| {
@@ -2063,7 +2181,7 @@ async fn perform_ocr(
                             let b_top = b.bbox.rect.top();
                             a_top.partial_cmp(&b_top).unwrap_or(std::cmp::Ordering::Equal)
                         });
-                        
+
                         // Combine text from all detected regions
                         let combined_text: String = sorted_results
                             .iter()
@@ -2071,22 +2189,22 @@ async fn perform_ocr(
                             .filter(|t| !t.is_empty())
                             .collect::<Vec<_>>()
                             .join(" ");
-                        
+
                         // Calculate average confidence
                         let avg_confidence = if sorted_results.is_empty() {
                             0.0
                         } else {
-                            sorted_results.iter().map(|r| r.confidence).sum::<f32>() as f64 
+                            sorted_results.iter().map(|r| r.confidence).sum::<f32>() as f64
                                 / sorted_results.len() as f64
                         };
-                        
+
                         worker_results.push(OcrFrameResult {
                             frame_index,
                             time_ms,
                             text: combined_text,
                             confidence: avg_confidence,
                         });
-                        
+
                         // Emit progress for each frame (smooth progress bar)
                         let current = progress_counter_clone.fetch_add(1, Ordering::Relaxed) + 1;
                         let _ = app_clone.emit("ocr-progress", serde_json::json!({
@@ -2097,11 +2215,11 @@ async fn perform_ocr(
                             "message": format!("Processing frame {}/{}...", current, total_frames)
                         }));
                     }
-                    
+
                     Ok(worker_results)
                 })
                 .collect();
-            
+
             // Flatten results and sort by frame index
             all_results.map(|chunk_results| {
                 let mut results: Vec<OcrFrameResult> = chunk_results.into_iter().flatten().collect();
@@ -2115,19 +2233,22 @@ async fn perform_ocr(
         cleanup();
         format!("OCR task failed: {}", e)
     })??;
-    
+
     // Emit completion
-    let _ = app.emit("ocr-progress", serde_json::json!({
-        "fileId": file_id,
-        "phase": "ocr",
-        "current": total_frames,
-        "total": total_frames,
-        "message": "OCR processing complete"
-    }));
-    
+    let _ = app.emit(
+        "ocr-progress",
+        serde_json::json!({
+            "fileId": file_id,
+            "phase": "ocr",
+            "current": total_frames,
+            "total": total_frames,
+            "message": "OCR processing complete"
+        }),
+    );
+
     // Clean up cancellation tracking
     cleanup();
-    
+
     Ok(results)
 }
 
@@ -2191,8 +2312,26 @@ fn is_edge_punctuation(c: char) -> bool {
 
     matches!(
         c,
-        '，' | '。' | '！' | '？' | '：' | '；' | '、' | '“' | '”' | '‘' | '’' | '《' | '》' | '（' | '）'
-            | '【' | '】' | '—' | '…' | '～' | '·'
+        '，' | '。'
+            | '！'
+            | '？'
+            | '：'
+            | '；'
+            | '、'
+            | '“'
+            | '”'
+            | '‘'
+            | '’'
+            | '《'
+            | '》'
+            | '（'
+            | '）'
+            | '【'
+            | '】'
+            | '—'
+            | '…'
+            | '～'
+            | '·'
     )
 }
 
@@ -2305,8 +2444,16 @@ mod tests {
 
     #[test]
     fn texts_are_similar_preserves_long_text_similarity_behavior() {
-        assert!(texts_are_similar("today we fight together", "today we fight togather", 0.92));
-        assert!(!texts_are_similar("today we fight together", "tomorrow we run away", 0.92));
+        assert!(texts_are_similar(
+            "today we fight together",
+            "today we fight togather",
+            0.92
+        ));
+        assert!(!texts_are_similar(
+            "today we fight together",
+            "tomorrow we run away",
+            0.92
+        ));
     }
 }
 
@@ -2432,14 +2579,17 @@ async fn generate_subtitles_from_ocr(
     let min_cue_duration_ms = cleanup.min_cue_duration_ms as u64;
 
     // Emit start
-    let _ = app.emit("ocr-progress", serde_json::json!({
-        "fileId": file_id,
-        "phase": "generating",
-        "current": 0,
-        "total": frame_results.len(),
-        "message": "Generating subtitles..."
-    }));
-    
+    let _ = app.emit(
+        "ocr-progress",
+        serde_json::json!({
+            "fileId": file_id,
+            "phase": "generating",
+            "current": 0,
+            "total": frame_results.len(),
+            "message": "Generating subtitles..."
+        }),
+    );
+
     let mut segments: Vec<SubtitleSegment> = Vec::new();
     let mut current: Option<SubtitleSegment> = None;
 
@@ -2526,13 +2676,16 @@ async fn generate_subtitles_from_ocr(
 
         // Emit progress
         if i % 100 == 0 {
-            let _ = app.emit("ocr-progress", serde_json::json!({
-                "fileId": file_id,
-                "phase": "generating",
-                "current": i,
-                "total": frame_results.len(),
-                "message": format!("Processing frame {}...", i)
-            }));
+            let _ = app.emit(
+                "ocr-progress",
+                serde_json::json!({
+                    "fileId": file_id,
+                    "phase": "generating",
+                    "current": i,
+                    "total": frame_results.len(),
+                    "message": format!("Processing frame {}...", i)
+                }),
+            );
         }
     }
 
@@ -2586,7 +2739,8 @@ async fn generate_subtitles_from_ocr(
                 if gap <= max_gap_ms && (similar_strict || (is_short && similar_short)) {
                     prev.end_time = prev.end_time.max(sub.end_time);
                     if sub.confidence > prev.confidence + 1e-9
-                        || ((sub.confidence - prev.confidence).abs() <= 1e-9 && sub.text.len() > prev.text.len())
+                        || ((sub.confidence - prev.confidence).abs() <= 1e-9
+                            && sub.text.len() > prev.text.len())
                     {
                         prev.text = sub.text;
                     }
@@ -2605,16 +2759,19 @@ async fn generate_subtitles_from_ocr(
 
         subtitles = merged;
     }
-    
+
     // Emit completion
-    let _ = app.emit("ocr-progress", serde_json::json!({
-        "fileId": file_id,
-        "phase": "generating",
-        "current": frame_results.len(),
-        "total": frame_results.len(),
-        "message": format!("Generated {} subtitles", subtitles.len())
-    }));
-    
+    let _ = app.emit(
+        "ocr-progress",
+        serde_json::json!({
+            "fileId": file_id,
+            "phase": "generating",
+            "current": frame_results.len(),
+            "total": frame_results.len(),
+            "message": format!("Generated {} subtitles", subtitles.len())
+        }),
+    );
+
     Ok(subtitles)
 }
 
@@ -2626,31 +2783,36 @@ async fn export_ocr_subtitles(
     format: String,
 ) -> Result<(), String> {
     validate_output_path(&output_path)?;
-    
+
     let content = match format.as_str() {
         "srt" => format_srt(&subtitles),
         "vtt" => format_vtt(&subtitles),
         "txt" => format_txt(&subtitles),
         _ => return Err(format!("Unsupported format: {}", format)),
     };
-    
+
     std::fs::write(&output_path, content)
         .map_err(|e| format!("Failed to write subtitle file: {}", e))?;
-    
+
     Ok(())
 }
 
 /// Format subtitles as SRT
 fn format_srt(subtitles: &[OcrSubtitleEntry]) -> String {
-    subtitles.iter().enumerate().map(|(i, sub)| {
-        format!(
-            "{}\n{} --> {}\n{}\n",
-            i + 1,
-            format_srt_time(sub.start_time),
-            format_srt_time(sub.end_time),
-            sub.text
-        )
-    }).collect::<Vec<_>>().join("\n")
+    subtitles
+        .iter()
+        .enumerate()
+        .map(|(i, sub)| {
+            format!(
+                "{}\n{} --> {}\n{}\n",
+                i + 1,
+                format_srt_time(sub.start_time),
+                format_srt_time(sub.end_time),
+                sub.text
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Format subtitles as VTT
@@ -2669,7 +2831,8 @@ fn format_vtt(subtitles: &[OcrSubtitleEntry]) -> String {
 
 /// Format subtitles as plain text
 fn format_txt(subtitles: &[OcrSubtitleEntry]) -> String {
-    subtitles.iter()
+    subtitles
+        .iter()
         .map(|sub| sub.text.clone())
         .collect::<Vec<_>>()
         .join("\n")
@@ -2702,7 +2865,7 @@ async fn cancel_ocr_operation(file_id: String) -> Result<(), String> {
             Err(_) => return Err("Failed to acquire process lock".to_string()),
         }
     };
-    
+
     // Get and remove the transcode output path for cleanup
     let transcode_path = {
         match OCR_TRANSCODE_PATHS.lock() {
@@ -2710,7 +2873,7 @@ async fn cancel_ocr_operation(file_id: String) -> Result<(), String> {
             Err(_) => None,
         }
     };
-    
+
     if let Some(pid) = pid {
         if pid != 0 {
             #[cfg(unix)]
@@ -2719,7 +2882,7 @@ async fn cancel_ocr_operation(file_id: String) -> Result<(), String> {
                     libc::kill(pid as i32, libc::SIGTERM);
                 }
             }
-            
+
             #[cfg(windows)]
             {
                 let _ = std::process::Command::new("taskkill")
@@ -2728,12 +2891,12 @@ async fn cancel_ocr_operation(file_id: String) -> Result<(), String> {
             }
         }
     }
-    
+
     // Clean up partial transcode file if it exists
     if let Some(path) = transcode_path {
         let _ = std::fs::remove_file(&path);
     }
-    
+
     Ok(())
 }
 
@@ -2766,28 +2929,66 @@ async fn check_ocr_models(app: tauri::AppHandle) -> Result<OcrModelsStatus, Stri
         (OCR_DET_MODEL, "detection"),
         ("PP-OCRv5_mobile_rec.mnn", "multi"),
     ];
-    
+
     let language_models = vec![
-        ("korean_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_korean.txt", "korean"),
-        ("latin_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_latin.txt", "latin"),
-        ("cyrillic_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_cyrillic.txt", "cyrillic"),
-        ("arabic_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_arabic.txt", "arabic"),
-        ("devanagari_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_devanagari.txt", "devanagari"),
-        ("th_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_th.txt", "thai"),
-        ("el_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_el.txt", "greek"),
-        ("ta_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_ta.txt", "tamil"),
-        ("te_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_te.txt", "telugu"),
+        (
+            "korean_PP-OCRv5_mobile_rec_infer.mnn",
+            "ppocr_keys_korean.txt",
+            "korean",
+        ),
+        (
+            "latin_PP-OCRv5_mobile_rec_infer.mnn",
+            "ppocr_keys_latin.txt",
+            "latin",
+        ),
+        (
+            "cyrillic_PP-OCRv5_mobile_rec_infer.mnn",
+            "ppocr_keys_cyrillic.txt",
+            "cyrillic",
+        ),
+        (
+            "arabic_PP-OCRv5_mobile_rec_infer.mnn",
+            "ppocr_keys_arabic.txt",
+            "arabic",
+        ),
+        (
+            "devanagari_PP-OCRv5_mobile_rec_infer.mnn",
+            "ppocr_keys_devanagari.txt",
+            "devanagari",
+        ),
+        (
+            "th_PP-OCRv5_mobile_rec_infer.mnn",
+            "ppocr_keys_th.txt",
+            "thai",
+        ),
+        (
+            "el_PP-OCRv5_mobile_rec_infer.mnn",
+            "ppocr_keys_el.txt",
+            "greek",
+        ),
+        (
+            "ta_PP-OCRv5_mobile_rec_infer.mnn",
+            "ppocr_keys_ta.txt",
+            "tamil",
+        ),
+        (
+            "te_PP-OCRv5_mobile_rec_infer.mnn",
+            "ppocr_keys_te.txt",
+            "telugu",
+        ),
     ];
-    
+
     // Try to find models directory
     let models_dir = match get_ocr_models_dir(&app) {
         Ok(dir) => dir,
         Err(_) => {
             // Models not found, check if app data dir exists
-            let app_data = app.path().app_data_dir()
+            let app_data = app
+                .path()
+                .app_data_dir()
                 .map_err(|e| format!("Failed to get app data dir: {}", e))?;
             let expected_dir = app_data.join(DEFAULT_OCR_MODELS_DIR);
-            
+
             return Ok(OcrModelsStatus {
                 installed: false,
                 models_dir: Some(expected_dir.to_string_lossy().to_string()),
@@ -2806,31 +3007,32 @@ async fn check_ocr_models(app: tauri::AppHandle) -> Result<OcrModelsStatus, Stri
             });
         }
     };
-    
+
     let mut missing_models = Vec::new();
     let mut available_languages = Vec::new();
-    
+
     // Check required models
     for (model, name) in &required_models {
         if !models_dir.join(model).exists() {
             missing_models.push(format!("{} ({})", model, name));
         }
     }
-    
+
     // Check charset for multi-language
-    if models_dir.join(OCR_CHARSET).exists() && models_dir.join("PP-OCRv5_mobile_rec.mnn").exists() {
+    if models_dir.join(OCR_CHARSET).exists() && models_dir.join("PP-OCRv5_mobile_rec.mnn").exists()
+    {
         available_languages.push("multi".to_string());
     }
-    
+
     // Check language-specific models
     for (rec_model, charset, lang) in &language_models {
         if models_dir.join(rec_model).exists() && models_dir.join(charset).exists() {
             available_languages.push(lang.to_string());
         }
     }
-    
+
     let installed = missing_models.is_empty() && !available_languages.is_empty();
-    
+
     Ok(OcrModelsStatus {
         installed,
         models_dir: Some(models_dir.to_string_lossy().to_string()),
@@ -2865,14 +3067,14 @@ async fn merge_tracks(
     // Validate input paths
     validate_media_path(&video_path)?;
     validate_output_path(&output_path)?;
-    
+
     // Validate all track input paths
     for track in &tracks {
         if let Some(input_path) = track.get("inputPath").and_then(|v| v.as_str()) {
             validate_media_path(input_path)?;
         }
     }
-    
+
     // First, probe the video to count streams and get their types
     let ffprobe_path = resolve_ffprobe_path(&app)?;
     let video_path_for_probe = video_path.clone();
@@ -2889,10 +3091,15 @@ async fn merge_tracks(
             .output()
             .await
     };
-    
+
     let probe_output = timeout(FFPROBE_TIMEOUT, probe_future)
         .await
-        .map_err(|_| format!("FFprobe timeout after {} seconds", FFPROBE_TIMEOUT.as_secs()))?
+        .map_err(|_| {
+            format!(
+                "FFprobe timeout after {} seconds",
+                FFPROBE_TIMEOUT.as_secs()
+            )
+        })?
         .map_err(|e| format!("Failed to probe video: {}", e))?;
 
     if !probe_output.status.success() {
@@ -2915,12 +3122,15 @@ async fn merge_tracks(
         configs
             .iter()
             .filter_map(|c| {
-                let enabled = c.get("config")
+                let enabled = c
+                    .get("config")
                     .and_then(|cfg| cfg.get("enabled"))
                     .and_then(|v| v.as_bool())
                     .unwrap_or(true);
                 if enabled {
-                    c.get("originalIndex").and_then(|v| v.as_u64()).map(|i| i as usize)
+                    c.get("originalIndex")
+                        .and_then(|v| v.as_u64())
+                        .map(|i| i as usize)
                 } else {
                     None
                 }
@@ -2986,7 +3196,8 @@ async fn merge_tracks(
     if let Some(ref configs) = source_track_configs {
         let mut output_stream_idx = 0;
         for config in configs {
-            let enabled = config.get("config")
+            let enabled = config
+                .get("config")
                 .and_then(|cfg| cfg.get("enabled"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
@@ -3011,7 +3222,10 @@ async fn merge_tracks(
                 }
 
                 // Default and forced flags
-                let is_default = cfg.get("default").and_then(|v| v.as_bool()).unwrap_or(false);
+                let is_default = cfg
+                    .get("default")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let is_forced = cfg.get("forced").and_then(|v| v.as_bool()).unwrap_or(false);
 
                 if is_default || is_forced {
@@ -3057,8 +3271,14 @@ async fn merge_tracks(
             }
 
             // Default and forced flags
-            let is_default = config.get("default").and_then(|v| v.as_bool()).unwrap_or(false);
-            let is_forced = config.get("forced").and_then(|v| v.as_bool()).unwrap_or(false);
+            let is_default = config
+                .get("default")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let is_forced = config
+                .get("forced")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
             if is_default || is_forced {
                 let mut disposition = Vec::new();
@@ -3098,10 +3318,8 @@ async fn merge_tracks(
         guard.insert(video_path.clone(), output_path.clone());
     }
 
-    let wait_future = async {
-        child.wait_with_output().await
-    };
-    
+    let wait_future = async { child.wait_with_output().await };
+
     // Execute with timeout
     let output = timeout(FFMPEG_MERGE_TIMEOUT, wait_future)
         .await
@@ -3112,7 +3330,10 @@ async fn merge_tracks(
             if let Ok(mut guard) = MERGE_OUTPUT_PATHS.lock() {
                 guard.remove(&video_path);
             }
-            format!("FFmpeg merge timeout after {} seconds", FFMPEG_MERGE_TIMEOUT.as_secs())
+            format!(
+                "FFmpeg merge timeout after {} seconds",
+                FFMPEG_MERGE_TIMEOUT.as_secs()
+            )
         })?
         .map_err(|e| {
             if let Ok(mut guard) = MERGE_PROCESS_IDS.lock() {
@@ -3188,7 +3409,7 @@ async fn cancel_merge() -> Result<(), String> {
                 let pids: Vec<u32> = guard.values().copied().collect();
                 guard.clear();
                 pids
-            },
+            }
             Err(_) => return Err("Failed to acquire process lock".to_string()),
         }
     };
@@ -3199,7 +3420,7 @@ async fn cancel_merge() -> Result<(), String> {
                 let paths: Vec<String> = guard.values().cloned().collect();
                 guard.clear();
                 paths
-            },
+            }
             Err(_) => Vec::new(),
         }
     };

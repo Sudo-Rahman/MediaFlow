@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use tauri::Emitter;
 
+use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::tools::ocr::{OcrFrameResult, OcrSubtitleCleanupOptions, OcrSubtitleEntry};
 
 impl Default for OcrSubtitleCleanupOptions {
@@ -309,6 +310,8 @@ pub(crate) async fn generate_subtitles_from_ocr(
     if fps <= 0.0 {
         return Err("FPS must be greater than 0".to_string());
     }
+
+    let _sleep_guard = SleepInhibitGuard::try_acquire("Generating subtitles from OCR").ok();
 
     let cleanup = cleanup.unwrap_or_default();
     let similarity_threshold = if cleanup.merge_similar {

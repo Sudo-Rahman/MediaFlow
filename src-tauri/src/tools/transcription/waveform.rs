@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crate::shared::hash::md5_hash;
 use crate::shared::store::resolve_ffmpeg_path;
+use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::validation::validate_media_path;
 use tokio::process::Command;
 use tokio::time::{Duration, timeout};
@@ -19,6 +20,8 @@ pub(crate) async fn convert_audio_for_waveform(
     track_index: Option<i32>,
 ) -> Result<String, String> {
     validate_media_path(&audio_path)?;
+
+    let _sleep_guard = SleepInhibitGuard::try_acquire("Waveform conversion").ok();
 
     let input = Path::new(&audio_path);
     let stem = input

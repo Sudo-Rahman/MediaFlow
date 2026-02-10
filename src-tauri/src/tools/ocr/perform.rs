@@ -5,6 +5,7 @@ use rayon::prelude::*;
 use tauri::Emitter;
 
 use crate::shared::validation::validate_directory_path;
+use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::tools::ocr::OcrFrameResult;
 
 /// Perform OCR on extracted frames using PP-OCRv5 with rayon parallel processing
@@ -24,6 +25,8 @@ pub(crate) async fn perform_ocr(
     if fps <= 0.0 {
         return Err("FPS must be greater than 0".to_string());
     }
+
+    let _sleep_guard = SleepInhibitGuard::try_acquire("OCR processing").ok();
 
     // Register this OCR operation for cancellation support
     if let Ok(mut guard) = super::state::OCR_PROCESS_IDS.lock() {

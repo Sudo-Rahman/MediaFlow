@@ -4398,6 +4398,7 @@ dependencies = [
  "walkdir",
  "window-vibrancy 0.7.1",
  "xz2",
+ "zbus",
  "zip",
 ]
 

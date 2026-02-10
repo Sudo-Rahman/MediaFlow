@@ -1,4 +1,5 @@
 use crate::shared::validation::validate_output_path;
+use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use std::path::Path;
 
 /// Rename a file on disk
@@ -37,6 +38,8 @@ pub(crate) async fn copy_file(source_path: String, dest_path: String) -> Result<
     }
 
     validate_output_path(&dest_path)?;
+
+    let _sleep_guard = SleepInhibitGuard::try_acquire("Copying file").ok();
 
     std::fs::copy(&source_path, &dest_path).map_err(|e| format!("Failed to copy file: {}", e))?;
     Ok(())

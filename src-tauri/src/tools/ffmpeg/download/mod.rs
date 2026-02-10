@@ -6,6 +6,7 @@ use serde::Serialize;
 use tauri::Manager;
 use tokio::io::AsyncWriteExt;
 
+use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::tools::ffmpeg::download::progress::{DownloadTracker, emit_download_progress};
 
 mod archive;
@@ -150,6 +151,8 @@ async fn install_binaries(
 /// Download and install FFmpeg + FFprobe for the current OS/arch
 #[tauri::command]
 pub(crate) async fn download_ffmpeg(app: tauri::AppHandle) -> Result<DownloadResult, String> {
+    let _sleep_guard = SleepInhibitGuard::try_acquire("Downloading FFmpeg").ok();
+
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
 

@@ -29,6 +29,8 @@ pub fn run() {
             commands::fs_file_ops::copy_file,
             commands::fs_metadata::get_file_metadata,
             commands::tokens::count_tokens,
+            commands::sleep_inhibit::acquire_sleep_inhibit,
+            commands::sleep_inhibit::release_sleep_inhibit,
             // Audio transcription commands
             commands::transcription_transcode::transcode_to_opus,
             commands::transcription_cancel::cancel_transcode,

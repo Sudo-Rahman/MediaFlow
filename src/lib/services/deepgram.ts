@@ -16,6 +16,7 @@ import type {
   TranscriptionOutputFormat,
   TranscriptionJSONOutput,
 } from '$lib/types';
+import { withSleepInhibit } from './sleep-inhibit';
 
 const DEEPGRAM_API_URL = 'https://api.deepgram.com/v1/listen';
 
@@ -108,123 +109,124 @@ export async function transcribeWithDeepgram(options: TranscribeOptions): Promis
   if (!apiKey) {
     return { success: false, error: 'Deepgram API key not configured' };
   }
-  
-  try {
-    // Check if already aborted
-    if (signal?.aborted) {
-      return { success: false, error: 'Transcription cancelled' };
-    }
-    
-    // Read audio file
-    onProgress?.(5, 'uploading');
-    const audioData = await readFile(audioPath);
 
-    // Check abort after file read
-    if (signal?.aborted) {
-      return { success: false, error: 'Transcription cancelled' };
-    }
-    
-    const audioBlob = new Blob([new Uint8Array(audioData)], { type: 'audio/opus' });
-    
-    onProgress?.(10, 'uploading');
-    
-    // Determine model based on language
-    // For non-English languages, use the general variant if not already specified
-    const isNonEnglish = config.language !== 'en' && config.language !== 'multi';
-    let model = config.model;
-    if (isNonEnglish && !model.includes('general')) {
-      model = `${model}-general` as typeof config.model;
-    }
-    
-    // Build query parameters
-    const params = new URLSearchParams({
-      model,
-      punctuate: String(config.punctuate),
-      paragraphs: String(config.paragraphs),
-      smart_format: String(config.smartFormat),
-      utterances: String(config.utterances),
-      utt_split: String(config.uttSplit),
-      diarize: String(config.diarize),
-      language: config.language === 'auto' ? 'multi' : config.language,
-    });
-    
-    onProgress?.(15, 'uploading');
-    
-    // Log the API call
-    logStore.addLog({
-      level: 'info',
-      source: 'deepgram',
-      title: 'Transcription started',
-      details: `Model: ${model}, Language: ${config.language}`,
-      context: { filePath: audioPath },
-    });
-    
-    // Make API request with abort signal
-    const response = await fetch(`${DEEPGRAM_API_URL}?${params}`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Token ${apiKey}`,
-        'Content-Type': audioBlob.type || 'audio/opus',
-      },
-      body: audioBlob,
-      signal,
-    });
-    
-    onProgress?.(50, 'processing');
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      logStore.addLog({
-        level: 'error',
-        source: 'deepgram',
-        title: 'Deepgram API Error',
-        details: `Status: ${response.status} - ${errorText}`,
-        context: { filePath: audioPath, apiError: errorText },
+  if (signal?.aborted) {
+    return { success: false, error: 'Transcription cancelled' };
+  }
+  
+  return withSleepInhibit('RsExtractor: Transcription', async () => {
+    try {
+      // Read audio file
+      onProgress?.(5, 'uploading');
+      const audioData = await readFile(audioPath);
+
+      // Check abort after file read
+      if (signal?.aborted) {
+        return { success: false, error: 'Transcription cancelled' };
+      }
+      
+      const audioBlob = new Blob([new Uint8Array(audioData)], { type: 'audio/opus' });
+      
+      onProgress?.(10, 'uploading');
+      
+      // Determine model based on language
+      // For non-English languages, use the general variant if not already specified
+      const isNonEnglish = config.language !== 'en' && config.language !== 'multi';
+      let model = config.model;
+      if (isNonEnglish && !model.includes('general')) {
+        model = `${model}-general` as typeof config.model;
+      }
+      
+      // Build query parameters
+      const params = new URLSearchParams({
+        model,
+        punctuate: String(config.punctuate),
+        paragraphs: String(config.paragraphs),
+        smart_format: String(config.smartFormat),
+        utterances: String(config.utterances),
+        utt_split: String(config.uttSplit),
+        diarize: String(config.diarize),
+        language: config.language === 'auto' ? 'multi' : config.language,
       });
-      return { success: false, error: `API Error: ${response.status} - ${errorText}` };
-    }
-    
-    const data: DeepgramAPIResponse = await response.json();
-    onProgress?.(90, 'processing');
-    
-    // Process response into our format
-    const result = processDeepgramResponse(data);
-    
-    onProgress?.(100, 'processing');
-    
-    logStore.addLog({
-      level: 'success',
-      source: 'deepgram',
-      title: 'Transcription complete',
-      details: `Duration: ${formatDuration(result.duration)}, Confidence: ${Math.round(result.confidence * 100)}%`,
-      context: { filePath: audioPath },
-    });
-    
-    return { success: true, result };
-    
-  } catch (error) {
-    // Handle abort error specifically
-    if (error instanceof Error && error.name === 'AbortError') {
+      
+      onProgress?.(15, 'uploading');
+      
+      // Log the API call
       logStore.addLog({
         level: 'info',
         source: 'deepgram',
-        title: 'Transcription cancelled',
-        details: 'Request was cancelled by user',
+        title: 'Transcription started',
+        details: `Model: ${model}, Language: ${config.language}`,
         context: { filePath: audioPath },
       });
-      return { success: false, error: 'Transcription cancelled' };
+      
+      // Make API request with abort signal
+      const response = await fetch(`${DEEPGRAM_API_URL}?${params}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Token ${apiKey}`,
+          'Content-Type': audioBlob.type || 'audio/opus',
+        },
+        body: audioBlob,
+        signal,
+      });
+      
+      onProgress?.(50, 'processing');
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        logStore.addLog({
+          level: 'error',
+          source: 'deepgram',
+          title: 'Deepgram API Error',
+          details: `Status: ${response.status} - ${errorText}`,
+          context: { filePath: audioPath, apiError: errorText },
+        });
+        return { success: false, error: `API Error: ${response.status} - ${errorText}` };
+      }
+      
+      const data: DeepgramAPIResponse = await response.json();
+      onProgress?.(90, 'processing');
+      
+      // Process response into our format
+      const result = processDeepgramResponse(data);
+      
+      onProgress?.(100, 'processing');
+      
+      logStore.addLog({
+        level: 'success',
+        source: 'deepgram',
+        title: 'Transcription complete',
+        details: `Duration: ${formatDuration(result.duration)}, Confidence: ${Math.round(result.confidence * 100)}%`,
+        context: { filePath: audioPath },
+      });
+      
+      return { success: true, result };
+      
+    } catch (error) {
+      // Handle abort error specifically
+      if (error instanceof Error && error.name === 'AbortError') {
+        logStore.addLog({
+          level: 'info',
+          source: 'deepgram',
+          title: 'Transcription cancelled',
+          details: 'Request was cancelled by user',
+          context: { filePath: audioPath },
+        });
+        return { success: false, error: 'Transcription cancelled' };
+      }
+      
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logStore.addLog({
+        level: 'error',
+        source: 'deepgram',
+        title: 'Transcription error',
+        details: errorMessage,
+        context: { filePath: audioPath },
+      });
+      return { success: false, error: errorMessage };
     }
-    
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    logStore.addLog({
-      level: 'error',
-      source: 'deepgram',
-      title: 'Transcription error',
-      details: errorMessage,
-      context: { filePath: audioPath },
-    });
-    return { success: false, error: errorMessage };
-  }
+  });
 }
 
 // ============================================================================

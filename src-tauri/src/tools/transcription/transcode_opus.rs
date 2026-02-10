@@ -5,6 +5,7 @@ use tauri::Emitter;
 use tokio::time::{Duration, timeout};
 
 use crate::shared::store::resolve_ffmpeg_path;
+use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::validation::{validate_media_path, validate_output_path};
 use crate::tools::ffprobe::get_media_duration_us;
 
@@ -23,6 +24,8 @@ pub(crate) async fn transcode_to_opus(
 ) -> Result<String, String> {
     validate_media_path(&input_path)?;
     validate_output_path(&output_path)?;
+
+    let _sleep_guard = SleepInhibitGuard::try_acquire("Audio transcoding").ok();
 
     // Get media duration BEFORE starting FFmpeg for accurate progress
     let duration_us = get_media_duration_us(&app, &input_path).await.unwrap_or(0);

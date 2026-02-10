@@ -18,6 +18,7 @@ import { parseSubtitle, detectFormat } from './subtitle-parser';
 import { reconstructSubtitle, validateTranslation } from './subtitle-reconstructor';
 import { callLlm } from './llm-client';
 import type { LlmUsage } from './llm-client';
+import { withSleepInhibit } from './sleep-inhibit';
 
 // ============================================================================
 // SYSTEM PROMPT (for JSON-based translation)
@@ -343,218 +344,220 @@ export async function translateSubtitle(
     };
   }
 
-  const reportProgress = (info: BatchProgressInfo) => {
-    if (onProgress) {
-      onProgress(info);
-    }
-  };
-
-  reportProgress({ progress: 5, currentBatch: 0, totalBatches: 0 });
-
-  // Step 1: Parse the subtitle file
-  const parsed = parseSubtitle(file.content);
-
-  if (!parsed) {
-    return {
-      originalFile: file,
-      translatedContent: '',
-      success: false,
-      error: 'Could not parse subtitle file. Unsupported format.'
-    };
-  }
-
-  if (parsed.cues.length === 0) {
-    return {
-      originalFile: file,
-      translatedContent: '',
-      success: false,
-      error: 'No subtitle cues found in file.'
-    };
-  }
-
-  reportProgress({ progress: 10, currentBatch: 0, totalBatches: 0 });
-
-  // Step 2: Split into N batches
-  const batches = splitIntoNBatches(parsed.cues, batchCount);
-  const totalBatches = batches.length;
-
-  reportProgress({ progress: 15, currentBatch: 0, totalBatches });
-
-  // Step 3: Translate all batches in parallel
-  interface BatchResult {
-    batchIndex: number;
-    cues: TranslatedCue[];
-    error?: string;
-    truncated?: boolean;
-    usage?: LlmUsage;
-  }
-
-  const translateBatch = async (batch: Cue[], batchIndex: number): Promise<BatchResult> => {
-    // Check for cancellation before starting
-    if (signal?.aborted) {
-      return { batchIndex, cues: [], error: 'Translation cancelled' };
-    }
-
-    // Build translation request for this batch
-    const translationRequest = buildTranslationRequest(batch, sourceLang, targetLang);
-    const userPrompt = buildUserPrompt(translationRequest);
-
-    // Call LLM for translation
-    const llmResponse = await callLlm({
-      provider,
-      apiKey,
-      model,
-      systemPrompt: TRANSLATION_SYSTEM_PROMPT,
-      userPrompt,
-      signal,
-      responseMode: 'json',
-      temperature: 0.3,
-      logSource: 'translation',
-    });
-
-    if (signal?.aborted) {
-      return { batchIndex, cues: [], error: 'Translation cancelled' };
-    }
-
-    if (llmResponse.error) {
-      return { batchIndex, cues: [], error: `Batch ${batchIndex + 1}/${totalBatches} failed: ${llmResponse.error}` };
-    }
-
-    // Check for truncated response (finish_reason === "length")
-    if (llmResponse.truncated) {
-      const errorMsg = `Batch ${batchIndex + 1}/${totalBatches}: Response truncated (increase batch count)`;
-      log('warning', 'translation', 'Response truncated', 
-        `The API response was truncated (finish_reason: ${llmResponse.finishReason}). Try increasing the number of batches.`,
-        { provider }
-      );
-      return { 
-        batchIndex, 
-        cues: [], 
-        error: errorMsg, 
-        truncated: true,
-        usage: llmResponse.usage 
-      };
-    }
-
-    // Check for empty content before parsing
-    if (!llmResponse.content || !llmResponse.content.trim()) {
-      const errorMsg = `Batch ${batchIndex + 1}/${totalBatches}: ${provider} returned empty content`;
-      log('error', 'translation', 'Empty response from AI', 
-        `The translation request succeeded but ${provider} returned no content. This may be caused by rate limits, content filtering, or API issues.`,
-        { provider }
-      );
-      return { batchIndex, cues: [], error: errorMsg, usage: llmResponse.usage };
-    }
-
-    // Parse LLM response with provider context for better error logging
-    const translationResponse = parseTranslationResponse(llmResponse.content, provider);
-
-    if (!translationResponse) {
-      return { 
-        batchIndex, 
-        cues: [], 
-        error: `Batch ${batchIndex + 1}/${totalBatches}: Failed to parse ${provider} response (check Logs for details)`,
-        usage: llmResponse.usage
-      };
-    }
-
-    return { 
-      batchIndex, 
-      cues: translationResponse.cues,
-      usage: llmResponse.usage
-    };
-  };
-
-  // Launch all batch translations in parallel
-  const batchPromises = batches.map((batch, index) => translateBatch(batch, index));
-
-  // Track progress as batches complete
-  let completedBatches = 0;
-  const batchResults: BatchResult[] = [];
-
-  // Use Promise.allSettled to handle all batches, even if some fail
-  const results = await Promise.allSettled(
-    batchPromises.map(async (promise) => {
-      const result = await promise;
-      completedBatches++;
-      const batchProgress = 15 + ((completedBatches / totalBatches) * 70);
-      reportProgress({
-        progress: Math.round(batchProgress),
-        currentBatch: completedBatches,
-        totalBatches
-      });
-      return result;
-    })
-  );
-
-  // Collect results and check for errors
-  let totalUsage: LlmUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-  
-  for (const result of results) {
-    if (result.status === 'fulfilled') {
-      // Accumulate usage from this batch
-      if (result.value.usage) {
-        totalUsage.promptTokens += result.value.usage.promptTokens;
-        totalUsage.completionTokens += result.value.usage.completionTokens;
-        totalUsage.totalTokens += result.value.usage.totalTokens;
+  return withSleepInhibit('RsExtractor: AI translation', async () => {
+    const reportProgress = (info: BatchProgressInfo) => {
+      if (onProgress) {
+        onProgress(info);
       }
-      
-      if (result.value.error) {
-        // Check if this was a truncation error
-        return {
-          originalFile: file,
-          translatedContent: '',
-          success: false,
-          error: result.value.error,
-          truncated: result.value.truncated,
-          usage: totalUsage.totalTokens > 0 ? totalUsage : undefined
-        };
-      }
-      batchResults.push(result.value);
-    } else {
+    };
+
+    reportProgress({ progress: 5, currentBatch: 0, totalBatches: 0 });
+
+    // Step 1: Parse the subtitle file
+    const parsed = parseSubtitle(file.content);
+
+    if (!parsed) {
       return {
         originalFile: file,
         translatedContent: '',
         success: false,
-        error: `Batch translation failed: ${result.reason}`,
-        usage: totalUsage.totalTokens > 0 ? totalUsage : undefined
+        error: 'Could not parse subtitle file. Unsupported format.'
       };
     }
-  }
 
-  // Sort results by batch index to maintain order
-  batchResults.sort((a, b) => a.batchIndex - b.batchIndex);
+    if (parsed.cues.length === 0) {
+      return {
+        originalFile: file,
+        translatedContent: '',
+        success: false,
+        error: 'No subtitle cues found in file.'
+      };
+    }
 
-  // Combine all translated cues in order
-  const allTranslatedCues: TranslatedCue[] = batchResults.flatMap(r => r.cues);
+    reportProgress({ progress: 10, currentBatch: 0, totalBatches: 0 });
 
-  reportProgress({ progress: 85, currentBatch: totalBatches, totalBatches });
+    // Step 2: Split into N batches
+    const batches = splitIntoNBatches(parsed.cues, batchCount);
+    const totalBatches = batches.length;
 
-  // Step 4: Validate all translations
-  const validation = validateTranslation(parsed.cues, allTranslatedCues);
+    reportProgress({ progress: 15, currentBatch: 0, totalBatches });
 
-  if (!validation.valid) {
-    console.warn('Translation validation errors:', validation.errors);
-  }
+    // Step 3: Translate all batches in parallel
+    interface BatchResult {
+      batchIndex: number;
+      cues: TranslatedCue[];
+      error?: string;
+      truncated?: boolean;
+      usage?: LlmUsage;
+    }
 
-  reportProgress({ progress: 90, currentBatch: totalBatches, totalBatches });
+    const translateBatch = async (batch: Cue[], batchIndex: number): Promise<BatchResult> => {
+      // Check for cancellation before starting
+      if (signal?.aborted) {
+        return { batchIndex, cues: [], error: 'Translation cancelled' };
+      }
 
-  // Step 5: Reconstruct subtitle file
-  const { content: translatedContent } = reconstructSubtitle(
-    parsed,
-    allTranslatedCues,
-    file.content
-  );
+      // Build translation request for this batch
+      const translationRequest = buildTranslationRequest(batch, sourceLang, targetLang);
+      const userPrompt = buildUserPrompt(translationRequest);
 
-  reportProgress({ progress: 100, currentBatch: totalBatches, totalBatches });
+      // Call LLM for translation
+      const llmResponse = await callLlm({
+        provider,
+        apiKey,
+        model,
+        systemPrompt: TRANSLATION_SYSTEM_PROMPT,
+        userPrompt,
+        signal,
+        responseMode: 'json',
+        temperature: 0.3,
+        logSource: 'translation',
+      });
 
-  return {
-    originalFile: file,
-    translatedContent,
-    success: true,
-    error: validation.valid ? undefined : `Warning: ${validation.errors.length} validation issue(s) detected`,
-    usage: totalUsage.totalTokens > 0 ? totalUsage : undefined
-  };
+      if (signal?.aborted) {
+        return { batchIndex, cues: [], error: 'Translation cancelled' };
+      }
+
+      if (llmResponse.error) {
+        return { batchIndex, cues: [], error: `Batch ${batchIndex + 1}/${totalBatches} failed: ${llmResponse.error}` };
+      }
+
+      // Check for truncated response (finish_reason === "length")
+      if (llmResponse.truncated) {
+        const errorMsg = `Batch ${batchIndex + 1}/${totalBatches}: Response truncated (increase batch count)`;
+        log('warning', 'translation', 'Response truncated', 
+          `The API response was truncated (finish_reason: ${llmResponse.finishReason}). Try increasing the number of batches.`,
+          { provider }
+        );
+        return { 
+          batchIndex, 
+          cues: [], 
+          error: errorMsg, 
+          truncated: true,
+          usage: llmResponse.usage 
+        };
+      }
+
+      // Check for empty content before parsing
+      if (!llmResponse.content || !llmResponse.content.trim()) {
+        const errorMsg = `Batch ${batchIndex + 1}/${totalBatches}: ${provider} returned empty content`;
+        log('error', 'translation', 'Empty response from AI', 
+          `The translation request succeeded but ${provider} returned no content. This may be caused by rate limits, content filtering, or API issues.`,
+          { provider }
+        );
+        return { batchIndex, cues: [], error: errorMsg, usage: llmResponse.usage };
+      }
+
+      // Parse LLM response with provider context for better error logging
+      const translationResponse = parseTranslationResponse(llmResponse.content, provider);
+
+      if (!translationResponse) {
+        return { 
+          batchIndex, 
+          cues: [], 
+          error: `Batch ${batchIndex + 1}/${totalBatches}: Failed to parse ${provider} response (check Logs for details)`,
+          usage: llmResponse.usage
+        };
+      }
+
+      return { 
+        batchIndex, 
+        cues: translationResponse.cues,
+        usage: llmResponse.usage
+      };
+    };
+
+    // Launch all batch translations in parallel
+    const batchPromises = batches.map((batch, index) => translateBatch(batch, index));
+
+    // Track progress as batches complete
+    let completedBatches = 0;
+    const batchResults: BatchResult[] = [];
+
+    // Use Promise.allSettled to handle all batches, even if some fail
+    const results = await Promise.allSettled(
+      batchPromises.map(async (promise) => {
+        const result = await promise;
+        completedBatches++;
+        const batchProgress = 15 + ((completedBatches / totalBatches) * 70);
+        reportProgress({
+          progress: Math.round(batchProgress),
+          currentBatch: completedBatches,
+          totalBatches
+        });
+        return result;
+      })
+    );
+
+    // Collect results and check for errors
+    let totalUsage: LlmUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        // Accumulate usage from this batch
+        if (result.value.usage) {
+          totalUsage.promptTokens += result.value.usage.promptTokens;
+          totalUsage.completionTokens += result.value.usage.completionTokens;
+          totalUsage.totalTokens += result.value.usage.totalTokens;
+        }
+        
+        if (result.value.error) {
+          // Check if this was a truncation error
+          return {
+            originalFile: file,
+            translatedContent: '',
+            success: false,
+            error: result.value.error,
+            truncated: result.value.truncated,
+            usage: totalUsage.totalTokens > 0 ? totalUsage : undefined
+          };
+        }
+        batchResults.push(result.value);
+      } else {
+        return {
+          originalFile: file,
+          translatedContent: '',
+          success: false,
+          error: `Batch translation failed: ${result.reason}`,
+          usage: totalUsage.totalTokens > 0 ? totalUsage : undefined
+        };
+      }
+    }
+
+    // Sort results by batch index to maintain order
+    batchResults.sort((a, b) => a.batchIndex - b.batchIndex);
+
+    // Combine all translated cues in order
+    const allTranslatedCues: TranslatedCue[] = batchResults.flatMap(r => r.cues);
+
+    reportProgress({ progress: 85, currentBatch: totalBatches, totalBatches });
+
+    // Step 4: Validate all translations
+    const validation = validateTranslation(parsed.cues, allTranslatedCues);
+
+    if (!validation.valid) {
+      console.warn('Translation validation errors:', validation.errors);
+    }
+
+    reportProgress({ progress: 90, currentBatch: totalBatches, totalBatches });
+
+    // Step 5: Reconstruct subtitle file
+    const { content: translatedContent } = reconstructSubtitle(
+      parsed,
+      allTranslatedCues,
+      file.content
+    );
+
+    reportProgress({ progress: 100, currentBatch: totalBatches, totalBatches });
+
+    return {
+      originalFile: file,
+      translatedContent,
+      success: true,
+      error: validation.valid ? undefined : `Warning: ${validation.errors.length} validation issue(s) detected`,
+      usage: totalUsage.totalTokens > 0 ? totalUsage : undefined
+    };
+  });
 }
 
 // ============================================================================

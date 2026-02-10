@@ -1,4 +1,5 @@
 pub(crate) mod hash;
+pub(crate) mod sleep_inhibit;
 pub(crate) mod store;
 pub(crate) mod validation;
 

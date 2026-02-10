@@ -15,6 +15,7 @@ pub(crate) use crate::tools::ocr::models as ocr_models;
 pub(crate) use crate::tools::ocr::perform as ocr_perform;
 pub(crate) use crate::tools::ocr::preview as ocr_preview;
 pub(crate) use crate::tools::ocr::subtitles as ocr_subtitles;
+pub(crate) use crate::tools::power::sleep_inhibit as sleep_inhibit;
 pub(crate) use crate::tools::tokens::count as tokens;
 pub(crate) use crate::tools::transcription::cancel as transcription_cancel;
 pub(crate) use crate::tools::transcription::transcode_opus as transcription_transcode;

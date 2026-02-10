@@ -5,6 +5,7 @@ use tokio::time::{Duration, timeout};
 
 use crate::shared::hash::md5_hash;
 use crate::shared::store::resolve_ffmpeg_path;
+use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::validation::validate_media_path;
 use crate::tools::ffprobe::get_media_duration_us;
 use crate::tools::ocr::OcrRegion;
@@ -23,6 +24,8 @@ pub(crate) async fn extract_ocr_frames(
     region: Option<OcrRegion>,
 ) -> Result<(String, u32), String> {
     validate_media_path(&video_path)?;
+
+    let _sleep_guard = SleepInhibitGuard::try_acquire("OCR frame extraction").ok();
 
     // Create output directory
     let path_hash = format!("{:x}", md5_hash(&video_path));

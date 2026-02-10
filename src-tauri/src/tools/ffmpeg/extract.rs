@@ -1,4 +1,5 @@
 use crate::shared::store::resolve_ffmpeg_path;
+use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::validation::{validate_media_path, validate_output_path};
 use tokio::process::Command;
 use tokio::time::{Duration, timeout};
@@ -82,6 +83,8 @@ pub(crate) async fn extract_track(
     // Validate paths
     validate_media_path(&input_path)?;
     validate_output_path(&output_path)?;
+
+    let _sleep_guard = SleepInhibitGuard::try_acquire("FFmpeg extraction").ok();
 
     // Build the map argument based on track type
     let map_arg = format!("0:{}", track_index);

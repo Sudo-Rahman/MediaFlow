@@ -1,4 +1,5 @@
 use crate::shared::store::{resolve_ffmpeg_path, resolve_ffprobe_path};
+use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::validation::{validate_media_path, validate_output_path};
 use crate::tools::ffprobe::FFPROBE_TIMEOUT;
 use serde_json::Value;
@@ -21,6 +22,8 @@ pub(crate) async fn merge_tracks(
     // Validate input paths
     validate_media_path(&video_path)?;
     validate_output_path(&output_path)?;
+
+    let _sleep_guard = SleepInhibitGuard::try_acquire("FFmpeg merge").ok();
 
     // Validate all track input paths
     for track in &tracks {

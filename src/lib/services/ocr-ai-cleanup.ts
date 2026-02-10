@@ -4,6 +4,7 @@ import type { LLMProvider, OcrSubtitle } from '$lib/types';
 import { normalizeOcrSubtitles } from '$lib/utils/ocr-subtitle-adapter';
 import { callLlm } from './llm-client';
 import type { LlmUsage } from './llm-client';
+import { withSleepInhibit } from './sleep-inhibit';
 
 const DEFAULT_BATCH_SIZE = 1000;
 
@@ -237,118 +238,120 @@ export async function cleanupOcrSubtitlesWithAi(
     };
   }
 
-  const batchSize = Math.max(20, options.batchSize ?? DEFAULT_BATCH_SIZE);
-  const batches = splitIntoBatches(normalizedInput, batchSize);
+  return withSleepInhibit('RsExtractor: OCR cleanup', async () => {
+    const batchSize = Math.max(20, options.batchSize ?? DEFAULT_BATCH_SIZE);
+    const batches = splitIntoBatches(normalizedInput, batchSize);
 
-  const correctedSubtitles: OcrSubtitle[] = [];
-  let processed = 0;
-  let totalUsage: LlmUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const correctedSubtitles: OcrSubtitle[] = [];
+    let processed = 0;
+    let totalUsage: LlmUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
-  for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
-    if (options.signal?.aborted) {
-      return {
-        success: false,
-        cancelled: true,
-        subtitles,
-        error: 'Cleanup cancelled',
-        batchesProcessed: processed,
-        totalBatches: batches.length,
-      };
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+      if (options.signal?.aborted) {
+        return {
+          success: false,
+          cancelled: true,
+          subtitles,
+          error: 'Cleanup cancelled',
+          batchesProcessed: processed,
+          totalBatches: batches.length,
+        };
+      }
+
+      const batch = batches[batchIndex];
+      const promptBatch: OcrCleanupCue[] = batch.map((cue) => ({
+        id: cue.id,
+        text: cue.text,
+      }));
+
+      const response = await callLlm({
+        provider: options.provider,
+        apiKey,
+        model: options.model,
+        systemPrompt: OCR_CLEANUP_SYSTEM_PROMPT,
+        userPrompt: buildUserPrompt(promptBatch, batchIndex, batches.length),
+        temperature: 0.2,
+        responseMode: 'json',
+        signal: options.signal,
+      });
+
+      if (options.signal?.aborted || response.error === 'Request cancelled') {
+        return {
+          success: false,
+          cancelled: true,
+          subtitles,
+          error: 'Cleanup cancelled',
+          batchesProcessed: processed,
+          totalBatches: batches.length,
+        };
+      }
+
+      if (response.error) {
+        return {
+          success: false,
+          subtitles,
+          error: `Batch ${batchIndex + 1}/${batches.length} failed: ${response.error}`,
+          batchesProcessed: processed,
+          totalBatches: batches.length,
+          usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
+        };
+      }
+
+      if (response.truncated) {
+        return {
+          success: false,
+          subtitles,
+          error: `Batch ${batchIndex + 1}/${batches.length}: response truncated`,
+          batchesProcessed: processed,
+          totalBatches: batches.length,
+          usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
+        };
+      }
+
+      const parsed = parseCleanupResponse(response.content);
+      if (!parsed) {
+        return {
+          success: false,
+          subtitles,
+          error: `Batch ${batchIndex + 1}/${batches.length}: invalid JSON response`,
+          batchesProcessed: processed,
+          totalBatches: batches.length,
+          usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
+        };
+      }
+
+      const correctedBatch = applyBatchCorrections(batch, parsed);
+      if (!correctedBatch) {
+        return {
+          success: false,
+          subtitles,
+          error: `Batch ${batchIndex + 1}/${batches.length}: missing corrected cues`,
+          batchesProcessed: processed,
+          totalBatches: batches.length,
+          usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
+        };
+      }
+
+      correctedSubtitles.push(...correctedBatch);
+      processed += 1;
+
+      if (response.usage) {
+        totalUsage = {
+          promptTokens: totalUsage.promptTokens + response.usage.promptTokens,
+          completionTokens: totalUsage.completionTokens + response.usage.completionTokens,
+          totalTokens: totalUsage.totalTokens + response.usage.totalTokens,
+        };
+      }
     }
 
-    const batch = batches[batchIndex];
-    const promptBatch: OcrCleanupCue[] = batch.map((cue) => ({
-      id: cue.id,
-      text: cue.text,
-    }));
+    const merged = mergeConsecutiveDuplicates(correctedSubtitles, Math.max(0, options.maxGapMs));
 
-    const response = await callLlm({
-      provider: options.provider,
-      apiKey,
-      model: options.model,
-      systemPrompt: OCR_CLEANUP_SYSTEM_PROMPT,
-      userPrompt: buildUserPrompt(promptBatch, batchIndex, batches.length),
-      temperature: 0.2,
-      responseMode: 'json',
-      signal: options.signal,
-    });
-
-    if (options.signal?.aborted || response.error === 'Request cancelled') {
-      return {
-        success: false,
-        cancelled: true,
-        subtitles,
-        error: 'Cleanup cancelled',
-        batchesProcessed: processed,
-        totalBatches: batches.length,
-      };
-    }
-
-    if (response.error) {
-      return {
-        success: false,
-        subtitles,
-        error: `Batch ${batchIndex + 1}/${batches.length} failed: ${response.error}`,
-        batchesProcessed: processed,
-        totalBatches: batches.length,
-        usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
-      };
-    }
-
-    if (response.truncated) {
-      return {
-        success: false,
-        subtitles,
-        error: `Batch ${batchIndex + 1}/${batches.length}: response truncated`,
-        batchesProcessed: processed,
-        totalBatches: batches.length,
-        usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
-      };
-    }
-
-    const parsed = parseCleanupResponse(response.content);
-    if (!parsed) {
-      return {
-        success: false,
-        subtitles,
-        error: `Batch ${batchIndex + 1}/${batches.length}: invalid JSON response`,
-        batchesProcessed: processed,
-        totalBatches: batches.length,
-        usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
-      };
-    }
-
-    const correctedBatch = applyBatchCorrections(batch, parsed);
-    if (!correctedBatch) {
-      return {
-        success: false,
-        subtitles,
-        error: `Batch ${batchIndex + 1}/${batches.length}: missing corrected cues`,
-        batchesProcessed: processed,
-        totalBatches: batches.length,
-        usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
-      };
-    }
-
-    correctedSubtitles.push(...correctedBatch);
-    processed += 1;
-
-    if (response.usage) {
-      totalUsage = {
-        promptTokens: totalUsage.promptTokens + response.usage.promptTokens,
-        completionTokens: totalUsage.completionTokens + response.usage.completionTokens,
-        totalTokens: totalUsage.totalTokens + response.usage.totalTokens,
-      };
-    }
-  }
-
-  const merged = mergeConsecutiveDuplicates(correctedSubtitles, Math.max(0, options.maxGapMs));
-
-  return {
-    success: true,
-    subtitles: merged,
-    batchesProcessed: processed,
-    totalBatches: batches.length,
-    usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
-  };
+    return {
+      success: true,
+      subtitles: merged,
+      batchesProcessed: processed,
+      totalBatches: batches.length,
+      usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
+    };
+  });
 }

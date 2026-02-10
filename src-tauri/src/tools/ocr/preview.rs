@@ -5,6 +5,7 @@ use tokio::time::{Duration, timeout};
 
 use crate::shared::hash::md5_hash;
 use crate::shared::store::resolve_ffmpeg_path;
+use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::validation::validate_media_path;
 use crate::tools::ffprobe::get_media_duration_us;
 
@@ -20,6 +21,8 @@ pub(crate) async fn transcode_for_preview(
     file_id: String,
 ) -> Result<String, String> {
     validate_media_path(&input_path)?;
+
+    let _sleep_guard = SleepInhibitGuard::try_acquire("Video preview transcoding").ok();
 
     // Create output path in temp directory
     let input = Path::new(&input_path);

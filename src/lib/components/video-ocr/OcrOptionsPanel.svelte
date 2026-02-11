@@ -267,7 +267,7 @@
           type="single"
           value={Math.round(config.similarityThreshold * 100)}
           onValueChange={handleSimilarityThresholdChange}
-          min={85}
+          min={80}
           max={98}
           step={1}
           disabled={!config.mergeSimilar}

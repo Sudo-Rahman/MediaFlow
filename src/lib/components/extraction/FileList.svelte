@@ -3,6 +3,7 @@
   import { cn } from '$lib/utils';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
+  import { FileItemCard } from '$lib/components/shared';
   import type { VideoFile } from '$lib/types';
   import { formatFileSize, formatDuration } from '$lib/utils/format';
 
@@ -30,15 +31,8 @@
 <div class={cn('flex flex-col gap-2', className)}>
   {#each files as file (file.path)}
     {@const counts = getTrackCounts(file)}
-    <button
-      class={cn(
-        'flex items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-accent w-full',
-        selectedPath === file.path && 'border-primary bg-primary/5'
-      )}
-      onclick={() => onSelect?.(file.path)}
-    >
-      <!-- Icon -->
-      <div class="flex-shrink-0 mt-0.5">
+    <FileItemCard selected={selectedPath === file.path} onclick={() => onSelect?.(file.path)}>
+      {#snippet icon()}
         {#if file.status === 'scanning'}
           <Loader2 class="size-5 text-muted-foreground animate-spin" />
         {:else if file.status === 'ready'}
@@ -48,11 +42,10 @@
         {:else}
           <FileVideo class="size-5 text-muted-foreground" />
         {/if}
-      </div>
+      {/snippet}
 
-      <!-- Content -->
-      <div class="flex-1 min-w-0">
-        <p class="font-medium truncate">{file.name}</p>
+      {#snippet content()}
+        <p class="font-medium text-sm truncate">{file.name}</p>
 
         {#if file.status === 'ready'}
           <div class="flex flex-wrap gap-1.5 mt-1.5">
@@ -86,19 +79,20 @@
         {:else if file.status === 'error'}
           <p class="text-xs text-destructive mt-1">{file.error}</p>
         {/if}
-      </div>
+      {/snippet}
 
-      <!-- Remove button -->
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        class="flex-shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-        onclick={(e: MouseEvent) => { e.stopPropagation(); onRemove?.(file.path); }}
-      >
-        <Trash2 class="size-4" />
-        <span class="sr-only">Remove</span>
-      </Button>
-    </button>
+      {#snippet actions()}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          class="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+          onclick={(e: MouseEvent) => { e.stopPropagation(); onRemove?.(file.path); }}
+        >
+          <Trash2 class="size-4" />
+          <span class="sr-only">Remove</span>
+        </Button>
+      {/snippet}
+    </FileItemCard>
   {:else}
     <p class="text-center text-muted-foreground py-8">No files imported</p>
   {/each}

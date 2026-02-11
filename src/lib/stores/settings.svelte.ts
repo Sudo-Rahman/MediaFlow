@@ -1,5 +1,6 @@
 import { Store } from '@tauri-apps/plugin-store';
-import type { LLMApiKeys, TranslationSettings } from '$lib/types';
+import { DEFAULT_OCR_REGION } from '$lib/types';
+import type { LLMApiKeys, OcrRegion, TranslationSettings } from '$lib/types';
 
 // Settings interface
 export interface AppSettings {
@@ -11,6 +12,7 @@ export interface AppSettings {
   translationSettings: TranslationSettings;
   openRouterModels: string[]; // Saved OpenRouter model IDs
   deepgramApiKey: string;     // Deepgram API key for transcription
+  videoOcrGlobalRegion: OcrRegion;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -29,7 +31,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     defaultBatchCount: 1
   },
   openRouterModels: [],
-  deepgramApiKey: ''
+  deepgramApiKey: '',
+  videoOcrGlobalRegion: { ...DEFAULT_OCR_REGION }
 };
 
 // Persistent store
@@ -60,6 +63,7 @@ export const settingsStore = {
       const translationSettings = await s.get<TranslationSettings>('translationSettings');
       const openRouterModels = await s.get<string[]>('openRouterModels');
       const deepgramApiKey = await s.get<string>('deepgramApiKey');
+      const videoOcrGlobalRegion = await s.get<OcrRegion>('videoOcrGlobalRegion');
 
       settings = {
         ffmpegPath: ffmpegPath ?? DEFAULT_SETTINGS.ffmpegPath,
@@ -69,7 +73,8 @@ export const settingsStore = {
         llmApiKeys: llmApiKeys ?? DEFAULT_SETTINGS.llmApiKeys,
         translationSettings: translationSettings ?? DEFAULT_SETTINGS.translationSettings,
         openRouterModels: openRouterModels ?? DEFAULT_SETTINGS.openRouterModels,
-        deepgramApiKey: deepgramApiKey ?? DEFAULT_SETTINGS.deepgramApiKey
+        deepgramApiKey: deepgramApiKey ?? DEFAULT_SETTINGS.deepgramApiKey,
+        videoOcrGlobalRegion: videoOcrGlobalRegion ?? { ...DEFAULT_SETTINGS.videoOcrGlobalRegion }
       };
 
       isLoaded = true;
@@ -163,10 +168,20 @@ export const settingsStore = {
     return (settings.deepgramApiKey?.length ?? 0) > 0;
   },
 
+  async setVideoOcrGlobalRegion(region: OcrRegion) {
+    const nextRegion = { ...region };
+    settings = { ...settings, videoOcrGlobalRegion: nextRegion };
+    const s = await getStore();
+    await s.set('videoOcrGlobalRegion', nextRegion);
+  },
+
+  getVideoOcrGlobalRegion(): OcrRegion {
+    return { ...settings.videoOcrGlobalRegion };
+  },
+
   async reset() {
     settings = { ...DEFAULT_SETTINGS };
     const s = await getStore();
     await s.clear();
   }
 };
-

@@ -32,6 +32,7 @@
   import * as Tooltip from '$lib/components/ui/tooltip';
   import * as Tabs from '$lib/components/ui/tabs';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
+  import { FileItemCard } from '$lib/components/shared';
   import { MergeTrackSettings, MergeOutputPanel, MergeTrackGroups, MergeTrackTable } from '$lib/components/merge';
 
   // Constants
@@ -612,11 +613,8 @@
           {@const isCurrentMerging = isProcessing() && currentMergingId === video.id}
           {@const seriesInfo = formatSeriesInfo(video.seasonNumber, video.episodeNumber)}
           {@const counts = getTrackCounts(video.tracks)}
-          <button
-            class="w-full flex items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-accent {isSelected ? 'border-primary bg-primary/5' : ''}"
-            onclick={() => mergeStore.selectVideo(video.id)}
-          >
-            <div class="shrink-0 mt-0.5">
+          <FileItemCard selected={isSelected} onclick={() => mergeStore.selectVideo(video.id)}>
+            {#snippet icon()}
               {#if isCurrentMerging}
                 <Loader2 class="size-5 text-primary animate-spin" />
               {:else if video.status === 'scanning'}
@@ -626,10 +624,10 @@
               {:else}
                 <FileIcon class="size-5 text-primary" />
               {/if}
-            </div>
+            {/snippet}
 
-            <div class="flex-1 min-w-0">
-              <p class="font-medium truncate">{video.name}</p>
+            {#snippet content()}
+              <p class="font-medium text-sm truncate">{video.name}</p>
               <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
                 {#if seriesInfo}
                   <Badge variant="outline" class="text-xs">{seriesInfo}</Badge>
@@ -656,32 +654,34 @@
                   <Badge class="text-xs">+{attachedCount}</Badge>
                 {/if}
               </div>
-            </div>
+            {/snippet}
 
-            {#if isCurrentMerging}
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                class="shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-                onclick={(e: MouseEvent) => { e.stopPropagation(); handleCancelFile(video.id); }}
-                disabled={isCancelling}
-                title="Cancel merge"
-              >
-                <X class="size-4" />
-              </Button>
-            {:else}
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                class="shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                onclick={(e: MouseEvent) => { e.stopPropagation(); mergeStore.removeVideoFile(video.id); }}
-                disabled={isProcessing()}
-                title="Remove"
-              >
-                <Trash2 class="size-4" />
-              </Button>
-            {/if}
-          </button>
+            {#snippet actions()}
+              {#if isCurrentMerging}
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  class="text-destructive hover:text-destructive hover:bg-destructive/10"
+                  onclick={(e: MouseEvent) => { e.stopPropagation(); handleCancelFile(video.id); }}
+                  disabled={isCancelling}
+                  title="Cancel merge"
+                >
+                  <X class="size-4" />
+                </Button>
+              {:else}
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  class="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                  onclick={(e: MouseEvent) => { e.stopPropagation(); mergeStore.removeVideoFile(video.id); }}
+                  disabled={isProcessing()}
+                  title="Remove"
+                >
+                  <Trash2 class="size-4" />
+                </Button>
+              {/if}
+            {/snippet}
+          </FileItemCard>
         {:else}
           <div>
             <ImportDropZone

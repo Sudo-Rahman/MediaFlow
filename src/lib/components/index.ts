@@ -42,3 +42,6 @@ export * from './llm';
 
 // Rename components
 export * from './rename';
+
+// Shared components
+export * from './shared';

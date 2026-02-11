@@ -76,6 +76,8 @@
       }
     }
 
+    videoOcrStore.setGlobalRegion(settingsStore.getVideoOcrGlobalRegion());
+
     if (!videoOcrStore.modelsChecked) {
       try {
         const status = await invoke<OcrModelsStatus>('check_ocr_models');
@@ -163,12 +165,21 @@
       videoPath: file.path,
       previewPath: file.previewPath,
       ocrRegion: file.ocrRegion,
+      ocrRegionMode: file.ocrRegionMode,
       ocrVersions: file.ocrVersions,
       createdAt: existingData?.createdAt ?? now,
       updatedAt: now,
     };
 
     return saveOcrData(file.path, payload);
+  }
+
+  async function persistGlobalRegionForLinkedFiles(): Promise<void> {
+    const persistPromises = videoOcrStore.videoFiles
+      .filter((file) => file.ocrRegionMode === 'global')
+      .map((file) => persistFileData(file.id));
+
+    await Promise.all(persistPromises);
   }
 
   async function runAiCleanup(fileId: string, subtitles: OcrSubtitle[], config: OcrConfig): Promise<OcrSubtitle[]> {
@@ -431,8 +442,12 @@
 
         const persisted = await loadOcrData(file.path);
         if (persisted) {
+          const persistedRegionMode = persisted.ocrRegionMode ?? 'custom';
           videoOcrStore.updateFile(file.id, {
-            ocrRegion: persisted.ocrRegion ?? file.ocrRegion,
+            ocrRegionMode: persistedRegionMode,
+            ocrRegion: persistedRegionMode === 'global'
+              ? videoOcrStore.globalRegion
+              : persisted.ocrRegion ?? file.ocrRegion,
           });
 
           if (persisted.ocrVersions.length > 0) {
@@ -608,13 +623,37 @@
     retryDialogOpen = true;
   }
 
-  function handleRegionChange(region: OcrRegion | undefined) {
+  function handleFileRegionChange(region: OcrRegion | undefined) {
     if (!videoOcrStore.selectedFileId) {
       return;
     }
 
-    videoOcrStore.setOcrRegion(videoOcrStore.selectedFileId, region);
+    videoOcrStore.setFileRegionCustom(videoOcrStore.selectedFileId, region);
     void persistFileData(videoOcrStore.selectedFileId);
+  }
+
+  function handleUseGlobalRegion() {
+    if (!videoOcrStore.selectedFileId) {
+      return;
+    }
+
+    videoOcrStore.setFileRegionMode(videoOcrStore.selectedFileId, 'global');
+    void persistFileData(videoOcrStore.selectedFileId);
+  }
+
+  async function handleGlobalRegionChange(region: OcrRegion | undefined) {
+    if (!region) {
+      return;
+    }
+
+    try {
+      videoOcrStore.setGlobalRegion(region);
+      await settingsStore.setVideoOcrGlobalRegion(region);
+      await persistGlobalRegionForLinkedFiles();
+    } catch (error) {
+      console.error('Failed to update global OCR region:', error);
+      toast.error('Failed to save global OCR region');
+    }
   }
 
   const transcodingCount = $derived(videoOcrStore.videoFiles.filter((file) => file.status === 'transcoding').length);
@@ -679,9 +718,12 @@
   <div class="flex-1 min-h-0 overflow-hidden p-4 grid grid-rows-[minmax(0,2fr)_minmax(0,1fr)] gap-4">
     <VideoPreview
       file={videoOcrStore.selectedFile}
+      globalRegion={videoOcrStore.globalRegion}
       showSubtitles={!resultDialogOpen && !retryDialogOpen}
       suspendPlayback={resultDialogOpen || retryDialogOpen}
-      onRegionChange={handleRegionChange}
+      onGlobalRegionChange={handleGlobalRegionChange}
+      onFileRegionChange={handleFileRegionChange}
+      onUseGlobalRegion={handleUseGlobalRegion}
       class="min-h-0"
     />
 

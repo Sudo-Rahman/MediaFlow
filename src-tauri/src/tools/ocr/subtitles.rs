@@ -315,7 +315,7 @@ pub(crate) async fn generate_subtitles_from_ocr(
 
     let cleanup = cleanup.unwrap_or_default();
     let similarity_threshold = if cleanup.merge_similar {
-        clamp_f64(cleanup.similarity_threshold, 0.85, 0.98)
+        clamp_f64(cleanup.similarity_threshold, 0.80, 0.98)
     } else {
         1.0
     };
@@ -478,7 +478,7 @@ pub(crate) async fn generate_subtitles_from_ocr(
                 let sub_dur = sub.end_time.saturating_sub(sub.start_time);
 
                 let similar_strict = texts_are_similar(&prev_key, &sub_key, similarity_threshold);
-                let similar_short = texts_are_similar(&prev_key, &sub_key, 0.85);
+                let similar_short = texts_are_similar(&prev_key, &sub_key, 0.80);
                 let is_short = prev_dur < min_cue_duration_ms || sub_dur < min_cue_duration_ms;
 
                 if gap <= max_gap_ms && (similar_strict || (is_short && similar_short)) {

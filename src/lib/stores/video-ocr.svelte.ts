@@ -8,6 +8,7 @@ import type {
   OcrFileStatus,
   OcrConfig,
   OcrRegion,
+  OcrRegionMode,
   OcrSubtitle,
   OcrVersion,
   OcrProgress,
@@ -28,6 +29,7 @@ let selectedFileId = $state<string | null>(null);
 // OCR configuration
 let config = $state<OcrConfig>({ ...DEFAULT_OCR_CONFIG });
 let outputDir = $state<string>('');
+let globalRegion = $state<OcrRegion>({ ...DEFAULT_OCR_REGION });
 
 // Processing state
 let isProcessing = $state(false);
@@ -68,7 +70,8 @@ function createEmptyVideoFile(path: string, id?: string): OcrVideoFile {
     name: getFileName(path),
     size: 0,
     status: 'pending',
-    ocrRegion: { ...DEFAULT_OCR_REGION },
+    ocrRegion: { ...globalRegion },
+    ocrRegionMode: 'global',
     subtitles: [],
     ocrVersions: [],
   };
@@ -129,6 +132,10 @@ export const videoOcrStore = {
 
   get outputDir() {
     return outputDir;
+  },
+
+  get globalRegion() {
+    return { ...globalRegion };
   },
 
   // -------------------------------------------------------------------------
@@ -198,7 +205,13 @@ export const videoOcrStore = {
   // -------------------------------------------------------------------------
   addFiles(files: OcrVideoFile[]) {
     const existingPaths = new Set(videoFiles.map(f => f.path));
-    const newFiles = files.filter(f => !existingPaths.has(f.path));
+    const newFiles = files
+      .filter(f => !existingPaths.has(f.path))
+      .map((file) => ({
+        ...file,
+        ocrRegionMode: file.ocrRegionMode ?? 'global',
+        ocrRegion: file.ocrRegion ?? { ...globalRegion },
+      }));
     videoFiles = [...videoFiles, ...newFiles];
 
     if (!selectedFileId && newFiles.length > 0) {
@@ -284,16 +297,55 @@ export const videoOcrStore = {
   // -------------------------------------------------------------------------
   // Actions - OCR Region
   // -------------------------------------------------------------------------
-  setOcrRegion(fileId: string, region: OcrRegion | undefined) {
+  setGlobalRegion(region: OcrRegion) {
+    globalRegion = { ...region };
+    this.applyGlobalRegionToGlobalFiles();
+  },
+
+  setFileRegionMode(fileId: string, mode: OcrRegionMode) {
+    videoFiles = videoFiles.map(f => {
+      if (f.id !== fileId) {
+        return f;
+      }
+
+      if (mode === 'global') {
+        return {
+          ...f,
+          ocrRegionMode: 'global',
+          ocrRegion: { ...globalRegion },
+        };
+      }
+
+      return {
+        ...f,
+        ocrRegionMode: 'custom',
+        ocrRegion: f.ocrRegion ? { ...f.ocrRegion } : { ...globalRegion },
+      };
+    });
+  },
+
+  setFileRegionCustom(fileId: string, region: OcrRegion | undefined) {
     videoFiles = videoFiles.map(f =>
-      f.id === fileId ? { ...f, ocrRegion: region } : f
+      f.id === fileId
+        ? { ...f, ocrRegionMode: 'custom', ocrRegion: region }
+        : f
     );
   },
 
-  clearOcrRegion(fileId: string) {
+  applyGlobalRegionToGlobalFiles() {
     videoFiles = videoFiles.map(f =>
-      f.id === fileId ? { ...f, ocrRegion: undefined } : f
+      f.ocrRegionMode === 'global'
+        ? { ...f, ocrRegion: { ...globalRegion } }
+        : f
     );
+  },
+
+  setOcrRegion(fileId: string, region: OcrRegion | undefined) {
+    this.setFileRegionCustom(fileId, region);
+  },
+
+  clearOcrRegion(fileId: string) {
+    this.setFileRegionCustom(fileId, undefined);
   },
 
   // -------------------------------------------------------------------------

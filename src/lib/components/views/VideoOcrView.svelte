@@ -35,6 +35,7 @@
   import { scanFile } from '$lib/services/ffprobe';
 
   import { Button } from '$lib/components/ui/button';
+  import * as AlertDialog from '$lib/components/ui/alert-dialog';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
   import {
     VideoFileList,
@@ -63,6 +64,8 @@
 
   let retryDialogOpen = $state(false);
   let retryDialogFile = $state.raw<OcrVideoFile | null>(null);
+  let removeDialogOpen = $state(false);
+  let removeTarget = $state.raw<{ mode: 'single'; fileId: string } | { mode: 'all' } | null>(null);
 
   let unlistenOcrProgress: UnlistenFn | null = null;
   const aiCleanupControllers = new Map<string, AbortController>();
@@ -119,6 +122,14 @@
 
   function getFreshFile(fileId: string): OcrVideoFile | undefined {
     return videoOcrStore.videoFiles.find((file) => file.id === fileId);
+  }
+
+  function isOcrActiveStatus(status: OcrVideoFile['status']): boolean {
+    return ['transcoding', 'extracting_frames', 'ocr_processing', 'generating_subs'].includes(status);
+  }
+
+  function hasTranscodingFile(): boolean {
+    return videoOcrStore.videoFiles.some((file) => file.status === 'transcoding');
   }
 
   function getLatestRawVersion(file: OcrVideoFile): OcrVersion | null {
@@ -593,14 +604,8 @@
     }
     aiCleanupControllers.clear();
 
-    try {
-      await invoke('cancel_transcode');
-    } catch (error) {
-      console.error('Failed to cancel transcodes:', error);
-    }
-
     for (const file of videoOcrStore.videoFiles) {
-      if (['extracting_frames', 'ocr_processing', 'generating_subs'].includes(file.status)) {
+      if (isOcrActiveStatus(file.status)) {
         try {
           await invoke('cancel_ocr_operation', { fileId: file.id });
         } catch {
@@ -611,6 +616,80 @@
 
     videoOcrStore.cancelAll();
     toast.info('Cancelling all...');
+  }
+
+  async function handleRequestRemoveFile(id: string) {
+    const file = videoOcrStore.videoFiles.find((entry) => entry.id === id);
+    if (!file) {
+      return;
+    }
+
+    if (file.status !== 'transcoding') {
+      videoOcrStore.removeFile(id);
+      return;
+    }
+
+    removeTarget = { mode: 'single', fileId: id };
+    removeDialogOpen = true;
+  }
+
+  function handleRequestRemoveAll() {
+    if (!hasTranscodingFile()) {
+      videoOcrStore.clear();
+      return;
+    }
+
+    removeTarget = { mode: 'all' };
+    removeDialogOpen = true;
+  }
+
+  async function handleConfirmRemove() {
+    const target = removeTarget;
+    if (!target) {
+      return;
+    }
+
+    removeDialogOpen = false;
+
+    if (target.mode === 'single') {
+      const file = videoOcrStore.videoFiles.find((entry) => entry.id === target.fileId);
+      if (!file) {
+        removeTarget = null;
+        return;
+      }
+
+      aiCleanupControllers.get(file.id)?.abort();
+      aiCleanupControllers.delete(file.id);
+
+      try {
+        await invoke('cancel_ocr_operation', { fileId: file.id });
+      } catch (error) {
+        console.error('Failed to cancel OCR operation before removal:', error);
+      }
+
+      videoOcrStore.removeFile(file.id);
+      removeTarget = null;
+      return;
+    }
+
+    for (const controller of aiCleanupControllers.values()) {
+      controller.abort();
+    }
+    aiCleanupControllers.clear();
+
+    const files = [...videoOcrStore.videoFiles];
+    for (const file of files) {
+      if (isOcrActiveStatus(file.status)) {
+        try {
+          await invoke('cancel_ocr_operation', { fileId: file.id });
+        } catch (error) {
+          console.error('Failed to cancel OCR operation before clearing list:', error);
+        }
+      }
+    }
+
+    videoOcrStore.clear();
+    removeTarget = null;
   }
 
   function handleViewResult(file: OcrVideoFile) {
@@ -668,7 +747,7 @@
           <Button
             variant="ghost"
             size="icon-sm"
-            onclick={() => videoOcrStore.clear()}
+            onclick={handleRequestRemoveAll}
             class="text-muted-foreground hover:text-destructive"
             disabled={videoOcrStore.isProcessing}
           >
@@ -697,7 +776,7 @@
           files={videoOcrStore.videoFiles}
           selectedId={videoOcrStore.selectedFileId}
           onSelect={(id) => videoOcrStore.selectFile(id)}
-          onRemove={(id) => videoOcrStore.removeFile(id)}
+          onRemove={handleRequestRemoveFile}
           onCancel={handleCancelFile}
           onViewResult={handleViewResult}
           onRetry={handleRetryFile}
@@ -776,3 +855,36 @@
   baseConfig={videoOcrStore.config}
   onConfirm={handleRetryConfirm}
 />
+
+<AlertDialog.Root bind:open={removeDialogOpen}>
+  <AlertDialog.Content>
+    <AlertDialog.Header>
+      <AlertDialog.Title>
+        {removeTarget?.mode === 'all' ? 'Remove all files while transcoding?' : 'Remove file while transcoding?'}
+      </AlertDialog.Title>
+      <AlertDialog.Description>
+        {#if removeTarget?.mode === 'all'}
+          One or more files are currently transcoding. Removing all files will cancel active transcodes.
+        {:else}
+          This file is currently transcoding. Removing it will cancel the active transcode.
+        {/if}
+      </AlertDialog.Description>
+    </AlertDialog.Header>
+    <AlertDialog.Footer>
+      <AlertDialog.Cancel
+        onclick={() => {
+          removeDialogOpen = false;
+          removeTarget = null;
+        }}
+      >
+        Cancel
+      </AlertDialog.Cancel>
+      <AlertDialog.Action
+        onclick={handleConfirmRemove}
+        class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+      >
+        Remove
+      </AlertDialog.Action>
+    </AlertDialog.Footer>
+  </AlertDialog.Content>
+</AlertDialog.Root>

@@ -27,6 +27,7 @@
   import { scanFile } from '$lib/services/ffprobe';
 
   import { Button } from '$lib/components/ui/button';
+  import * as AlertDialog from '$lib/components/ui/alert-dialog';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
   import { 
     AudioFileList, 
@@ -56,6 +57,8 @@
   // State for retranscribe dialog
   let retranscribeDialogOpen = $state(false);
   let retranscribeDialogFile = $state<AudioFile | null>(null);
+  let removeDialogOpen = $state(false);
+  let removeTarget = $state.raw<{ mode: 'single'; fileId: string } | { mode: 'all' } | null>(null);
 
   // State for track selection dialog
   let trackSelectDialogOpen = $state(false);
@@ -74,6 +77,14 @@
 
   // Event listener cleanup
   let unlistenTranscodeProgress: UnlistenFn | null = null;
+
+  function hasAudioFile(fileId: string): boolean {
+    return audioToSubsStore.audioFiles.some((file) => file.id === fileId);
+  }
+
+  function getAudioFile(fileId: string): AudioFile | undefined {
+    return audioToSubsStore.audioFiles.find((file) => file.id === fileId);
+  }
 
   // Helper: Check if file needs transcoding to OPUS
   function needsTranscoding(file: AudioFile): boolean {
@@ -488,27 +499,39 @@
     }
     
     // Phase 5: Start transcoding files in parallel
-    if (filesToTranscode.length > 0) {
-      await transcodeFilesInParallel(filesToTranscode);
+    const pendingTranscodes = filesToTranscode.filter((item) => hasAudioFile(item.file.id));
+    if (pendingTranscodes.length > 0) {
+      await transcodeFilesInParallel(pendingTranscodes);
     }
   }
 
   // Transcode a single file to OPUS
   async function transcodeFile(file: AudioFile, trackIndex?: number): Promise<boolean> {
+    if (!hasAudioFile(file.id)) {
+      return false;
+    }
+
     let outputPath: string | undefined;
     const resolvedTrackIndex = trackIndex ?? file.selectedTrackIndex ?? 0;
     
     try {
       outputPath = await getOpusOutputPath(file, resolvedTrackIndex);
+      if (!hasAudioFile(file.id)) {
+        return false;
+      }
       
       // Check if OPUS file already exists (cached from previous transcode)
       const opusExists = await exists(outputPath);
       if (opusExists) {
+        if (!hasAudioFile(file.id)) {
+          return false;
+        }
+
         // Use cached OPUS file - no need to transcode again
         audioToSubsStore.finishTranscoding(file.id, outputPath);
         
         // Save the opus path to transcription data
-        const currentFile = audioToSubsStore.audioFiles.find(f => f.id === file.id);
+        const currentFile = getAudioFile(file.id);
         if (currentFile) {
           await saveTranscriptionData(file.path, {
             version: 1,
@@ -527,6 +550,10 @@
       if (!dirExists) {
         await mkdir(outputDir, { recursive: true });
       }
+
+      if (!hasAudioFile(file.id)) {
+        return false;
+      }
       
       audioToSubsStore.startTranscoding(file.id);
       
@@ -535,11 +562,15 @@
         outputPath,
         trackIndex: trackIndex ?? null
       });
+
+      if (!hasAudioFile(file.id)) {
+        return false;
+      }
       
       audioToSubsStore.finishTranscoding(file.id, result);
       
       // Save the opus path to transcription data
-      const currentFile = audioToSubsStore.audioFiles.find(f => f.id === file.id);
+      const currentFile = getAudioFile(file.id);
       if (currentFile) {
         await saveTranscriptionData(file.path, {
           version: 1,
@@ -552,7 +583,10 @@
       return true;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      audioToSubsStore.failTranscoding(file.id, errorMsg);
+      const fileStillExists = hasAudioFile(file.id);
+      if (fileStillExists) {
+        audioToSubsStore.failTranscoding(file.id, errorMsg);
+      }
       
       // Clean up partial output file on failure
       if (outputPath) {
@@ -565,12 +599,14 @@
           // Ignore cleanup errors
         }
       }
-      
-      logAndToast.error({
-        source: 'ffmpeg',
-        title: `Transcode failed: ${file.name}`,
-        details: errorMsg
-      });
+
+      if (fileStillExists) {
+        logAndToast.error({
+          source: 'ffmpeg',
+          title: `Transcode failed: ${file.name}`,
+          details: errorMsg
+        });
+      }
       return false;
     }
   }
@@ -579,18 +615,28 @@
   async function transcodeFilesInParallel(files: { file: AudioFile; trackIndex?: number }[]) {
     const pending = [...files];
     const active: Promise<void>[] = [];
-    const activeFileIds = new Set<string>();
     
     async function processFile(item: { file: AudioFile; trackIndex?: number }) {
-      activeFileIds.add(item.file.id);
-      await transcodeFile(item.file, item.trackIndex);
-      activeFileIds.delete(item.file.id);
+      if (!hasAudioFile(item.file.id)) {
+        return;
+      }
+
+      const latestFile = getAudioFile(item.file.id);
+      if (!latestFile) {
+        return;
+      }
+
+      await transcodeFile(latestFile, item.trackIndex);
     }
     
     while (pending.length > 0 || active.length > 0) {
       // Start new transcodes up to limit
       while (active.length < MAX_CONCURRENT_TRANSCODES && pending.length > 0) {
         const item = pending.shift()!;
+        if (!hasAudioFile(item.file.id)) {
+          continue;
+        }
+
         const promise = processFile(item).then(() => {
           // Remove from active when done
           const idx = active.indexOf(promise);
@@ -837,29 +883,32 @@
     audioToSubsStore.stopTranscription();
   }
 
+  async function cancelTranscodeAndCleanup(file: AudioFile): Promise<void> {
+    // Cancel FFmpeg transcoding for this specific file
+    try {
+      await invoke('cancel_transcode_file', { inputPath: file.path });
+    } catch (error) {
+      console.error('Failed to cancel transcode:', error);
+    }
+
+    // Delete partial OPUS file
+    try {
+      const opusPath = await getOpusOutputPath(file, file.selectedTrackIndex ?? 0);
+      const opusExists = await exists(opusPath);
+      if (opusExists) {
+        await remove(opusPath);
+      }
+    } catch (error) {
+      console.error('Failed to delete partial OPUS file:', error);
+    }
+  }
+
   async function handleCancelFile(id: string) {
-    const file = audioToSubsStore.audioFiles.find(f => f.id === id);
+    const file = getAudioFile(id);
     if (!file) return;
 
     if (file.status === 'transcoding') {
-      // Cancel FFmpeg transcoding for this specific file
-      try {
-        await invoke('cancel_transcode_file', { inputPath: file.path });
-      } catch (error) {
-        console.error('Failed to cancel transcode:', error);
-      }
-      
-      // Delete partial OPUS file
-      try {
-        const opusPath = await getOpusOutputPath(file, file.selectedTrackIndex ?? 0);
-        const opusExists = await exists(opusPath);
-        if (opusExists) {
-          await remove(opusPath);
-        }
-      } catch (error) {
-        console.error('Failed to delete partial OPUS file:', error);
-      }
-      
+      await cancelTranscodeAndCleanup(file);
       audioToSubsStore.failTranscoding(id, 'Cancelled');
     } else if (file.status === 'transcribing') {
       // Abort the fetch request for this file
@@ -890,6 +939,60 @@
     
     audioToSubsStore.cancelAll();
     toast.info('Cancelling all...');
+  }
+
+  async function handleRequestRemoveFile(id: string) {
+    const file = getAudioFile(id);
+    if (!file) {
+      return;
+    }
+
+    if (file.status !== 'transcoding') {
+      audioToSubsStore.removeFile(id);
+      return;
+    }
+
+    removeTarget = { mode: 'single', fileId: id };
+    removeDialogOpen = true;
+  }
+
+  function handleRequestRemoveAll() {
+    const hasTranscoding = audioToSubsStore.audioFiles.some((file) => file.status === 'transcoding');
+    if (!hasTranscoding) {
+      audioToSubsStore.clear();
+      return;
+    }
+
+    removeTarget = { mode: 'all' };
+    removeDialogOpen = true;
+  }
+
+  async function handleConfirmRemove() {
+    const target = removeTarget;
+    if (!target) {
+      return;
+    }
+
+    removeDialogOpen = false;
+
+    if (target.mode === 'single') {
+      const file = getAudioFile(target.fileId);
+      if (file) {
+        await cancelTranscodeAndCleanup(file);
+        audioToSubsStore.removeFile(file.id);
+      }
+      removeTarget = null;
+      return;
+    }
+
+    try {
+      await invoke('cancel_transcode');
+    } catch (error) {
+      console.error('Failed to cancel transcodes before clearing list:', error);
+    }
+
+    audioToSubsStore.clear();
+    removeTarget = null;
   }
 
   function handleViewResult(file: AudioFile) {
@@ -1044,7 +1147,7 @@
             <Button
               variant="ghost"
               size="icon-sm"
-              onclick={audioToSubsStore.clear}
+              onclick={handleRequestRemoveAll}
               class="text-muted-foreground hover:text-destructive"
             >
               <Trash2 class="size-4" />
@@ -1074,7 +1177,7 @@
           files={audioToSubsStore.audioFiles}
           selectedId={audioToSubsStore.selectedFileId}
           onSelect={(id) => audioToSubsStore.selectFile(id)}
-          onRemove={(id) => audioToSubsStore.removeFile(id)}
+          onRemove={handleRequestRemoveFile}
           onCancel={handleCancelFile}
           onViewResult={handleViewResult}
           onRetranscribe={handleRetranscribeRequest}
@@ -1171,3 +1274,36 @@
   onSelect={handleBatchStrategySelect}
   onCancel={handleBatchStrategyCancel}
 />
+
+<AlertDialog.Root bind:open={removeDialogOpen}>
+  <AlertDialog.Content>
+    <AlertDialog.Header>
+      <AlertDialog.Title>
+        {removeTarget?.mode === 'all' ? 'Remove all files while transcoding?' : 'Remove file while transcoding?'}
+      </AlertDialog.Title>
+      <AlertDialog.Description>
+        {#if removeTarget?.mode === 'all'}
+          One or more files are currently transcoding. Removing all files will cancel active transcodes.
+        {:else}
+          This file is currently transcoding. Removing it will cancel the active transcode.
+        {/if}
+      </AlertDialog.Description>
+    </AlertDialog.Header>
+    <AlertDialog.Footer>
+      <AlertDialog.Cancel
+        onclick={() => {
+          removeDialogOpen = false;
+          removeTarget = null;
+        }}
+      >
+        Cancel
+      </AlertDialog.Cancel>
+      <AlertDialog.Action
+        onclick={handleConfirmRemove}
+        class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+      >
+        Remove
+      </AlertDialog.Action>
+    </AlertDialog.Footer>
+  </AlertDialog.Content>
+</AlertDialog.Root>

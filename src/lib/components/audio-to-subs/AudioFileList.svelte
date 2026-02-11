@@ -149,7 +149,7 @@
               </Button>
             {/if}
 
-            {#if (isTranscribing || isTranscoding) && onCancel}
+            {#if isTranscribing && onCancel}
               <Button
                 variant="ghost"
                 size="icon"
@@ -162,7 +162,7 @@
               >
                 <X class="size-3.5" />
               </Button>
-            {:else if !isTranscribing && !isTranscoding}
+            {:else}
               <Button
                 variant="ghost"
                 size="icon"

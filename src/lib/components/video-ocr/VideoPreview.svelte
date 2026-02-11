@@ -12,17 +12,23 @@
 
   interface VideoPreviewProps {
     file?: OcrVideoFile;
+    globalRegion?: OcrRegion;
     showSubtitles?: boolean;
     suspendPlayback?: boolean;
-    onRegionChange?: (region: OcrRegion | undefined) => void;
+    onGlobalRegionChange?: (region: OcrRegion | undefined) => void | Promise<void>;
+    onFileRegionChange?: (region: OcrRegion | undefined) => void | Promise<void>;
+    onUseGlobalRegion?: () => void;
     class?: string;
   }
 
   let {
     file,
+    globalRegion,
     showSubtitles = true,
     suspendPlayback = false,
-    onRegionChange,
+    onGlobalRegionChange,
+    onFileRegionChange,
+    onUseGlobalRegion,
     class: className = '',
   }: VideoPreviewProps = $props();
 
@@ -30,6 +36,7 @@
   let containerEl: HTMLDivElement | undefined = $state();
   let currentTime = $state(0);
   let isRegionMode = $state(false);
+  let editScope = $state<'all' | 'file'>('all');
   let region = $state<OcrRegion | undefined>(undefined);
   let resumePlayback = $state(false);
   
@@ -85,13 +92,25 @@
     });
   });
 
-  // Sync region with file's region
+  // Sync editable region with active editing scope
   $effect(() => {
+    if (editScope === 'all') {
+      region = globalRegion ? { ...globalRegion } : { ...DEFAULT_OCR_REGION };
+      return;
+    }
+
     if (file?.ocrRegion) {
-      region = file.ocrRegion;
+      region = { ...file.ocrRegion };
     } else {
       region = undefined;
     }
+  });
+
+  const displayedRegion = $derived.by(() => {
+    if (file?.ocrRegionMode === 'global') {
+      return file.ocrRegion ?? globalRegion ?? DEFAULT_OCR_REGION;
+    }
+    return file?.ocrRegion;
   });
 
   // Get video source URL
@@ -181,19 +200,34 @@
   }
 
   function handleRegionChange(newRegion: OcrRegion | undefined) {
+    if (editScope === 'all') {
+      const nextRegion = newRegion ?? { ...DEFAULT_OCR_REGION };
+      region = nextRegion;
+      onGlobalRegionChange?.(nextRegion);
+      return;
+    }
+
     region = newRegion;
-    onRegionChange?.(newRegion);
+    onFileRegionChange?.(newRegion);
   }
 
   function setDefaultRegion() {
     const defaultRegion = { ...DEFAULT_OCR_REGION };
-    region = defaultRegion;
-    onRegionChange?.(defaultRegion);
+    handleRegionChange(defaultRegion);
   }
 
   function clearRegion() {
-    region = undefined;
-    onRegionChange?.(undefined);
+    if (editScope === 'all') {
+      setDefaultRegion();
+      return;
+    }
+
+    handleRegionChange(undefined);
+  }
+
+  function useGlobalRegion() {
+    onUseGlobalRegion?.();
+    editScope = 'all';
   }
 </script>
 
@@ -227,14 +261,14 @@
       {/if}
 
       <!-- Region indicator when not in edit mode -->
-      {#if !isRegionMode && region}
+      {#if !isRegionMode && displayedRegion}
         <div
           class="absolute border-2 border-primary/50 bg-primary/10 pointer-events-none"
           style="
-            left: {videoBounds.x * 100 + region.x * videoBounds.width * 100}%;
-            top: {videoBounds.y * 100 + region.y * videoBounds.height * 100}%;
-            width: {region.width * videoBounds.width * 100}%;
-            height: {region.height * videoBounds.height * 100}%;
+            left: {videoBounds.x * 100 + displayedRegion.x * videoBounds.width * 100}%;
+            top: {videoBounds.y * 100 + displayedRegion.y * videoBounds.height * 100}%;
+            width: {displayedRegion.width * videoBounds.width * 100}%;
+            height: {displayedRegion.height * videoBounds.height * 100}%;
           "
         />
       {/if}
@@ -260,7 +294,7 @@
 
   <!-- Region controls -->
   {#if file?.previewPath}
-    <div class="flex items-center gap-2 mt-2 px-2">
+    <div class="flex flex-wrap items-center gap-2 mt-2 px-2">
       <Button
         variant={isRegionMode ? "default" : "outline"}
         size="sm"
@@ -274,6 +308,32 @@
           Set OCR Region
         {/if}
       </Button>
+
+      <div class="flex items-center gap-1 rounded-md border p-1">
+        <Button
+          variant={editScope === 'all' ? 'secondary' : 'ghost'}
+          size="sm"
+          class="h-7 px-2 text-xs"
+          onclick={() => editScope = 'all'}
+        >
+          All files
+        </Button>
+        <Button
+          variant={editScope === 'file' ? 'secondary' : 'ghost'}
+          size="sm"
+          class="h-7 px-2 text-xs"
+          onclick={() => editScope = 'file'}
+          disabled={!file}
+        >
+          This file
+        </Button>
+      </div>
+
+      {#if file?.ocrRegionMode === 'custom'}
+        <Button variant="ghost" size="sm" class="text-xs" onclick={useGlobalRegion}>
+          Use global region
+        </Button>
+      {/if}
 
       {#if region}
         <Button
@@ -303,7 +363,7 @@
       {/if}
     </div>
     <p class="text-xs text-muted-foreground mt-2 px-2">
-      Tip: Adjust OCR Region to exclude logos/watermarks.
+      Tip: Use All files for a shared default region, or This file for an override.
     </p>
   {/if}
 </div>

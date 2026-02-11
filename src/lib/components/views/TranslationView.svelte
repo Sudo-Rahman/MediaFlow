@@ -26,6 +26,7 @@
   import * as Resizable from '$lib/components/ui/resizable';
   import * as Tooltip from "$lib/components/ui/tooltip/index.js";
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
+  import { FileItemCard } from '$lib/components/shared';
 
   import { TranslationConfigPanel } from '$lib/components/translation';
 
@@ -57,17 +58,17 @@
 
   // Calculate tokens only when a NEW file path is selected
   let lastCountedPath = $state<string | null>(null);
-  
+
   $effect(() => {
     const job = translationStore.selectedJob;
     const filePath = job?.file?.path;
-    
+
     // Only calculate if we have a new file that wasn't counted before
     if (filePath && filePath !== lastCountedPath && !tokenCountCache.has(filePath)) {
       const fileContent = job.file.content;
       lastCountedPath = filePath;
       isCountingTokens = true;
-      
+
       // Use untrack to avoid re-triggering on config changes
       untrack(() => {
         const { sourceLanguage, targetLanguage } = translationStore.config;
@@ -76,7 +77,7 @@
           sourceLanguage,
           targetLanguage
         );
-        
+
         countTokens(fullPrompt)
           .then(count => {
             tokenCountCache.set(filePath, count);
@@ -287,17 +288,17 @@
 
       for (const job of completedJobs) {
         if (!job.result?.translatedContent) continue;
-        
+
         const extension = getSubtitleExtension(job.file.format);
         const baseName = job.file.name.replace(/\.[^/.]+$/, '');
         const targetLang = translationStore.config.targetLanguage;
         const fileName = `${baseName}.${targetLang}${extension}`;
         const filePath = `${selectedDir}${sep}${fileName}`;
-        
+
         await writeTextFile(filePath, job.result.translatedContent);
         savedCount++;
       }
-      
+
       toast.success(`Saved ${savedCount} files`);
     } catch (e) {
       logAndToast.error({
@@ -345,7 +346,7 @@
         const promise = translateJob(job).finally(() => {
           activePromises.delete(promise);
         });
-        
+
         activePromises.add(promise);
       }
 
@@ -384,12 +385,12 @@
     // Double the batch count (minimum +1)
     const currentBatchCount = translationStore.config.batchCount;
     const newBatchCount = Math.max(currentBatchCount + 1, currentBatchCount * 2);
-    
+
     // Temporarily set the higher batch count
     translationStore.setBatchCount(newBatchCount);
-    
+
     toast.info(`Retrying with ${newBatchCount} batches...`);
-    
+
     // Retry the job
     await translateJob(job);
   }
@@ -470,7 +471,7 @@
     hasApiKey
   );
   const selectedJob = $derived(translationStore.selectedJob);
-  
+
   // Global progress
   const totalJobs = $derived(translationStore.jobs.length);
   const completedJobsCount = $derived(translationStore.jobs.filter(j => j.status === 'completed').length);
@@ -493,13 +494,13 @@
                 <Badge variant="secondary">{translationStore.jobs.length}</Badge>
               {/if}
             </div>
-            
+
             <div class="flex items-center gap-2">
               {#if translationStore.jobs.length > 0}
-                <Button 
-                  variant="ghost" 
-                  size="icon-sm" 
-                  onclick={() => { translationStore.removeAllJobs(); toast.info('All files cleared'); }} 
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onclick={() => { translationStore.removeAllJobs(); toast.info('All files cleared'); }}
                   disabled={isTranslating}
                   class="text-muted-foreground hover:text-destructive"
                 >
@@ -537,57 +538,59 @@
               <div class="space-y-2">
                 {#each translationStore.jobs as job (job.id)}
                   {@const StatusIcon = getStatusIcon(job.status)}
-                  <div
-                    class="flex items-center justify-between p-2 rounded-lg bg-muted/50 hover:bg-muted cursor-pointer transition-colors {selectedJob?.id === job.id ? 'border-2 border-accent' : ''}"
+                  <FileItemCard
+                    selected={selectedJob?.id === job.id}
+                    class="bg-muted/50 hover:bg-muted"
                     onclick={() => translationStore.selectJob(job.id)}
-                    onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') translationStore.selectJob(job.id); }}
-                    role="button"
-                    tabindex="0"
                   >
-                    <div class="flex items-center gap-2 min-w-0 flex-1">
+                    {#snippet icon()}
                       <StatusIcon class="size-4 shrink-0 {getStatusColor(job.status)}" />
-                      <div class="min-w-0 flex-1">
-                        <p class="text-sm font-medium truncate">{job.file.name}</p>
-                        <div class="flex items-center gap-2 text-xs text-muted-foreground">
-                          <Badge variant="outline" class="text-xs uppercase">{job.file.format}</Badge>
-                          {#if job.status === 'translating'}
-                            <span>{job.progress}%</span>
-                            {#if job.totalBatches > 1}
-                              <span class="text-muted-foreground">
-                                (Batch {job.currentBatch}/{job.totalBatches})
-                              </span>
-                            {/if}
-                          {/if}
-                        </div>
+                    {/snippet}
+
+                    {#snippet content()}
+                      <p class="text-sm font-medium truncate">{job.file.name}</p>
+                      <div class="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Badge variant="outline" class="text-xs uppercase">{job.file.format}</Badge>
                         {#if job.status === 'translating'}
-                          <Progress value={job.progress} class="h-1 mt-1" />
+                          <span>{job.progress}%</span>
+                          {#if job.totalBatches > 1}
+                            <span class="text-muted-foreground">
+                              (Batch {job.currentBatch}/{job.totalBatches})
+                            </span>
+                          {/if}
                         {/if}
                       </div>
-                    </div>
-                    <div class="flex items-center gap-1">
                       {#if job.status === 'translating'}
-                        <Button variant="ghost" size="icon" class="size-7" onclick={(e) => { e.stopPropagation(); handleCancelJob(job.id); }}>
-                          <Square class="size-3" />
-                        </Button>
-                      {:else}
-                        {#if job.status === 'error'}
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            class="size-7 hover:text-primary" 
-                            onclick={(e) => { e.stopPropagation(); translateJob(job); }} 
-                            disabled={isTranslating}
-                            title="Retry"
-                          >
-                            <RotateCw class="size-3" />
+                        <Progress value={job.progress} class="h-1 mt-1" />
+                      {/if}
+                    {/snippet}
+
+                    {#snippet actions()}
+                      <div class="flex items-center gap-1">
+                        {#if job.status === 'translating'}
+                          <Button variant="ghost" size="icon" class="size-7" onclick={(e) => { e.stopPropagation(); handleCancelJob(job.id); }}>
+                            <Square class="size-3" />
+                          </Button>
+                        {:else}
+                          {#if job.status === 'error'}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              class="size-7 hover:text-primary"
+                              onclick={(e) => { e.stopPropagation(); translateJob(job); }}
+                              disabled={isTranslating}
+                              title="Retry"
+                            >
+                              <RotateCw class="size-3" />
+                            </Button>
+                          {/if}
+                          <Button variant="ghost" size="icon" class="size-7" onclick={(e) => { e.stopPropagation(); handleRemoveJob(job.id); }} disabled={isTranslating}>
+                            <X class="size-3" />
                           </Button>
                         {/if}
-                        <Button variant="ghost" size="icon" class="size-7" onclick={(e) => { e.stopPropagation(); handleRemoveJob(job.id); }} disabled={isTranslating}>
-                          <X class="size-3" />
-                        </Button>
-                      {/if}
-                    </div>
-                  </div>
+                      </div>
+                    {/snippet}
+                  </FileItemCard>
                 {/each}
               </div>
             </div>
@@ -757,9 +760,9 @@
                     {#if selectedJob.result?.truncated}
                       <div class="flex flex-col items-center gap-2 mt-2">
                         <p class="text-xs text-muted-foreground">Response was truncated due to token limits</p>
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
+                        <Button
+                          variant="outline"
+                          size="sm"
                           onclick={() => retryWithMoreBatches(selectedJob)}
                           disabled={isTranslating}
                         >

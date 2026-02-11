@@ -28,6 +28,7 @@ export interface OcrVideoFile {
   
   // OCR region (relative coordinates 0-1)
   ocrRegion?: OcrRegion;
+  ocrRegionMode: OcrRegionMode;
   
   // OCR results
   subtitles: OcrSubtitle[];
@@ -57,6 +58,8 @@ export interface OcrRegion {
   width: number;       // Width (0-1 relative to video width)
   height: number;      // Height (0-1 relative to video height)
 }
+
+export type OcrRegionMode = 'global' | 'custom';
 
 // Default region: bottom 25% of the video (typical subtitle area)
 export const DEFAULT_OCR_REGION: OcrRegion = {
@@ -263,6 +266,7 @@ export interface VideoOcrPersistenceData {
   videoPath: string;
   previewPath?: string;
   ocrRegion?: OcrRegion;
+  ocrRegionMode?: OcrRegionMode;
   ocrVersions: OcrVersion[];
   createdAt: string;
   updatedAt: string;

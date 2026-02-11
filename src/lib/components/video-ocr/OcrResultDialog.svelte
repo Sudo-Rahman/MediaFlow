@@ -355,11 +355,13 @@
       </div>
 
       <div class="flex-1">
-        <ScrollArea class="overflow-scroll h-[calc(50vh-200px)] rounded-md border bg-muted/30">
+        <ScrollArea orientation="both" class="h-[calc(50vh-200px)] rounded-md border bg-muted/30">
           {#if isPreviewPending}
             <p class="p-6 text-sm text-muted-foreground text-center">Preparing preview...</p>
           {:else if previewText}
-            <pre class="p-4 text-xs whitespace-pre leading-relaxed font-mono">{previewText}</pre>
+            <div class="min-w-max">
+              <pre class="p-4 text-xs whitespace-pre leading-relaxed font-mono">{previewText}</pre>
+            </div>
           {:else}
             <p class="p-6 text-sm text-muted-foreground text-center">No subtitles in this version</p>
           {/if}

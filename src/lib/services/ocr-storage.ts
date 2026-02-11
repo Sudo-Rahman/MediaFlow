@@ -1,6 +1,7 @@
 import type {
   OcrConfig,
   OcrRegion,
+  OcrRegionMode,
   OcrRetryMode,
   OcrSubtitle,
   OcrRawFrame,
@@ -39,6 +40,7 @@ function createEmptyOcrData(
   videoPath: string,
   previewPath?: string,
   ocrRegion?: OcrRegion,
+  ocrRegionMode?: OcrRegionMode,
 ): VideoOcrPersistenceData {
   const now = new Date().toISOString();
   return {
@@ -46,6 +48,7 @@ function createEmptyOcrData(
     videoPath,
     previewPath,
     ocrRegion,
+    ocrRegionMode,
     ocrVersions: [],
     createdAt: now,
     updatedAt: now,
@@ -90,10 +93,11 @@ export async function addOcrVersion(
   options?: {
     previewPath?: string;
     ocrRegion?: OcrRegion;
+    ocrRegionMode?: OcrRegionMode;
   },
 ): Promise<VideoOcrPersistenceData | null> {
   const data = (await loadOcrData(videoPath))
-    ?? createEmptyOcrData(videoPath, options?.previewPath, options?.ocrRegion);
+    ?? createEmptyOcrData(videoPath, options?.previewPath, options?.ocrRegion, options?.ocrRegionMode);
 
   data.ocrVersions = [...data.ocrVersions, version];
 
@@ -102,6 +106,9 @@ export async function addOcrVersion(
   }
   if (options?.ocrRegion !== undefined) {
     data.ocrRegion = options.ocrRegion;
+  }
+  if (options?.ocrRegionMode !== undefined) {
+    data.ocrRegionMode = options.ocrRegionMode;
   }
 
   const success = await saveOcrData(videoPath, data);

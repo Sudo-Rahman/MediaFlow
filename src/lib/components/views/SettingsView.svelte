@@ -3,6 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
+  import { openUrl } from '@tauri-apps/plugin-opener';
   import { mode, setMode } from 'mode-watcher';
   import { toast } from 'svelte-sonner';
 
@@ -192,8 +193,13 @@
     }
   }
 
-  function handleOpenDeepgramConsole() {
-    window.open('https://console.deepgram.com/', '_blank');
+  async function handleOpenDeepgramConsole() {
+    try {
+      await openUrl('https://console.deepgram.com/');
+    } catch (error) {
+      console.error('Failed to open Deepgram console:', error);
+      toast.error('Failed to open Deepgram website');
+    }
   }
 
   const currentMode = $derived(mode.current || 'system');
@@ -211,82 +217,6 @@
     </div>
 
     <Separator />
-
-    <!-- Deepgram Configuration -->
-    <Card.Root>
-      <Card.Header>
-        <div class="flex items-center gap-2">
-          <AudioLines class="size-5 text-primary" />
-          <Card.Title>Deepgram</Card.Title>
-        </div>
-        <Card.Description>
-          Configure Deepgram Nova API for audio transcription
-        </Card.Description>
-      </Card.Header>
-      <Card.Content class="space-y-4">
-        <!-- Status -->
-        <div class="flex items-center justify-between p-3 rounded-md bg-muted/50">
-          <div class="flex items-center gap-2">
-            {#if deepgramApiKeyConfigured}
-              <CheckCircle class="size-4 text-green-500" />
-              <span class="text-sm">API key configured</span>
-            {:else}
-              <XCircle class="size-4 text-amber-500" />
-              <span class="text-sm text-amber-600 dark:text-amber-400">API key not configured</span>
-            {/if}
-          </div>
-        </div>
-
-        <!-- API Key input -->
-        <div class="space-y-2">
-          <Label for="deepgram-api-key">Deepgram API Key</Label>
-          <div class="flex gap-2">
-            <div class="relative flex-1">
-              <Input
-                id="deepgram-api-key"
-                type={showDeepgramApiKey ? 'text' : 'password'}
-                placeholder="Enter your Deepgram API key"
-                value={settingsStore.settings.deepgramApiKey}
-                oninput={(e) => handleDeepgramApiKeyChange(e.currentTarget.value)}
-                class="pr-10"
-              />
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              onclick={() => showDeepgramApiKey = !showDeepgramApiKey}
-            >
-              {#if showDeepgramApiKey}
-                <EyeOff class="size-4" />
-              {:else}
-                <Eye class="size-4" />
-              {/if}
-            </Button>
-          </div>
-        </div>
-
-        <!-- Info and link -->
-        <div class="p-3 rounded-md border border-muted bg-muted/30">
-          <p class="text-sm text-muted-foreground mb-2">
-            Deepgram Nova offers high-quality audio transcription with multilingual support.
-          </p>
-          <Button 
-            variant="outline" 
-            size="sm" 
-            class="w-full"
-            onclick={handleOpenDeepgramConsole}
-          >
-            <ExternalLink class="size-4 mr-2" />
-            Get API key on Deepgram
-          </Button>
-        </div>
-
-        <div class="pt-2 text-xs text-muted-foreground">
-          <p>The API key is stored locally and is never shared.</p>
-          <p class="mt-1">Deepgram offers $200 in free credits to get started.</p>
-        </div>
-      </Card.Content>
-    </Card.Root>
 
     <!-- FFmpeg Configuration -->
     <Card.Root>
@@ -494,6 +424,82 @@
       </Card.Content>
     </Card.Root>
 
+    <!-- Deepgram Configuration -->
+    <Card.Root>
+      <Card.Header>
+        <div class="flex items-center gap-2">
+          <AudioLines class="size-5 text-primary" />
+          <Card.Title>Deepgram</Card.Title>
+        </div>
+        <Card.Description>
+          Configure Deepgram Nova API for audio transcription
+        </Card.Description>
+      </Card.Header>
+      <Card.Content class="space-y-4">
+        <!-- Status -->
+        <div class="flex items-center justify-between p-3 rounded-md bg-muted/50">
+          <div class="flex items-center gap-2">
+            {#if deepgramApiKeyConfigured}
+              <CheckCircle class="size-4 text-green-500" />
+              <span class="text-sm">API key configured</span>
+            {:else}
+              <XCircle class="size-4 text-amber-500" />
+              <span class="text-sm text-amber-600 dark:text-amber-400">API key not configured</span>
+            {/if}
+          </div>
+        </div>
+
+        <!-- API Key input -->
+        <div class="space-y-2">
+          <Label for="deepgram-api-key">Deepgram API Key</Label>
+          <div class="flex gap-2">
+            <div class="relative flex-1">
+              <Input
+                id="deepgram-api-key"
+                type={showDeepgramApiKey ? 'text' : 'password'}
+                placeholder="Enter your Deepgram API key"
+                value={settingsStore.settings.deepgramApiKey}
+                oninput={(e) => handleDeepgramApiKeyChange(e.currentTarget.value)}
+                class="pr-10"
+              />
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onclick={() => showDeepgramApiKey = !showDeepgramApiKey}
+            >
+              {#if showDeepgramApiKey}
+                <EyeOff class="size-4" />
+              {:else}
+                <Eye class="size-4" />
+              {/if}
+            </Button>
+          </div>
+        </div>
+
+        <!-- Info and link -->
+        <div class="p-3 rounded-md border border-muted bg-muted/30">
+          <p class="text-sm text-muted-foreground mb-2">
+            Deepgram Nova offers high-quality audio transcription with multilingual support.
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            class="w-full"
+            onclick={handleOpenDeepgramConsole}
+          >
+            <ExternalLink class="size-4 mr-2" />
+            Get API key on Deepgram
+          </Button>
+        </div>
+
+        <div class="pt-2 text-xs text-muted-foreground">
+          <p>The API key is stored locally and is never shared.</p>
+          <p class="mt-1">Deepgram offers $200 in free credits to get started.</p>
+        </div>
+      </Card.Content>
+    </Card.Root>
+
     <!-- Appearance -->
     <Card.Root>
       <Card.Header>
@@ -544,8 +550,13 @@
         </div>
         <Separator />
         <div class="text-sm text-muted-foreground">
-          <p>RsExtractor is a tool to extract and merge multimedia tracks (audio, video, subtitles) from MKV files and other containers.</p>
-          <p class="mt-2">Built with Tauri, Svelte, and FFmpeg.</p>
+          <p>
+            RsExtractor is an all-in-one desktop toolkit for multimedia workflows: Extraction, Merge,
+            Audio to Subs, Video OCR, AI Translation, Rename, and file Info analysis.
+          </p>
+          <p class="mt-2">
+            Built with Tauri, Svelte 5, TypeScript, Rust, and FFmpeg for fast local processing.
+          </p>
         </div>
       </Card.Content>
     </Card.Root>

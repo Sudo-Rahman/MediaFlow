@@ -13,7 +13,6 @@
   import { mergeStore, infoStore } from '$lib/stores';
   import { scanFiles } from '$lib/services/ffprobe';
   import { log } from '$lib/utils/log-toast';
-  import { cn } from '$lib/utils';
   import type { Track } from '$lib/types';
   import type { FileInfo } from '$lib/stores/info.svelte';
 
@@ -23,6 +22,7 @@
   import * as Card from '$lib/components/ui/card';
   import * as Tabs from '$lib/components/ui/tabs';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
+  import { FileItemCard } from '$lib/components/shared';
 
   const SUPPORTED_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];
   const SUPPORTED_FORMATS = SUPPORTED_EXTENSIONS.map((ext) => ext.slice(1).toUpperCase());
@@ -285,48 +285,46 @@
       {:else}
         <div class="space-y-2 p-2">
           {#each infoStore.files as file (file.id)}
-            <button
-              class={cn(
-                'group w-full rounded-lg border p-3 text-left transition-colors hover:bg-accent',
-                infoStore.selectedFileId === file.id && 'border-primary bg-primary/5'
-              )}
+            <FileItemCard
+              selected={infoStore.selectedFileId === file.id}
+              class="group"
               onclick={() => infoStore.selectFile(file.id)}
             >
-              <div class="flex items-start gap-3">
-                <div class="shrink-0 mt-0.5">
-                  {#if file.status === 'scanning'}
-                    <Loader2 class="size-5 animate-spin text-muted-foreground" />
-                  {:else if file.status === 'error'}
-                    <XCircle class="size-5 text-destructive" />
-                  {:else}
-                    <FileVideo class="size-5 text-primary" />
-                  {/if}
-                </div>
+              {#snippet icon()}
+                {#if file.status === 'scanning'}
+                  <Loader2 class="size-5 animate-spin text-muted-foreground" />
+                {:else if file.status === 'error'}
+                  <XCircle class="size-5 text-destructive" />
+                {:else}
+                  <FileVideo class="size-5 text-primary" />
+                {/if}
+              {/snippet}
 
-                <div class="min-w-0 flex-1">
-                  <p class="font-medium truncate">{file.name}</p>
-                  {#if file.status === 'ready'}
-                    <p class="mt-1 text-xs text-muted-foreground">
-                      {formatFileSize(file.size)} • {file.tracks.length} tracks
-                    </p>
-                  {:else if file.status === 'error'}
-                    <p class="mt-1 truncate text-xs text-destructive">{file.error}</p>
-                  {:else}
-                    <p class="mt-1 text-xs text-muted-foreground">Scanning...</p>
-                  {/if}
-                </div>
+              {#snippet content()}
+                <p class="font-medium text-sm truncate">{file.name}</p>
+                {#if file.status === 'ready'}
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    {formatFileSize(file.size)} • {file.tracks.length} tracks
+                  </p>
+                {:else if file.status === 'error'}
+                  <p class="mt-1 truncate text-xs text-destructive">{file.error}</p>
+                {:else}
+                  <p class="mt-1 text-xs text-muted-foreground">Scanning...</p>
+                {/if}
+              {/snippet}
 
+              {#snippet actions()}
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  class="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive hover:bg-destructive/10"
+                  class="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive hover:bg-destructive/10"
                   onclick={(e: MouseEvent) => { e.stopPropagation(); handleRemoveFile(file.id); }}
                 >
                   <X class="size-4" />
                   <span class="sr-only">Remove</span>
                 </Button>
-              </div>
-            </button>
+              {/snippet}
+            </FileItemCard>
           {/each}
         </div>
 

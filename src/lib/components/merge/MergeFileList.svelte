@@ -4,6 +4,7 @@
   import type { MergeVideoFile } from '$lib/types';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
+  import { FileItemCard } from '$lib/components/shared';
 
   interface MergeFileListProps {
     files: MergeVideoFile[];
@@ -51,16 +52,12 @@
     {#each files as file (file.id)}
       {@const counts = getTrackCounts(file)}
       {@const FileIcon = getFileIcon(file)}
-      <button
-        class={cn(
-          'flex items-start gap-2 rounded-lg border text-left transition-colors hover:bg-accent w-full',
-          compact ? 'p-2' : 'p-2.5',
-          selectedId === file.id && 'border-primary bg-primary/5'
-        )}
+      <FileItemCard
+        compact={compact}
+        selected={selectedId === file.id}
         onclick={() => onSelect?.(file.id)}
       >
-        <!-- Icon -->
-        <div class="flex-shrink-0 mt-0.5">
+        {#snippet icon()}
           {#if file.status === 'scanning'}
             <Loader2 class="size-4 text-muted-foreground animate-spin" />
           {:else if file.status === 'ready'}
@@ -70,11 +67,10 @@
           {:else}
             <FileIcon class="size-4 text-muted-foreground" />
           {/if}
-        </div>
+        {/snippet}
 
-        <!-- Content -->
-        <div class="flex-1 min-w-0">
-          <p class={cn('font-medium truncate', compact ? 'text-xs' : 'text-sm')}>{file.name}</p>
+        {#snippet content()}
+          <p class={cn('font-medium truncate text-sm')}>{file.name}</p>
 
           {#if file.status === 'ready' && !compact}
             <div class="flex flex-wrap gap-1 mt-1">
@@ -93,19 +89,20 @@
           {:else if file.status === 'error'}
             <p class="text-xs text-destructive mt-1 truncate">{file.error}</p>
           {/if}
-        </div>
+        {/snippet}
 
-        <!-- Remove button -->
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          class="flex-shrink-0 size-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-          onclick={(e: MouseEvent) => { e.stopPropagation(); onRemove?.(file.id); }}
-        >
-          <Trash2 class="size-3" />
-          <span class="sr-only">Remove</span>
-        </Button>
-      </button>
+        {#snippet actions()}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            class="size-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+            onclick={(e: MouseEvent) => { e.stopPropagation(); onRemove?.(file.id); }}
+          >
+            <Trash2 class="size-3" />
+            <span class="sr-only">Remove</span>
+          </Button>
+        {/snippet}
+      </FileItemCard>
     {:else}
       {#if showAddButton}
         <div class="flex flex-col items-center justify-center py-8 text-center">
@@ -120,4 +117,3 @@
     {/each}
   </div>
 </div>
-

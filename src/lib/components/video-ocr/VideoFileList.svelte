@@ -139,7 +139,7 @@
               </Button>
             {/if}
 
-            {#if processing && onCancel}
+            {#if ['extracting_frames', 'ocr_processing', 'generating_subs'].includes(file.status) && onCancel}
               <Button
                 variant="ghost"
                 size="icon"
@@ -152,7 +152,7 @@
               >
                 <X class="size-3.5" />
               </Button>
-            {:else if !processing}
+            {:else}
               <Button
                 variant="ghost"
                 size="icon"

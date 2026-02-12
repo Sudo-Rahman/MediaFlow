@@ -181,6 +181,11 @@
     }
   }
 
+  function isTextSubtitlePath(path: string): boolean {
+    const lowerPath = path.toLowerCase();
+    return SUBTITLE_EXTENSIONS.some((ext) => lowerPath.endsWith(ext));
+  }
+
   function importSubtitleFiles(files: SubtitleFile[]) {
     if (files.length === 0) {
       return { imported: 0, skipped: 0 };
@@ -226,7 +231,20 @@
       targetTool: 'translate',
       sourceId,
     });
-    await importSubtitlePaths(payload.paths);
+
+    const textSubtitlePaths = payload.paths.filter(isTextSubtitlePath);
+    const skippedCount = payload.paths.length - textSubtitlePaths.length;
+
+    if (textSubtitlePaths.length === 0) {
+      toast.info('No text subtitle files available from this source');
+      return;
+    }
+
+    if (skippedCount > 0) {
+      toast.info(`Skipped ${skippedCount} non-text subtitle file(s)`);
+    }
+
+    await importSubtitlePaths(textSubtitlePaths);
   }
 
   async function handleConfirmVersionImport(mode: ImportSelectionMode, selectedKeys: string[]) {

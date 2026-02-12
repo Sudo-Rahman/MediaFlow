@@ -203,6 +203,12 @@ export const audioToSubsStore = {
   removeFile(id: string) {
     // Clean up waveform instance and blob URL for this file
     this.removeWaveformInstance(id);
+
+    // Ensure transcoding bookkeeping is cleaned when removing an in-flight file.
+    if (transcodingFileIds.has(id)) {
+      transcodingFileIds = new Set([...transcodingFileIds].filter((fileId) => fileId !== id));
+      isTranscoding = transcodingFileIds.size > 0;
+    }
     
     audioFiles = audioFiles.filter(f => f.id !== id);
     if (selectedFileId === id) {

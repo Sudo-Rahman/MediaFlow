@@ -17,7 +17,7 @@
   import { logAndToast } from '$lib/utils/log-toast';
 
   import { getCodecFromExtension, type ImportedTrack, type MergeTrack, type MergeTrackConfig } from '$lib/types';
-  import type { ImportSourceId } from '$lib/types/tool-import';
+  import type { ImportItem, ImportSourceId, ImportableKind } from '$lib/types/tool-import';
 
   interface Props {
     viewMode?: 'home' | 'groups' | 'table';
@@ -37,11 +37,12 @@
 
   // Constants
   const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];
-  const SUBTITLE_EXTENSIONS = ['.ass', '.ssa', '.srt', '.sub', '.idx', '.vtt'];
+  const SUBTITLE_EXTENSIONS = ['.ass', '.ssa', '.srt', '.sub', '.idx', '.vtt', '.sup'];
   const AUDIO_EXTENSIONS = ['.aac', '.ac3', '.dts', '.flac', '.mp3', '.ogg', '.wav', '.eac3', '.opus'];
   const ALL_EXTENSIONS = [...VIDEO_EXTENSIONS, ...SUBTITLE_EXTENSIONS, ...AUDIO_EXTENSIONS];
   const FLIP_DURATION_MS = 200;
   const VIDEO_FORMATS = VIDEO_EXTENSIONS.map((ext) => ext.slice(1).toUpperCase());
+  type ForcedImportType = 'video' | 'subtitle' | 'audio';
 
   // Track settings dialog
   let settingsOpen = $state(false);
@@ -191,7 +192,39 @@
     }
   }
 
-  async function addFiles(paths: string[]) {
+  function kindToForcedImportType(kind: ImportableKind): ForcedImportType | null {
+    if (kind === 'track_video') {
+      return 'video';
+    }
+    if (kind === 'track_subtitle') {
+      return 'subtitle';
+    }
+    if (kind === 'track_audio') {
+      return 'audio';
+    }
+    return null;
+  }
+
+  function buildSourceImportPayload(items: ImportItem[]): { paths: string[]; forcedTypes: Map<string, ForcedImportType> } {
+    const pathSet = new Set<string>();
+    const forcedTypes = new Map<string, ForcedImportType>();
+
+    for (const item of items) {
+      if (item.itemType !== 'path') {
+        continue;
+      }
+
+      pathSet.add(item.path);
+      const forcedType = kindToForcedImportType(item.kind);
+      if (forcedType) {
+        forcedTypes.set(item.path, forcedType);
+      }
+    }
+
+    return { paths: Array.from(pathSet), forcedTypes };
+  }
+
+  async function addFiles(paths: string[], forcedTypes?: Map<string, ForcedImportType>) {
     if (mergeStore.status === 'completed') {
       mergeStore.reset();
     }
@@ -211,7 +244,9 @@
       const name = path.split('/').pop() || path.split('\\').pop() || path;
       const ext = path.toLowerCase().substring(path.lastIndexOf('.'));
 
-      if (VIDEO_EXTENSIONS.includes(ext)) {
+      const forcedType = forcedTypes?.get(path);
+
+      if (forcedType === 'video' || (!forcedType && VIDEO_EXTENSIONS.includes(ext))) {
         // Add video file to store with 'scanning' status
         const fileId = mergeStore.addVideoFile({
           path, name, size: 0, tracks: [], status: 'scanning'
@@ -220,7 +255,9 @@
         videoFileIds.set(path, fileId);
       } else {
         // Handle track files immediately (no scanning needed)
-        const type = SUBTITLE_EXTENSIONS.includes(ext) ? 'subtitle' : 'audio';
+        const type: 'subtitle' | 'audio' = (forcedType === 'subtitle' || forcedType === 'audio')
+          ? forcedType
+          : (SUBTITLE_EXTENSIONS.includes(ext) ? 'subtitle' : 'audio');
         const codec = getCodecFromExtension(ext);
 
         mergeStore.addImportedTrack({
@@ -291,17 +328,19 @@
   }
 
   async function handleImportFromSource(sourceId: ImportSourceId) {
-    const { paths } = toolImportStore.resolveImport({
-      targetTool: 'merge',
-      sourceId,
-    });
+    const items = toolImportStore.getItems(sourceId, 'merge');
+    if (items.length === 0) {
+      toast.info('No compatible tracks available from this source');
+      return;
+    }
 
+    const { paths, forcedTypes } = buildSourceImportPayload(items);
     if (paths.length === 0) {
       toast.info('No compatible tracks available from this source');
       return;
     }
 
-    await addFiles(paths);
+    await addFiles(paths, forcedTypes);
   }
 
 

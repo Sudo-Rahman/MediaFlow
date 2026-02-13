@@ -68,69 +68,45 @@ const KNOWN_EXTENSIONS: &[&str] = &[
     ".sup",
 ];
 
-/// Extract a track from a video file using ffmpeg
-/// Uses async tokio::process::Command with timeout
-/// Automatically adds -f flag when codec requires explicit format specification
-#[tauri::command]
-pub(crate) async fn extract_track(
-    app: tauri::AppHandle,
-    input_path: String,
-    output_path: String,
+fn build_extract_args(
+    input_path: &str,
+    output_path: &str,
     track_index: i32,
-    track_type: String,
-    codec: String,
-) -> Result<(), String> {
-    // Validate paths
-    validate_media_path(&input_path)?;
-    validate_output_path(&output_path)?;
-
-    let _sleep_guard = SleepInhibitGuard::try_acquire("FFmpeg extraction").ok();
-
-    // Build the map argument based on track type
+    track_type: &str,
+    codec: &str,
+) -> Vec<String> {
     let map_arg = format!("0:{}", track_index);
 
-    // Determine codec options based on track type
     let mut args = vec![
-        "-y".to_string(), // Overwrite output
+        "-y".to_string(),
         "-i".to_string(),
-        input_path.clone(),
+        input_path.to_string(),
         "-map".to_string(),
         map_arg,
     ];
 
-    // Add codec-specific options
-    let needs_explicit_format = match track_type.as_str() {
+    let needs_explicit_format = match track_type {
         "subtitle" => {
-            // For subtitles, we might need to convert
-            match codec.as_str() {
-                "ass" | "ssa" => {
-                    args.extend(["-c:s".to_string(), "copy".to_string()]);
-                }
-                "subrip" | "srt" => {
-                    args.extend(["-c:s".to_string(), "srt".to_string()]);
-                }
-                "webvtt" => {
-                    args.extend(["-c:s".to_string(), "webvtt".to_string()]);
-                }
+            match codec {
+                "ass" | "ssa" => args.extend(["-c:s".to_string(), "copy".to_string()]),
+                "subrip" | "srt" => args.extend(["-c:s".to_string(), "srt".to_string()]),
+                "webvtt" => args.extend(["-c:s".to_string(), "webvtt".to_string()]),
                 "hdmv_pgs_subtitle" | "dvd_subtitle" => {
-                    args.extend(["-c:s".to_string(), "copy".to_string()]);
+                    args.extend(["-c:s".to_string(), "copy".to_string()])
                 }
-                _ => {
-                    args.extend(["-c:s".to_string(), "copy".to_string()]);
-                }
+                _ => args.extend(["-c:s".to_string(), "copy".to_string()]),
             }
             false
         }
         "audio" => {
             args.extend(["-c:a".to_string(), "copy".to_string()]);
-            args.extend(["-vn".to_string()]); // No video
-            // Check if this codec needs explicit format
-            get_ffmpeg_format_for_codec(&codec).is_some() || !has_recognized_extension(&output_path)
+            args.extend(["-vn".to_string()]);
+            get_ffmpeg_format_for_codec(codec).is_some() || !has_recognized_extension(output_path)
         }
         "video" => {
             args.extend(["-c:v".to_string(), "copy".to_string()]);
-            args.extend(["-an".to_string()]); // No audio
-            args.extend(["-sn".to_string()]); // No subtitles
+            args.extend(["-an".to_string()]);
+            args.extend(["-sn".to_string()]);
             false
         }
         _ => {
@@ -139,20 +115,33 @@ pub(crate) async fn extract_track(
         }
     };
 
-    // Add explicit format flag if needed
     if needs_explicit_format {
-        if let Some(format) = get_ffmpeg_format_for_codec(&codec) {
+        if let Some(format) = get_ffmpeg_format_for_codec(codec) {
             args.push("-f".to_string());
             args.push(format.to_string());
         }
     }
 
-    args.push(output_path.clone());
+    args.push(output_path.to_string());
+    args
+}
 
-    let ffmpeg_path = resolve_ffmpeg_path(&app)?;
+pub(super) async fn extract_track_with_ffmpeg(
+    ffmpeg_path: &str,
+    input_path: &str,
+    output_path: &str,
+    track_index: i32,
+    track_type: &str,
+    codec: &str,
+) -> Result<(), String> {
+    // Validate paths
+    validate_media_path(input_path)?;
+    validate_output_path(output_path)?;
+
+    let args = build_extract_args(input_path, output_path, track_index, track_type, codec);
+
     let extract_future = async move { Command::new(ffmpeg_path).args(&args).output().await };
 
-    // Execute with timeout
     let output = timeout(FFMPEG_EXTRACT_TIMEOUT, extract_future)
         .await
         .map_err(|_| {
@@ -174,4 +163,117 @@ pub(crate) async fn extract_track(
     }
 
     Ok(())
+}
+
+/// Extract a track from a video file using ffmpeg
+/// Uses async tokio::process::Command with timeout
+/// Automatically adds -f flag when codec requires explicit format specification
+#[tauri::command]
+pub(crate) async fn extract_track(
+    app: tauri::AppHandle,
+    input_path: String,
+    output_path: String,
+    track_index: i32,
+    track_type: String,
+    codec: String,
+) -> Result<(), String> {
+    let _sleep_guard = SleepInhibitGuard::try_acquire("FFmpeg extraction").ok();
+    let ffmpeg_path = resolve_ffmpeg_path(&app)?;
+    extract_track_with_ffmpeg(
+        &ffmpeg_path,
+        &input_path,
+        &output_path,
+        track_index,
+        &track_type,
+        &codec,
+    )
+    .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_extract_args, extract_track_with_ffmpeg, get_ffmpeg_format_for_codec,
+        has_recognized_extension,
+    };
+
+    #[test]
+    fn get_ffmpeg_format_for_codec_matches_known_codec_case_insensitive() {
+        assert_eq!(get_ffmpeg_format_for_codec("WMAV2"), Some("asf"));
+        assert_eq!(get_ffmpeg_format_for_codec("unknown"), None);
+    }
+
+    #[test]
+    fn has_recognized_extension_supports_common_extensions() {
+        assert!(has_recognized_extension("/tmp/file.MP3"));
+        assert!(!has_recognized_extension("/tmp/file.custom"));
+    }
+
+    #[test]
+    fn build_extract_args_adds_explicit_format_for_audio_codec_when_needed() {
+        let args = build_extract_args(
+            "/tmp/input.mkv",
+            "/tmp/output.bin",
+            1,
+            "audio",
+            "wmav2",
+        );
+        assert!(args.windows(2).any(|w| w == ["-f", "asf"]));
+    }
+
+    #[test]
+    fn build_extract_args_for_video_disables_audio_and_subtitles() {
+        let args = build_extract_args(
+            "/tmp/input.mkv",
+            "/tmp/output.mkv",
+            0,
+            "video",
+            "h264",
+        );
+        assert!(args.contains(&"-an".to_string()));
+        assert!(args.contains(&"-sn".to_string()));
+    }
+
+    #[tokio::test]
+    async fn extract_track_extracts_video_stream_from_sample_video() {
+        let video = crate::test_support::assets::ensure_sample_video()
+            .await
+            .expect("failed to load local sample video");
+        let temp = tempfile::tempdir().expect("failed to create tempdir");
+        let output = temp.path().join("video.mkv");
+
+        let probe_json =
+            crate::tools::ffprobe::probe::probe_file_with_ffprobe("ffprobe", video.to_string_lossy().as_ref())
+                .await
+                .expect("probe should succeed");
+        let probe_value: serde_json::Value =
+            serde_json::from_str(&probe_json).expect("valid probe json expected");
+        let track_index = probe_value
+            .get("streams")
+            .and_then(|v| v.as_array())
+            .and_then(|streams| {
+                streams.iter().find_map(|stream| {
+                    let codec_type = stream.get("codec_type")?.as_str()?;
+                    if codec_type == "video" {
+                        stream.get("index")?.as_i64().map(|idx| idx as i32)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .expect("video stream index should exist");
+
+        extract_track_with_ffmpeg(
+            "ffmpeg",
+            video.to_string_lossy().as_ref(),
+            output.to_string_lossy().as_ref(),
+            track_index,
+            "video",
+            "h264",
+        )
+        .await
+        .expect("video extraction should succeed");
+
+        assert!(output.exists());
+    }
 }

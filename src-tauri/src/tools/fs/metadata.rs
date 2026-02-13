@@ -34,3 +34,21 @@ pub(crate) async fn get_file_metadata(path: String) -> Result<FileMetadata, Stri
         modified_at,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::get_file_metadata;
+
+    #[tokio::test]
+    async fn get_file_metadata_returns_file_size() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let file = dir.path().join("meta.bin");
+        std::fs::write(&file, b"12345").expect("failed to write test file");
+
+        let metadata = get_file_metadata(file.to_string_lossy().to_string())
+            .await
+            .expect("metadata should succeed");
+        let json = serde_json::to_value(metadata).expect("failed to serialize metadata");
+        assert_eq!(json.get("size").and_then(|v| v.as_u64()), Some(5));
+    }
+}

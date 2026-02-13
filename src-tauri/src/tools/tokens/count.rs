@@ -11,3 +11,16 @@ pub(crate) async fn count_tokens(text: String) -> Result<usize, String> {
     .await
     .map_err(|e| format!("Token counting failed: {}", e))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::count_tokens;
+
+    #[tokio::test]
+    async fn count_tokens_returns_positive_count_for_non_empty_text() {
+        let count = count_tokens("Hello world".to_string())
+            .await
+            .expect("token count should succeed");
+        assert!(count > 0);
+    }
+}

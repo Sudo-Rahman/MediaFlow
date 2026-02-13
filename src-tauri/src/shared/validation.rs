@@ -71,3 +71,76 @@ pub(crate) fn validate_directory_path(path: &str) -> Result<(), String> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_directory_path, validate_media_path, validate_output_path};
+
+    #[test]
+    fn validate_media_path_rejects_missing_file() {
+        let error =
+            validate_media_path("/tmp/definitely-missing.mp4").expect_err("missing file expected");
+        assert!(error.contains("File not found"));
+    }
+
+    #[test]
+    fn validate_media_path_rejects_directory() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let error = validate_media_path(dir.path().to_string_lossy().as_ref())
+            .expect_err("directory should be rejected");
+        assert!(error.contains("Not a file"));
+    }
+
+    #[test]
+    fn validate_media_path_accepts_allowed_extension() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let file = dir.path().join("input.MP4");
+        std::fs::write(&file, b"data").expect("failed to create media file");
+
+        validate_media_path(file.to_string_lossy().as_ref()).expect("valid media path expected");
+    }
+
+    #[test]
+    fn validate_media_path_rejects_unsupported_extension() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let file = dir.path().join("input.xyz");
+        std::fs::write(&file, b"data").expect("failed to create media file");
+
+        let error = validate_media_path(file.to_string_lossy().as_ref())
+            .expect_err("unsupported extension should fail");
+        assert!(error.contains("Unsupported file type"));
+    }
+
+    #[test]
+    fn validate_output_path_rejects_path_traversal() {
+        let error = validate_output_path("../escape.mp4").expect_err("path traversal should fail");
+        assert!(error.contains("Path traversal not allowed"));
+    }
+
+    #[test]
+    fn validate_output_path_rejects_missing_parent() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let output = dir.path().join("missing").join("out.mp4");
+        let error = validate_output_path(output.to_string_lossy().as_ref())
+            .expect_err("missing parent should fail");
+        assert!(error.contains("Output directory does not exist"));
+    }
+
+    #[test]
+    fn validate_output_path_accepts_existing_parent() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let output = dir.path().join("out.mp4");
+        validate_output_path(output.to_string_lossy().as_ref()).expect("output path should be valid");
+    }
+
+    #[test]
+    fn validate_directory_path_checks_directory_existence() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        validate_directory_path(dir.path().to_string_lossy().as_ref()).expect("directory should pass");
+
+        let missing = dir.path().join("missing");
+        let error = validate_directory_path(missing.to_string_lossy().as_ref())
+            .expect_err("missing directory should fail");
+        assert!(error.contains("Directory not found"));
+    }
+}

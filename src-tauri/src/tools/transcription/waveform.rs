@@ -13,28 +13,23 @@ const AUDIO_CONVERT_TIMEOUT: Duration = Duration::from_secs(120);
 /// Convert audio file to a lightweight format for waveform visualization
 /// Converts to low-bitrate MP3 for small file size while maintaining playability
 /// Returns the path to the converted file in the system temp directory
-#[tauri::command]
-pub(crate) async fn convert_audio_for_waveform(
-    app: tauri::AppHandle,
-    audio_path: String,
+pub(super) async fn convert_audio_for_waveform_with_ffmpeg(
+    ffmpeg_path: &str,
+    audio_path: &str,
     track_index: Option<i32>,
 ) -> Result<String, String> {
-    validate_media_path(&audio_path)?;
+    validate_media_path(audio_path)?;
 
-    let _sleep_guard = SleepInhibitGuard::try_acquire("Waveform conversion").ok();
-
-    let input = Path::new(&audio_path);
+    let input = Path::new(audio_path);
     let stem = input
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("audio");
 
-    // Use system temp directory for waveform cache
     let temp_dir = std::env::temp_dir().join("mediaflow_waveform");
     std::fs::create_dir_all(&temp_dir)
         .map_err(|e| format!("Failed to create temp directory: {}", e))?;
 
-    // Create a unique filename based on the original path hash AND track index
     let track_idx = track_index.unwrap_or(0);
     let cache_key = format!("{}::track{}", audio_path, track_idx);
     let path_hash = format!("{:x}", md5_hash(&cache_key));
@@ -46,26 +41,23 @@ pub(crate) async fn convert_audio_for_waveform(
     ));
     let output_str = output_path.to_str().unwrap().to_string();
 
-    // If already converted, return existing file
     if output_path.exists() {
         return Ok(output_str);
     }
 
-    // FFmpeg command to convert to low-bitrate MP3
     let audio_stream = format!("a:{}", track_idx);
-    let ffmpeg_path = resolve_ffmpeg_path(&app)?;
     let convert_future = async {
-        Command::new(&ffmpeg_path)
+        Command::new(ffmpeg_path)
             .args([
                 "-y",
                 "-i",
-                &audio_path,
+                audio_path,
                 "-b:a",
                 "128k",
                 "-ac",
                 "1",
                 "-map",
-                &audio_stream, // Use specified audio stream
+                &audio_stream,
                 &output_str,
             ])
             .output()
@@ -92,4 +84,38 @@ pub(crate) async fn convert_audio_for_waveform(
     }
 
     Ok(output_str)
+}
+
+#[tauri::command]
+pub(crate) async fn convert_audio_for_waveform(
+    app: tauri::AppHandle,
+    audio_path: String,
+    track_index: Option<i32>,
+) -> Result<String, String> {
+    let _sleep_guard = SleepInhibitGuard::try_acquire("Waveform conversion").ok();
+    let ffmpeg_path = resolve_ffmpeg_path(&app)?;
+    convert_audio_for_waveform_with_ffmpeg(&ffmpeg_path, &audio_path, track_index).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::convert_audio_for_waveform_with_ffmpeg;
+
+    #[tokio::test]
+    async fn convert_audio_for_waveform_returns_existing_or_new_mp3_path() {
+        let input = crate::test_support::assets::ensure_sample_video()
+            .await
+            .expect("failed to load local sample video");
+
+        let output = convert_audio_for_waveform_with_ffmpeg(
+            "ffmpeg",
+            input.to_string_lossy().as_ref(),
+            Some(0),
+        )
+        .await
+        .expect("waveform conversion should succeed");
+
+        assert!(std::path::Path::new(&output).exists());
+        assert!(output.ends_with(".mp3"));
+    }
 }

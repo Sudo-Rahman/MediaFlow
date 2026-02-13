@@ -28,10 +28,15 @@ fn create_temp_dir(app: &tauri::AppHandle, prefix: &str) -> Result<PathBuf, Stri
         .path()
         .temp_dir()
         .map_err(|e| format!("Failed to access temp directory: {}", e))?;
+
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis().to_string())
-        .unwrap_or_else(|_| "0".to_string());
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    create_temp_dir_in(&base, prefix, nonce)
+}
+
+fn create_temp_dir_in(base: &Path, prefix: &str, nonce: u128) -> Result<PathBuf, String> {
     let dir = base.join(format!("{}_{}", prefix, nonce));
     std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create temp directory: {}", e))?;
     Ok(dir)
@@ -104,6 +109,16 @@ async fn install_binaries(
         .map_err(|e| format!("Failed to access app data directory: {}", e))?;
     let bin_dir = app_data_dir.join("ffmpeg").join("bin");
 
+    install_binaries_to_dir(&bin_dir, ffmpeg_src, ffprobe_src).await
+}
+
+async fn install_binaries_to_dir(
+    bin_dir: &Path,
+    ffmpeg_src: &Path,
+    ffprobe_src: &Path,
+) -> Result<(PathBuf, PathBuf), String> {
+    let bin_dir = bin_dir.to_path_buf();
+
     tokio::fs::create_dir_all(&bin_dir)
         .await
         .map_err(|e| format!("Failed to create FFmpeg install directory: {}", e))?;
@@ -160,5 +175,50 @@ pub(crate) async fn download_ffmpeg(app: tauri::AppHandle) -> Result<DownloadRes
         "macos" => evermeet::download_from_evermeet(&app, arch).await,
         "windows" | "linux" => btbn::download_from_btbn(&app, os, arch).await,
         _ => Err(format!("Unsupported OS: {}", os)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{create_temp_dir_in, install_binaries_to_dir};
+
+    #[test]
+    fn create_temp_dir_in_creates_prefixed_directory() {
+        let root = tempfile::tempdir().expect("failed to create tempdir");
+        let dir = create_temp_dir_in(root.path(), "ffmpeg_test", 123).expect("temp dir expected");
+        assert!(dir.exists());
+        assert!(dir
+            .file_name()
+            .expect("missing file name")
+            .to_string_lossy()
+            .starts_with("ffmpeg_test_123"));
+    }
+
+    #[tokio::test]
+    async fn install_binaries_to_dir_copies_ffmpeg_and_ffprobe() {
+        let temp = tempfile::tempdir().expect("failed to create tempdir");
+        let src_dir = temp.path().join("src");
+        let dst_dir = temp.path().join("dst");
+        std::fs::create_dir_all(&src_dir).expect("failed to create src dir");
+
+        let ffmpeg_src = src_dir.join("ffmpeg-src");
+        let ffprobe_src = src_dir.join("ffprobe-src");
+        std::fs::write(&ffmpeg_src, b"ffmpeg-bin").expect("failed to write ffmpeg source");
+        std::fs::write(&ffprobe_src, b"ffprobe-bin").expect("failed to write ffprobe source");
+
+        let (ffmpeg_dest, ffprobe_dest) = install_binaries_to_dir(&dst_dir, &ffmpeg_src, &ffprobe_src)
+            .await
+            .expect("install should succeed");
+
+        assert!(ffmpeg_dest.exists());
+        assert!(ffprobe_dest.exists());
+        assert_eq!(
+            std::fs::read_to_string(&ffmpeg_dest).expect("failed to read ffmpeg dest"),
+            "ffmpeg-bin"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&ffprobe_dest).expect("failed to read ffprobe dest"),
+            "ffprobe-bin"
+        );
     }
 }

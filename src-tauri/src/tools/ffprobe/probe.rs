@@ -11,7 +11,10 @@ pub(crate) async fn probe_file(app: tauri::AppHandle, path: String) -> Result<St
     // Validate input path
     validate_media_path(&path)?;
     let ffprobe_path = resolve_ffprobe_path(&app)?;
+    probe_file_with_ffprobe(&ffprobe_path, &path).await
+}
 
+pub(crate) async fn probe_file_with_ffprobe(ffprobe_path: &str, path: &str) -> Result<String, String> {
     let probe_future = async move {
         Command::new(ffprobe_path)
             .args([
@@ -21,7 +24,7 @@ pub(crate) async fn probe_file(app: tauri::AppHandle, path: String) -> Result<St
                 "json",
                 "-show_streams",
                 "-show_format",
-                &path,
+                path,
             ])
             .output()
             .await
@@ -49,4 +52,22 @@ pub(crate) async fn probe_file(app: tauri::AppHandle, path: String) -> Result<St
     }
 
     String::from_utf8(output.stdout).map_err(|e| format!("Invalid UTF-8 output: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::probe_file_with_ffprobe;
+
+    #[tokio::test]
+    async fn probe_file_returns_streams_json_for_sample_video() {
+        let video = crate::test_support::assets::ensure_sample_video()
+            .await
+            .expect("failed to load local sample video");
+
+        let json = probe_file_with_ffprobe("ffprobe", video.to_string_lossy().as_ref())
+            .await
+            .expect("probe should succeed");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid json expected");
+        assert!(value.get("streams").is_some());
+    }
 }

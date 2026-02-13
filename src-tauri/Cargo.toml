@@ -55,6 +55,12 @@ ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git", branch = "n
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[dev-dependencies]
+ctor = "0.2"
+serial_test = "3.2"
+sha2 = "0.10"
+tauri = { version = "^2", features = ["test"] }
+tempfile = "3.20"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "5.12"
-

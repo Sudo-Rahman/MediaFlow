@@ -125,3 +125,90 @@ pub(super) async fn download_from_btbn(
         warning: None,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{find_btbn_url, find_btbn_url_with_ext, resolve_btbn_variant};
+
+    #[test]
+    fn resolve_btbn_variant_maps_supported_platforms() {
+        assert_eq!(
+            resolve_btbn_variant("windows", "x86_64").expect("variant expected"),
+            "win64-gpl-8.0"
+        );
+        assert_eq!(
+            resolve_btbn_variant("linux", "aarch64").expect("variant expected"),
+            "linuxarm64-gpl-8.0"
+        );
+    }
+
+    #[test]
+    fn resolve_btbn_variant_rejects_unsupported_platform() {
+        let error = resolve_btbn_variant("macos", "x86_64").expect_err("should fail");
+        assert!(error.contains("Unsupported platform"));
+    }
+
+    #[test]
+    fn find_btbn_url_with_ext_prefers_absolute_and_relative_urls() {
+        let page = r#"
+            <a href="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-8.0.zip">zip</a>
+            <a href="/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-8.0.tar.xz">tar</a>
+        "#;
+
+        let url_zip = find_btbn_url_with_ext(page, "win64-gpl-8.0", ".zip")
+            .expect("zip url should be found");
+        assert!(url_zip.ends_with(".zip"));
+
+        let url_tar = find_btbn_url_with_ext(page, "win64-gpl-8.0", ".tar.xz")
+            .expect("tar.xz url should be found");
+        assert!(url_tar.starts_with("https://github.com/"));
+    }
+
+    #[test]
+    fn find_btbn_url_falls_back_to_secondary_extension() {
+        let page = r#"
+            <a href="/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl-8.0.zip">zip</a>
+        "#;
+
+        let url = find_btbn_url(page, "linux64-gpl-8.0", ".tar.xz", ".zip")
+            .expect("fallback zip url should be found");
+        assert!(url.ends_with(".zip"));
+    }
+
+    #[tokio::test]
+    #[ignore = "network integration test; run explicitly when internet is available"]
+    async fn btbn_latest_page_contains_download_url_for_supported_variant() {
+        let client = reqwest::Client::builder()
+            .user_agent("RsExtractor-Tests/1.0")
+            .no_proxy()
+            .build()
+            .expect("failed to create client");
+
+        let mut page: Option<String> = None;
+        let mut last_error = String::new();
+        for _ in 0..2 {
+            let response = tokio::time::timeout(
+                std::time::Duration::from_secs(20),
+                client.get(super::BTBN_LATEST_URL).send(),
+            )
+            .await;
+
+            match response {
+                Ok(Ok(resp)) => match resp.text().await {
+                    Ok(body) => {
+                        page = Some(body);
+                        break;
+                    }
+                    Err(e) => last_error = format!("failed to read btbn latest page: {}", e),
+                },
+                Ok(Err(e)) => last_error = format!("failed to fetch btbn latest page: {}", e),
+                Err(_) => last_error = "timeout while fetching btbn latest page".to_string(),
+            }
+        }
+        let page = page.unwrap_or_else(|| panic!("{}", last_error));
+
+        let variant = resolve_btbn_variant("linux", "x86_64").expect("variant should resolve");
+        let url = find_btbn_url(&page, variant, ".tar.xz", ".zip");
+        assert!(url.is_some());
+    }
+}

@@ -33,3 +33,16 @@ pub(crate) async fn open_folder(path: String) -> Result<(), String> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::open_folder;
+
+    #[tokio::test]
+    async fn open_folder_rejects_missing_directory() {
+        let error = open_folder("/tmp/definitely-missing-folder".to_string())
+            .await
+            .expect_err("missing directory should fail");
+        assert!(error.contains("Directory not found"));
+    }
+}

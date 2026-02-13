@@ -76,3 +76,45 @@ pub(super) async fn download_from_evermeet(
         warning,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    #[ignore = "network integration test; run explicitly when internet is available"]
+    async fn evermeet_release_endpoints_are_reachable() {
+        let client = reqwest::Client::builder()
+            .user_agent("RsExtractor-Tests/1.0")
+            .no_proxy()
+            .build()
+            .expect("failed to create client");
+
+        async fn fetch_head_status(client: &reqwest::Client, url: &str) -> Result<reqwest::StatusCode, String> {
+            let mut last_error = String::new();
+            for _ in 0..2 {
+                let response = tokio::time::timeout(
+                    std::time::Duration::from_secs(20),
+                    client.head(url).send(),
+                )
+                .await;
+
+                match response {
+                    Ok(Ok(resp)) => return Ok(resp.status()),
+                    Ok(Err(e)) => last_error = format!("request failed: {}", e),
+                    Err(_) => last_error = "request timed out".to_string(),
+                }
+            }
+
+            Err(last_error)
+        }
+
+        let ffmpeg_status = fetch_head_status(&client, super::EVERMEET_RELEASE_FFMPEG_URL)
+            .await
+            .expect("failed to query ffmpeg endpoint");
+        let ffprobe_status = fetch_head_status(&client, super::EVERMEET_RELEASE_FFPROBE_URL)
+            .await
+            .expect("failed to query ffprobe endpoint");
+
+        assert!(ffmpeg_status.is_success() || ffmpeg_status.is_redirection());
+        assert!(ffprobe_status.is_success() || ffprobe_status.is_redirection());
+    }
+}

@@ -25,6 +25,14 @@ fn resolve_binary_path(
     label: &str,
 ) -> Result<String, String> {
     let custom = read_store_path(app, key)?.unwrap_or_default();
+    resolve_binary_path_from_custom(&custom, fallback_cmd, label)
+}
+
+fn resolve_binary_path_from_custom(
+    custom: &str,
+    fallback_cmd: &str,
+    label: &str,
+) -> Result<String, String> {
     let trimmed = custom.trim();
     if trimmed.is_empty() {
         return Ok(fallback_cmd.to_string());
@@ -55,4 +63,51 @@ pub(crate) fn resolve_ffmpeg_path(app: &tauri::AppHandle) -> Result<String, Stri
 
 pub(crate) fn resolve_ffprobe_path(app: &tauri::AppHandle) -> Result<String, String> {
     resolve_binary_path(app, FFPROBE_PATH_KEY, "ffprobe", "FFprobe")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_binary_path_from_custom;
+
+    #[test]
+    fn resolve_binary_path_from_custom_returns_fallback_for_empty_custom_path() {
+        let resolved =
+            resolve_binary_path_from_custom("   ", "ffmpeg", "FFmpeg").expect("fallback expected");
+        assert_eq!(resolved, "ffmpeg");
+    }
+
+    #[test]
+    fn resolve_binary_path_from_custom_rejects_nonexistent_path() {
+        let error =
+            resolve_binary_path_from_custom("/tmp/definitely-not-a-real-binary", "ffmpeg", "FFmpeg")
+                .expect_err("path should not exist");
+        assert!(error.contains("does not exist"));
+    }
+
+    #[test]
+    fn resolve_binary_path_from_custom_rejects_directory_path() {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let error = resolve_binary_path_from_custom(
+            dir.path().to_string_lossy().as_ref(),
+            "ffmpeg",
+            "FFmpeg",
+        )
+        .expect_err("directory path must be rejected");
+        assert!(error.contains("is not a file"));
+    }
+
+    #[test]
+    fn resolve_binary_path_from_custom_accepts_existing_file() {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let file = dir.path().join("ffmpeg-custom");
+        std::fs::write(&file, b"").expect("failed to create file");
+
+        let resolved = resolve_binary_path_from_custom(
+            file.to_string_lossy().as_ref(),
+            "ffmpeg",
+            "FFmpeg",
+        )
+        .expect("existing file should be accepted");
+        assert_eq!(resolved, file.to_string_lossy().to_string());
+    }
 }

@@ -96,8 +96,10 @@ pub(super) fn create_ocr_engine(
                 .with_threads(mnn_threads)
         }
     } else {
-        // CPU-only mode: no GPU backend
-        OcrEngineConfig::new().with_threads(mnn_threads)
+        // CPU-only mode: force CPU backend to avoid platform auto-selection issues.
+        OcrEngineConfig::new()
+            .with_backend(Backend::CPU)
+            .with_threads(mnn_threads)
     };
 
     // Create the engine
@@ -131,4 +133,31 @@ pub(super) fn get_ocr_models_dir(app: &tauri::AppHandle) -> Result<PathBuf, Stri
     }
 
     Err("OCR models not found. Please download the PP-OCRv5 models and place them in the app's ocr-models directory.".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{create_ocr_engine, get_charset_for_language, get_rec_model_for_language};
+
+    #[test]
+    fn language_model_mapping_returns_expected_model_file() {
+        assert_eq!(get_rec_model_for_language("korean"), "korean_PP-OCRv5_mobile_rec_infer.mnn");
+        assert_eq!(get_rec_model_for_language("unknown"), "PP-OCRv5_mobile_rec.mnn");
+    }
+
+    #[test]
+    fn language_charset_mapping_returns_expected_charset_file() {
+        assert_eq!(get_charset_for_language("latin"), "ppocr_keys_latin.txt");
+        assert_eq!(get_charset_for_language("unknown"), "ppocr_keys_v5.txt");
+    }
+
+    #[test]
+    fn create_ocr_engine_fails_when_required_models_are_missing() {
+        let models_dir = tempfile::tempdir().expect("failed to create tempdir");
+        let error = match create_ocr_engine(models_dir.path(), "multi", false) {
+            Ok(_) => panic!("missing detection model should fail"),
+            Err(error) => error,
+        };
+        assert!(error.contains("Detection model not found"));
+    }
 }

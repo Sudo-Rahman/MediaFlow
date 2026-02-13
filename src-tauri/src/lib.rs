@@ -1,6 +1,8 @@
 mod app;
 mod commands;
 mod shared;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod tools;
 
 pub use shared::ExtractionError;

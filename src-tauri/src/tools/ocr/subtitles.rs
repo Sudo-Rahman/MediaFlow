@@ -168,35 +168,166 @@ fn texts_are_similar(a_key: &str, b_key: &str, threshold: f64) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::texts_are_similar;
+    use crate::tools::ocr::{OcrFrameResult, OcrSubtitleCleanupOptions};
 
     #[test]
     fn texts_are_similar_merges_short_texts_with_single_char_difference() {
-        assert!(texts_are_similar("吴昊 菲菲", "昊昊 菲菲", 0.85));
+        assert!(super::texts_are_similar("吴昊 菲菲", "昊昊 菲菲", 0.85));
     }
 
     #[test]
     fn texts_are_similar_keeps_short_exact_matches() {
-        assert!(texts_are_similar("哥哥", "哥哥", 0.92));
+        assert!(super::texts_are_similar("哥哥", "哥哥", 0.92));
     }
 
     #[test]
     fn texts_are_similar_rejects_short_texts_with_multiple_char_differences() {
-        assert!(!texts_are_similar("吴昊 菲菲", "叶昊 爸爸", 0.85));
+        assert!(!super::texts_are_similar("吴昊 菲菲", "叶昊 爸爸", 0.85));
     }
 
     #[test]
     fn texts_are_similar_preserves_long_text_similarity_behavior() {
-        assert!(texts_are_similar(
+        assert!(super::texts_are_similar(
             "today we fight together",
             "today we fight togather",
             0.92
         ));
-        assert!(!texts_are_similar(
+        assert!(!super::texts_are_similar(
             "today we fight together",
             "tomorrow we run away",
             0.92
         ));
+    }
+
+    #[test]
+    fn collapse_whitespace_trims_and_deduplicates_spaces() {
+        assert_eq!(super::collapse_whitespace("  hello   world \n\t"), "hello world");
+    }
+
+    #[test]
+    fn normalize_text_for_compare_strips_punctuation() {
+        assert_eq!(super::normalize_text_for_compare("《Hello, World!》"), "hello, world");
+    }
+
+    #[test]
+    fn levenshtein_distance_bounded_returns_none_when_distance_too_large() {
+        let a: Vec<char> = "abc".chars().collect();
+        let b: Vec<char> = "xyz".chars().collect();
+        assert_eq!(super::levenshtein_distance_bounded(&a, &b, 1), None);
+    }
+
+    #[test]
+    fn token_looks_like_domain_detects_common_domains() {
+        assert!(super::token_looks_like_domain("example.com"));
+        assert!(!super::token_looks_like_domain("not-a-domain"));
+    }
+
+    #[test]
+    fn text_looks_url_like_detects_links_and_domains() {
+        assert!(super::text_looks_url_like("visit https://example.com now"));
+        assert!(super::text_looks_url_like("example.org"));
+        assert!(!super::text_looks_url_like("plain subtitle text"));
+    }
+
+    #[test]
+    fn select_segment_text_prefers_highest_confidence_candidate() {
+        let candidates = vec![
+            super::SegmentCandidate {
+                key: "hello".to_string(),
+                text: "hello".to_string(),
+                confidence: 0.82,
+            },
+            super::SegmentCandidate {
+                key: "hello".to_string(),
+                text: "hello!".to_string(),
+                confidence: 0.95,
+            },
+            super::SegmentCandidate {
+                key: "hullo".to_string(),
+                text: "hullo".to_string(),
+                confidence: 0.90,
+            },
+        ];
+
+        let selected = super::select_segment_text(&candidates).expect("candidate should be selected");
+        assert_eq!(selected.0, "hello!");
+        assert!((selected.1 - 0.95).abs() < 1e-9);
+    }
+
+    #[test]
+    fn generate_subtitles_merges_similar_adjacent_frames() {
+        let frames = vec![
+            OcrFrameResult {
+                frame_index: 0,
+                time_ms: 0,
+                text: "Hello world".to_string(),
+                confidence: 0.92,
+            },
+            OcrFrameResult {
+                frame_index: 1,
+                time_ms: 500,
+                text: "Hello world".to_string(),
+                confidence: 0.93,
+            },
+            OcrFrameResult {
+                frame_index: 2,
+                time_ms: 1000,
+                text: "Hello world".to_string(),
+                confidence: 0.94,
+            },
+        ];
+
+        let subtitles = super::generate_subtitles_core(
+            &frames,
+            2.0,
+            0.5,
+            OcrSubtitleCleanupOptions::default(),
+            |_current, _total| {},
+        )
+        .expect("subtitle generation should succeed");
+
+        assert_eq!(subtitles.len(), 1);
+        assert_eq!(subtitles[0].id, "sub-1");
+        assert!(subtitles[0].text.to_lowercase().contains("hello"));
+        assert!(subtitles[0].end_time > subtitles[0].start_time);
+    }
+
+    #[test]
+    fn generate_subtitles_filters_url_like_text_when_enabled() {
+        let frames = vec![
+            OcrFrameResult {
+                frame_index: 0,
+                time_ms: 0,
+                text: "www.example.com".to_string(),
+                confidence: 0.99,
+            },
+            OcrFrameResult {
+                frame_index: 1,
+                time_ms: 1000,
+                text: "Real subtitle".to_string(),
+                confidence: 0.99,
+            },
+        ];
+
+        let cleanup = OcrSubtitleCleanupOptions {
+            merge_similar: false,
+            similarity_threshold: 0.92,
+            max_gap_ms: 250,
+            min_cue_duration_ms: 300,
+            filter_url_like: true,
+        };
+
+        let subtitles = super::generate_subtitles_core(
+            &frames,
+            1.0,
+            0.5,
+            cleanup,
+            |_current, _total| {},
+        )
+        .expect("subtitle generation should succeed");
+
+        assert_eq!(subtitles.len(), 1);
+        assert_eq!(subtitles[0].text, "Real subtitle");
     }
 }
 
@@ -297,23 +428,20 @@ fn select_segment_text(candidates: &[SegmentCandidate]) -> Option<(String, f64)>
     best_key.map(|_| (best_text.to_string(), best_confidence))
 }
 
-/// Generate subtitles from OCR results with stabilization and cleanup
-#[tauri::command]
-pub(crate) async fn generate_subtitles_from_ocr(
-    app: tauri::AppHandle,
-    file_id: String,
-    frame_results: Vec<OcrFrameResult>,
+pub(crate) fn generate_subtitles_core<F>(
+    frame_results: &[OcrFrameResult],
     fps: f64,
     min_confidence: f64,
-    cleanup: Option<OcrSubtitleCleanupOptions>,
-) -> Result<Vec<OcrSubtitleEntry>, String> {
+    cleanup: OcrSubtitleCleanupOptions,
+    mut on_progress: F,
+) -> Result<Vec<OcrSubtitleEntry>, String>
+where
+    F: FnMut(usize, usize),
+{
     if fps <= 0.0 {
         return Err("FPS must be greater than 0".to_string());
     }
 
-    let _sleep_guard = SleepInhibitGuard::try_acquire("Generating subtitles from OCR").ok();
-
-    let cleanup = cleanup.unwrap_or_default();
     let similarity_threshold = if cleanup.merge_similar {
         clamp_f64(cleanup.similarity_threshold, 0.80, 0.98)
     } else {
@@ -322,18 +450,6 @@ pub(crate) async fn generate_subtitles_from_ocr(
     let max_gap_ms = cleanup.max_gap_ms as u64;
     let min_confidence = clamp_f64(min_confidence, 0.0, 1.0);
     let min_cue_duration_ms = cleanup.min_cue_duration_ms as u64;
-
-    // Emit start
-    let _ = app.emit(
-        "ocr-progress",
-        serde_json::json!({
-            "fileId": file_id,
-            "phase": "generating",
-            "current": 0,
-            "total": frame_results.len(),
-            "message": "Generating subtitles..."
-        }),
-    );
 
     let mut segments: Vec<SubtitleSegment> = Vec::new();
     let mut current: Option<SubtitleSegment> = None;
@@ -419,18 +535,8 @@ pub(crate) async fn generate_subtitles_from_ocr(
             });
         }
 
-        // Emit progress
         if i % 100 == 0 {
-            let _ = app.emit(
-                "ocr-progress",
-                serde_json::json!({
-                    "fileId": file_id,
-                    "phase": "generating",
-                    "current": i,
-                    "total": frame_results.len(),
-                    "message": format!("Processing frame {}...", i)
-                }),
-            );
+            on_progress(i, frame_results.len());
         }
     }
 
@@ -439,7 +545,6 @@ pub(crate) async fn generate_subtitles_from_ocr(
     }
 
     let mut subtitles: Vec<OcrSubtitleEntry> = Vec::with_capacity(segments.len());
-
     for seg in &segments {
         let Some((text, confidence)) = select_segment_text(&seg.candidates) else {
             continue;
@@ -459,12 +564,10 @@ pub(crate) async fn generate_subtitles_from_ocr(
         });
     }
 
-    // Drop obvious watermark/URL-like cues (optional).
     if cleanup.filter_url_like {
         subtitles.retain(|s| !text_looks_url_like(&s.text));
     }
 
-    // Merge adjacent similar cues (optional).
     if cleanup.merge_similar && subtitles.len() > 1 {
         let mut merged: Vec<OcrSubtitleEntry> = Vec::with_capacity(subtitles.len());
 
@@ -497,7 +600,6 @@ pub(crate) async fn generate_subtitles_from_ocr(
             merged.push(sub);
         }
 
-        // Re-number ids to be stable after merges.
         for (i, sub) in merged.iter_mut().enumerate() {
             sub.id = format!("sub-{}", i + 1);
         }
@@ -505,14 +607,69 @@ pub(crate) async fn generate_subtitles_from_ocr(
         subtitles = merged;
     }
 
+    Ok(subtitles)
+}
+
+/// Generate subtitles from OCR results with stabilization and cleanup
+#[tauri::command]
+pub(crate) async fn generate_subtitles_from_ocr(
+    app: tauri::AppHandle,
+    file_id: String,
+    frame_results: Vec<OcrFrameResult>,
+    fps: f64,
+    min_confidence: f64,
+    cleanup: Option<OcrSubtitleCleanupOptions>,
+) -> Result<Vec<OcrSubtitleEntry>, String> {
+    if fps <= 0.0 {
+        return Err("FPS must be greater than 0".to_string());
+    }
+
+    let _sleep_guard = SleepInhibitGuard::try_acquire("Generating subtitles from OCR").ok();
+
+    let cleanup = cleanup.unwrap_or_default();
+    let total_frames = frame_results.len();
+
+    // Emit start
+    let _ = app.emit(
+        "ocr-progress",
+        serde_json::json!({
+            "fileId": file_id,
+            "phase": "generating",
+            "current": 0,
+            "total": frame_results.len(),
+            "message": "Generating subtitles..."
+        }),
+    );
+
+    let app_for_progress = app.clone();
+    let file_id_for_progress = file_id.clone();
+    let subtitles = generate_subtitles_core(
+        &frame_results,
+        fps,
+        min_confidence,
+        cleanup,
+        move |current, total| {
+            let _ = app_for_progress.emit(
+                "ocr-progress",
+                serde_json::json!({
+                    "fileId": file_id_for_progress.clone(),
+                    "phase": "generating",
+                    "current": current,
+                    "total": total,
+                    "message": format!("Processing frame {}...", current)
+                }),
+            );
+        },
+    )?;
+
     // Emit completion
     let _ = app.emit(
         "ocr-progress",
         serde_json::json!({
             "fileId": file_id,
             "phase": "generating",
-            "current": frame_results.len(),
-            "total": frame_results.len(),
+            "current": total_frames,
+            "total": total_frames,
             "message": format!("Generated {} subtitles", subtitles.len())
         }),
     );

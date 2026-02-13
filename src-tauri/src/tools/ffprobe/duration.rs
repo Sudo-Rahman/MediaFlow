@@ -8,6 +8,13 @@ pub(crate) async fn get_media_duration_us(
     path: &str,
 ) -> Result<u64, String> {
     let ffprobe_path = resolve_ffprobe_path(app)?;
+    get_media_duration_us_with_ffprobe(&ffprobe_path, path).await
+}
+
+pub(crate) async fn get_media_duration_us_with_ffprobe(
+    ffprobe_path: &str,
+    path: &str,
+) -> Result<u64, String> {
     let output = Command::new(&ffprobe_path)
         .args([
             "-v",
@@ -34,4 +41,22 @@ pub(crate) async fn get_media_duration_us(
         .map_err(|_| format!("Invalid duration: {}", duration_str.trim()))?;
 
     Ok((duration_secs * 1_000_000.0) as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_media_duration_us_with_ffprobe;
+
+    #[tokio::test]
+    async fn get_media_duration_us_returns_non_zero_for_sample_video() {
+        let video = crate::test_support::assets::ensure_sample_video()
+            .await
+            .expect("failed to load local sample video");
+
+        let duration = get_media_duration_us_with_ffprobe("ffprobe", video.to_string_lossy().as_ref())
+        .await
+        .expect("duration probe should succeed");
+
+        assert!(duration > 0);
+    }
 }

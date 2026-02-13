@@ -7,7 +7,7 @@ use tokio::time::{Duration, timeout};
 use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::validation::{validate_media_path, validate_output_path};
-use crate::tools::ffprobe::get_media_duration_us;
+use crate::tools::ffprobe::{get_media_duration_us, get_media_duration_us_with_ffprobe};
 
 /// Timeout for audio transcoding (5 minutes)
 const AUDIO_TRANSCODE_TIMEOUT: Duration = Duration::from_secs(300);
@@ -15,6 +15,72 @@ const AUDIO_TRANSCODE_TIMEOUT: Duration = Duration::from_secs(300);
 /// Transcode audio/video to OPUS format (mono 96kbps)
 /// If track_index is provided, extract that specific audio track
 /// Otherwise, use the first audio track
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) async fn transcode_to_opus_with_bins(
+    ffmpeg_path: &str,
+    ffprobe_path: &str,
+    input_path: &str,
+    output_path: &str,
+    track_index: Option<u32>,
+) -> Result<String, String> {
+    validate_media_path(input_path)?;
+    validate_output_path(output_path)?;
+
+    let _duration_us = get_media_duration_us_with_ffprobe(ffprobe_path, input_path)
+        .await
+        .unwrap_or(0);
+
+    let map_arg = match track_index {
+        Some(idx) => format!("0:a:{}", idx),
+        None => "0:a:0".to_string(),
+    };
+
+    let child = tokio::process::Command::new(ffmpeg_path)
+        .args([
+            "-y",
+            "-i",
+            input_path,
+            "-map",
+            &map_arg,
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "96k",
+            "-ac",
+            "1",
+            "-progress",
+            "pipe:1",
+            output_path,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to start ffmpeg: {}", e))?;
+
+    let wait_future = async { child.wait_with_output().await };
+
+    let output = timeout(AUDIO_TRANSCODE_TIMEOUT, wait_future)
+        .await
+        .map_err(|_| {
+            format!(
+                "Transcode timeout after {} seconds",
+                AUDIO_TRANSCODE_TIMEOUT.as_secs()
+            )
+        })?
+        .map_err(|e| format!("FFmpeg error: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Transcode failed: {}", stderr));
+    }
+
+    if !Path::new(output_path).exists() {
+        return Err("Transcode failed: output file not created".to_string());
+    }
+
+    Ok(output_path.to_string())
+}
+
 #[tauri::command]
 pub(crate) async fn transcode_to_opus(
     app: tauri::AppHandle,
@@ -157,4 +223,31 @@ pub(crate) async fn transcode_to_opus(
 
     println!("Transcode finished, {}", output_path);
     Ok(output_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::transcode_to_opus_with_bins;
+
+    #[tokio::test]
+    async fn transcode_to_opus_generates_output_file() {
+        let input = crate::test_support::assets::ensure_sample_video()
+            .await
+            .expect("failed to load local sample video");
+        let temp = tempfile::tempdir().expect("failed to create tempdir");
+        let output = temp.path().join("audio.opus");
+
+        let result_path = transcode_to_opus_with_bins(
+            "ffmpeg",
+            "ffprobe",
+            input.to_string_lossy().as_ref(),
+            output.to_string_lossy().as_ref(),
+            Some(0),
+        )
+        .await
+        .expect("transcode should succeed");
+
+        assert_eq!(result_path, output.to_string_lossy().to_string());
+        assert!(output.exists());
+    }
 }

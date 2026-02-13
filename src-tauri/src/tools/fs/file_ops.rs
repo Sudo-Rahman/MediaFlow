@@ -44,3 +44,61 @@ pub(crate) async fn copy_file(source_path: String, dest_path: String) -> Result<
     std::fs::copy(&source_path, &dest_path).map_err(|e| format!("Failed to copy file: {}", e))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{copy_file, rename_file};
+
+    #[tokio::test]
+    async fn rename_file_moves_source_to_destination() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let source = dir.path().join("old.txt");
+        let dest = dir.path().join("new.txt");
+        std::fs::write(&source, b"hello").expect("failed to create source file");
+
+        rename_file(
+            source.to_string_lossy().to_string(),
+            dest.to_string_lossy().to_string(),
+        )
+        .await
+        .expect("rename should succeed");
+
+        assert!(!source.exists());
+        assert!(dest.exists());
+    }
+
+    #[tokio::test]
+    async fn rename_file_rejects_existing_destination() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let source = dir.path().join("old.txt");
+        let dest = dir.path().join("new.txt");
+        std::fs::write(&source, b"hello").expect("failed to create source file");
+        std::fs::write(&dest, b"occupied").expect("failed to create destination file");
+
+        let error = rename_file(
+            source.to_string_lossy().to_string(),
+            dest.to_string_lossy().to_string(),
+        )
+        .await
+        .expect_err("rename should fail when destination exists");
+        assert!(error.contains("Destination already exists"));
+    }
+
+    #[tokio::test]
+    async fn copy_file_writes_destination() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let source = dir.path().join("src.txt");
+        let dest = dir.path().join("dst.txt");
+        std::fs::write(&source, b"copy-me").expect("failed to create source file");
+
+        copy_file(
+            source.to_string_lossy().to_string(),
+            dest.to_string_lossy().to_string(),
+        )
+        .await
+        .expect("copy should succeed");
+
+        let content = std::fs::read_to_string(&dest).expect("failed to read destination");
+        assert_eq!(content, "copy-me");
+    }
+}

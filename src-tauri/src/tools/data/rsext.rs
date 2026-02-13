@@ -70,3 +70,69 @@ fn get_rsext_data_path(media_path: &str) -> String {
         .to_string_lossy()
         .to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        delete_rsext_data, delete_transcription_data, get_rsext_data_path, load_rsext_data,
+        load_transcription_data, save_rsext_data, save_transcription_data,
+    };
+
+    #[tokio::test]
+    async fn rsext_data_roundtrip_save_load_delete() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let media_path = dir.path().join("movie.mp4");
+        std::fs::write(&media_path, b"video").expect("failed to create media file");
+        let json_path = dir.path().join("movie.rsext.json");
+
+        save_rsext_data(
+            media_path.to_string_lossy().to_string(),
+            "{\"hello\":\"world\"}".to_string(),
+        )
+        .await
+        .expect("save should succeed");
+        assert!(json_path.exists());
+
+        let loaded = load_rsext_data(media_path.to_string_lossy().to_string())
+            .await
+            .expect("load should succeed");
+        assert_eq!(loaded, Some("{\"hello\":\"world\"}".to_string()));
+
+        delete_rsext_data(media_path.to_string_lossy().to_string())
+            .await
+            .expect("delete should succeed");
+        assert!(!json_path.exists());
+    }
+
+    #[tokio::test]
+    async fn transcription_alias_functions_delegate_to_rsext() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let audio_path = dir.path().join("voice.wav");
+        std::fs::write(&audio_path, b"audio").expect("failed to create audio file");
+        let json_path = dir.path().join("voice.rsext.json");
+
+        save_transcription_data(
+            audio_path.to_string_lossy().to_string(),
+            "{\"segments\":1}".to_string(),
+        )
+        .await
+        .expect("save transcription should succeed");
+        assert!(json_path.exists());
+
+        let loaded = load_transcription_data(audio_path.to_string_lossy().to_string())
+            .await
+            .expect("load transcription should succeed");
+        assert_eq!(loaded, Some("{\"segments\":1}".to_string()));
+
+        delete_transcription_data(audio_path.to_string_lossy().to_string())
+            .await
+            .expect("delete transcription should succeed");
+        assert!(!json_path.exists());
+    }
+
+    #[test]
+    fn get_rsext_data_path_uses_media_stem() {
+        let path = get_rsext_data_path("/tmp/example.file.mkv");
+        assert!(path.ends_with("example.file.rsext.json"));
+    }
+}

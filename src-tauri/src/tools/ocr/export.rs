@@ -81,3 +81,65 @@ fn format_vtt_time(ms: u64) -> String {
     let millis = ms % 1000;
     format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{export_ocr_subtitles, format_srt, format_srt_time, format_txt, format_vtt, format_vtt_time};
+    use crate::tools::ocr::OcrSubtitleEntry;
+
+    fn sample_subtitles() -> Vec<OcrSubtitleEntry> {
+        vec![
+            OcrSubtitleEntry {
+                id: "sub-1".to_string(),
+                text: "Hello".to_string(),
+                start_time: 0,
+                end_time: 1200,
+                confidence: 0.95,
+            },
+            OcrSubtitleEntry {
+                id: "sub-2".to_string(),
+                text: "World".to_string(),
+                start_time: 1500,
+                end_time: 2600,
+                confidence: 0.92,
+            },
+        ]
+    }
+
+    #[test]
+    fn format_srt_and_vtt_time_render_expected_formats() {
+        assert_eq!(format_srt_time(3723004), "01:02:03,004");
+        assert_eq!(format_vtt_time(3723004), "01:02:03.004");
+    }
+
+    #[test]
+    fn formatters_render_expected_content() {
+        let subtitles = sample_subtitles();
+        let srt = format_srt(&subtitles);
+        assert!(srt.contains("1\n00:00:00,000 --> 00:00:01,200\nHello"));
+
+        let vtt = format_vtt(&subtitles);
+        assert!(vtt.starts_with("WEBVTT"));
+        assert!(vtt.contains("00:00:01.500 --> 00:00:02.600"));
+
+        let txt = format_txt(&subtitles);
+        assert_eq!(txt, "Hello\nWorld");
+    }
+
+    #[tokio::test]
+    async fn export_ocr_subtitles_writes_requested_format() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let output = dir.path().join("export.srt");
+        export_ocr_subtitles(
+            sample_subtitles(),
+            output.to_string_lossy().to_string(),
+            "srt".to_string(),
+        )
+        .await
+        .expect("export should succeed");
+
+        let content = std::fs::read_to_string(&output).expect("failed to read exported file");
+        assert!(content.contains("Hello"));
+        assert!(content.contains("World"));
+    }
+}

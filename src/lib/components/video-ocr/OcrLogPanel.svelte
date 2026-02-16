@@ -47,7 +47,7 @@
       class="flex items-center gap-2 text-sm font-medium hover:text-foreground">
       <span>Activity Log</span>
       {#if errorCount > 0}
-        <span class="text-xs bg-destructive text-destructive-foreground px-1.5 py-0.5 rounded-full">
+        <span class="text-xs bg-destructive text-white px-1.5 py-0.5 rounded-full">
           {errorCount} error{errorCount > 1 ? 's' : ''}
         </span>
       {/if}

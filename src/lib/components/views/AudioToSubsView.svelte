@@ -1371,7 +1371,7 @@
       </AlertDialog.Cancel>
       <AlertDialog.Action
         onclick={handleConfirmRemove}
-        class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+        class="bg-destructive text-white hover:bg-destructive/90"
       >
         Remove
       </AlertDialog.Action>

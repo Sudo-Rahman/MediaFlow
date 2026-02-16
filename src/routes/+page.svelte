@@ -164,7 +164,7 @@
       >
         <ScrollText class="size-4" />
         {#if logStore.unreadErrorCount > 0}
-          <span class="absolute -top-1 -right-1 size-4 bg-destructive text-destructive-foreground rounded-full text-[10px] font-medium flex items-center justify-center">
+          <span class="absolute -top-1 -right-1 size-4 bg-destructive text-white rounded-full text-[10px] font-medium flex items-center justify-center">
             {logStore.unreadErrorCount > 9 ? '9+' : logStore.unreadErrorCount}
           </span>
         {/if}

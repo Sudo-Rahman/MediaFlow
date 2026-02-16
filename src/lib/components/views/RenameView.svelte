@@ -679,7 +679,7 @@
       <AlertDialog.Cancel onclick={cancelCopyOverwritePrompt}>Cancel</AlertDialog.Cancel>
       <AlertDialog.Action
         onclick={confirmCopyOverwrite}
-        class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+        class="bg-destructive text-white hover:bg-destructive/90"
       >
         Overwrite and Continue
       </AlertDialog.Action>

@@ -32,7 +32,8 @@
   class={cn(
     'w-full rounded-lg border text-left transition-colors hover:bg-accent',
     compact ? 'p-2.5' : 'p-3',
-    selected && 'border-primary bg-primary/5',
+    selected &&
+      'border-primary bg-card ring-1 ring-primary/20 hover:bg-card',
     disabled && 'cursor-not-allowed opacity-60',
     className
   )}

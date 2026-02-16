@@ -12,9 +12,7 @@ const config = {
     adapter: adapter({
       fallback: "index.html",
     }),
-    alias: {
-      "@/*": "./path/to/lib/*",
-    },
+    alias: {},
   },
 };
 

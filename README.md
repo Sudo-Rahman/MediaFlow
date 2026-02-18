@@ -108,4 +108,4 @@ pnpm tauri build
 
 ## License
 
-MIT
+MediaFlow Non-Commercial License (MNCL) v1.0. See `LICENSE`.

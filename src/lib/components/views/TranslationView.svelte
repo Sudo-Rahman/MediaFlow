@@ -324,8 +324,17 @@
       ?.modelJobs?.find(mj => mj.id === modelJobId);
   }
 
-  function isRetryableStatus(status: TranslationJob['status']): boolean {
+  function isPrimaryRetryableStatus(status: TranslationJob['status']): boolean {
     return status === 'pending' || status === 'error' || status === 'cancelled';
+  }
+
+  function selectTranslateAllTargets(jobs: TranslationJob[]): TranslationJob[] {
+    const primaryTargets = jobs.filter((job) => isPrimaryRetryableStatus(job.status));
+    if (primaryTargets.length > 0) {
+      return primaryTargets;
+    }
+
+    return jobs.filter((job) => job.status === 'completed');
   }
 
   /** Translate a single file with a single model (existing flow) */
@@ -814,9 +823,8 @@
   }
 
   async function handleTranslateAll() {
-    const hasRetryableJobs = translationStore.jobs.some(j => isRetryableStatus(j.status));
-
-    if (!hasRetryableJobs) {
+    const targets = selectTranslateAllTargets(translationStore.jobs);
+    if (targets.length === 0) {
       toast.warning('No files to translate');
       return;
     }
@@ -829,37 +837,35 @@
       totalBatches: 0
     });
 
+    const maxParallel = Math.max(1, settingsStore.settings.translationSettings.maxParallelFiles);
+    const queue = targets.map((job) => job.id);
     const activePromises = new Map<string, Promise<void>>();
 
-    // Keep running while we still have translatable jobs or active jobs.
-    while (true) {
+    // Process a fixed snapshot of target IDs to avoid rerunning jobs in the same click.
+    while (queue.length > 0 || activePromises.size > 0) {
       if ((translationStore.progress.status as string) === 'cancelled') {
         break;
       }
 
-      const maxParallel = Math.max(1, settingsStore.settings.translationSettings.maxParallelFiles);
-      const queuedJobs = translationStore.jobs.filter(
-        j => isRetryableStatus(j.status) && !activePromises.has(j.id)
-      );
-
-      while (activePromises.size < maxParallel && queuedJobs.length > 0) {
+      while (activePromises.size < maxParallel && queue.length > 0) {
         if ((translationStore.progress.status as string) === 'cancelled') break;
 
-        const job = queuedJobs.shift();
-        if (!job) break;
+        const jobId = queue.shift();
+        if (!jobId) break;
+
+        const job = translationStore.jobs.find((entry) => entry.id === jobId);
+        if (!job) {
+          continue;
+        }
 
         const promise = translateJob(job).finally(() => {
-          activePromises.delete(job.id);
+          activePromises.delete(jobId);
         });
-        activePromises.set(job.id, promise);
+        activePromises.set(jobId, promise);
       }
 
       if (activePromises.size === 0) {
-        const remaining = translationStore.jobs.some(j => isRetryableStatus(j.status));
-        if (!remaining) {
-          break;
-        }
-        // Yield to allow state updates before reevaluating the queue.
+        // Yield to avoid a tight loop when remaining queued IDs were removed.
         await Promise.resolve();
         continue;
       }

@@ -14,6 +14,8 @@
   import { OS } from '$lib/utils';
   import { useSidebar } from "$lib/components/ui/sidebar";
   import { logStore } from '$lib/stores/logs.svelte';
+  import { audioToSubsStore, videoOcrStore, translationStore, extractionStore, mergeStore, renameStore } from '$lib/stores';
+  import { GlobalProgress } from '$lib/components/shared';
   import { logAndToast } from '$lib/utils/log-toast';
 
   // Current view state
@@ -34,6 +36,110 @@
   let videoOcrViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
 
   const isMacOS = OS() === 'MacOS';
+
+  // --- Progress aggregation per tool (T050-T053) ---
+
+  // T050: Audio-to-Subs progress: weighted average of per-file progress
+  const audioProgress = $derived.by(() => {
+    const files = audioToSubsStore.audioFiles;
+    if (files.length === 0) return 0;
+    const total = files.reduce((sum, f) => {
+      if (f.status === 'completed') return sum + 100;
+      if (f.isTranscoding) return sum + (f.transcodingProgress ?? 0);
+      if (f.status === 'transcribing') return sum + (f.progress ?? 0);
+      return sum;
+    }, 0);
+    return total / files.length;
+  });
+
+  // T051: Video OCR progress: weighted average of per-file progress.percentage
+  const videoOcrProgress = $derived.by(() => {
+    const files = videoOcrStore.videoFiles;
+    if (files.length === 0) return 0;
+    const total = files.reduce((sum, f) => {
+      if (f.status === 'completed') return sum + 100;
+      if (f.progress) return sum + (f.progress.percentage ?? 0);
+      return sum;
+    }, 0);
+    return total / files.length;
+  });
+
+  // T052: Translation progress: weighted average of per-job progress
+  const translationProgress = $derived.by(() => {
+    const jobs = translationStore.jobs;
+    if (jobs.length === 0) return 0;
+    const total = jobs.reduce((sum, j) => {
+      if (j.status === 'completed') return sum + 100;
+      if (j.status === 'translating') {
+        // Multi-model: use completedModels / totalModels if modelJobs exist
+        if (j.modelJobs && j.modelJobs.length > 0) {
+          const completed = j.modelJobs.filter(m => m.status === 'completed').length;
+          return sum + (completed / j.modelJobs.length) * 100;
+        }
+        return sum + (j.progress ?? 0);
+      }
+      return sum;
+    }, 0);
+    return total / jobs.length;
+  });
+
+  // T053: Extraction progress
+  const extractionProgress = $derived.by(() => {
+    const p = extractionStore.progress;
+    if (!p || p.totalFiles === 0 || p.totalTracks === 0) return 0;
+    const fileWeight = p.currentFileIndex / p.totalFiles;
+    const trackWeight = (p.currentTrack / p.totalTracks) / p.totalFiles;
+    return Math.min((fileWeight + trackWeight) * 100, 100);
+  });
+
+  // T053: Merge progress — direct 0-100 value
+  const mergeProgress = $derived(mergeStore.progress);
+
+  // T053: Rename progress
+  const renameProgress = $derived.by(() => {
+    const p = renameStore.progress;
+    if (!p || p.total === 0) return 0;
+    return (p.current / p.total) * 100;
+  });
+
+  // T054/T055: Current tool's progress percentage and visibility
+  const currentToolProgress = $derived.by(() => {
+    switch (currentView) {
+      case 'audio-to-subs':
+        return {
+          active: audioToSubsStore.isTranscribing || audioToSubsStore.isTranscoding,
+          percentage: audioProgress,
+        };
+      case 'video-ocr':
+        return {
+          active: videoOcrStore.isProcessing,
+          percentage: videoOcrProgress,
+        };
+      case 'translate':
+        return {
+          active: translationStore.isTranslating,
+          percentage: translationProgress,
+        };
+      case 'extract':
+        return {
+          active: extractionStore.isExtracting,
+          percentage: extractionProgress,
+        };
+      case 'merge':
+        return {
+          active: mergeStore.isProcessing,
+          percentage: mergeProgress,
+        };
+      case 'rename':
+        return {
+          active: renameStore.isProcessing,
+          percentage: renameProgress,
+        };
+      default:
+        // Settings, Info — no progress
+        return { active: false, percentage: 0 };
+    }
+  });
 
   const viewTitles: Record<string, string> = {
     extract: 'Track Extraction',
@@ -116,8 +222,13 @@
     >
       <Sidebar.Trigger class="{!useSidebar().open && isMacOS ? 'ml-20' : '-ml-1'} transition-all duration-300" />
       <Separator orientation="vertical" class="mr-2 data-[orientation=vertical]:h-4" />
-      <div class="flex-1" data-tauri-drag-region={isMacOS}>
+      <div class="flex-1 flex items-center" data-tauri-drag-region={isMacOS}>
         <h1 data-tauri-drag-region={isMacOS} class="text-lg font-semibold">{viewTitles[currentView]}</h1>
+        {#if currentToolProgress.active}
+          <div class="ml-auto">
+            <GlobalProgress percentage={currentToolProgress.percentage} />
+          </div>
+        {/if}
       </div>
 
       <!-- Merge view mode buttons (only visible in merge view) -->

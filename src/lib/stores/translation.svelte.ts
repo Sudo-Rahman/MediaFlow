@@ -4,6 +4,8 @@ import type {
   TranslationProgress,
   TranslationResult,
   TranslationJob,
+  TranslationVersion,
+  ModelJob,
   LLMProvider,
   LanguageCode
 } from '$lib/types';
@@ -20,7 +22,8 @@ let config = $state<TranslationConfig>({
   targetLanguage: 'fr',
   provider: 'google',
   model: 'gemini-2.5-flash',
-  batchCount: 1 // Default: no splitting
+  batchCount: 1, // Default: no splitting
+  models: [],
 });
 let globalProgress = $state<TranslationProgress>({
   status: 'idle',
@@ -95,7 +98,9 @@ export const translationStore = {
       status: 'pending',
       progress: 0,
       currentBatch: 0,
-      totalBatches: 0
+      totalBatches: 0,
+      translationVersions: [],
+      activeVersionId: null,
     };
     jobs = [...jobs, job];
     if (!selectedJobId) {
@@ -119,6 +124,14 @@ export const translationStore = {
     if (job?.abortController) {
       job.abortController.abort();
     }
+    // Cancel any active model jobs
+    if (job?.modelJobs) {
+      for (const mj of job.modelJobs) {
+        if (mj.abortController) {
+          mj.abortController.abort();
+        }
+      }
+    }
     jobs = jobs.filter(j => j.id !== jobId);
     if (selectedJobId === jobId) {
       selectedJobId = jobs[0]?.id || null;
@@ -140,6 +153,12 @@ export const translationStore = {
   // Select a job
   selectJob(jobId: string) {
     selectedJobId = jobId;
+    // Set activeVersionId to the most recent version when selecting a job with versions
+    const job = jobs.find(j => j.id === jobId);
+    if (job && job.translationVersions.length > 0 && !job.activeVersionId) {
+      const mostRecent = job.translationVersions[job.translationVersions.length - 1];
+      this.updateJob(jobId, { activeVersionId: mostRecent.id });
+    }
   },
 
   // Update job status
@@ -162,17 +181,33 @@ export const translationStore = {
     if (job?.abortController) {
       job.abortController.abort();
     }
-    this.updateJob(jobId, { status: 'cancelled', error: 'Cancelled by user' });
+    // Cancel all model jobs
+    if (job?.modelJobs) {
+      for (const mj of job.modelJobs) {
+        if (mj.abortController && (mj.status === 'pending' || mj.status === 'translating')) {
+          mj.abortController.abort();
+        }
+      }
+      // Mark all pending/translating model jobs as cancelled
+      this.updateJob(jobId, {
+        status: 'cancelled',
+        error: 'Cancelled by user',
+        modelJobs: job.modelJobs.map(mj =>
+          mj.status === 'pending' || mj.status === 'translating'
+            ? { ...mj, status: 'cancelled' as const, error: 'Cancelled by user' }
+            : mj
+        ),
+      });
+    } else {
+      this.updateJob(jobId, { status: 'cancelled', error: 'Cancelled by user' });
+    }
   },
 
   // Cancel all jobs
   cancelAllJobs() {
     for (const job of jobs) {
       if (job.status === 'translating' || job.status === 'pending') {
-        if (job.abortController) {
-          job.abortController.abort();
-        }
-        this.updateJob(job.id, { status: 'cancelled', error: 'Cancelled by user' });
+        this.cancelJob(job.id);
       }
     }
     globalProgress = { ...globalProgress, status: 'cancelled' };
@@ -208,6 +243,21 @@ export const translationStore = {
     config = { ...config, batchCount: Math.max(1, count) };
   },
 
+  setModels(models: Array<{ provider: LLMProvider; model: string }>) {
+    config = { ...config, models };
+  },
+
+  addModel(provider: LLMProvider, model: string) {
+    const exists = config.models.some(m => m.provider === provider && m.model === model);
+    if (!exists) {
+      config = { ...config, models: [...config.models, { provider, model }] };
+    }
+  },
+
+  removeModel(provider: LLMProvider, model: string) {
+    config = { ...config, models: config.models.filter(m => !(m.provider === provider && m.model === model)) };
+  },
+
   updateProgress(updates: Partial<TranslationProgress>) {
     globalProgress = { ...globalProgress, ...updates };
   },
@@ -224,6 +274,96 @@ export const translationStore = {
     }
   },
 
+  // ============================================================================
+  // VERSION MANAGEMENT
+  // ============================================================================
+
+  get activeVersion(): TranslationVersion | undefined {
+    const job = this.selectedJob;
+    if (!job || !job.activeVersionId) return undefined;
+    return job.translationVersions.find(v => v.id === job.activeVersionId);
+  },
+
+  addTranslationVersion(jobId: string, version: TranslationVersion): void {
+    jobs = jobs.map(j => {
+      if (j.id !== jobId) return j;
+      return {
+        ...j,
+        translationVersions: [...j.translationVersions, version],
+        activeVersionId: version.id,
+      };
+    });
+  },
+
+  removeTranslationVersion(jobId: string, versionId: string): void {
+    jobs = jobs.map(j => {
+      if (j.id !== jobId) return j;
+      const filtered = j.translationVersions.filter(v => v.id !== versionId);
+      const newActiveId = j.activeVersionId === versionId
+        ? (filtered.length > 0 ? filtered[filtered.length - 1].id : null)
+        : j.activeVersionId;
+      return {
+        ...j,
+        translationVersions: filtered,
+        activeVersionId: newActiveId,
+        // If no versions remain, revert to unprocessed state
+        ...(filtered.length === 0 ? { status: 'pending' as const, result: undefined, progress: 0 } : {}),
+      };
+    });
+  },
+
+  setTranslationVersions(jobId: string, versions: TranslationVersion[]): void {
+    jobs = jobs.map(j => {
+      if (j.id !== jobId) return j;
+      return {
+        ...j,
+        translationVersions: versions,
+        activeVersionId: versions.length > 0 ? versions[versions.length - 1].id : null,
+      };
+    });
+  },
+
+  getTranslationVersionCount(jobId: string): number {
+    const job = jobs.find(j => j.id === jobId);
+    return job?.translationVersions.length ?? 0;
+  },
+
+  setActiveVersion(jobId: string, versionId: string | null): void {
+    this.updateJob(jobId, { activeVersionId: versionId });
+  },
+
+  updateVersionContent(jobId: string, versionId: string, content: string): void {
+    jobs = jobs.map(j => {
+      if (j.id !== jobId) return j;
+      return {
+        ...j,
+        translationVersions: j.translationVersions.map(v =>
+          v.id === versionId ? { ...v, translatedContent: content } : v
+        ),
+      };
+    });
+  },
+
+  // ============================================================================
+  // MULTI-MODEL SUPPORT
+  // ============================================================================
+
+  setModelJobs(jobId: string, modelJobs: ModelJob[]): void {
+    this.updateJob(jobId, { modelJobs });
+  },
+
+  updateModelJob(jobId: string, modelKey: string, updates: Partial<ModelJob>): void {
+    jobs = jobs.map(j => {
+      if (j.id !== jobId || !j.modelJobs) return j;
+      return {
+        ...j,
+        modelJobs: j.modelJobs.map(mj =>
+          `${mj.provider}/${mj.model}` === modelKey ? { ...mj, ...updates } : mj
+        ),
+      };
+    });
+  },
+
   reset() {
     // Cancel all active jobs first
     this.cancelAllJobs();
@@ -234,7 +374,8 @@ export const translationStore = {
       targetLanguage: 'fr',
       provider: 'google',
       model: 'gemini-2.5-flash',
-      batchCount: 1
+      batchCount: 1,
+      models: [],
     };
     globalProgress = { status: 'idle', currentFile: '', progress: 0, currentBatch: 0, totalBatches: 0 };
   },

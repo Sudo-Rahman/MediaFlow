@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { RsextData, TranscriptionData, VideoOcrPersistenceData } from '$lib/types';
+import type { RsextData, TranscriptionData, TranslationPersistenceData, VideoOcrPersistenceData } from '$lib/types';
+import { log } from '$lib/utils/log-toast';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -27,17 +28,29 @@ function isLegacyVideoOcrData(value: unknown): value is VideoOcrPersistenceData 
   );
 }
 
+function isLegacyTranslationData(value: unknown): value is TranslationPersistenceData {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.filePath === 'string'
+    && Array.isArray(value.translationVersions)
+  );
+}
+
 function normalizeRsextData(value: unknown): RsextData | null {
   if (!isRecord(value)) {
     return null;
   }
 
   // New shared schema
-  if ('audioToSubs' in value || 'videoOcr' in value) {
+  if ('audioToSubs' in value || 'videoOcr' in value || 'translation' in value) {
     return {
       version: 1,
       audioToSubs: value.audioToSubs as TranscriptionData | undefined,
       videoOcr: value.videoOcr as VideoOcrPersistenceData | undefined,
+      translation: value.translation as TranslationPersistenceData | undefined,
     };
   }
 
@@ -57,6 +70,14 @@ function normalizeRsextData(value: unknown): RsextData | null {
     };
   }
 
+  // Legacy translation-only schema
+  if (isLegacyTranslationData(value)) {
+    return {
+      version: 1,
+      translation: value,
+    };
+  }
+
   return null;
 }
 
@@ -70,7 +91,7 @@ export async function loadRsextData(mediaPath: string): Promise<RsextData | null
     const parsed = JSON.parse(jsonStr) as unknown;
     return normalizeRsextData(parsed);
   } catch (error) {
-    console.error('Failed to load rsext data:', error);
+    log('warning', 'system', 'Failed to load rsext data', error instanceof Error ? error.message : String(error));
     return null;
   }
 }
@@ -81,6 +102,7 @@ export async function saveRsextData(mediaPath: string, data: RsextData): Promise
       version: 1,
       audioToSubs: data.audioToSubs,
       videoOcr: data.videoOcr,
+      translation: data.translation,
     };
 
     await invoke('save_rsext_data', {

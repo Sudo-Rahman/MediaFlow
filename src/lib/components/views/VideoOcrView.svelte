@@ -62,7 +62,12 @@
   let { onNavigateToSettings }: VideoOcrViewProps = $props();
 
   let resultDialogOpen = $state(false);
-  let resultDialogFile = $state.raw<OcrVideoFile | null>(null);
+  let resultDialogFileId = $state<string | null>(null);
+  const resultDialogFile = $derived(
+    resultDialogFileId
+      ? videoOcrStore.videoFiles.find(f => f.id === resultDialogFileId) ?? null
+      : null
+  );
 
   let retryDialogOpen = $state(false);
   let retryDialogFile = $state.raw<OcrVideoFile | null>(null);
@@ -657,7 +662,7 @@
       return;
     }
 
-    if (file.status !== 'transcoding') {
+    if (!isOcrActiveStatus(file.status)) {
       clearPersistedOcrVersionsForPath(file.path);
       videoOcrStore.removeFile(id);
       return;
@@ -668,7 +673,8 @@
   }
 
   function handleRequestRemoveAll() {
-    if (!hasTranscodingFile()) {
+    const hasActiveFile = videoOcrStore.videoFiles.some((file) => isOcrActiveStatus(file.status));
+    if (!hasActiveFile) {
       persistedOcrVersionKeys = new Set();
       videoOcrStore.clear();
       return;
@@ -730,7 +736,7 @@
   }
 
   function handleViewResult(file: OcrVideoFile) {
-    resultDialogFile = file;
+    resultDialogFileId = file.id;
     resultDialogOpen = true;
   }
 
@@ -897,7 +903,7 @@
   onOpenChange={(open) => {
     resultDialogOpen = open;
     if (!open) {
-      resultDialogFile = null;
+      resultDialogFileId = null;
     }
   }}
   file={resultDialogFile}
@@ -920,13 +926,13 @@
   <AlertDialog.Content>
     <AlertDialog.Header>
       <AlertDialog.Title>
-        {removeTarget?.mode === 'all' ? 'Remove all files while transcoding?' : 'Remove file while transcoding?'}
+        {removeTarget?.mode === 'all' ? 'Remove all files while processing?' : 'Remove file while processing?'}
       </AlertDialog.Title>
       <AlertDialog.Description>
         {#if removeTarget?.mode === 'all'}
-          One or more files are currently transcoding. Removing all files will cancel active transcodes.
+          One or more files are currently being processed. Removing all files will cancel active operations.
         {:else}
-          This file is currently transcoding. Removing it will cancel the active transcode.
+          This file is currently being processed. Removing it will cancel the active operation.
         {/if}
       </AlertDialog.Description>
     </AlertDialog.Header>

@@ -85,6 +85,7 @@ export interface TranslationConfig {
   provider: LLMProvider;
   model: string;
   batchCount: number; // Number of batches to split the file into (1 = no splitting)
+  models: Array<{ provider: LLMProvider; model: string }>; // Multi-model selection
 }
 
 export interface TranslationProgress {
@@ -112,6 +113,50 @@ export interface TranslationResult {
   usage?: TranslationUsage;
 }
 
+// ============================================================================
+// TRANSLATION VERSIONING
+// ============================================================================
+
+export interface TranslationVersion {
+  id: string;                    // "tv-{timestamp}-{random7}"
+  name: string;                  // "Version 1", "GPT-5 - French", etc.
+  createdAt: string;             // ISO 8601
+  provider: LLMProvider;
+  model: string;
+  sourceLanguage: LanguageCode;
+  targetLanguage: LanguageCode;
+  batchCount: number;
+  translatedContent: string;     // Full translated subtitle file content
+  usage?: TranslationUsage;
+  truncated?: boolean;
+}
+
+export interface TranslationPersistenceData {
+  version: 1;
+  filePath: string;              // Absolute path to the original subtitle file
+  translationVersions: TranslationVersion[];
+  createdAt: string;             // ISO 8601
+  updatedAt: string;             // ISO 8601
+}
+
+// ============================================================================
+// MULTI-MODEL SUPPORT
+// ============================================================================
+
+export type ModelJobStatus = 'pending' | 'translating' | 'completed' | 'error' | 'cancelled';
+
+export interface ModelJob {
+  provider: LLMProvider;
+  model: string;
+  status: ModelJobStatus;
+  progress: number;              // 0-100
+  currentBatch: number;
+  totalBatches: number;
+  result?: TranslationResult;
+  error?: string;
+  abortController?: AbortController;
+}
+
 // File translation job for multi-file support
 export interface TranslationJob {
   id: string;
@@ -123,6 +168,9 @@ export interface TranslationJob {
   result?: TranslationResult;
   error?: string;
   abortController?: AbortController;
+  translationVersions: TranslationVersion[];
+  activeVersionId: string | null;
+  modelJobs?: ModelJob[];
 }
 
 // API Keys interface

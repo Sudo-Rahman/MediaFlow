@@ -56,7 +56,12 @@
 
   // State for result dialog
   let resultDialogOpen = $state(false);
-  let resultDialogFile = $state<AudioFile | null>(null);
+  let resultDialogFileId = $state<string | null>(null);
+  const resultDialogFile = $derived(
+    resultDialogFileId
+      ? audioToSubsStore.audioFiles.find(f => f.id === resultDialogFileId) ?? null
+      : null
+  );
 
   // State for retranscribe dialog
   let retranscribeDialogOpen = $state(false);
@@ -997,7 +1002,7 @@
       return;
     }
 
-    if (file.status !== 'transcoding') {
+    if (file.status !== 'transcoding' && file.status !== 'transcribing') {
       clearPersistedTranscriptionVersionsForPath(file.path);
       audioToSubsStore.removeFile(id);
       return;
@@ -1008,8 +1013,8 @@
   }
 
   function handleRequestRemoveAll() {
-    const hasTranscoding = audioToSubsStore.audioFiles.some((file) => file.status === 'transcoding');
-    if (!hasTranscoding) {
+    const hasActive = audioToSubsStore.audioFiles.some((file) => file.status === 'transcoding' || file.status === 'transcribing');
+    if (!hasActive) {
       persistedTranscriptionVersionKeys = new Set();
       audioToSubsStore.clear();
       return;
@@ -1050,7 +1055,7 @@
   }
 
   function handleViewResult(file: AudioFile) {
-    resultDialogFile = file;
+    resultDialogFileId = file.id;
     resultDialogOpen = true;
   }
 
@@ -1266,8 +1271,7 @@
           onRemove={handleRequestRemoveFile}
           onCancel={handleCancelFile}
           onViewResult={handleViewResult}
-          onRetranscribe={handleRetranscribeRequest}
-          onRetry={handleRetryFile}
+          onRetry={handleRetranscribeRequest}
           disabled={audioToSubsStore.isTranscribing}
         />
       {/if}
@@ -1350,13 +1354,13 @@
   <AlertDialog.Content>
     <AlertDialog.Header>
       <AlertDialog.Title>
-        {removeTarget?.mode === 'all' ? 'Remove all files while transcoding?' : 'Remove file while transcoding?'}
+        {removeTarget?.mode === 'all' ? 'Remove all files while processing?' : 'Remove file while processing?'}
       </AlertDialog.Title>
       <AlertDialog.Description>
         {#if removeTarget?.mode === 'all'}
-          One or more files are currently transcoding. Removing all files will cancel active transcodes.
+          One or more files are currently being processed. Removing all files will cancel active operations.
         {:else}
-          This file is currently transcoding. Removing it will cancel the active transcode.
+          This file is currently being processed. Removing it will cancel the active operation.
         {/if}
       </AlertDialog.Description>
     </AlertDialog.Header>

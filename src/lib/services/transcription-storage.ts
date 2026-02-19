@@ -33,6 +33,7 @@ export async function saveTranscriptionData(audioPath: string, data: Transcripti
       version: 1,
       audioToSubs: data,
       videoOcr: existing?.videoOcr,
+      translation: existing?.translation,
     });
   } catch (error) {
     console.error('Failed to save transcription data:', error);
@@ -50,10 +51,11 @@ export async function deleteTranscriptionData(audioPath: string): Promise<boolea
       return true;
     }
 
-    if (existing.videoOcr) {
+    if (existing.videoOcr || existing.translation) {
       return saveRsextData(audioPath, {
         version: 1,
         videoOcr: existing.videoOcr,
+        translation: existing.translation,
       });
     }
 

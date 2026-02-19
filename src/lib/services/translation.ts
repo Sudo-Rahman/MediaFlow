@@ -561,6 +561,92 @@ export async function translateSubtitle(
 }
 
 // ============================================================================
+// MULTI-MODEL PARALLEL TRANSLATION
+// ============================================================================
+
+/**
+ * Translate a subtitle file with multiple models in parallel.
+ * Each model runs its own translateSubtitle() call concurrently.
+ * Results are delivered incrementally via callbacks as each model completes.
+ *
+ * @param file - The subtitle file to translate
+ * @param models - Array of provider/model pairs to translate with
+ * @param sourceLang - Source language code
+ * @param targetLang - Target language code
+ * @param batchCount - Number of batches to split the file into
+ * @param onModelProgress - Called with progress updates for each model
+ * @param onModelComplete - Called when a model finishes successfully
+ * @param onModelError - Called when a model fails
+ * @param signals - Map of "provider/model" key to AbortSignal for per-model cancellation
+ * @returns Map of "provider/model" key to TranslationResult for all settled models
+ */
+export async function translateSubtitleMultiModel(
+  file: SubtitleFile,
+  models: Array<{ provider: LLMProvider; model: string }>,
+  sourceLang: LanguageCode,
+  targetLang: LanguageCode,
+  batchCount: number = 1,
+  onModelProgress?: (modelKey: string, info: BatchProgressInfo | number) => void,
+  onModelComplete?: (modelKey: string, result: TranslationResult) => void,
+  onModelError?: (modelKey: string, error: Error) => void,
+  signals?: Map<string, AbortSignal>
+): Promise<Map<string, TranslationResult>> {
+  const results = new Map<string, TranslationResult>();
+
+  /** Unique key for each model entry (handles same model appearing twice) */
+  function modelKey(entry: { provider: LLMProvider; model: string }): string {
+    return `${entry.provider}/${entry.model}`;
+  }
+
+  const promises = models.map(async (entry) => {
+    const key = modelKey(entry);
+    const signal = signals?.get(key);
+
+    try {
+      const result = await translateSubtitle(
+        file,
+        entry.provider,
+        entry.model,
+        sourceLang,
+        targetLang,
+        (info: BatchProgressInfo | number) => {
+          onModelProgress?.(key, info);
+        },
+        batchCount,
+        signal
+      );
+
+      results.set(key, result);
+
+      if (result.success) {
+        onModelComplete?.(key, result);
+      } else {
+        const isCancelled = result.error?.toLowerCase().includes('cancel');
+        if (!isCancelled) {
+          onModelError?.(key, new Error(result.error || 'Translation failed'));
+        }
+      }
+
+      return result;
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      const failResult: TranslationResult = {
+        originalFile: file,
+        translatedContent: '',
+        success: false,
+        error: err.message,
+      };
+      results.set(key, failResult);
+      onModelError?.(key, err);
+      return failResult;
+    }
+  });
+
+  await Promise.allSettled(promises);
+  return results;
+}
+
+// ============================================================================
 // UTILITY EXPORTS
 // ============================================================================
 

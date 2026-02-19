@@ -6,6 +6,7 @@ import type {
   TranslationJob,
   TranslationVersion,
   ModelJob,
+  TranslationModelSelection,
   LLMProvider,
   LanguageCode
 } from '$lib/types';
@@ -13,6 +14,10 @@ import type {
 // Generate unique ID
 function generateId(): string {
   return `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
+function generateModelSelectionId(): string {
+  return `model_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 // Translation state
@@ -96,6 +101,7 @@ export const translationStore = {
       id,
       file,
       status: 'pending',
+      activeRunId: null,
       progress: 0,
       currentBatch: 0,
       totalBatches: 0,
@@ -144,6 +150,13 @@ export const translationStore = {
       if (job.abortController) {
         job.abortController.abort();
       }
+      if (job.modelJobs) {
+        for (const mj of job.modelJobs) {
+          if (mj.abortController) {
+            mj.abortController.abort();
+          }
+        }
+      }
     }
     jobs = [];
     selectedJobId = null;
@@ -168,6 +181,41 @@ export const translationStore = {
     );
   },
 
+  startRun(jobId: string, runId: string) {
+    jobs = jobs.map(j =>
+      j.id === jobId
+        ? {
+            ...j,
+            activeRunId: runId,
+            error: undefined,
+            abortController: undefined,
+            modelJobs: undefined,
+          }
+        : j
+    );
+  },
+
+  invalidateRun(jobId: string) {
+    jobs = jobs.map(j =>
+      j.id === jobId
+        ? {
+            ...j,
+            activeRunId: null,
+          }
+        : j
+    );
+  },
+
+  isRunActive(jobId: string, runId: string): boolean {
+    const job = jobs.find(j => j.id === jobId);
+    return !!job && job.activeRunId === runId;
+  },
+
+  updateJobIfActive(jobId: string, runId: string, updates: Partial<TranslationJob>) {
+    if (!this.isRunActive(jobId, runId)) return;
+    this.updateJob(jobId, updates);
+  },
+
   // Set abort controller for a job
   setJobAbortController(jobId: string, controller: AbortController) {
     jobs = jobs.map(j =>
@@ -175,9 +223,19 @@ export const translationStore = {
     );
   },
 
+  setJobAbortControllerIfActive(jobId: string, runId: string, controller: AbortController) {
+    if (!this.isRunActive(jobId, runId)) return;
+    this.setJobAbortController(jobId, controller);
+  },
+
   // Cancel a specific job
   cancelJob(jobId: string) {
     const job = jobs.find(j => j.id === jobId);
+    if (!job) return;
+
+    // Invalidate run first so late async results are ignored.
+    this.invalidateRun(jobId);
+
     if (job?.abortController) {
       job.abortController.abort();
     }
@@ -192,14 +250,24 @@ export const translationStore = {
       this.updateJob(jobId, {
         status: 'cancelled',
         error: 'Cancelled by user',
+        abortController: undefined,
         modelJobs: job.modelJobs.map(mj =>
           mj.status === 'pending' || mj.status === 'translating'
-            ? { ...mj, status: 'cancelled' as const, error: 'Cancelled by user' }
+            ? {
+                ...mj,
+                status: 'cancelled' as const,
+                error: 'Cancelled by user',
+                abortController: undefined,
+              }
             : mj
         ),
       });
     } else {
-      this.updateJob(jobId, { status: 'cancelled', error: 'Cancelled by user' });
+      this.updateJob(jobId, {
+        status: 'cancelled',
+        error: 'Cancelled by user',
+        abortController: undefined,
+      });
     }
   },
 
@@ -243,19 +311,21 @@ export const translationStore = {
     config = { ...config, batchCount: Math.max(1, count) };
   },
 
-  setModels(models: Array<{ provider: LLMProvider; model: string }>) {
+  setModels(models: TranslationModelSelection[]) {
     config = { ...config, models };
   },
 
   addModel(provider: LLMProvider, model: string) {
-    const exists = config.models.some(m => m.provider === provider && m.model === model);
-    if (!exists) {
-      config = { ...config, models: [...config.models, { provider, model }] };
-    }
+    const selection: TranslationModelSelection = {
+      id: generateModelSelectionId(),
+      provider,
+      model,
+    };
+    config = { ...config, models: [...config.models, selection] };
   },
 
-  removeModel(provider: LLMProvider, model: string) {
-    config = { ...config, models: config.models.filter(m => !(m.provider === provider && m.model === model)) };
+  removeModel(modelSelectionId: string) {
+    config = { ...config, models: config.models.filter(m => m.id !== modelSelectionId) };
   },
 
   updateProgress(updates: Partial<TranslationProgress>) {
@@ -352,16 +422,26 @@ export const translationStore = {
     this.updateJob(jobId, { modelJobs });
   },
 
-  updateModelJob(jobId: string, modelKey: string, updates: Partial<ModelJob>): void {
+  setModelJobsIfActive(jobId: string, runId: string, modelJobs: ModelJob[]): void {
+    if (!this.isRunActive(jobId, runId)) return;
+    this.setModelJobs(jobId, modelJobs);
+  },
+
+  updateModelJob(jobId: string, modelJobId: string, updates: Partial<ModelJob>): void {
     jobs = jobs.map(j => {
       if (j.id !== jobId || !j.modelJobs) return j;
       return {
         ...j,
         modelJobs: j.modelJobs.map(mj =>
-          `${mj.provider}/${mj.model}` === modelKey ? { ...mj, ...updates } : mj
+          mj.id === modelJobId ? { ...mj, ...updates } : mj
         ),
       };
     });
+  },
+
+  updateModelJobIfActive(jobId: string, runId: string, modelJobId: string, updates: Partial<ModelJob>): void {
+    if (!this.isRunActive(jobId, runId)) return;
+    this.updateModelJob(jobId, modelJobId, updates);
   },
 
   reset() {

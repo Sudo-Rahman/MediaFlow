@@ -85,7 +85,7 @@ export interface TranslationConfig {
   provider: LLMProvider;
   model: string;
   batchCount: number; // Number of batches to split the file into (1 = no splitting)
-  models: Array<{ provider: LLMProvider; model: string }>; // Multi-model selection
+  models: TranslationModelSelection[]; // Multi-model selection
 }
 
 export interface TranslationProgress {
@@ -145,7 +145,14 @@ export interface TranslationPersistenceData {
 
 export type ModelJobStatus = 'pending' | 'translating' | 'completed' | 'error' | 'cancelled';
 
+export interface TranslationModelSelection {
+  id: string;                    // Stable config-level entry id (supports duplicates)
+  provider: LLMProvider;
+  model: string;
+}
+
 export interface ModelJob {
+  id: string;                    // Unique per model run (allows duplicate provider/model entries)
   provider: LLMProvider;
   model: string;
   status: ModelJobStatus;
@@ -162,6 +169,7 @@ export interface TranslationJob {
   id: string;
   file: SubtitleFile;
   status: 'pending' | 'translating' | 'completed' | 'error' | 'cancelled';
+  activeRunId: string | null;    // Current active translation run for stale-update protection
   progress: number;
   currentBatch: number;
   totalBatches: number;

@@ -18,6 +18,7 @@ export interface LlmResponse {
   error?: string;
   truncated?: boolean;
   finishReason?: string;
+  cancelled?: boolean;
   usage?: LlmUsage;
   retryable?: boolean;
   retryAfter?: number;
@@ -162,26 +163,38 @@ async function fetchWithTimeout(
   options: RequestInit,
   timeoutMs: number = API_REQUEST_TIMEOUT
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
   const originalSignal = options.signal;
-  const abortListener = () => controller.abort();
-  if (originalSignal) {
-    originalSignal.addEventListener('abort', abortListener);
+  if (originalSignal?.aborted) {
+    throw new DOMException('The operation was aborted.', 'AbortError');
   }
 
-  try {
-    return await fetch(url, {
-      ...options,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeoutId);
-    if (originalSignal) {
-      originalSignal.removeEventListener('abort', abortListener);
-    }
-  }
+  const timeoutSignal = typeof AbortSignal.timeout === 'function'
+    ? AbortSignal.timeout(timeoutMs)
+    : (() => {
+        const timeoutController = new AbortController();
+        setTimeout(() => timeoutController.abort(), timeoutMs);
+        return timeoutController.signal;
+      })();
+
+  const mergedSignal = originalSignal
+    ? (typeof AbortSignal.any === 'function'
+        ? AbortSignal.any([originalSignal, timeoutSignal])
+        : (() => {
+            const fallbackController = new AbortController();
+            const onAbort = () => fallbackController.abort();
+            originalSignal.addEventListener('abort', onAbort, { once: true });
+            timeoutSignal.addEventListener('abort', onAbort, { once: true });
+            if (originalSignal.aborted || timeoutSignal.aborted) {
+              fallbackController.abort();
+            }
+            return fallbackController.signal;
+          })())
+    : timeoutSignal;
+
+  return await fetch(url, {
+    ...options,
+    signal: mergedSignal,
+  });
 }
 
 function maybeLog(
@@ -214,15 +227,16 @@ function isNetworkError(error: unknown): boolean {
 
 function buildAbortErrorResponse(
   providerLabel: string,
-  signal: AbortSignal | undefined
+  reason: 'cancelled' | 'timeout'
 ): LlmResponse {
-  if (signal?.aborted) {
-    return { content: '', error: 'Request cancelled', retryable: false };
+  if (reason === 'cancelled') {
+    return { content: '', error: 'Request cancelled', retryable: false, cancelled: true };
   }
 
   return {
     content: '',
     error: `${providerLabel}: Request timeout (>${API_REQUEST_TIMEOUT / 1000}s)`,
+    cancelled: false,
     retryable: true,
     retryAfter: 5000,
   };
@@ -287,7 +301,8 @@ async function callOpenAi(params: ProviderCallParams): Promise<LlmResponse> {
     };
   } catch (error: any) {
     if (error.name === 'AbortError') {
-      return buildAbortErrorResponse(providerLabel, params.signal);
+      const reason: 'cancelled' | 'timeout' = params.signal?.aborted ? 'cancelled' : 'timeout';
+      return buildAbortErrorResponse(providerLabel, reason);
     }
 
     const networkError = isNetworkError(error);
@@ -372,7 +387,8 @@ async function callAnthropic(params: ProviderCallParams): Promise<LlmResponse> {
     };
   } catch (error: any) {
     if (error.name === 'AbortError') {
-      return buildAbortErrorResponse(providerLabel, params.signal);
+      const reason: 'cancelled' | 'timeout' = params.signal?.aborted ? 'cancelled' : 'timeout';
+      return buildAbortErrorResponse(providerLabel, reason);
     }
 
     const networkError = isNetworkError(error);
@@ -464,7 +480,8 @@ async function callGoogle(params: ProviderCallParams): Promise<LlmResponse> {
     };
   } catch (error: any) {
     if (error.name === 'AbortError') {
-      return buildAbortErrorResponse(providerLabel, params.signal);
+      const reason: 'cancelled' | 'timeout' = params.signal?.aborted ? 'cancelled' : 'timeout';
+      return buildAbortErrorResponse(providerLabel, reason);
     }
 
     const networkError = isNetworkError(error);
@@ -546,7 +563,8 @@ async function callOpenRouter(params: ProviderCallParams): Promise<LlmResponse> 
     };
   } catch (error: any) {
     if (error.name === 'AbortError') {
-      return buildAbortErrorResponse(providerLabel, params.signal);
+      const reason: 'cancelled' | 'timeout' = params.signal?.aborted ? 'cancelled' : 'timeout';
+      return buildAbortErrorResponse(providerLabel, reason);
     }
 
     const networkError = isNetworkError(error);

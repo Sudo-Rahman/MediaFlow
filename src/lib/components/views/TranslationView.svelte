@@ -306,9 +306,28 @@
     return found?.name || model;
   }
 
+  function createRunId(jobId: string): string {
+    return `${jobId}_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function createModelJobId(runId: string, index: number): string {
+    return `${runId}_model_${index}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function isRunActive(jobId: string, runId: string): boolean {
+    return translationStore.isRunActive(jobId, runId);
+  }
+
+  function getModelJob(jobId: string, modelJobId: string): ModelJob | undefined {
+    return translationStore.jobs
+      .find(j => j.id === jobId)
+      ?.modelJobs?.find(mj => mj.id === modelJobId);
+  }
+
   /** Translate a single file with a single model (existing flow) */
   async function translateJobSingleModel(job: TranslationJob) {
     const { provider, model, sourceLanguage, targetLanguage, batchCount } = translationStore.config;
+    const runId = createRunId(job.id);
 
     // Validate API key
     const apiKey = settingsStore.getLLMApiKey(provider);
@@ -328,10 +347,30 @@
       return;
     }
 
+    translationStore.startRun(job.id, runId);
+
     // Create abort controller for this job
     const abortController = new AbortController();
-    translationStore.setJobAbortController(job.id, abortController);
-    translationStore.updateJob(job.id, { status: 'translating', progress: 0 });
+    translationStore.setJobAbortControllerIfActive(job.id, runId, abortController);
+    if (!isRunActive(job.id, runId)) {
+      log('info', 'translation', 'Late response dropped',
+        'Single-model dispatch skipped after run invalidation',
+        { filePath: job.file.path, provider, jobId: job.id, runId }
+      );
+      return;
+    }
+    translationStore.updateJobIfActive(job.id, runId, {
+      status: 'translating',
+      progress: 0,
+      currentBatch: 0,
+      totalBatches: 0,
+      error: undefined,
+    });
+
+    log('info', 'translation', 'Translation run started',
+      `${sourceLanguage} → ${targetLanguage} (${batchCount} batch${batchCount > 1 ? 'es' : ''})`,
+      { filePath: job.file.path, provider, jobId: job.id, runId }
+    );
 
     try {
       const result = await translateSubtitle(
@@ -340,37 +379,65 @@
         model,
         sourceLanguage,
         targetLanguage,
-        (info: BatchProgressInfo | number) => {
-          if (typeof info === 'number') {
-            translationStore.updateJob(job.id, { progress: info });
-          } else {
-            translationStore.updateJob(job.id, {
-              progress: info.progress,
-              currentBatch: info.currentBatch,
-              totalBatches: info.totalBatches
-            });
-          }
-        },
-        batchCount,
-        abortController.signal
+        {
+          onProgress: (info: BatchProgressInfo | number) => {
+            if (typeof info === 'number') {
+              translationStore.updateJobIfActive(job.id, runId, { progress: info });
+            } else {
+              translationStore.updateJobIfActive(job.id, runId, {
+                progress: info.progress,
+                currentBatch: info.currentBatch,
+                totalBatches: info.totalBatches
+              });
+            }
+          },
+          batchCount,
+          signal: abortController.signal,
+          runId,
+          batchConcurrency: 2,
+        }
       );
 
-      translationStore.updateJob(job.id, {
-        result,
-        status: result.success ? 'completed' : 'error',
-        error: result.error,
-        progress: 100
-      });
+      if (!isRunActive(job.id, runId)) {
+        log('info', 'translation', 'Late response dropped',
+          'Single-model result ignored after run invalidation',
+          { filePath: job.file.path, provider, jobId: job.id, runId }
+        );
+        return;
+      }
 
       if (result.success) {
+        translationStore.updateJobIfActive(job.id, runId, {
+          result,
+          status: 'completed',
+          error: result.error,
+          progress: 100
+        });
+
+        if (!isRunActive(job.id, runId)) {
+          log('info', 'translation', 'Late response dropped',
+            'Single-model success side-effects skipped after run invalidation',
+            { filePath: job.file.path, provider, jobId: job.id, runId }
+          );
+          return;
+        }
+
         log('success', 'translation',
           `Translated: ${job.file.name}`,
-          `${translationStore.config.sourceLanguage} → ${translationStore.config.targetLanguage} (${batchCount} batch${batchCount > 1 ? 'es' : ''})`,
-          { filePath: job.file.path, provider: translationStore.config.provider }
+          `${sourceLanguage} → ${targetLanguage} (${batchCount} batch${batchCount > 1 ? 'es' : ''})`,
+          { filePath: job.file.path, provider, jobId: job.id, runId }
         );
         toast.success(`Translation completed: ${job.file.name}`);
 
-        // Create and persist a translation version
+        // Create and persist a translation version only while run is still active.
+        if (!isRunActive(job.id, runId)) {
+          log('info', 'translation', 'Late response dropped',
+            'Version creation skipped after run invalidation',
+            { filePath: job.file.path, provider, jobId: job.id, runId }
+          );
+          return;
+        }
+
         const existingVersions = translationStore.selectedJob?.id === job.id
           ? (translationStore.selectedJob?.translationVersions ?? [])
           : (translationStore.jobs.find(j => j.id === job.id)?.translationVersions ?? []);
@@ -386,43 +453,96 @@
           result.usage,
           result.truncated,
         );
+
         translationStore.addTranslationVersion(job.id, version);
+
+        if (!isRunActive(job.id, runId)) {
+          log('info', 'translation', 'Late response dropped',
+            'Version persistence skipped after run invalidation',
+            { filePath: job.file.path, provider, jobId: job.id, runId }
+          );
+          return;
+        }
+
         const persisted = await persistTranslationVersion(job.file.path, version);
         if (!persisted) {
           log('warning', 'translation', 'Translation version not persisted',
             'Version is available in memory only for this session',
-            { filePath: job.file.path }
+            { filePath: job.file.path, provider, jobId: job.id, runId }
           );
         }
       } else {
         const isCancelled = result.error?.toLowerCase().includes('cancel');
         if (isCancelled) {
+          translationStore.updateJobIfActive(job.id, runId, {
+            status: 'cancelled',
+            error: 'Cancelled by user',
+          });
           log('warning', 'translation',
             `Translation cancelled: ${job.file.name}`,
             'Cancelled by user',
-            { filePath: job.file.path, provider: translationStore.config.provider }
+            { filePath: job.file.path, provider, jobId: job.id, runId }
           );
           // Toast already shown by handleCancelJob/handleCancelAll
         } else {
+          translationStore.updateJobIfActive(job.id, runId, {
+            result,
+            status: 'error',
+            error: result.error,
+          });
+
+          if (!isRunActive(job.id, runId)) {
+            log('info', 'translation', 'Late response dropped',
+              'Single-model error side-effects skipped after run invalidation',
+              { filePath: job.file.path, provider, jobId: job.id, runId }
+            );
+            return;
+          }
+
           log('error', 'translation',
             `Translation failed: ${job.file.name}`,
             result.error || 'Unknown error',
-            { filePath: job.file.path, provider: translationStore.config.provider }
+            { filePath: job.file.path, provider, jobId: job.id, runId }
           );
           toast.error(result.error || 'Translation failed');
         }
       }
     } catch (error) {
+      if (!isRunActive(job.id, runId)) {
+        log('info', 'translation', 'Late response dropped',
+          'Single-model exception ignored after run invalidation',
+          { filePath: job.file.path, provider, jobId: job.id, runId }
+        );
+        return;
+      }
+
+      if (error instanceof Error && error.name === 'AbortError') {
+        translationStore.updateJobIfActive(job.id, runId, {
+          status: 'cancelled',
+          error: 'Cancelled by user',
+        });
+        return;
+      }
+
       const errorMsg = error instanceof Error ? error.message : String(error);
-      translationStore.updateJob(job.id, {
+      translationStore.updateJobIfActive(job.id, runId, {
         status: 'error',
         error: errorMsg
       });
+
+      if (!isRunActive(job.id, runId)) {
+        log('info', 'translation', 'Late response dropped',
+          'Single-model exception side-effects skipped after run invalidation',
+          { filePath: job.file.path, provider, jobId: job.id, runId }
+        );
+        return;
+      }
+
       logAndToast.error({
         source: 'translation',
         title: 'Translation failed',
         details: errorMsg,
-        context: { filePath: job.file.path }
+        context: { filePath: job.file.path, provider, jobId: job.id, runId }
       });
     }
   }
@@ -430,6 +550,7 @@
   /** Translate a single file with multiple models in parallel */
   async function translateJobMultiModel(job: TranslationJob) {
     const { models, sourceLanguage, targetLanguage, batchCount } = translationStore.config;
+    const runId = createRunId(job.id);
 
     // Validate API keys for all models
     for (const entry of models) {
@@ -443,13 +564,16 @@
       }
     }
 
+    translationStore.startRun(job.id, runId);
+
     // Create AbortControllers and ModelJob entries for each model
-    const signals = new Map<string, AbortSignal>();
-    const initialModelJobs: ModelJob[] = models.map(entry => {
-      const key = `${entry.provider}/${entry.model}`;
+    const signalByModelJobId = new Map<string, AbortSignal>();
+    const initialModelJobs: ModelJob[] = models.map((entry, index) => {
+      const modelJobId = createModelJobId(runId, index);
       const controller = new AbortController();
-      signals.set(key, controller.signal);
+      signalByModelJobId.set(modelJobId, controller.signal);
       return {
+        id: modelJobId,
         provider: entry.provider,
         model: entry.model,
         status: 'pending' as const,
@@ -461,114 +585,198 @@
     });
 
     // Set model jobs and mark the file as translating
-    translationStore.setModelJobs(job.id, initialModelJobs);
-    translationStore.updateJob(job.id, { status: 'translating', progress: 0 });
+    translationStore.setModelJobsIfActive(job.id, runId, initialModelJobs);
+    if (!isRunActive(job.id, runId)) {
+      log('info', 'translation', 'Late response dropped',
+        'Multi-model dispatch skipped after run invalidation',
+        { filePath: job.file.path, jobId: job.id, runId }
+      );
+      return;
+    }
+    translationStore.updateJobIfActive(job.id, runId, {
+      status: 'translating',
+      progress: 0,
+      currentBatch: 0,
+      totalBatches: 0,
+      error: undefined,
+    });
 
-    let completedCount = 0;
-    const totalModels = models.length;
+    log('info', 'translation', 'Translation run started',
+      `${sourceLanguage} → ${targetLanguage} (${models.length} models)`,
+      { filePath: job.file.path, jobId: job.id, runId }
+    );
 
     await translateSubtitleMultiModel(
       job.file,
-      models,
+      initialModelJobs.map(modelJob => ({
+        modelJobId: modelJob.id,
+        provider: modelJob.provider,
+        model: modelJob.model,
+      })),
       sourceLanguage,
       targetLanguage,
-      batchCount,
+      {
+        batchCount,
+        runId,
+        batchConcurrency: 2,
+        signalByModelJobId,
 
-      // onModelProgress
-      (modelKey: string, info: BatchProgressInfo | number) => {
-        if (typeof info === 'number') {
-          translationStore.updateModelJob(job.id, modelKey, {
-            status: 'translating',
-            progress: info,
-          });
-        } else {
-          translationStore.updateModelJob(job.id, modelKey, {
-            status: 'translating',
-            progress: info.progress,
-            currentBatch: info.currentBatch,
-            totalBatches: info.totalBatches,
-          });
-        }
-        // Derive aggregate progress: average of all model progresses
-        const currentJob = translationStore.jobs.find(j => j.id === job.id);
-        if (currentJob?.modelJobs) {
-          const avgProgress = Math.round(
-            currentJob.modelJobs.reduce((sum, mj) => sum + mj.progress, 0) / currentJob.modelJobs.length
-          );
-          translationStore.updateJob(job.id, { progress: avgProgress });
-        }
-      },
+        // onModelProgress
+        onModelProgress: (modelJobId: string, info: BatchProgressInfo | number) => {
+          if (!isRunActive(job.id, runId)) return;
 
-      // onModelComplete — create a version immediately for each completed model
-      async (modelKey: string, result) => {
-        const [provider, model] = modelKey.split('/');
-        translationStore.updateModelJob(job.id, modelKey, {
-          status: 'completed',
-          progress: 100,
-          result,
-        });
-        completedCount++;
+          if (typeof info === 'number') {
+            translationStore.updateModelJobIfActive(job.id, runId, modelJobId, {
+              status: 'translating',
+              progress: info,
+            });
+          } else {
+            translationStore.updateModelJobIfActive(job.id, runId, modelJobId, {
+              status: 'translating',
+              progress: info.progress,
+              currentBatch: info.currentBatch,
+              totalBatches: info.totalBatches,
+            });
+          }
 
-        // Derive the version name: "{ModelName} - {TargetLanguage}"
-        const modelDisplayName = getModelDisplayName(provider, model);
-        const targetLangName = SUPPORTED_LANGUAGES.find(l => l.code === targetLanguage)?.name ?? targetLanguage;
-        const versionName = `${modelDisplayName} - ${targetLangName}`;
+          // Derive aggregate progress: average of all model progresses
+          const currentJob = translationStore.jobs.find(j => j.id === job.id);
+          if (currentJob?.modelJobs && currentJob.modelJobs.length > 0) {
+            const avgProgress = Math.round(
+              currentJob.modelJobs.reduce((sum, mj) => sum + mj.progress, 0) / currentJob.modelJobs.length
+            );
+            translationStore.updateJobIfActive(job.id, runId, { progress: avgProgress });
+          }
+        },
 
-        const version = createTranslationVersion(
-          versionName,
-          provider as import('$lib/types').LLMProvider,
-          model,
-          sourceLanguage,
-          targetLanguage,
-          batchCount,
-          result.translatedContent,
-          result.usage,
-          result.truncated,
-        );
-        translationStore.addTranslationVersion(job.id, version);
-        const persisted = await persistTranslationVersion(job.file.path, version);
-        if (!persisted) {
-          log('warning', 'translation', 'Translation version not persisted',
-            'Version is available in memory only for this session',
-            { filePath: job.file.path }
-          );
-        }
+        // onModelComplete — create a version immediately for each completed model
+        onModelComplete: async (modelJobId: string, result) => {
+          if (!isRunActive(job.id, runId)) {
+            log('info', 'translation', 'Late response dropped',
+              'Model completion ignored after run invalidation',
+              { filePath: job.file.path, jobId: job.id, runId, modelJobId }
+            );
+            return;
+          }
 
-        log('success', 'translation',
-          `Model completed: ${modelDisplayName}`,
-          `${sourceLanguage} → ${targetLanguage} for ${job.file.name}`,
-          { filePath: job.file.path, provider }
-        );
-        toast.success(`${modelDisplayName} completed: ${job.file.name}`);
+          const modelJob = getModelJob(job.id, modelJobId);
+          if (!modelJob) return;
 
-        // Check if all models are done
-        if (completedCount === totalModels) {
-          translationStore.updateJob(job.id, {
+          translationStore.updateModelJobIfActive(job.id, runId, modelJobId, {
             status: 'completed',
             progress: 100,
+            result,
           });
-        }
-      },
 
-      // onModelError
-      (modelKey: string, error: Error) => {
-        const [provider, model] = modelKey.split('/');
-        translationStore.updateModelJob(job.id, modelKey, {
-          status: 'error',
-          error: error.message,
-        });
+          const provider = modelJob.provider;
+          const model = modelJob.model;
+          const modelDisplayName = getModelDisplayName(provider, model);
+          const targetLangName = SUPPORTED_LANGUAGES.find(l => l.code === targetLanguage)?.name ?? targetLanguage;
+          const versionName = `${modelDisplayName} - ${targetLangName}`;
 
-        const modelDisplayName = getModelDisplayName(provider, model);
-        log('error', 'translation',
-          `Model failed: ${modelDisplayName}`,
-          error.message,
-          { filePath: job.file.path, provider }
-        );
-        toast.error(`${modelDisplayName} failed: ${error.message}`);
-      },
+          if (!isRunActive(job.id, runId)) {
+            log('info', 'translation', 'Late response dropped',
+              'Version creation skipped after run invalidation',
+              { filePath: job.file.path, provider, jobId: job.id, runId, modelJobId }
+            );
+            return;
+          }
 
-      signals
+          const version = createTranslationVersion(
+            versionName,
+            provider,
+            model,
+            sourceLanguage,
+            targetLanguage,
+            batchCount,
+            result.translatedContent,
+            result.usage,
+            result.truncated,
+          );
+          translationStore.addTranslationVersion(job.id, version);
+
+          if (!isRunActive(job.id, runId)) {
+            log('info', 'translation', 'Late response dropped',
+              'Version persistence skipped after run invalidation',
+              { filePath: job.file.path, provider, jobId: job.id, runId, modelJobId }
+            );
+            return;
+          }
+
+          const persisted = await persistTranslationVersion(job.file.path, version);
+          if (!persisted) {
+            log('warning', 'translation', 'Translation version not persisted',
+              'Version is available in memory only for this session',
+              { filePath: job.file.path, provider, jobId: job.id, runId, modelJobId }
+            );
+          }
+
+          if (!isRunActive(job.id, runId)) {
+            log('info', 'translation', 'Late response dropped',
+              'Model success side-effects skipped after run invalidation',
+              { filePath: job.file.path, provider, jobId: job.id, runId, modelJobId }
+            );
+            return;
+          }
+
+          log('success', 'translation',
+            `Model completed: ${modelDisplayName}`,
+            `${sourceLanguage} → ${targetLanguage} for ${job.file.name}`,
+            { filePath: job.file.path, provider, jobId: job.id, runId, modelJobId }
+          );
+          toast.success(`${modelDisplayName} completed: ${job.file.name}`);
+        },
+
+        // onModelError
+        onModelError: (modelJobId: string, error: Error) => {
+          if (!isRunActive(job.id, runId)) {
+            log('info', 'translation', 'Late response dropped',
+              'Model error ignored after run invalidation',
+              { filePath: job.file.path, jobId: job.id, runId, modelJobId }
+            );
+            return;
+          }
+
+          const modelJob = getModelJob(job.id, modelJobId);
+          if (!modelJob) return;
+
+          translationStore.updateModelJobIfActive(job.id, runId, modelJobId, {
+            status: 'error',
+            error: error.message,
+          });
+
+          if (!isRunActive(job.id, runId)) {
+            log('info', 'translation', 'Late response dropped',
+              'Model error side-effects skipped after run invalidation',
+              { filePath: job.file.path, jobId: job.id, runId, modelJobId }
+            );
+            return;
+          }
+
+          const modelDisplayName = getModelDisplayName(modelJob.provider, modelJob.model);
+          log('error', 'translation',
+            `Model failed: ${modelDisplayName}`,
+            error.message,
+            {
+              filePath: job.file.path,
+              provider: modelJob.provider,
+              jobId: job.id,
+              runId,
+              modelJobId,
+            }
+          );
+          toast.error(`${modelDisplayName} failed: ${error.message}`);
+        },
+      }
     );
+
+    if (!isRunActive(job.id, runId)) {
+      log('info', 'translation', 'Late response dropped',
+        'Multi-model finalization ignored after run invalidation',
+        { filePath: job.file.path, jobId: job.id, runId }
+      );
+      return;
+    }
 
     // After all models settled, derive final aggregate status
     const currentJob = translationStore.jobs.find(j => j.id === job.id);
@@ -581,11 +789,11 @@
 
       if (allSettled) {
         if (allCancelled) {
-          translationStore.updateJob(job.id, { status: 'cancelled', error: 'Cancelled by user' });
+          translationStore.updateJobIfActive(job.id, runId, { status: 'cancelled', error: 'Cancelled by user' });
         } else if (anyCompleted) {
-          translationStore.updateJob(job.id, { status: 'completed', progress: 100 });
+          translationStore.updateJobIfActive(job.id, runId, { status: 'completed', progress: 100 });
         } else {
-          translationStore.updateJob(job.id, { status: 'error', error: 'All models failed' });
+          translationStore.updateJobIfActive(job.id, runId, { status: 'error', error: 'All models failed' });
         }
       }
     }
@@ -646,9 +854,9 @@
   }
 
   async function handleTranslateAll() {
-    const pendingJobs = translationStore.jobs.filter(j => j.status === 'pending' || j.status === 'error');
+    const hasPendingJobs = translationStore.jobs.some(j => j.status === 'pending' || j.status === 'error');
 
-    if (pendingJobs.length === 0) {
+    if (!hasPendingJobs) {
       toast.warning('No files to translate');
       return;
     }
@@ -661,36 +869,42 @@
       totalBatches: 0
     });
 
-    let i = 0;
-    const activePromises = new Set<Promise<void>>();
+    const activePromises = new Map<string, Promise<void>>();
 
-    // We keep looping as long as there are pending jobs OR active translations
-    while (i < pendingJobs.length || activePromises.size > 0) {
-      // Check cancellation
+    // Keep running while we still have translatable jobs or active jobs.
+    while (true) {
       if ((translationStore.progress.status as string) === 'cancelled') {
         break;
       }
 
-      // Dynamic batch size - read from settings every iteration
-      const maxParallel = settingsStore.settings.translationSettings.maxParallelFiles;
+      const maxParallel = Math.max(1, settingsStore.settings.translationSettings.maxParallelFiles);
+      const queuedJobs = translationStore.jobs.filter(
+        j => (j.status === 'pending' || j.status === 'error') && !activePromises.has(j.id)
+      );
 
-      // Fill the pool with new jobs up to maxParallel
-      while (activePromises.size < maxParallel && i < pendingJobs.length) {
+      while (activePromises.size < maxParallel && queuedJobs.length > 0) {
         if ((translationStore.progress.status as string) === 'cancelled') break;
 
-        const job = pendingJobs[i++];
+        const job = queuedJobs.shift();
+        if (!job) break;
+
         const promise = translateJob(job).finally(() => {
-          activePromises.delete(promise);
+          activePromises.delete(job.id);
         });
-
-        activePromises.add(promise);
+        activePromises.set(job.id, promise);
       }
 
-      // If we have active jobs, wait for at least one to finish before checking again
-      // This creates the "sliding window" effect
-      if (activePromises.size > 0) {
-        await Promise.race(activePromises);
+      if (activePromises.size === 0) {
+        const remaining = translationStore.jobs.some(j => j.status === 'pending' || j.status === 'error');
+        if (!remaining) {
+          break;
+        }
+        // Yield to allow state updates before reevaluating the queue.
+        await Promise.resolve();
+        continue;
       }
+
+      await Promise.race([...activePromises.values()]);
     }
 
     // Only set completed if not cancelled
@@ -701,15 +915,61 @@
       });
     }
   }
-
-
   function handleCancelAll() {
+    const cancellableJobs = translationStore.jobs.filter(
+      j => j.status === 'translating' || j.status === 'pending'
+    );
+
+    for (const job of cancellableJobs) {
+      log('info', 'translation', 'Cancel requested',
+        'Cancel all requested by user',
+        {
+          filePath: job.file.path,
+          provider: translationStore.config.provider,
+          jobId: job.id,
+          runId: job.activeRunId ?? 'none',
+        }
+      );
+    }
+
     translationStore.cancelAllJobs();
+
+    log('info', 'translation', 'Abort propagated',
+      `Cancelled ${cancellableJobs.length} job(s)`,
+      { provider: translationStore.config.provider }
+    );
+
     toast.info('All translations cancelled');
   }
 
   function handleCancelJob(jobId: string) {
+    const job = translationStore.jobs.find(j => j.id === jobId);
+    if (job) {
+      log('info', 'translation', 'Cancel requested',
+        'Single-job cancel requested by user',
+        {
+          filePath: job.file.path,
+          provider: translationStore.config.provider,
+          jobId,
+          runId: job.activeRunId ?? 'none',
+        }
+      );
+    }
+
     translationStore.cancelJob(jobId);
+
+    if (job) {
+      log('info', 'translation', 'Abort propagated',
+        'Single-job cancellation propagated to controllers',
+        {
+          filePath: job.file.path,
+          provider: translationStore.config.provider,
+          jobId,
+          runId: job.activeRunId ?? 'none',
+        }
+      );
+    }
+
     toast.info('Translation cancelled');
   }
 
@@ -894,7 +1154,7 @@
 
 <div class="flex flex-col h-full">
   <!-- Top Section: Config and File List -->
-  <div class="flex border-b min-h-0 flex-1">
+  <div class="flex min-h-0 flex-1">
     <!-- Left Panel: File Import & Config -->
     <div class="flex-1 max-w-108 border-r flex flex-col min-h-0 p-4 gap-4 overflow-auto">
       <!-- File Section -->

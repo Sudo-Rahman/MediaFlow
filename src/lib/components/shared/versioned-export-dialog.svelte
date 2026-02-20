@@ -6,6 +6,7 @@
 
   import type {
     RunBatchExportResult,
+    VersionedExportFailure,
     VersionedExportFormatOption,
     VersionedExportGroup,
     VersionedExportMode,
@@ -52,6 +53,7 @@
   let outputDir = $state('');
   let selectedFormat = $state('');
   let isExporting = $state(false);
+  let exportFailures = $state<VersionedExportFailure[]>([]);
 
   function getTimestamp(iso: string): number {
     const timestamp = Date.parse(iso);
@@ -71,6 +73,11 @@
     return parsed.toLocaleString('en-US');
   }
 
+  function formatFailureVersionLabel(failure: VersionedExportFailure): string {
+    const versionLabel = failure.versionName.trim();
+    return versionLabel.length > 0 ? versionLabel : failure.versionId;
+  }
+
   const sortedGroups = $derived.by(() => {
     return groups
       .map((group) => ({
@@ -87,6 +94,7 @@
     mode = 'latest_per_file';
     outputDir = '';
     selectedFormat = defaultFormat;
+    exportFailures = [];
     selectedFileIds = new Set(sortedGroups.map((group) => group.fileId));
     selectedVersionKeys = new Set(
       sortedGroups.flatMap((group) => group.versions.map((version) => version.key)),
@@ -162,6 +170,8 @@
   const selectedFileCount = $derived(selectedGroups.length);
   const selectedVersionCount = $derived(exportTargets.length);
   const canExport = $derived(outputDir.trim().length > 0 && selectedVersionCount > 0 && !isExporting);
+  const displayedFailures = $derived(exportFailures.slice(0, 5));
+  const hiddenFailureCount = $derived(Math.max(0, exportFailures.length - displayedFailures.length));
 
   function setMode(nextMode: VersionedExportMode): void {
     mode = nextMode;
@@ -221,6 +231,7 @@
     }
 
     isExporting = true;
+    exportFailures = [];
 
     try {
       const result = await onExport({
@@ -229,6 +240,7 @@
         outputDir: outputDir.trim(),
         targets: exportTargets,
       });
+      exportFailures = result.failures;
 
       if (result.successCount > 0) {
         toast.success(`${result.successCount} file(s) exported`);
@@ -242,6 +254,7 @@
         onOpenChange(false);
       }
     } catch (error) {
+      exportFailures = [];
       const message = error instanceof Error ? error.message : 'Export failed';
       toast.error(message);
     } finally {
@@ -395,6 +408,24 @@
         <div class="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
           {selectedFileCount} file(s) selected · {selectedVersionCount} version(s) to export
         </div>
+
+        {#if exportFailures.length > 0}
+          <div class="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+            <p class="text-sm font-medium text-destructive">Export issues</p>
+            <ul class="space-y-1 text-xs text-destructive/90">
+              {#each displayedFailures as failure}
+                <li class="break-words">
+                  {failure.fileName}/{formatFailureVersionLabel(failure)}: {failure.message}
+                </li>
+              {/each}
+            </ul>
+            {#if hiddenFailureCount > 0}
+              <p class="text-xs text-destructive/80">
+                +{hiddenFailureCount} more issue(s)
+              </p>
+            {/if}
+          </div>
+        {/if}
       </div>
     {/if}
 

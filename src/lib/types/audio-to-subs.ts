@@ -6,8 +6,7 @@
 import type { 
   DeepgramConfig, 
   DeepgramResult, 
-  TranscriptionVersion,
-  TranscriptionOutputFormat 
+  TranscriptionVersion 
 } from './deepgram';
 
 // Re-export Deepgram types for convenience
@@ -88,7 +87,6 @@ export type AudioFileStatus =
 
 export interface TranscriptionConfig {
   deepgramConfig: DeepgramConfig;
-  outputFormat: TranscriptionOutputFormat;
   maxConcurrentTranscriptions: number;
 }
 
@@ -103,7 +101,6 @@ export const DEFAULT_TRANSCRIPTION_CONFIG: TranscriptionConfig = {
     uttSplit: 0.8,
     diarize: false,
   },
-  outputFormat: 'srt',
   maxConcurrentTranscriptions: 5,
 };
 

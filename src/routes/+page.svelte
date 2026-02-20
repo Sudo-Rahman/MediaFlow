@@ -21,6 +21,7 @@
     runBatchExport,
     stripFileExtension,
     type RunBatchExportResult,
+    type VersionedExportFormatOption,
     type VersionedExportGroup,
     type VersionedExportRequest,
   } from '$lib/services/versioned-export';
@@ -44,12 +45,15 @@
   let audioExportDialogOpen = $state(false);
   let ocrExportDialogOpen = $state(false);
 
-  const AUDIO_EXPORT_FORMAT_OPTIONS = [
+  const AUDIO_EXPORT_FORMAT_OPTIONS: VersionedExportFormatOption[] = [
     { value: 'srt', label: 'SRT - SubRip' },
     { value: 'vtt', label: 'VTT - WebVTT' },
     { value: 'json', label: 'JSON - Structured data' },
-  ] as const;
-  const LEGACY_OCR_RESULT_VERSION_ID = '__current_result__';
+  ];
+  const OCR_EXPORT_FORMAT_OPTIONS: VersionedExportFormatOption[] = OCR_OUTPUT_FORMATS.map((format) => ({
+    value: format.value,
+    label: format.label,
+  }));
 
   // References to views for drag & drop forwarding
   let extractViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
@@ -347,15 +351,6 @@
           createdAt: version.createdAt,
         }));
 
-        if (versionEntries.length === 0 && file.subtitles.length > 0) {
-          versionEntries.push({
-            key: `${file.id}:${LEGACY_OCR_RESULT_VERSION_ID}`,
-            versionId: LEGACY_OCR_RESULT_VERSION_ID,
-            versionName: 'Current result',
-            createdAt: '',
-          });
-        }
-
         if (versionEntries.length === 0) {
           return null;
         }
@@ -468,14 +463,12 @@
         throw new Error(`Video file not found: ${target.fileId}`);
       }
 
-      const sourceSubtitles = target.versionId === LEGACY_OCR_RESULT_VERSION_ID
-        ? file.subtitles
-        : file.ocrVersions.find((version) => version.id === target.versionId)?.finalSubtitles;
-      if (!sourceSubtitles) {
+      const version = file.ocrVersions.find((entry) => entry.id === target.versionId);
+      if (!version) {
         throw new Error(`OCR version not found: ${target.versionId}`);
       }
 
-      const normalizedSubtitles = normalizeOcrSubtitles(sourceSubtitles);
+      const normalizedSubtitles = normalizeOcrSubtitles(version.finalSubtitles);
       if (normalizedSubtitles.length === 0) {
         throw new Error('No valid subtitles to export');
       }
@@ -766,7 +759,7 @@
   title="Export Transcriptions"
   description="Export transcription versions by file."
   groups={audioExportGroups}
-  formatOptions={[...AUDIO_EXPORT_FORMAT_OPTIONS]}
+  formatOptions={AUDIO_EXPORT_FORMAT_OPTIONS}
   defaultFormat="srt"
   onExport={handleExportTranscriptions}
 />
@@ -779,7 +772,7 @@
   title="Export OCR Subtitles"
   description="Export OCR subtitle versions by file."
   groups={ocrExportGroups}
-  formatOptions={OCR_OUTPUT_FORMATS.map((format) => ({ value: format.value, label: format.label }))}
+  formatOptions={OCR_EXPORT_FORMAT_OPTIONS}
   defaultFormat="srt"
   onExport={handleExportOcr}
 />

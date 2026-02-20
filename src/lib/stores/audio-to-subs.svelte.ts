@@ -24,11 +24,8 @@ let selectedFileId = $state<string | null>(null);
 // Transcription configuration
 let config = $state<TranscriptionConfig>({
   deepgramConfig: { ...DEFAULT_DEEPGRAM_CONFIG },
-  outputFormat: 'srt',
   maxConcurrentTranscriptions: 5,
 });
-
-let outputDir = $state<string>('');
 
 // Transcription state
 let isTranscribing = $state(false);
@@ -126,10 +123,6 @@ export const audioToSubsStore = {
   get deepgramConfig(): DeepgramConfig {
     return config.deepgramConfig;
   },
-  
-  get outputDir() { 
-    return outputDir; 
-  },
 
   // -------------------------------------------------------------------------
   // Getters - Transcription State
@@ -144,15 +137,6 @@ export const audioToSubsStore = {
 
   get transcriptionScopeFileIds() {
     return transcriptionScopeFileIds;
-  },
-  
-  get canTranscribe(): boolean {
-    // Can transcribe if we have ready files, not currently transcribing,
-    // output dir is set, and no files are still transcoding
-    return audioFiles.some(f => f.status === 'ready' || f.status === 'completed') && 
-           !isTranscribing && 
-           outputDir.length > 0 &&
-           !audioFiles.some(f => f.status === 'transcoding');
   },
   
   get isCancelling() {
@@ -359,14 +343,6 @@ export const audioToSubsStore = {
       ...config, 
       deepgramConfig: { ...config.deepgramConfig, language } 
     };
-  },
-
-  setOutputFormat(format: TranscriptionConfig['outputFormat']) {
-    config = { ...config, outputFormat: format };
-  },
-
-  setOutputDir(dir: string) {
-    outputDir = dir;
   },
 
   setUttSplit(value: number) {
@@ -582,9 +558,7 @@ export const audioToSubsStore = {
     this.clear();
     config = {
       deepgramConfig: { ...DEFAULT_DEEPGRAM_CONFIG },
-      outputFormat: 'srt',
       maxConcurrentTranscriptions: 5,
     };
-    outputDir = '';
   }
 };

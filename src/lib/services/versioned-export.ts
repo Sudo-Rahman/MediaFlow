@@ -37,6 +37,15 @@ export interface VersionedExportRequest {
 export interface RunBatchExportResult {
   successCount: number;
   failCount: number;
+  failures: VersionedExportFailure[];
+}
+
+export interface VersionedExportFailure {
+  fileId: string;
+  fileName: string;
+  versionId: string;
+  versionName: string;
+  message: string;
 }
 
 export function sanitizeExportNameSegment(name: string, fallback = 'version'): string {
@@ -85,21 +94,41 @@ export function buildUniqueExportFileName(
   return candidate;
 }
 
-export async function runBatchExport<T>(
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+
+  if (typeof error === 'string' && error.trim().length > 0) {
+    return error;
+  }
+
+  return 'Unknown export error';
+}
+
+export async function runBatchExport<T extends VersionedExportTarget>(
   targets: readonly T[],
   exportTarget: (target: T) => Promise<void>,
 ): Promise<RunBatchExportResult> {
   let successCount = 0;
   let failCount = 0;
+  const failures: VersionedExportFailure[] = [];
 
   for (const target of targets) {
     try {
       await exportTarget(target);
       successCount += 1;
-    } catch {
+    } catch (error) {
       failCount += 1;
+      failures.push({
+        fileId: target.fileId,
+        fileName: target.fileName,
+        versionId: target.versionId,
+        versionName: target.versionName,
+        message: getErrorMessage(error),
+      });
     }
   }
 
-  return { successCount, failCount };
+  return { successCount, failCount, failures };
 }

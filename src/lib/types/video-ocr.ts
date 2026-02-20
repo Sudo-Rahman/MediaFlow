@@ -137,7 +137,6 @@ export const OCR_PHASE_LABELS: Record<OcrPhase, string> = {
 export interface OcrConfig {
   frameRate: number;              // Frames per second to extract (default: 10)
   language: OcrLanguage;          // OCR language
-  outputFormat: OcrOutputFormat;  // Export format
   useGpu: boolean;                // Use GPU acceleration
   confidenceThreshold: number;    // Min confidence to keep (0-1)
   threadCount: number;            // Number of threads for OCR processing
@@ -167,7 +166,6 @@ export const OCR_OUTPUT_FORMATS: { value: OcrOutputFormat; label: string }[] = [
 export const DEFAULT_OCR_CONFIG: OcrConfig = {
   frameRate: 10,
   language: 'multi',
-  outputFormat: 'srt',
   useGpu: true,
   confidenceThreshold: 0.5,
   threadCount: Math.max(1, Math.floor((navigator.hardwareConcurrency || 4) * 2 / 3)),

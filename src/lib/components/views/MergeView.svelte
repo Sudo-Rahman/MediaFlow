@@ -1044,7 +1044,6 @@
         enabledTracksCount={mergeStore.totalTracksToMerge}
         videosCount={mergeStore.videosReadyForMerge.length}
         status={mergeStore.status}
-        progress={mergeStore.progress}
         onSelectOutputDir={handleSelectOutputDir}
         onOutputNameChange={(name) => mergeStore.setOutputNamePattern(name)}
         onMerge={handleMerge}

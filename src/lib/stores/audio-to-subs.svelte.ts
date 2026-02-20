@@ -40,6 +40,10 @@ let isCancelling = $state(false);
 let isTranscoding = $state(false);
 let transcodingFileIds = $state<Set<string>>(new Set());
 
+// Scoped run targets (for precise global progress aggregation)
+let transcriptionScopeFileIds = $state<Set<string>>(new Set());
+let transcodingScopeFileIds = $state<Set<string>>(new Set());
+
 // Waveform persistence - stores WaveSurfer instances by fileId
 interface WaveformInstance {
   wavesurfer: WaveSurfer;
@@ -137,6 +141,10 @@ export const audioToSubsStore = {
   get currentTranscribingId() {
     return currentTranscribingId;
   },
+
+  get transcriptionScopeFileIds() {
+    return transcriptionScopeFileIds;
+  },
   
   get canTranscribe(): boolean {
     // Can transcribe if we have ready files, not currently transcribing,
@@ -168,6 +176,10 @@ export const audioToSubsStore = {
 
   get transcodingFileIds() {
     return transcodingFileIds;
+  },
+
+  get transcodingScopeFileIds() {
+    return transcodingScopeFileIds;
   },
 
   get hasFilesTranscoding(): boolean {
@@ -208,6 +220,18 @@ export const audioToSubsStore = {
     if (transcodingFileIds.has(id)) {
       transcodingFileIds = new Set([...transcodingFileIds].filter((fileId) => fileId !== id));
       isTranscoding = transcodingFileIds.size > 0;
+    }
+
+    if (transcriptionScopeFileIds.has(id)) {
+      transcriptionScopeFileIds = new Set(
+        [...transcriptionScopeFileIds].filter((fileId) => fileId !== id)
+      );
+    }
+
+    if (transcodingScopeFileIds.has(id)) {
+      transcodingScopeFileIds = new Set(
+        [...transcodingScopeFileIds].filter((fileId) => fileId !== id)
+      );
     }
     
     audioFiles = audioFiles.filter(f => f.id !== id);
@@ -391,6 +415,14 @@ export const audioToSubsStore = {
   // -------------------------------------------------------------------------
   // Actions - Transcription State
   // -------------------------------------------------------------------------
+  setTranscriptionScope(fileIds: string[]) {
+    transcriptionScopeFileIds = new Set(fileIds);
+  },
+
+  clearTranscriptionScope() {
+    transcriptionScopeFileIds = new Set();
+  },
+
   startTranscription(fileId?: string) {
     isTranscribing = true;
     currentTranscribingId = fileId ?? null;
@@ -401,6 +433,7 @@ export const audioToSubsStore = {
     currentTranscribingId = null;
     cancelledFileIds = new Set();
     isCancelling = false;
+    transcriptionScopeFileIds = new Set();
   },
   
   cancelFile(id: string) {
@@ -452,6 +485,14 @@ export const audioToSubsStore = {
   // -------------------------------------------------------------------------
   // Actions - Transcoding State
   // -------------------------------------------------------------------------
+  setTranscodingScope(fileIds: string[]) {
+    transcodingScopeFileIds = new Set(fileIds);
+  },
+
+  clearTranscodingScope() {
+    transcodingScopeFileIds = new Set();
+  },
+
   startTranscoding(fileId: string) {
     transcodingFileIds = new Set([...transcodingFileIds, fileId]);
     isTranscoding = transcodingFileIds.size > 0;
@@ -533,6 +574,8 @@ export const audioToSubsStore = {
     isCancelling = false;
     isTranscoding = false;
     transcodingFileIds = new Set();
+    transcriptionScopeFileIds = new Set();
+    transcodingScopeFileIds = new Set();
   },
 
   reset() {

@@ -77,6 +77,7 @@ export async function saveOcrData(
   return saveRsextData(videoPath, {
     version: 1,
     audioToSubs: existing?.audioToSubs,
+    translation: existing?.translation,
     videoOcr: {
       ...data,
       version: 1,

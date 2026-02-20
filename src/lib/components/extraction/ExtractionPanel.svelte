@@ -1,7 +1,6 @@
 <script lang="ts">
   import { Folder, Play, FolderOpen, Loader2, CheckCircle } from '@lucide/svelte';
   import { Button } from '$lib/components/ui/button';
-  import { Progress } from '$lib/components/ui/progress';
   import { Badge } from '$lib/components/ui/badge';
   import * as Card from '$lib/components/ui/card';
   import * as Alert from '$lib/components/ui/alert';
@@ -32,13 +31,6 @@
   const isExtracting = $derived(progress.status === 'extracting');
   const isCompleted = $derived(progress.status === 'completed');
   const canExtract = $derived(selectedCount > 0 && outputDir && !isExtracting);
-
-  const progressPercent = $derived(() => {
-    if (progress.totalTracks === 0) return 0;
-    const fileProgress = (progress.currentFileIndex - 1) / progress.totalFiles;
-    const trackProgress = progress.currentTrack / progress.totalTracks / progress.totalFiles;
-    return Math.round((fileProgress + trackProgress) * 100);
-  });
 </script>
 
 <Card.Root class={className}>
@@ -84,12 +76,8 @@
             </Alert.Description>
           </Alert.Root>
         {:else}
-          <div class="space-y-2">
-            <div class="flex justify-between text-sm">
-              <span class="text-muted-foreground">Extracting...</span>
-              <span class="font-medium">{progressPercent()}%</span>
-            </div>
-            <Progress value={progressPercent()} />
+          <div class="space-y-2 rounded-md border bg-muted/30 px-3 py-2">
+            <p class="text-sm font-medium">Extracting...</p>
             {#if progress.currentFile}
               <p class="text-xs text-muted-foreground truncate">
                 File {progress.currentFileIndex}/{progress.totalFiles}: {progress.currentFile}
@@ -131,4 +119,3 @@
     {/if}
   </Card.Footer>
 </Card.Root>
-

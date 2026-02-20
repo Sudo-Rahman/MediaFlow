@@ -25,7 +25,6 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as AlertDialog from '$lib/components/ui/alert-dialog';
   import { Label } from '$lib/components/ui/label';
-  import { Progress } from '$lib/components/ui/progress';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
   import { ToolImportButton } from '$lib/components/shared';
   import {
@@ -401,10 +400,6 @@
     (mode === 'rename' || outputDir)
   );
 
-  const progressPercent = $derived(
-    progress.total > 0 ? (progress.current / progress.total) * 100 : 0
-  );
-
   const overwriteTargetSamples = $derived(existingCopyTargets.slice(0, 5));
 </script>
 
@@ -545,22 +540,6 @@
       {/if}
     </div>
 
-    <!-- Progress bar -->
-    {#if isProcessing || progress.status === 'completed'}
-      <div class="p-3 border-t shrink-0 space-y-2">
-        <div class="flex items-center justify-between text-sm">
-          <span class="text-muted-foreground truncate">
-            {#if isProcessing}
-              {progress.currentFile}
-            {:else}
-              Completed
-            {/if}
-          </span>
-          <span class="font-medium shrink-0 ml-2">{progress.current} / {progress.total}</span>
-        </div>
-        <Progress value={progressPercent} class="h-1.5" />
-      </div>
-    {/if}
   </div>
 
   <!-- Right panel: Rules & Actions -->

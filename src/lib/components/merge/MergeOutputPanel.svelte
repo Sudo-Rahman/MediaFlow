@@ -3,7 +3,6 @@
   import type { MergeOutputConfig } from '$lib/types';
   import { Button } from '$lib/components/ui/button';
   import { Label } from '$lib/components/ui/label';
-  import { Progress } from '$lib/components/ui/progress';
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import * as Card from '$lib/components/ui/card';
@@ -14,7 +13,6 @@
     enabledTracksCount: number;
     videosCount?: number;
     status: 'idle' | 'processing' | 'completed' | 'error';
-    progress: number;
     onSelectOutputDir?: () => void;
     onOutputNameChange?: (name: string) => void;
     onMerge?: () => void;
@@ -30,7 +28,6 @@
     enabledTracksCount,
     videosCount = 0,
     status,
-    progress,
     onSelectOutputDir,
     onOutputNameChange,
     onMerge,
@@ -114,12 +111,8 @@
             </Alert.Description>
           </Alert.Root>
         {:else}
-          <div class="space-y-2">
-            <div class="flex justify-between text-sm">
-              <span class="text-muted-foreground">Merging...</span>
-              <span class="font-medium">{Math.round(progress)}%</span>
-            </div>
-            <Progress value={progress} />
+          <div class="space-y-2 rounded-md border bg-muted/30 px-3 py-2">
+            <p class="text-sm font-medium">Merging...</p>
             {#if currentFileName}
               <p class="text-xs text-muted-foreground truncate" title={currentFileName}>
                 Current file: {currentFileName}

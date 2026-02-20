@@ -40,6 +40,9 @@ let cancelledFileIds = $state<Set<string>>(new Set());
 // Operation tracking for cancellation
 let currentOperationId = $state<string | null>(null);
 
+// Scoped run targets (for precise global progress aggregation)
+let processingScopeFileIds = $state<Set<string>>(new Set());
+
 // Logs
 let logs = $state<OcrLogEntry[]>([]);
 
@@ -153,6 +156,10 @@ export const videoOcrStore = {
     return currentOperationId;
   },
 
+  get processingScopeFileIds() {
+    return processingScopeFileIds;
+  },
+
   get isCancelling() {
     return isCancelling;
   },
@@ -227,6 +234,11 @@ export const videoOcrStore = {
 
   removeFile(id: string) {
     videoFiles = videoFiles.filter(f => f.id !== id);
+    if (processingScopeFileIds.has(id)) {
+      processingScopeFileIds = new Set(
+        [...processingScopeFileIds].filter((fileId) => fileId !== id)
+      );
+    }
     if (selectedFileId === id) {
       selectedFileId = videoFiles[0]?.id ?? null;
     }
@@ -462,6 +474,14 @@ export const videoOcrStore = {
   // -------------------------------------------------------------------------
   // Actions - Processing State
   // -------------------------------------------------------------------------
+  setProcessingScope(fileIds: string[]) {
+    processingScopeFileIds = new Set(fileIds);
+  },
+
+  clearProcessingScope() {
+    processingScopeFileIds = new Set();
+  },
+
   startProcessing(fileId: string, operationId?: string) {
     isProcessing = true;
     currentProcessingId = fileId;
@@ -475,6 +495,7 @@ export const videoOcrStore = {
     currentOperationId = null;
     cancelledFileIds = new Set();
     isCancelling = false;
+    processingScopeFileIds = new Set();
   },
 
   cancelProcessing(fileId: string) {
@@ -591,6 +612,7 @@ export const videoOcrStore = {
     currentOperationId = null;
     cancelledFileIds = new Set();
     isCancelling = false;
+    processingScopeFileIds = new Set();
     logs = [];
   },
 

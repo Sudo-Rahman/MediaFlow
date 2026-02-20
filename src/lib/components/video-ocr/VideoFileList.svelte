@@ -139,6 +139,7 @@
                   e.stopPropagation();
                   onRetry(file);
                 }}
+                disabled={disabled}
                 title="Retry"
               >
                 <RotateCw class="size-3.5" />

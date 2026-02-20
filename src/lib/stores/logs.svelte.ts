@@ -11,6 +11,10 @@ export interface LogContext {
   command?: string;
   trackIndex?: number;
   provider?: string;
+  runId?: string;
+  jobId?: string;
+  modelJobId?: string;
+  batchIndex?: string;
   apiError?: string;
   outputPath?: string;
 }

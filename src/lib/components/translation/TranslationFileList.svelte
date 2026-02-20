@@ -1,100 +1,87 @@
 <script lang="ts">
-  import { AudioLines, Trash2, CheckCircle, Loader2, AlertCircle, Clock, FileAudio, FileText, RotateCw, X } from '@lucide/svelte';
-  import type { AudioFile } from '$lib/types';
-  import { formatDuration, formatFileSize, formatChannels } from '$lib/utils/format';
+  import { FileText, Trash2, CheckCircle, Loader2, AlertCircle, Languages, RotateCw, X, Square } from '@lucide/svelte';
+  import type { TranslationJob } from '$lib/types';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import { Progress } from '$lib/components/ui/progress';
   import { FileItemCard } from '$lib/components/shared';
 
-  interface AudioFileListProps {
-    files: AudioFile[];
+  interface TranslationFileListProps {
+    jobs: TranslationJob[];
     selectedId: string | null;
     onSelect: (id: string) => void;
     onRemove: (id: string) => void;
     onCancel?: (id: string) => void;
-    onViewResult?: (file: AudioFile) => void;
-    onRetry?: (file: AudioFile) => void;
+    onViewResult?: (job: TranslationJob) => void;
+    onRetry?: (job: TranslationJob) => void;
     disabled?: boolean;
   }
 
-  let { 
-    files, 
-    selectedId, 
-    onSelect, 
+  let {
+    jobs,
+    selectedId,
+    onSelect,
     onRemove,
     onCancel,
     onViewResult,
     onRetry,
-    disabled = false 
-  }: AudioFileListProps = $props();
+    disabled = false,
+  }: TranslationFileListProps = $props();
 
+  function isProcessing(status: TranslationJob['status']): boolean {
+    return status === 'translating';
+  }
 </script>
 
 <div class="space-y-2">
-  {#each files as file (file.id)}
-    {@const isSelected = file.id === selectedId}
-    {@const isTranscribing = file.status === 'transcribing'}
-    {@const isTranscoding = file.status === 'transcoding'}
-    {@const versionCount = file.transcriptionVersions?.length ?? 0}
-    <FileItemCard selected={isSelected} onclick={() => onSelect(file.id)}>
+  {#each jobs as job (job.id)}
+    {@const isSelected = job.id === selectedId}
+    {@const processing = isProcessing(job.status)}
+    {@const versionCount = job.translationVersions?.length ?? 0}
+    {@const hasModelJobs = !!job.modelJobs && job.modelJobs.length > 0}
+    {@const completedModels = hasModelJobs ? job.modelJobs!.filter(mj => mj.status === 'completed').length : 0}
+    {@const totalModels = hasModelJobs ? job.modelJobs!.length : 0}
+    <FileItemCard selected={isSelected} onclick={() => onSelect(job.id)}>
       {#snippet icon()}
-        {#if file.status === 'completed'}
+        {#if job.status === 'completed'}
           <CheckCircle class="size-5 text-green-500" />
-        {:else if file.status === 'transcribing'}
+        {:else if processing}
           <Loader2 class="size-5 animate-spin text-primary" />
-        {:else if file.status === 'transcoding'}
-          <Loader2 class="size-5 animate-spin text-orange-500" />
-        {:else if file.status === 'error'}
+        {:else if job.status === 'error'}
           <AlertCircle class="size-5 text-destructive" />
         {:else}
-          <FileAudio class="size-5 text-muted-foreground" />
+          <FileText class="size-5 text-muted-foreground" />
         {/if}
       {/snippet}
 
       {#snippet content()}
-        <p class="font-medium text-sm truncate">{file.name}</p>
+        <p class="font-medium text-sm truncate">{job.file.name}</p>
 
         <div class="flex items-center gap-2 text-xs text-muted-foreground mt-1 flex-wrap">
-          {#if file.duration}
-            <span class="flex items-center gap-1">
-              <Clock class="size-3" />
-              {formatDuration(file.duration)}
-            </span>
-          {/if}
-
-          {#if file.format}
-            <Badge variant="outline" class="text-[10px] px-1.5 py-0">
-              {file.format.toUpperCase()}
-            </Badge>
-          {/if}
-
-          {#if file.channels}
-            <span>{formatChannels(file.channels)}</span>
-          {/if}
-
-          {#if file.size && file.size > 0}
-            <span>{formatFileSize(file.size)}</span>
+          <Badge variant="outline" class="text-[10px] px-1.5 py-0 uppercase">
+            {job.file.format}
+          </Badge>
+          {#if processing && hasModelJobs}
+            <span>{completedModels}/{totalModels} models complete</span>
+          {:else if processing}
+            <span>{job.progress}%</span>
+            {#if job.totalBatches > 1}
+              <span class="text-muted-foreground">
+                (Batch {job.currentBatch}/{job.totalBatches})
+              </span>
+            {/if}
           {/if}
         </div>
 
-        {#if file.status === 'transcribing' && file.progress !== undefined}
+        {#if processing}
           <div class="mt-2">
-            <Progress value={file.progress} class="h-1.5" />
-            <p class="text-xs text-muted-foreground mt-1">Transcribing {file.progress}%</p>
+            <Progress value={job.progress} class="h-1.5" />
           </div>
         {/if}
 
-        {#if file.status === 'transcoding' && file.transcodingProgress !== undefined}
-          <div class="mt-2">
-            <Progress value={file.transcodingProgress} class="h-1.5 [&>div]:bg-orange-500" />
-            <p class="text-xs text-orange-600 mt-1">Converting to OPUS {file.transcodingProgress}%</p>
-          </div>
-        {/if}
-
-        {#if file.status === 'error' && file.error}
-          <p class="text-xs text-destructive mt-1 truncate" title={file.error}>
-            {file.error}
+        {#if job.status === 'error' && job.error}
+          <p class="text-xs text-destructive mt-1 truncate" title={job.error}>
+            {job.error}
           </p>
         {/if}
       {/snippet}
@@ -109,7 +96,7 @@
                 class="size-7 text-primary hover:text-primary"
                 onclick={(e: MouseEvent) => {
                   e.stopPropagation();
-                  onViewResult(file);
+                  onViewResult(job);
                 }}
                 title="View results"
               >
@@ -117,14 +104,14 @@
               </Button>
             {/if}
 
-            {#if (file.status === 'error' || file.status === 'completed') && onRetry}
+            {#if (job.status === 'error' || job.status === 'completed' || job.status === 'cancelled') && onRetry && !processing}
               <Button
                 variant="ghost"
                 size="icon"
                 class="size-7 text-orange-500 hover:text-orange-600 hover:bg-orange-500/10"
                 onclick={(e: MouseEvent) => {
                   e.stopPropagation();
-                  onRetry(file);
+                  onRetry(job);
                 }}
                 disabled={disabled}
                 title="Retry"
@@ -133,14 +120,14 @@
               </Button>
             {/if}
 
-            {#if isTranscribing && onCancel}
+            {#if processing && onCancel}
               <Button
                 variant="ghost"
                 size="icon"
                 class="size-7 text-destructive hover:text-destructive hover:bg-destructive/10"
                 onclick={(e: MouseEvent) => {
                   e.stopPropagation();
-                  onCancel(file.id);
+                  onCancel(job.id);
                 }}
                 title="Cancel"
               >
@@ -153,7 +140,7 @@
                 class="size-7"
                 onclick={(e: MouseEvent) => {
                   e.stopPropagation();
-                  onRemove(file.id);
+                  onRemove(job.id);
                 }}
                 disabled={disabled}
                 title="Remove"
@@ -172,11 +159,11 @@
       {/snippet}
     </FileItemCard>
   {/each}
-  
-  {#if files.length === 0}
+
+  {#if jobs.length === 0}
     <div class="text-center py-8 text-muted-foreground">
-      <AudioLines class="size-8 mx-auto mb-2 opacity-50" />
-      <p class="text-sm">No audio files</p>
+      <Languages class="size-8 mx-auto mb-2 opacity-50" />
+      <p class="text-sm">No subtitle files</p>
     </div>
   {/if}
 </div>

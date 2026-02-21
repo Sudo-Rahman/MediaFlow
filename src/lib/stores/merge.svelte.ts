@@ -5,6 +5,7 @@ import type {
   MergeTrackConfig,
   MergeOutputConfig,
   BatchMergeJob,
+  MergeRuntimeProgress,
   AttachedTrack,
   TrackGroup,
   TrackPreset,
@@ -26,6 +27,15 @@ let outputConfig = $state<MergeOutputConfig>({
 let batchJobs = $state<BatchMergeJob[]>([]);
 let status = $state<'idle' | 'processing' | 'completed' | 'error'>('idle');
 let progress = $state(0);
+let runtimeProgress = $state<MergeRuntimeProgress>({
+  totalFiles: 0,
+  completedFiles: 0,
+  currentFileId: null,
+  currentFilePath: null,
+  currentFileName: '',
+  currentFileProgress: 0,
+  currentSpeedBytesPerSec: undefined,
+});
 let error = $state<string | null>(null);
 
 // Track groups for bulk editing
@@ -72,6 +82,32 @@ function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${++idCounter}`;
 }
 
+function clampPercentage(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, value));
+}
+
+function computeOverallProgress(value: MergeRuntimeProgress): number {
+  if (value.totalFiles <= 0) {
+    return 0;
+  }
+
+  const doneUnits = value.completedFiles + (clampPercentage(value.currentFileProgress) / 100);
+  return clampPercentage((doneUnits / value.totalFiles) * 100);
+}
+
+function resetRuntimeProgressState(): MergeRuntimeProgress {
+  return {
+    totalFiles: 0,
+    completedFiles: 0,
+    currentFileId: null,
+    currentFilePath: null,
+    currentFileName: '',
+    currentFileProgress: 0,
+    currentSpeedBytesPerSec: undefined,
+  };
+}
+
 export const mergeStore = {
   // Getters
   get videoFiles() { return videoFiles; },
@@ -84,6 +120,7 @@ export const mergeStore = {
   get batchJobs() { return batchJobs; },
   get status() { return status; },
   get progress() { return progress; },
+  get runtimeProgress() { return runtimeProgress; },
   get error() { return error; },
   get isProcessing() { return status === 'processing'; },
 
@@ -355,6 +392,50 @@ export const mergeStore = {
     progress = value;
   },
 
+  startRuntimeProgress(totalFiles: number) {
+    runtimeProgress = {
+      ...resetRuntimeProgressState(),
+      totalFiles: Math.max(totalFiles, 0),
+    };
+    progress = 0;
+  },
+
+  setCurrentRuntimeFile(fileId: string, filePath: string, fileName: string) {
+    runtimeProgress = {
+      ...runtimeProgress,
+      currentFileId: fileId,
+      currentFilePath: filePath,
+      currentFileName: fileName,
+      currentFileProgress: 0,
+      currentSpeedBytesPerSec: undefined,
+    };
+    progress = computeOverallProgress(runtimeProgress);
+  },
+
+  updateRuntimeCurrentFile(currentFileProgress: number, currentSpeedBytesPerSec?: number) {
+    runtimeProgress = {
+      ...runtimeProgress,
+      currentFileProgress: clampPercentage(currentFileProgress),
+      currentSpeedBytesPerSec,
+    };
+    progress = computeOverallProgress(runtimeProgress);
+  },
+
+  markRuntimeFileCompleted() {
+    runtimeProgress = {
+      ...runtimeProgress,
+      completedFiles: Math.min(runtimeProgress.totalFiles, runtimeProgress.completedFiles + 1),
+      currentFileProgress: 0,
+      currentSpeedBytesPerSec: undefined,
+    };
+    progress = computeOverallProgress(runtimeProgress);
+  },
+
+  resetRuntimeProgress() {
+    runtimeProgress = resetRuntimeProgressState();
+    progress = 0;
+  },
+
   setError(err: string | null) {
     error = err;
     if (err) status = 'error';
@@ -383,6 +464,7 @@ export const mergeStore = {
     };
     batchJobs = [];
     status = 'idle';
+    runtimeProgress = resetRuntimeProgressState();
     progress = 0;
     error = null;
   },
@@ -394,6 +476,7 @@ export const mergeStore = {
     selectedVideoId = null;
     batchJobs = [];
     status = 'idle';
+    runtimeProgress = resetRuntimeProgressState();
     progress = 0;
     error = null;
     trackGroups = new Map();

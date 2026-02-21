@@ -1,8 +1,11 @@
+use crate::shared::ffmpeg_progress::FfmpegProgressTracker;
 use crate::shared::store::{resolve_ffmpeg_path, resolve_ffprobe_path};
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::validation::{validate_media_path, validate_output_path};
 use crate::tools::ffprobe::FFPROBE_TIMEOUT;
 use serde_json::Value;
+use std::process::Stdio;
+use tauri::Emitter;
 use tokio::process::Command;
 use tokio::time::{Duration, timeout};
 
@@ -178,8 +181,28 @@ fn build_merge_args(
         }
     }
 
+    args.push("-progress".to_string());
+    args.push("pipe:1".to_string());
     args.push(output_path.to_string());
     args
+}
+
+fn emit_merge_progress(
+    app: &tauri::AppHandle,
+    video_path: &str,
+    output_path: &str,
+    progress: i32,
+    speed_bytes_per_sec: Option<f64>,
+) {
+    let _ = app.emit(
+        "merge-progress",
+        serde_json::json!({
+            "videoPath": video_path,
+            "outputPath": output_path,
+            "progress": progress,
+            "speedBytesPerSec": speed_bytes_per_sec
+        }),
+    );
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -281,6 +304,7 @@ pub(crate) async fn merge_tracks(
     tracks: Vec<Value>,
     source_track_configs: Option<Vec<Value>>,
     output_path: String,
+    duration_us: Option<u64>,
 ) -> Result<(), String> {
     // Validate input paths
     validate_media_path(&video_path)?;
@@ -346,12 +370,14 @@ pub(crate) async fn merge_tracks(
     );
 
     let ffmpeg_path = resolve_ffmpeg_path(&app)?;
-    let child = Command::new(ffmpeg_path)
+    let mut child = Command::new(ffmpeg_path)
         .args(&args)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Failed to start ffmpeg: {}", e))?;
+
+    emit_merge_progress(&app, &video_path, &output_path, 0, None);
 
     if let Some(pid) = child.id() {
         if let Ok(mut guard) = super::state::MERGE_PROCESS_IDS.lock() {
@@ -361,6 +387,41 @@ pub(crate) async fn merge_tracks(
 
     if let Ok(mut guard) = super::state::MERGE_OUTPUT_PATHS.lock() {
         guard.insert(video_path.clone(), output_path.clone());
+    }
+
+    if let Some(stdout) = child.stdout.take() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let app_for_progress = app.clone();
+        let video_path_for_progress = video_path.clone();
+        let output_path_for_progress = output_path.clone();
+
+        tokio::spawn(async move {
+            let mut tracker = FfmpegProgressTracker::new(duration_us);
+            let mut last_progress = 0;
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Some(update) = tracker.handle_line(&line) {
+                    if let Some(progress) = update.progress {
+                        last_progress = progress;
+                    }
+
+                    emit_merge_progress(
+                        &app_for_progress,
+                        &video_path_for_progress,
+                        &output_path_for_progress,
+                        last_progress,
+                        update.speed_bytes_per_sec,
+                    );
+
+                    if update.is_end {
+                        last_progress = 100;
+                    }
+                }
+            }
+        });
     }
 
     let wait_future = async { child.wait_with_output().await };
@@ -401,6 +462,8 @@ pub(crate) async fn merge_tracks(
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("FFmpeg merge failed: {}", stderr));
     }
+
+    emit_merge_progress(&app, &video_path, &output_path, 100, None);
 
     Ok(())
 }
@@ -453,6 +516,7 @@ mod tests {
         assert!(args.windows(2).any(|w| w == ["-map", "0:0"]));
         assert!(args.windows(2).any(|w| w == ["-map", "0:1"]));
         assert!(args.windows(2).any(|w| w == ["-map", "1:0"]));
+        assert!(args.windows(2).any(|w| w == ["-progress", "pipe:1"]));
         assert_eq!(args.last().map(String::as_str), Some("/tmp/out.mkv"));
     }
 

@@ -28,7 +28,7 @@
   import { LogsSheet } from '$lib/components/logs';
   import { AlertCircle, ScrollText, Home, LayoutGrid, Table, Download, AudioLines, ScanText, Languages, FileOutput, GitMerge, PenLine } from '@lucide/svelte';
   import { OCR_OUTPUT_FORMATS } from '$lib/types';
-  import { OS, normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils';
+  import { OS, formatTransferRate, normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils';
   import { useSidebar } from "$lib/components/ui/sidebar";
   import { logStore } from '$lib/stores/logs.svelte';
   import { audioToSubsStore, videoOcrStore, translationStore, extractionStore, mergeStore, renameStore } from '$lib/stores';
@@ -86,19 +86,6 @@
     if (totalUnits <= 0) return 0;
     return clampPercentage((doneUnits / totalUnits) * 100);
   }
-
-  let mergeRunTotalFiles = $state(0);
-  let previousMergeProcessing = false;
-
-  $effect(() => {
-    const isProcessing = mergeStore.isProcessing;
-    if (isProcessing && !previousMergeProcessing) {
-      mergeRunTotalFiles = Math.max(mergeStore.videosReadyForMerge.length, 1);
-    } else if (!isProcessing && previousMergeProcessing) {
-      mergeRunTotalFiles = 0;
-    }
-    previousMergeProcessing = isProcessing;
-  });
 
   const audioMetric = $derived.by((): ToolProgressMetric => {
     const transcriptionScopeIds = Array.from(audioToSubsStore.transcriptionScopeFileIds);
@@ -249,7 +236,14 @@
   const extractionMetric = $derived.by((): ToolProgressMetric => {
     const progress = extractionStore.progress;
     const totalUnits = progress.totalTracks;
-    const doneUnits = Math.min(Math.max(progress.currentTrack, 0), totalUnits);
+    const doneUnits = Math.min(
+      totalUnits,
+      Math.max(0, progress.completedTracks) +
+        (clampPercentage(progress.currentTrackProgress) / 100),
+    );
+    const speedText = progress.currentSpeedBytesPerSec && progress.currentSpeedBytesPerSec > 0
+      ? ` · ${formatTransferRate(progress.currentSpeedBytesPerSec)}`
+      : '';
     return {
       toolId: 'extract',
       label: 'Extraction',
@@ -257,14 +251,21 @@
       totalUnits,
       percentage: ratioToPercentage(doneUnits, totalUnits),
       active: extractionStore.isExtracting && totalUnits > 0,
-      detailText: `${Math.round(doneUnits)}/${totalUnits} tracks`,
+      detailText: `${Math.min(Math.round(doneUnits), totalUnits)}/${totalUnits} tracks${speedText}`,
       icon: FileOutput,
     };
   });
 
   const mergeMetric = $derived.by((): ToolProgressMetric => {
-    const totalUnits = mergeRunTotalFiles;
-    const doneUnits = (clampPercentage(mergeStore.progress) / 100) * totalUnits;
+    const runtime = mergeStore.runtimeProgress;
+    const totalUnits = runtime.totalFiles;
+    const doneUnits = Math.min(
+      totalUnits,
+      Math.max(0, runtime.completedFiles) + (clampPercentage(runtime.currentFileProgress) / 100),
+    );
+    const speedText = runtime.currentSpeedBytesPerSec && runtime.currentSpeedBytesPerSec > 0
+      ? ` · ${formatTransferRate(runtime.currentSpeedBytesPerSec)}`
+      : '';
     return {
       toolId: 'merge',
       label: 'Merge',
@@ -272,7 +273,7 @@
       totalUnits,
       percentage: ratioToPercentage(doneUnits, totalUnits),
       active: mergeStore.isProcessing && totalUnits > 0,
-      detailText: `${Math.min(Math.round(doneUnits), totalUnits)}/${totalUnits} files`,
+      detailText: `${Math.min(Math.round(doneUnits), totalUnits)}/${totalUnits} files${speedText}`,
       icon: GitMerge,
     };
   });

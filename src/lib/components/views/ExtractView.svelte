@@ -6,7 +6,9 @@
 </script>
 
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
   import { FileVideo, Trash2 } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
@@ -15,7 +17,7 @@
   import { scanFiles } from '$lib/services/ffprobe';
   import { extractTrack, buildOutputPath } from '$lib/services/ffmpeg';
   import { logAndToast } from '$lib/utils/log-toast';
-  import type { VideoFile, Track } from '$lib/types';
+  import type { VideoFile, Track, ExtractProgressEvent } from '$lib/types';
 
   import {
     Button,
@@ -40,6 +42,77 @@
   }
 
   let extractedOutputItems = $state<ExtractedOutputItem[]>([]);
+  let activeExtractionKey: string | null = null;
+  let runFileTrackTotals = new Map<string, number>();
+  let runFileCompletedTracks = new Map<string, number>();
+
+  function clampProgress(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.min(100, Math.max(0, value));
+  }
+
+  function buildExtractionKey(inputPath: string, trackIndex: number): string {
+    return `${inputPath}::${trackIndex}`;
+  }
+
+  function clearExtractionRuntimeState() {
+    activeExtractionKey = null;
+    runFileTrackTotals = new Map();
+    runFileCompletedTracks = new Map();
+  }
+
+  function toDurationUs(durationSeconds?: number): number | undefined {
+    if (durationSeconds === undefined || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      return undefined;
+    }
+    return Math.round(durationSeconds * 1_000_000);
+  }
+
+  onMount(() => {
+    let destroyed = false;
+    let removeListener: (() => void) | null = null;
+
+    const registerProgressListener = async () => {
+      const unlisten = await listen<ExtractProgressEvent>('extract-progress', (event) => {
+        if (!extractionStore.isExtracting || !activeExtractionKey) {
+          return;
+        }
+
+        const { inputPath, trackIndex, progress, speedBytesPerSec } = event.payload;
+        const eventKey = buildExtractionKey(inputPath, trackIndex);
+        if (eventKey !== activeExtractionKey) {
+          return;
+        }
+
+        const currentTrackProgress = clampProgress(progress);
+        const fileCompletedTracks = runFileCompletedTracks.get(inputPath) ?? 0;
+        const fileTotalTracks = Math.max(runFileTrackTotals.get(inputPath) ?? 1, 1);
+        const currentFileProgress = clampProgress(
+          ((fileCompletedTracks + currentTrackProgress / 100) / fileTotalTracks) * 100,
+        );
+
+        extractionStore.setLiveProgress(
+          currentTrackProgress,
+          currentFileProgress,
+          speedBytesPerSec,
+        );
+      });
+
+      if (destroyed) {
+        unlisten();
+        return;
+      }
+
+      removeListener = unlisten;
+    };
+
+    void registerProgressListener();
+
+    return () => {
+      destroyed = true;
+      removeListener?.();
+    };
+  });
 
   function trackTypeToImportKind(type: Track['type']): ExtractedOutputItem['kind'] | null {
     if (type === 'audio') {
@@ -212,12 +285,31 @@
       return;
     }
 
+    const fileIndexByPath = new Map<string, number>();
+    runFileTrackTotals = new Map();
+    runFileCompletedTracks = new Map();
+
+    for (const { file } of extractions) {
+      if (!fileIndexByPath.has(file.path)) {
+        fileIndexByPath.set(file.path, fileIndexByPath.size + 1);
+      }
+      runFileTrackTotals.set(file.path, (runFileTrackTotals.get(file.path) ?? 0) + 1);
+    }
+
+    for (const filePath of runFileTrackTotals.keys()) {
+      runFileCompletedTracks.set(filePath, 0);
+    }
+
     extractionStore.updateProgress({
       status: 'extracting',
-      totalFiles: files.length,
+      totalFiles: fileIndexByPath.size,
       totalTracks: extractions.length,
       currentFileIndex: 0,
-      currentTrack: 0
+      currentTrack: 0,
+      completedTracks: 0,
+      currentTrackProgress: 0,
+      currentFileProgress: 0,
+      currentSpeedBytesPerSec: undefined,
     });
 
     let successCount = 0;
@@ -227,22 +319,39 @@
     for (let i = 0; i < extractions.length; i++) {
       const { file, track } = extractions[i];
       const outputPath = buildOutputPath(file.path, track, outputDir);
+      const fileCompletedTracks = runFileCompletedTracks.get(file.path) ?? 0;
+      const fileTotalTracks = Math.max(runFileTrackTotals.get(file.path) ?? 1, 1);
 
       extractionStore.updateProgress({
         currentFile: file.name,
-        currentFileIndex: Math.floor(i / extractions.length * files.length) + 1,
-        currentTrack: i + 1
+        currentFileIndex: fileIndexByPath.get(file.path) ?? 1,
+        currentTrack: i + 1,
+        currentTrackProgress: 0,
+        currentFileProgress: clampProgress((fileCompletedTracks / fileTotalTracks) * 100),
+        currentSpeedBytesPerSec: undefined,
       });
 
+      activeExtractionKey = buildExtractionKey(file.path, track.index);
       const result = await extractTrack({
         inputPath: file.path,
         outputPath,
         trackIndex: track.index,
         trackType: track.type,
-        codec: track.codec
+        codec: track.codec,
+        durationUs: toDurationUs(file.duration),
       });
+      activeExtractionKey = null;
 
       extractionStore.addResult(result);
+      extractionStore.markTrackCompleted();
+
+      const updatedCompletedTracks = (runFileCompletedTracks.get(file.path) ?? 0) + 1;
+      runFileCompletedTracks.set(file.path, updatedCompletedTracks);
+
+      extractionStore.updateProgress({
+        currentFileProgress: clampProgress((updatedCompletedTracks / fileTotalTracks) * 100),
+        currentSpeedBytesPerSec: undefined,
+      });
 
       if (result.success) {
         successCount++;
@@ -261,7 +370,13 @@
       }
     }
 
-    extractionStore.updateProgress({ status: 'completed' });
+    extractionStore.updateProgress({
+      status: 'completed',
+      currentTrackProgress: 0,
+      currentFileProgress: 100,
+      currentSpeedBytesPerSec: undefined,
+    });
+    clearExtractionRuntimeState();
 
     if (extractedOutputs.length > 0) {
       const byPath = new Map(extractedOutputItems.map((item) => [item.path, item]));
@@ -287,6 +402,7 @@
   }
 
   function handleClearAll() {
+    clearExtractionRuntimeState();
     fileListStore.clear();
     extractionStore.reset();
     extractionStore.clearAllTracks();
@@ -295,6 +411,7 @@
   }
 
   function handleExtractAgain() {
+    clearExtractionRuntimeState();
     // Reset progress but keep the selected tracks and output dir
     extractionStore.reset();
   }

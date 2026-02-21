@@ -6,7 +6,9 @@
 </script>
 
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
   import { toast } from 'svelte-sonner';
   import { flip } from 'svelte/animate';
@@ -16,7 +18,13 @@
   import { dndzone } from '$lib/utils/dnd';
   import { logAndToast } from '$lib/utils/log-toast';
 
-  import { getCodecFromExtension, type ImportedTrack, type MergeTrack, type MergeTrackConfig } from '$lib/types';
+  import {
+    getCodecFromExtension,
+    type ImportedTrack,
+    type MergeTrack,
+    type MergeTrackConfig,
+    type MergeProgressEvent,
+  } from '$lib/types';
   import type { ImportItem, ImportSourceId, ImportableKind } from '$lib/types/tool-import';
 
   interface Props {
@@ -75,6 +83,43 @@
   const currentMergingFileName = $derived(() => {
     if (!currentMergingId) return '';
     return mergeStore.videoFiles.find(v => v.id === currentMergingId)?.name || '';
+  });
+
+  onMount(() => {
+    let destroyed = false;
+    let removeListener: (() => void) | null = null;
+
+    const registerProgressListener = async () => {
+      const unlisten = await listen<MergeProgressEvent>('merge-progress', (event) => {
+        if (!mergeStore.isProcessing) {
+          return;
+        }
+
+        const runtime = mergeStore.runtimeProgress;
+        if (!runtime.currentFilePath || runtime.currentFilePath !== event.payload.videoPath) {
+          return;
+        }
+
+        mergeStore.updateRuntimeCurrentFile(
+          event.payload.progress,
+          event.payload.speedBytesPerSec,
+        );
+      });
+
+      if (destroyed) {
+        unlisten();
+        return;
+      }
+
+      removeListener = unlisten;
+    };
+
+    void registerProgressListener();
+
+    return () => {
+      destroyed = true;
+      removeListener?.();
+    };
   });
 
   // DnD items - mutable state required by svelte-dnd-action
@@ -421,7 +466,7 @@
     }
 
     mergeStore.setStatus('processing');
-    mergeStore.setProgress(0);
+    mergeStore.startRuntimeProgress(videosToMerge.length);
     currentMergingId = null;
     isCancelling = false;
     cancelAllRequested = false;
@@ -430,13 +475,13 @@
     const mergedPaths: string[] = [];
     let completed = 0;
     let cancelled = 0;
-    let processed = 0;
     let mergeError: string | null = null;
 
     for (const video of videosToMerge) {
       if (cancelAllRequested) break;
 
       currentMergingId = video.id;
+      mergeStore.setCurrentRuntimeFile(video.id, video.path, video.name);
       const attachedTracks = mergeStore.getAttachedTracks(video.id);
 
       let outputFilename = video.name;
@@ -492,7 +537,8 @@
           videoPath: video.path,
           tracks: trackArgs,
           sourceTrackConfigs,
-          outputPath: fullOutputPath
+          outputPath: fullOutputPath,
+          durationUs: video.duration ? Math.round(video.duration * 1_000_000) : undefined,
         });
 
         mergedPaths.push(fullOutputPath);
@@ -505,8 +551,7 @@
           break;
         }
       } finally {
-        processed++;
-        mergeStore.setProgress((processed / videosToMerge.length) * 100);
+        mergeStore.markRuntimeFileCompleted();
 
         if (cancelCurrentFileId === video.id) {
           cancelCurrentFileId = null;
@@ -521,6 +566,7 @@
 
     if (mergeError) {
       mergeStore.setError(mergeError);
+      mergeStore.resetRuntimeProgress();
       logAndToast.error({
         source: 'merge',
         title: 'Merge failed',
@@ -528,7 +574,7 @@
       });
     } else if (cancelAllRequested || cancelled > 0) {
       mergeStore.setStatus('idle');
-      mergeStore.setProgress(0);
+      mergeStore.resetRuntimeProgress();
 
       appendMergedOutputs(mergedPaths);
 
@@ -1043,6 +1089,7 @@
         outputConfig={mergeStore.outputConfig}
         enabledTracksCount={mergeStore.totalTracksToMerge}
         videosCount={mergeStore.videosReadyForMerge.length}
+        completedFiles={mergeStore.runtimeProgress.completedFiles}
         status={mergeStore.status}
         onSelectOutputDir={handleSelectOutputDir}
         onOutputNameChange={(name) => mergeStore.setOutputNamePattern(name)}
@@ -1051,6 +1098,8 @@
         onCancel={handleCancelAll}
         isCancelling={isCancelling}
         currentFileName={currentMergingFileName()}
+        currentFileProgress={mergeStore.runtimeProgress.currentFileProgress}
+        currentSpeedBytesPerSec={mergeStore.runtimeProgress.currentSpeedBytesPerSec}
       />
     </div>
 

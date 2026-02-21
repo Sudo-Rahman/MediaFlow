@@ -51,6 +51,10 @@ export interface ExtractionProgress {
   totalFiles: number;
   currentTrack: number;
   totalTracks: number;
+  completedTracks: number;
+  currentTrackProgress: number;
+  currentFileProgress: number;
+  currentSpeedBytesPerSec?: number;
   status: 'idle' | 'extracting' | 'completed' | 'error';
   error?: string;
 }
@@ -235,4 +239,3 @@ export function getCodecFromExtension(ext: string): string {
   const normalized = ext.toLowerCase();
   return extensionToCodec[normalized] || normalized.replace(/^\./, '');
 }
-

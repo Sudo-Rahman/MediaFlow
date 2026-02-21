@@ -2,16 +2,19 @@
   import { Folder, FolderOpen, Play, Loader2, CheckCircle, X } from '@lucide/svelte';
   import type { MergeOutputConfig } from '$lib/types';
   import { Button } from '$lib/components/ui/button';
+  import { Progress } from '$lib/components/ui/progress';
   import { Label } from '$lib/components/ui/label';
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import * as Card from '$lib/components/ui/card';
   import * as Alert from '$lib/components/ui/alert';
+  import { formatTransferRate } from '$lib/utils';
 
   interface MergeOutputPanelProps {
     outputConfig: MergeOutputConfig;
     enabledTracksCount: number;
     videosCount?: number;
+    completedFiles?: number;
     status: 'idle' | 'processing' | 'completed' | 'error';
     onSelectOutputDir?: () => void;
     onOutputNameChange?: (name: string) => void;
@@ -20,6 +23,8 @@
     onCancel?: () => void;
     isCancelling?: boolean;
     currentFileName?: string;
+    currentFileProgress?: number;
+    currentSpeedBytesPerSec?: number;
     class?: string;
   }
 
@@ -27,6 +32,7 @@
     outputConfig,
     enabledTracksCount,
     videosCount = 0,
+    completedFiles = 0,
     status,
     onSelectOutputDir,
     onOutputNameChange,
@@ -35,6 +41,8 @@
     onCancel,
     isCancelling = false,
     currentFileName,
+    currentFileProgress = 0,
+    currentSpeedBytesPerSec,
     class: className = ''
   }: MergeOutputPanelProps = $props();
 
@@ -118,6 +126,18 @@
                 Current file: {currentFileName}
               </p>
             {/if}
+            <div class="space-y-1.5">
+              <Progress value={currentFileProgress} class="h-1.5" />
+              <p class="text-[11px] text-muted-foreground">
+                File progress: {Math.round(currentFileProgress)}%
+                {#if currentSpeedBytesPerSec && currentSpeedBytesPerSec > 0}
+                  {' '}· {formatTransferRate(currentSpeedBytesPerSec)}
+                {/if}
+              </p>
+              <p class="text-[11px] text-muted-foreground">
+                {completedFiles}/{videosCount} files completed
+              </p>
+            </div>
           </div>
         {/if}
       </div>

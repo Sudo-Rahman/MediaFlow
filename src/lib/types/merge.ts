@@ -89,6 +89,16 @@ export interface BatchMergeJob {
   error?: string;
 }
 
+export interface MergeRuntimeProgress {
+  totalFiles: number;
+  completedFiles: number;
+  currentFileId: string | null;
+  currentFilePath: string | null;
+  currentFileName: string;
+  currentFileProgress: number;
+  currentSpeedBytesPerSec?: number;
+}
+
 // Track group for bulk editing (by language + type)
 export interface TrackGroup {
   id: string;

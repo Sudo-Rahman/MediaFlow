@@ -29,6 +29,21 @@ export function formatFileSize(bytes: number): string {
 }
 
 /**
+ * Format transfer rate using adaptive KB/s or MB/s units (decimal base 1000)
+ */
+export function formatTransferRate(speedBytesPerSec?: number): string {
+  if (!speedBytesPerSec || !Number.isFinite(speedBytesPerSec) || speedBytesPerSec <= 0) {
+    return '0.0 KB/s';
+  }
+
+  if (speedBytesPerSec >= 1_000_000) {
+    return `${(speedBytesPerSec / 1_000_000).toFixed(2)} MB/s`;
+  }
+
+  return `${(speedBytesPerSec / 1_000).toFixed(1)} KB/s`;
+}
+
+/**
  * Format duration in hh:mm:ss
  */
 export function formatDuration(seconds?: number): string {
@@ -151,4 +166,3 @@ export function buildOutputFileName(
 
   return `${baseName}${langSuffix}${trackSuffix}${extension}`;
 }
-

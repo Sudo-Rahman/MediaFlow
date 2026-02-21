@@ -26,6 +26,7 @@ export function OS(): OSType {
 
 export { analyzeOcrSubtitles, formatOcrSubtitleAnalysis } from "./utils/ocr-subtitle-analysis";
 export type { OcrSubtitleAnalysis } from "./utils/ocr-subtitle-analysis";
+export { formatTransferRate } from "./utils/format";
 export {
   normalizeOcrSubtitle,
   toRustOcrFrame,

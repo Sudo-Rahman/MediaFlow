@@ -1,6 +1,9 @@
+use crate::shared::ffmpeg_progress::FfmpegProgressTracker;
 use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::validation::{validate_media_path, validate_output_path};
+use std::process::Stdio;
+use tauri::Emitter;
 use tokio::process::Command;
 use tokio::time::{Duration, timeout};
 
@@ -122,17 +125,41 @@ fn build_extract_args(
         }
     }
 
+    args.push("-progress".to_string());
+    args.push("pipe:1".to_string());
     args.push(output_path.to_string());
     args
 }
 
-pub(super) async fn extract_track_with_ffmpeg(
+fn emit_extract_progress(
+    app: &tauri::AppHandle,
+    input_path: &str,
+    output_path: &str,
+    track_index: i32,
+    progress: i32,
+    speed_bytes_per_sec: Option<f64>,
+) {
+    let _ = app.emit(
+        "extract-progress",
+        serde_json::json!({
+            "inputPath": input_path,
+            "outputPath": output_path,
+            "trackIndex": track_index,
+            "progress": progress,
+            "speedBytesPerSec": speed_bytes_per_sec
+        }),
+    );
+}
+
+async fn extract_track_with_ffmpeg_and_progress(
+    app: Option<&tauri::AppHandle>,
     ffmpeg_path: &str,
     input_path: &str,
     output_path: &str,
     track_index: i32,
     track_type: &str,
     codec: &str,
+    duration_us: Option<u64>,
 ) -> Result<(), String> {
     // Validate paths
     validate_media_path(input_path)?;
@@ -140,7 +167,68 @@ pub(super) async fn extract_track_with_ffmpeg(
 
     let args = build_extract_args(input_path, output_path, track_index, track_type, codec);
 
-    let extract_future = async move { Command::new(ffmpeg_path).args(&args).output().await };
+    let mut child = Command::new(ffmpeg_path)
+        .args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            format!(
+                "Failed to execute ffmpeg: {}. Make sure FFmpeg is installed.",
+                e
+            )
+        })?;
+
+    if let Some(app_handle) = app {
+        emit_extract_progress(
+            app_handle,
+            input_path,
+            output_path,
+            track_index,
+            0,
+            None,
+        );
+    }
+
+    if let Some(stdout) = child.stdout.take() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let app_for_progress = app.cloned();
+        let input_path_for_progress = input_path.to_string();
+        let output_path_for_progress = output_path.to_string();
+
+        tokio::spawn(async move {
+            let mut tracker = FfmpegProgressTracker::new(duration_us);
+            let mut last_progress = 0;
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Some(update) = tracker.handle_line(&line) {
+                    if let Some(progress) = update.progress {
+                        last_progress = progress;
+                    }
+
+                    if let Some(app_handle) = app_for_progress.as_ref() {
+                        emit_extract_progress(
+                            app_handle,
+                            &input_path_for_progress,
+                            &output_path_for_progress,
+                            track_index,
+                            last_progress,
+                            update.speed_bytes_per_sec,
+                        );
+                    }
+
+                    if update.is_end {
+                        last_progress = 100;
+                    }
+                }
+            }
+        });
+    }
+
+    let extract_future = async { child.wait_with_output().await };
 
     let output = timeout(FFMPEG_EXTRACT_TIMEOUT, extract_future)
         .await
@@ -150,19 +238,47 @@ pub(super) async fn extract_track_with_ffmpeg(
                 FFMPEG_EXTRACT_TIMEOUT.as_secs()
             )
         })?
-        .map_err(|e| {
-            format!(
-                "Failed to execute ffmpeg: {}. Make sure FFmpeg is installed.",
-                e
-            )
-        })?;
+        .map_err(|e| format!("Failed to execute ffmpeg: {}", e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("ffmpeg extraction failed: {}", stderr));
     }
 
+    if let Some(app_handle) = app {
+        emit_extract_progress(
+            app_handle,
+            input_path,
+            output_path,
+            track_index,
+            100,
+            None,
+        );
+    }
+
     Ok(())
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(super) async fn extract_track_with_ffmpeg(
+    ffmpeg_path: &str,
+    input_path: &str,
+    output_path: &str,
+    track_index: i32,
+    track_type: &str,
+    codec: &str,
+) -> Result<(), String> {
+    extract_track_with_ffmpeg_and_progress(
+        None,
+        ffmpeg_path,
+        input_path,
+        output_path,
+        track_index,
+        track_type,
+        codec,
+        None,
+    )
+    .await
 }
 
 /// Extract a track from a video file using ffmpeg
@@ -176,16 +292,19 @@ pub(crate) async fn extract_track(
     track_index: i32,
     track_type: String,
     codec: String,
+    duration_us: Option<u64>,
 ) -> Result<(), String> {
     let _sleep_guard = SleepInhibitGuard::try_acquire("FFmpeg extraction").ok();
     let ffmpeg_path = resolve_ffmpeg_path(&app)?;
-    extract_track_with_ffmpeg(
+    extract_track_with_ffmpeg_and_progress(
+        Some(&app),
         &ffmpeg_path,
         &input_path,
         &output_path,
         track_index,
         &track_type,
         &codec,
+        duration_us,
     )
     .await
 }
@@ -232,6 +351,18 @@ mod tests {
         );
         assert!(args.contains(&"-an".to_string()));
         assert!(args.contains(&"-sn".to_string()));
+    }
+
+    #[test]
+    fn build_extract_args_enables_progress_output() {
+        let args = build_extract_args(
+            "/tmp/input.mkv",
+            "/tmp/output.mkv",
+            0,
+            "video",
+            "h264",
+        );
+        assert!(args.windows(2).any(|w| w == ["-progress", "pipe:1"]));
     }
 
     #[tokio::test]

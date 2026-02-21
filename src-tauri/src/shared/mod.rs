@@ -1,3 +1,4 @@
+pub(crate) mod ffmpeg_progress;
 pub(crate) mod hash;
 pub(crate) mod process;
 pub(crate) mod sleep_inhibit;

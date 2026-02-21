@@ -2,8 +2,10 @@
   import { Folder, Play, FolderOpen, Loader2, CheckCircle } from '@lucide/svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
+  import { Progress } from '$lib/components/ui/progress';
   import * as Card from '$lib/components/ui/card';
   import * as Alert from '$lib/components/ui/alert';
+  import { formatTransferRate } from '$lib/utils';
   import type { ExtractionProgress } from '$lib/types';
 
   interface ExtractionPanelProps {
@@ -83,6 +85,19 @@
                 File {progress.currentFileIndex}/{progress.totalFiles}: {progress.currentFile}
               </p>
             {/if}
+            <div class="space-y-1.5">
+              <div class="flex items-center justify-between text-[11px] text-muted-foreground">
+                <span>Track {Math.min(progress.completedTracks + 1, progress.totalTracks)}/{progress.totalTracks}</span>
+                <span>{Math.round(progress.currentTrackProgress)}%</span>
+              </div>
+              <Progress value={progress.currentFileProgress} class="h-1.5" />
+              <p class="text-[11px] text-muted-foreground">
+                File progress: {Math.round(progress.currentFileProgress)}%
+                {#if progress.currentSpeedBytesPerSec && progress.currentSpeedBytesPerSec > 0}
+                  {' '}· {formatTransferRate(progress.currentSpeedBytesPerSec)}
+                {/if}
+              </p>
+            </div>
           </div>
         {/if}
       </div>

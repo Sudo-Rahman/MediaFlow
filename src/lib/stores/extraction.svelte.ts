@@ -9,6 +9,9 @@ let progress = $state<ExtractionProgress>({
   totalFiles: 0,
   currentTrack: 0,
   totalTracks: 0,
+  completedTracks: 0,
+  currentTrackProgress: 0,
+  currentFileProgress: 0,
   status: 'idle'
 });
 let results = $state<ExtractionResult[]>([]);
@@ -98,6 +101,27 @@ export const extractionStore = {
     progress = { ...progress, ...updates };
   },
 
+  setLiveProgress(
+    currentTrackProgress: number,
+    currentFileProgress: number,
+    currentSpeedBytesPerSec?: number,
+  ) {
+    progress = {
+      ...progress,
+      currentTrackProgress,
+      currentFileProgress,
+      currentSpeedBytesPerSec,
+    };
+  },
+
+  markTrackCompleted() {
+    progress = {
+      ...progress,
+      completedTracks: Math.min(progress.totalTracks, progress.completedTracks + 1),
+      currentTrackProgress: 0,
+    };
+  },
+
   addResult(result: ExtractionResult) {
     results = [...results, result];
   },
@@ -109,6 +133,10 @@ export const extractionStore = {
       totalFiles: 0,
       currentTrack: 0,
       totalTracks: 0,
+      completedTracks: 0,
+      currentTrackProgress: 0,
+      currentFileProgress: 0,
+      currentSpeedBytesPerSec: undefined,
       status: 'idle'
     };
     results = [];
@@ -118,4 +146,3 @@ export const extractionStore = {
     results = [];
   }
 };
-

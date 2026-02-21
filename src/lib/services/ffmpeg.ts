@@ -10,6 +10,7 @@ export interface ExtractTrackParams {
   trackIndex: number;
   trackType: string;
   codec: string;
+  durationUs?: number;
 }
 
 /**
@@ -40,7 +41,8 @@ export async function extractTrack(params: ExtractTrackParams): Promise<Extracti
       outputPath: params.outputPath,
       trackIndex: params.trackIndex,
       trackType: params.trackType,
-      codec: params.codec
+      codec: params.codec,
+      durationUs: params.durationUs,
     });
 
     // Log success
@@ -103,4 +105,3 @@ export async function extractTracks(
 
   return results;
 }
-

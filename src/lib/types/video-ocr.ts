@@ -32,7 +32,6 @@ export interface OcrVideoFile {
   ocrRegionMode: OcrRegionMode;
   
   // OCR results
-  subtitles: OcrSubtitle[];
   ocrVersions: OcrVersion[];
   
   // Progress tracking
@@ -46,7 +45,7 @@ export type OcrFileStatus =
   | 'extracting_frames' // Extracting video frames
   | 'ocr_processing'    // Running OCR on frames
   | 'generating_subs'   // Generating subtitles from OCR results
-  | 'completed'         // OCR completed, has subtitles
+  | 'completed'         // OCR completed, at least one OCR version is available
   | 'error';            // Error occurred
 
 // ============================================================================

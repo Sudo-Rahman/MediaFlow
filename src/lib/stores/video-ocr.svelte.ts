@@ -9,7 +9,6 @@ import type {
   OcrConfig,
   OcrRegion,
   OcrRegionMode,
-  OcrSubtitle,
   OcrVersion,
   OcrProgress,
   OcrPhase,
@@ -74,7 +73,6 @@ function createEmptyVideoFile(path: string, id?: string): OcrVideoFile {
     status: 'pending',
     ocrRegion: { ...globalRegion },
     ocrRegionMode: 'global',
-    subtitles: [],
     ocrVersions: [],
   };
 }
@@ -374,12 +372,10 @@ export const videoOcrStore = {
   // Actions - Subtitles
   // -------------------------------------------------------------------------
   setOcrVersions(fileId: string, versions: OcrVersion[]) {
-    const latest = versions[versions.length - 1];
     videoFiles = videoFiles.map(f =>
       f.id === fileId ? {
         ...f,
         ocrVersions: [...versions],
-        subtitles: latest?.finalSubtitles ?? f.subtitles,
         status: versions.length > 0 ? 'completed' as const : f.status,
         progress: undefined,
         error: undefined,
@@ -396,29 +392,11 @@ export const videoOcrStore = {
       return {
         ...f,
         ocrVersions: [...f.ocrVersions, version],
-        subtitles: [...version.finalSubtitles],
         status: 'completed' as const,
         progress: undefined,
         error: undefined,
       };
     });
-  },
-
-  setSubtitles(fileId: string, subtitles: OcrSubtitle[]) {
-    videoFiles = videoFiles.map(f =>
-      f.id === fileId ? {
-        ...f,
-        subtitles,
-        status: 'completed' as const,
-        progress: undefined,
-      } : f
-    );
-  },
-
-  clearSubtitles(fileId: string) {
-    videoFiles = videoFiles.map(f =>
-      f.id === fileId ? { ...f, subtitles: [] } : f
-    );
   },
 
   // -------------------------------------------------------------------------
@@ -480,7 +458,7 @@ export const videoOcrStore = {
       if (f.id === fileId && isProcessingStatus(f.status)) {
         return {
           ...f,
-          status: (f.ocrVersions.length > 0 || f.subtitles.length > 0) ? 'completed' as const : 'ready' as const,
+          status: f.ocrVersions.length > 0 ? 'completed' as const : 'ready' as const,
           progress: undefined,
           error: undefined
         };
@@ -500,7 +478,7 @@ export const videoOcrStore = {
         cancelledFileIds = new Set([...cancelledFileIds, f.id]);
         return {
           ...f,
-          status: (f.ocrVersions.length > 0 || f.subtitles.length > 0) ? 'completed' as const : 'ready' as const,
+          status: f.ocrVersions.length > 0 ? 'completed' as const : 'ready' as const,
           progress: undefined,
           error: undefined
         };
@@ -509,17 +487,6 @@ export const videoOcrStore = {
     });
 
     this.addLog('warning', 'All processing cancelled');
-  },
-
-  completeFile(fileId: string) {
-    videoFiles = videoFiles.map(f =>
-      f.id === fileId ? {
-        ...f,
-        status: 'completed' as const,
-        progress: undefined
-      } : f
-    );
-    this.addLog('info', 'OCR completed successfully', fileId);
   },
 
   failFile(fileId: string, error: string) {

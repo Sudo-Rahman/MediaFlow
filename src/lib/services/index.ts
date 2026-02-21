@@ -3,6 +3,7 @@ export * from './ffmpeg';
 export * from './llm-client';
 export * from './ocr-ai-cleanup';
 export * from './translation';
+export * from './translation-versioned-export';
 export * from './presets';
 export * from './rsext-storage';
 export * from './transcription-storage';

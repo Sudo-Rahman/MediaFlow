@@ -117,6 +117,7 @@
   const videoSrc = $derived(
     file?.previewPath ? convertFileSrc(file.previewPath) : undefined
   );
+  const latestSubtitles = $derived(file?.ocrVersions.at(-1)?.finalSubtitles ?? []);
 
   function findSubtitleAtTime(subtitles: OcrSubtitle[], timeMs: number): OcrSubtitle | undefined {
     let left = 0;
@@ -140,9 +141,9 @@
 
   // Current subtitle based on video time
   const currentSubtitle = $derived.by(() => {
-    if (!showSubtitles || !file?.subtitles?.length) return undefined;
+    if (!showSubtitles || latestSubtitles.length === 0) return undefined;
     const timeMs = currentTime * 1000;
-    return findSubtitleAtTime(file.subtitles, timeMs);
+    return findSubtitleAtTime(latestSubtitles, timeMs);
   });
 
   function handleTimeUpdate() {

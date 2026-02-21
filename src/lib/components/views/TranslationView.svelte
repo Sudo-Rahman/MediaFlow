@@ -40,7 +40,11 @@
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
   import { ToolImportButton, ToolImportSourceDialog } from '$lib/components/shared';
 
-  import { TranslationConfigPanel, TranslationFileList, TranslationResultDialog } from '$lib/components/translation';
+  import {
+    TranslationConfigPanel,
+    TranslationFileList,
+    TranslationResultDialog,
+  } from '$lib/components/translation';
 
   import { Textarea } from '$lib/components/ui/textarea';
 

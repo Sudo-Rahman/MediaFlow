@@ -31,7 +31,12 @@
   import { cleanupOcrSubtitlesWithAi } from '$lib/services/ocr-ai-cleanup';
   import { ocrVersionToSubtitleFile } from '$lib/services/subtitle-interop';
   import { createOcrVersion, generateOcrVersionName, loadOcrData, saveOcrData } from '$lib/services/ocr-storage';
-  import { analyzeOcrSubtitles, formatOcrSubtitleAnalysis, normalizeOcrSubtitles, toRustOcrFrames } from '$lib/utils';
+  import {
+    analyzeOcrSubtitles,
+    formatOcrSubtitleAnalysis,
+    normalizeOcrSubtitles,
+    toRustOcrFrames,
+  } from '$lib/utils';
   import { logAndToast } from '$lib/utils/log-toast';
   import { scanFile } from '$lib/services/ffprobe';
 
@@ -896,9 +901,6 @@
       config={videoOcrStore.config}
       canStart={videoOcrStore.canStartOcr}
       isProcessing={videoOcrStore.isProcessing}
-      allCompleted={videoOcrStore.allCompleted}
-      filesWithSubtitles={videoOcrStore.filesWithSubtitles}
-      totalSubtitles={videoOcrStore.totalSubtitles}
       availableLanguages={videoOcrStore.availableLanguages}
       onConfigChange={(updates) => videoOcrStore.updateConfig(updates)}
       onStart={handleStartOcr}

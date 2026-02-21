@@ -1,10 +1,6 @@
 <script lang="ts">
-  import { Play, Loader2, Settings2, Users, Key, Download, FolderOpen, CheckCircle } from '@lucide/svelte';
-  import { open } from '@tauri-apps/plugin-dialog';
-  import { writeTextFile } from '@tauri-apps/plugin-fs';
-  import { join } from '@tauri-apps/api/path';
-  import type { TranscriptionConfig, DeepgramConfig, AudioFile, TranscriptionOutputFormat } from '$lib/types';
-  import { formatToSRT, formatToVTT, formatToJSON } from '$lib/services/deepgram';
+  import { Play, Loader2, Settings2, Users, Key } from '@lucide/svelte';
+  import type { TranscriptionConfig, DeepgramConfig } from '$lib/types';
   import { cn } from '$lib/utils';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
@@ -13,9 +9,7 @@
   import { Slider } from '$lib/components/ui/slider';
   import { Separator } from '$lib/components/ui/separator';
   import * as Alert from '$lib/components/ui/alert';
-  import * as Select from '$lib/components/ui/select';
   import { Input } from '$lib/components/ui/input';
-  import { toast } from 'svelte-sonner';
   import ModelSelector from './ModelSelector.svelte';
   import LanguageSelector from './LanguageSelector.svelte';
 
@@ -28,8 +22,6 @@
     completedFilesCount: number;
     totalFilesCount: number;
     transcodingCount: number;
-    completedFiles: AudioFile[];
-    allFilesCompleted: boolean;
     onDeepgramConfigChange: (updates: Partial<DeepgramConfig>) => void;
     onMaxConcurrentChange: (value: number) => void;
     onTranscribeAll: () => void;
@@ -46,8 +38,6 @@
     completedFilesCount,
     totalFilesCount,
     transcodingCount,
-    completedFiles,
-    allFilesCompleted,
     onDeepgramConfigChange,
     onMaxConcurrentChange,
     onTranscribeAll,
@@ -71,96 +61,6 @@
     completedFilesCount === totalFilesCount &&
     readyFilesCount === 0
   );
-
-  // Export All state
-  let exportFormat = $state<TranscriptionOutputFormat>('srt');
-  let outputDir = $state('');
-  let isExporting = $state(false);
-
-  const filesWithVersions = $derived(
-    completedFiles.filter(f => f.transcriptionVersions.length > 0)
-  );
-
-  const canExport = $derived(filesWithVersions.length > 0 && outputDir.length > 0 && !isExporting);
-
-  const totalVersions = $derived(
-    filesWithVersions.reduce((sum, f) => sum + f.transcriptionVersions.length, 0)
-  );
-
-  async function handleBrowseOutput() {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: 'Select output folder'
-    });
-    if (selected && typeof selected === 'string') {
-      outputDir = selected;
-    }
-  }
-
-  function sanitizeVersionName(name: string): string {
-    return name
-      .replace(/[^a-zA-Z0-9\s-]/g, '')
-      .replace(/\s+/g, '_')
-      .trim();
-  }
-
-  async function handleExportAll() {
-    if (!canExport) return;
-
-    isExporting = true;
-    let successCount = 0;
-    let failCount = 0;
-
-    const extensions: Record<TranscriptionOutputFormat, string> = {
-      srt: 'srt',
-      vtt: 'vtt',
-      json: 'json'
-    };
-    const ext = extensions[exportFormat];
-
-    try {
-      for (const file of filesWithVersions) {
-        const baseName = file.name.replace(/\.[^/.]+$/, '');
-
-        for (const version of file.transcriptionVersions) {
-          try {
-            let content: string;
-            switch (exportFormat) {
-              case 'srt':
-                content = formatToSRT(version.result);
-                break;
-              case 'vtt':
-                content = formatToVTT(version.result);
-                break;
-              case 'json':
-                content = JSON.stringify(formatToJSON(version.result), null, 2);
-                break;
-            }
-
-            const versionSuffix = sanitizeVersionName(version.name);
-            const fileName = `${baseName}_${versionSuffix}.${ext}`;
-            const filePath = await join(outputDir, fileName);
-
-            await writeTextFile(filePath, content);
-            successCount++;
-          } catch (error) {
-            console.error(`Failed to export ${file.name} - ${version.name}:`, error);
-            failCount++;
-          }
-        }
-      }
-
-      if (successCount > 0) {
-        toast.success(`${successCount} file(s) exported`);
-      }
-      if (failCount > 0) {
-        toast.error(`${failCount} file(s) failed`);
-      }
-    } finally {
-      isExporting = false;
-    }
-  }
 </script>
 
 <div class={cn("h-full flex flex-col overflow-auto", className)}>
@@ -335,77 +235,6 @@
       </Card.Content>
     </Card.Root>
 
-    <!-- Export All Section - only when all files are completed -->
-    {#if allFilesCompleted && filesWithVersions.length > 0}
-      <Card.Root>
-        <Card.Header class="pb-3">
-          <Card.Title class="text-sm flex items-center gap-2">
-            <CheckCircle class="size-4 text-green-500" />
-            Export All
-          </Card.Title>
-          <Card.Description class="text-xs">
-            {filesWithVersions.length} file(s), {totalVersions} version(s)
-          </Card.Description>
-        </Card.Header>
-        <Card.Content class="space-y-4">
-          <!-- Format -->
-          <div class="space-y-2">
-            <Label class="text-sm">Format</Label>
-            <Select.Root
-              type="single"
-              value={exportFormat}
-              onValueChange={(v) => v && (exportFormat = v as TranscriptionOutputFormat)}
-              disabled={isExporting}
-            >
-              <Select.Trigger class="w-full">
-                <span>{exportFormat.toUpperCase()}</span>
-              </Select.Trigger>
-              <Select.Content>
-                <Select.Item value="srt" label="SRT">SRT - SubRip</Select.Item>
-                <Select.Item value="vtt" label="VTT">VTT - WebVTT</Select.Item>
-                <Select.Item value="json" label="JSON">JSON - Structured data</Select.Item>
-              </Select.Content>
-            </Select.Root>
-          </div>
-
-          <!-- Output directory -->
-          <div class="space-y-2">
-            <Label class="text-sm">Output folder</Label>
-            <div class="flex gap-2">
-              <Input
-                value={outputDir}
-                placeholder="Select..."
-                readonly
-                class="flex-1 text-xs"
-              />
-              <Button 
-                variant="outline" 
-                size="icon"
-                onclick={handleBrowseOutput}
-                disabled={isExporting}
-              >
-                <FolderOpen class="size-4" />
-              </Button>
-            </div>
-          </div>
-
-          <!-- Export button -->
-          <Button
-            class="w-full"
-            disabled={!canExport}
-            onclick={handleExportAll}
-          >
-            {#if isExporting}
-              <Loader2 class="size-4 mr-2 animate-spin" />
-              Exporting...
-            {:else}
-              <Download class="size-4 mr-2" />
-              Export ({totalVersions})
-            {/if}
-          </Button>
-        </Card.Content>
-      </Card.Root>
-    {/if}
   </div>
 
   <!-- Actions -->

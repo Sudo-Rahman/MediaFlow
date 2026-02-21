@@ -1187,12 +1187,6 @@
     }
   }
 
-  async function handleOpenOutputFolder() {
-    if (audioToSubsStore.outputDir) {
-      await invoke('open_folder', { path: audioToSubsStore.outputDir });
-    }
-  }
-
   $effect(() => {
     const versionedItems = audioToSubsStore.audioFiles.flatMap((file) =>
       file.transcriptionVersions.map((version) => ({
@@ -1222,12 +1216,6 @@
 
   const apiKeyConfigured = $derived(settingsStore.hasDeepgramApiKey());
   const transcodingCount = $derived(audioToSubsStore.transcodingFiles.length);
-  
-  // Check if all files have completed transcription (no pending, ready, transcribing, or error)
-  const allFilesCompleted = $derived(
-    audioToSubsStore.audioFiles.length > 0 &&
-    audioToSubsStore.audioFiles.every(f => f.status === 'completed')
-  );
 </script>
 
 <div class="h-full flex overflow-hidden">
@@ -1316,8 +1304,6 @@
         completedFilesCount={audioToSubsStore.completedFiles.length}
         totalFilesCount={audioToSubsStore.audioFiles.length}
         {transcodingCount}
-        completedFiles={audioToSubsStore.completedFiles}
-        {allFilesCompleted}
         onDeepgramConfigChange={(updates) => audioToSubsStore.updateDeepgramConfig(updates)}
         onMaxConcurrentChange={(value) => audioToSubsStore.setMaxConcurrentTranscriptions(value)}
         onTranscribeAll={handleTranscribeAll}

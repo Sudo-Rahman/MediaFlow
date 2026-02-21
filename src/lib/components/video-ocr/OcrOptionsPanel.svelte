@@ -1,28 +1,19 @@
 <script lang="ts">
-  import { toast } from 'svelte-sonner';
-  import { join } from '@tauri-apps/api/path';
-  import { invoke } from '@tauri-apps/api/core';
-  import { open } from '@tauri-apps/plugin-dialog';
-  import { CheckCircle, Download, FolderOpen, Loader2, Play, Settings, Square } from '@lucide/svelte';
+  import { Play, Settings, Square } from '@lucide/svelte';
 
-  import type { OcrConfig, OcrLanguage, OcrOutputFormat, OcrVideoFile } from '$lib/types/video-ocr';
-  import { OCR_LANGUAGES, OCR_OUTPUT_FORMATS } from '$lib/types/video-ocr';
+  import type { OcrConfig, OcrLanguage } from '$lib/types/video-ocr';
+  import { OCR_LANGUAGES } from '$lib/types/video-ocr';
   import { LlmProviderModelSelector } from '$lib/components/llm';
   import { Button } from '$lib/components/ui/button';
-  import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import * as Select from '$lib/components/ui/select';
   import { Slider } from '$lib/components/ui/slider';
   import { Switch } from '$lib/components/ui/switch';
-  import { normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils/ocr-subtitle-adapter';
 
   interface OcrOptionsPanelProps {
     config: OcrConfig;
     canStart: boolean;
     isProcessing: boolean;
-    allCompleted: boolean;
-    filesWithSubtitles: OcrVideoFile[];
-    totalSubtitles: number;
     availableLanguages?: string[];  // Languages with installed models
     maxThreads?: number;            // Max available threads
     onConfigChange: (updates: Partial<OcrConfig>) => void;
@@ -35,9 +26,6 @@
     config,
     canStart,
     isProcessing,
-    allCompleted,
-    filesWithSubtitles,
-    totalSubtitles,
     availableLanguages = [],
     maxThreads = navigator.hardwareConcurrency || 4,
     onConfigChange,
@@ -45,13 +33,6 @@
     onCancel,
     onNavigateToSettings,
   }: OcrOptionsPanelProps = $props();
-
-  // Export All state
-  let exportFormat = $state<OcrOutputFormat>('srt');
-  let exportDir = $state('');
-  let isExporting = $state(false);
-
-  const canExport = $derived(filesWithSubtitles.length > 0 && exportDir.length > 0 && !isExporting);
 
   // Filter languages to only show those with installed models
   // If no availableLanguages provided, show all (fallback)
@@ -63,10 +44,6 @@
 
   function handleLanguageChange(value: string) {
     onConfigChange({ language: value as OcrLanguage });
-  }
-
-  function handleFormatChange(value: string) {
-    onConfigChange({ outputFormat: value as OcrOutputFormat });
   }
 
   function handleFrameRateChange(value: number) {
@@ -93,58 +70,6 @@
     onConfigChange({ minCueDurationMs: value });
   }
 
-  async function handleBrowseExportDir() {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: 'Select export folder'
-    });
-    if (selected && typeof selected === 'string') {
-      exportDir = selected;
-    }
-  }
-
-  async function handleExportAll() {
-    if (!canExport) return;
-
-    isExporting = true;
-    let successCount = 0;
-    let failCount = 0;
-
-    try {
-      for (const file of filesWithSubtitles) {
-        try {
-          const baseName = file.name.replace(/\.[^/.]+$/, '');
-          const fileName = `${baseName}.${exportFormat}`;
-          const outputPath = await join(exportDir, fileName);
-          const normalizedSubtitles = normalizeOcrSubtitles(file.subtitles);
-
-          if (normalizedSubtitles.length === 0) {
-            throw new Error('No valid subtitles to export');
-          }
-
-          await invoke('export_ocr_subtitles', {
-            subtitles: toRustOcrSubtitles(normalizedSubtitles),
-            outputPath,
-            format: exportFormat,
-          });
-          successCount++;
-        } catch (error) {
-          console.error(`Failed to export ${file.name}:`, error);
-          failCount++;
-        }
-      }
-
-      if (successCount > 0) {
-        toast.success(`${successCount} file(s) exported`);
-      }
-      if (failCount > 0) {
-        toast.error(`${failCount} file(s) failed`);
-      }
-    } finally {
-      isExporting = false;
-    }
-  }
 </script>
 
 <div class="space-y-6">
@@ -382,72 +307,4 @@
     {/if}
   </div>
 
-  <!-- Export All Section - only when all files are completed -->
-  {#if allCompleted && filesWithSubtitles.length > 0}
-    <div class="pt-4 border-t space-y-4">
-      <div class="flex items-center gap-2">
-        <CheckCircle class="size-4 text-green-500" />
-        <h4 class="text-sm font-medium">Export All</h4>
-        <span class="text-xs text-muted-foreground ml-auto">
-          {filesWithSubtitles.length} file(s), {totalSubtitles} subtitles
-        </span>
-      </div>
-
-      <!-- Export Format -->
-      <div class="space-y-2">
-        <Label class="text-sm">Format</Label>
-        <Select.Root
-          type="single"
-          value={exportFormat}
-          onValueChange={(v) => v && (exportFormat = v as OcrOutputFormat)}
-          disabled={isExporting}
-        >
-          <Select.Trigger class="w-full">
-            {OCR_OUTPUT_FORMATS.find(f => f.value === exportFormat)?.label ?? 'Select format'}
-          </Select.Trigger>
-          <Select.Content>
-            {#each OCR_OUTPUT_FORMATS as format}
-              <Select.Item value={format.value}>{format.label}</Select.Item>
-            {/each}
-          </Select.Content>
-        </Select.Root>
-      </div>
-
-      <!-- Export directory -->
-      <div class="space-y-2">
-        <Label class="text-sm">Output folder</Label>
-        <div class="flex gap-2">
-          <Input
-            value={exportDir}
-            placeholder="Select..."
-            readonly
-            class="flex-1 text-xs"
-          />
-          <Button 
-            variant="outline" 
-            size="icon"
-            onclick={handleBrowseExportDir}
-            disabled={isExporting}
-          >
-            <FolderOpen class="size-4" />
-          </Button>
-        </div>
-      </div>
-
-      <!-- Export button -->
-      <Button
-        class="w-full"
-        disabled={!canExport}
-        onclick={handleExportAll}
-      >
-        {#if isExporting}
-          <Loader2 class="size-4 mr-2 animate-spin" />
-          Exporting...
-        {:else}
-          <Download class="size-4 mr-2" />
-          Export All ({filesWithSubtitles.length})
-        {/if}
-      </Button>
-    </div>
-  {/if}
 </div>

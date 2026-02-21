@@ -9,7 +9,6 @@ import type {
   OcrConfig,
   OcrRegion,
   OcrRegionMode,
-  OcrSubtitle,
   OcrVersion,
   OcrProgress,
   OcrPhase,
@@ -28,7 +27,6 @@ let selectedFileId = $state<string | null>(null);
 
 // OCR configuration
 let config = $state<OcrConfig>({ ...DEFAULT_OCR_CONFIG });
-let outputDir = $state<string>('');
 let globalRegion = $state<OcrRegion>({ ...DEFAULT_OCR_REGION });
 
 // Processing state
@@ -75,7 +73,6 @@ function createEmptyVideoFile(path: string, id?: string): OcrVideoFile {
     status: 'pending',
     ocrRegion: { ...globalRegion },
     ocrRegionMode: 'global',
-    subtitles: [],
     ocrVersions: [],
   };
 }
@@ -112,29 +109,11 @@ export const videoOcrStore = {
     return videoFiles.length > 0;
   },
 
-  get filesWithSubtitles(): OcrVideoFile[] {
-    return videoFiles.filter(f => f.subtitles.length > 0 || f.ocrVersions.length > 0);
-  },
-
-  get allCompleted(): boolean {
-    return videoFiles.length > 0 && 
-      videoFiles.every(f => f.status === 'completed' || f.status === 'error') &&
-      videoFiles.some(f => f.subtitles.length > 0 || f.ocrVersions.length > 0);
-  },
-
-  get totalSubtitles(): number {
-    return videoFiles.reduce((sum, f) => sum + f.subtitles.length, 0);
-  },
-
   // -------------------------------------------------------------------------
   // Getters - Config
   // -------------------------------------------------------------------------
   get config() {
     return config;
-  },
-
-  get outputDir() {
-    return outputDir;
   },
 
   get globalRegion() {
@@ -393,12 +372,10 @@ export const videoOcrStore = {
   // Actions - Subtitles
   // -------------------------------------------------------------------------
   setOcrVersions(fileId: string, versions: OcrVersion[]) {
-    const latest = versions[versions.length - 1];
     videoFiles = videoFiles.map(f =>
       f.id === fileId ? {
         ...f,
         ocrVersions: [...versions],
-        subtitles: latest?.finalSubtitles ?? f.subtitles,
         status: versions.length > 0 ? 'completed' as const : f.status,
         progress: undefined,
         error: undefined,
@@ -415,29 +392,11 @@ export const videoOcrStore = {
       return {
         ...f,
         ocrVersions: [...f.ocrVersions, version],
-        subtitles: [...version.finalSubtitles],
         status: 'completed' as const,
         progress: undefined,
         error: undefined,
       };
     });
-  },
-
-  setSubtitles(fileId: string, subtitles: OcrSubtitle[]) {
-    videoFiles = videoFiles.map(f =>
-      f.id === fileId ? {
-        ...f,
-        subtitles,
-        status: 'completed' as const,
-        progress: undefined,
-      } : f
-    );
-  },
-
-  clearSubtitles(fileId: string) {
-    videoFiles = videoFiles.map(f =>
-      f.id === fileId ? { ...f, subtitles: [] } : f
-    );
   },
 
   // -------------------------------------------------------------------------
@@ -453,14 +412,6 @@ export const videoOcrStore = {
 
   setLanguage(language: OcrConfig['language']) {
     config = { ...config, language };
-  },
-
-  setOutputFormat(format: OcrConfig['outputFormat']) {
-    config = { ...config, outputFormat: format };
-  },
-
-  setOutputDir(dir: string) {
-    outputDir = dir;
   },
 
   toggleGpu() {
@@ -507,7 +458,7 @@ export const videoOcrStore = {
       if (f.id === fileId && isProcessingStatus(f.status)) {
         return {
           ...f,
-          status: (f.ocrVersions.length > 0 || f.subtitles.length > 0) ? 'completed' as const : 'ready' as const,
+          status: f.ocrVersions.length > 0 ? 'completed' as const : 'ready' as const,
           progress: undefined,
           error: undefined
         };
@@ -527,7 +478,7 @@ export const videoOcrStore = {
         cancelledFileIds = new Set([...cancelledFileIds, f.id]);
         return {
           ...f,
-          status: (f.ocrVersions.length > 0 || f.subtitles.length > 0) ? 'completed' as const : 'ready' as const,
+          status: f.ocrVersions.length > 0 ? 'completed' as const : 'ready' as const,
           progress: undefined,
           error: undefined
         };
@@ -536,17 +487,6 @@ export const videoOcrStore = {
     });
 
     this.addLog('warning', 'All processing cancelled');
-  },
-
-  completeFile(fileId: string) {
-    videoFiles = videoFiles.map(f =>
-      f.id === fileId ? {
-        ...f,
-        status: 'completed' as const,
-        progress: undefined
-      } : f
-    );
-    this.addLog('info', 'OCR completed successfully', fileId);
   },
 
   failFile(fileId: string, error: string) {
@@ -619,7 +559,6 @@ export const videoOcrStore = {
   reset() {
     this.clear();
     config = { ...DEFAULT_OCR_CONFIG };
-    outputDir = '';
   }
 };
 

@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
+  import { join } from '@tauri-apps/api/path';
+  import { writeTextFile } from '@tauri-apps/plugin-fs';
 
   import * as Sidebar from '$lib/components/ui/sidebar';
   import { Separator } from '$lib/components/ui/separator';
@@ -9,12 +11,24 @@
   import { Progress } from '$lib/components/ui/progress';
   import { Alert, AlertTitle, AlertDescription } from '$lib/components';
   import * as HoverCard from '$lib/components/ui/hover-card';
+  import { VersionedExportDialog } from '$lib/components/shared';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
   import { ExtractView, MergeView, SettingsView, InfoView, TranslationView, RenameView, AudioToSubsView, VideoOcrView } from '$lib/components/views';
   import { TranslationExportDialog } from '$lib/components/translation';
+  import { getFormattedOutput } from '$lib/services/deepgram';
+  import {
+    buildUniqueExportFileName,
+    runBatchExport,
+    stripFileExtension,
+    type RunBatchExportResult,
+    type VersionedExportFormatOption,
+    type VersionedExportGroup,
+    type VersionedExportRequest,
+  } from '$lib/services/versioned-export';
   import { LogsSheet } from '$lib/components/logs';
   import { AlertCircle, ScrollText, Home, LayoutGrid, Table, Download, AudioLines, ScanText, Languages, FileOutput, GitMerge, PenLine } from '@lucide/svelte';
-  import { OS } from '$lib/utils';
+  import { OCR_OUTPUT_FORMATS } from '$lib/types';
+  import { OS, normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils';
   import { useSidebar } from "$lib/components/ui/sidebar";
   import { logStore } from '$lib/stores/logs.svelte';
   import { audioToSubsStore, videoOcrStore, translationStore, extractionStore, mergeStore, renameStore } from '$lib/stores';
@@ -28,6 +42,18 @@
   // Merge view mode state (only applicable when currentView === 'merge')
   let mergeViewMode = $state<'home' | 'groups' | 'table'>('home');
   let translationExportDialogOpen = $state(false);
+  let audioExportDialogOpen = $state(false);
+  let ocrExportDialogOpen = $state(false);
+
+  const AUDIO_EXPORT_FORMAT_OPTIONS: VersionedExportFormatOption[] = [
+    { value: 'srt', label: 'SRT - SubRip' },
+    { value: 'vtt', label: 'VTT - WebVTT' },
+    { value: 'json', label: 'JSON - Structured data' },
+  ];
+  const OCR_EXPORT_FORMAT_OPTIONS: VersionedExportFormatOption[] = OCR_OUTPUT_FORMATS.map((format) => ({
+    value: format.value,
+    label: format.label,
+  }));
 
   // References to views for drag & drop forwarding
   let extractViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
@@ -291,6 +317,178 @@
     });
   });
 
+  const audioExportGroups = $derived.by(() => {
+    return audioToSubsStore.audioFiles
+      .map((file): VersionedExportGroup | null => {
+        if (file.transcriptionVersions.length === 0) {
+          return null;
+        }
+
+        return {
+          fileId: file.id,
+          fileName: file.name,
+          fileBadge: file.path.split('.').pop()?.toUpperCase(),
+          versions: file.transcriptionVersions.map((version) => ({
+            key: `${file.id}:${version.id}`,
+            versionId: version.id,
+            versionName: version.name,
+            createdAt: version.createdAt,
+          })),
+        };
+      })
+      .filter((group): group is VersionedExportGroup => group !== null);
+  });
+
+  const hasAudioExportableData = $derived(audioExportGroups.length > 0);
+
+  const ocrExportGroups = $derived.by(() => {
+    return videoOcrStore.videoFiles
+      .map((file): VersionedExportGroup | null => {
+        const versionEntries = file.ocrVersions.map((version) => ({
+          key: `${file.id}:${version.id}`,
+          versionId: version.id,
+          versionName: version.name,
+          createdAt: version.createdAt,
+        }));
+
+        if (versionEntries.length === 0) {
+          return null;
+        }
+
+        return {
+          fileId: file.id,
+          fileName: file.name,
+          fileBadge: file.path.split('.').pop()?.toUpperCase(),
+          versions: versionEntries,
+        };
+      })
+      .filter((group): group is VersionedExportGroup => group !== null);
+  });
+
+  const hasOcrExportableData = $derived(ocrExportGroups.length > 0);
+
+  const showGlobalExportButton = $derived(
+    currentView === 'translate' || currentView === 'audio-to-subs' || currentView === 'video-ocr',
+  );
+
+  const globalExportDisabled = $derived.by(() => {
+    if (currentView === 'translate') {
+      return !hasTranslationExportableData;
+    }
+
+    if (currentView === 'audio-to-subs') {
+      return !hasAudioExportableData;
+    }
+
+    if (currentView === 'video-ocr') {
+      return !hasOcrExportableData;
+    }
+
+    return true;
+  });
+
+  const globalExportTitle = $derived.by(() => {
+    if (currentView === 'translate') {
+      return 'Export translated subtitles';
+    }
+    if (currentView === 'audio-to-subs') {
+      return 'Export transcription versions';
+    }
+    if (currentView === 'video-ocr') {
+      return 'Export OCR subtitle versions';
+    }
+    return 'Export';
+  });
+
+  function handleOpenGlobalExportDialog(): void {
+    if (currentView === 'translate') {
+      translationExportDialogOpen = true;
+      return;
+    }
+    if (currentView === 'audio-to-subs') {
+      audioExportDialogOpen = true;
+      return;
+    }
+    if (currentView === 'video-ocr') {
+      ocrExportDialogOpen = true;
+    }
+  }
+
+  async function handleExportTranscriptions(
+    request: VersionedExportRequest,
+  ): Promise<RunBatchExportResult> {
+    const targetFormat = request.format as 'srt' | 'vtt' | 'json';
+    if (!AUDIO_EXPORT_FORMAT_OPTIONS.some((option) => option.value === targetFormat)) {
+      throw new Error('Invalid export format');
+    }
+
+    const usedNames = new Set<string>();
+    const filesById = new Map(audioToSubsStore.audioFiles.map((file) => [file.id, file]));
+
+    return runBatchExport(request.targets, async (target) => {
+      const file = filesById.get(target.fileId);
+      if (!file) {
+        throw new Error(`Audio file not found: ${target.fileId}`);
+      }
+
+      const version = file.transcriptionVersions.find((entry) => entry.id === target.versionId);
+      if (!version) {
+        throw new Error(`Transcription version not found: ${target.versionId}`);
+      }
+
+      const exportContent = getFormattedOutput(version.result, targetFormat);
+      const exportFileName = buildUniqueExportFileName(
+        stripFileExtension(target.fileName),
+        target.versionName,
+        targetFormat,
+        usedNames,
+      );
+      const outputPath = await join(request.outputDir, exportFileName);
+      await writeTextFile(outputPath, exportContent);
+    });
+  }
+
+  async function handleExportOcr(request: VersionedExportRequest): Promise<RunBatchExportResult> {
+    const targetFormat = request.format as (typeof OCR_OUTPUT_FORMATS)[number]['value'];
+    if (!OCR_OUTPUT_FORMATS.some((format) => format.value === targetFormat)) {
+      throw new Error('Invalid export format');
+    }
+
+    const usedNames = new Set<string>();
+    const filesById = new Map(videoOcrStore.videoFiles.map((file) => [file.id, file]));
+
+    return runBatchExport(request.targets, async (target) => {
+      const file = filesById.get(target.fileId);
+      if (!file) {
+        throw new Error(`Video file not found: ${target.fileId}`);
+      }
+
+      const version = file.ocrVersions.find((entry) => entry.id === target.versionId);
+      if (!version) {
+        throw new Error(`OCR version not found: ${target.versionId}`);
+      }
+
+      const normalizedSubtitles = normalizeOcrSubtitles(version.finalSubtitles);
+      if (normalizedSubtitles.length === 0) {
+        throw new Error('No valid subtitles to export');
+      }
+
+      const exportFileName = buildUniqueExportFileName(
+        stripFileExtension(target.fileName),
+        target.versionName,
+        targetFormat,
+        usedNames,
+      );
+      const outputPath = await join(request.outputDir, exportFileName);
+
+      await invoke('export_ocr_subtitles', {
+        subtitles: toRustOcrSubtitles(normalizedSubtitles),
+        outputPath,
+        format: targetFormat,
+      });
+    });
+  }
+
   const viewTitles: Record<string, string> = {
     extract: 'Track Extraction',
     merge: 'Track Merge',
@@ -357,6 +555,12 @@
     currentView = viewId as 'extract' | 'merge' | 'translate' | 'rename' | 'audio-to-subs' | 'video-ocr' | 'info' | 'settings';
     if (currentView !== 'translate') {
       translationExportDialogOpen = false;
+    }
+    if (currentView !== 'audio-to-subs') {
+      audioExportDialogOpen = false;
+    }
+    if (currentView !== 'video-ocr') {
+      ocrExportDialogOpen = false;
     }
   }
 </script>
@@ -451,13 +655,13 @@
         <Separator orientation="vertical" class="h-6 mr-2" />
       {/if}
 
-      {#if currentView === 'translate'}
+      {#if showGlobalExportButton}
         <Button
           variant="outline"
           size="sm"
-          onclick={() => { translationExportDialogOpen = true; }}
-          disabled={!hasTranslationExportableData}
-          title="Export translated subtitles"
+          onclick={handleOpenGlobalExportDialog}
+          disabled={globalExportDisabled}
+          title={globalExportTitle}
         >
           <Download class="size-4 mr-2" />
           Export
@@ -545,6 +749,32 @@
     translationExportDialogOpen = open;
   }}
   jobs={translationStore.jobs}
+/>
+
+<VersionedExportDialog
+  open={audioExportDialogOpen}
+  onOpenChange={(open) => {
+    audioExportDialogOpen = open;
+  }}
+  title="Export Transcriptions"
+  description="Export transcription versions by file."
+  groups={audioExportGroups}
+  formatOptions={AUDIO_EXPORT_FORMAT_OPTIONS}
+  defaultFormat="srt"
+  onExport={handleExportTranscriptions}
+/>
+
+<VersionedExportDialog
+  open={ocrExportDialogOpen}
+  onOpenChange={(open) => {
+    ocrExportDialogOpen = open;
+  }}
+  title="Export OCR Subtitles"
+  description="Export OCR subtitle versions by file."
+  groups={ocrExportGroups}
+  formatOptions={OCR_EXPORT_FORMAT_OPTIONS}
+  defaultFormat="srt"
+  onExport={handleExportOcr}
 />
 
 <!-- Logs Sheet (global overlay) -->

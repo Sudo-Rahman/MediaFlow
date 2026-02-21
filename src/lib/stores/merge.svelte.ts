@@ -4,7 +4,7 @@ import type {
   MergeTrack,
   MergeTrackConfig,
   MergeOutputConfig,
-  BatchMergeJob,
+  FileRunState,
   MergeRuntimeProgress,
   AttachedTrack,
   TrackGroup,
@@ -19,12 +19,12 @@ let videoFiles = $state<MergeVideoFile[]>([]);
 let importedTracks = $state<ImportedTrack[]>([]);
 let sourceTrackConfigs = $state<Map<string, MergeTrackConfig>>(new Map());
 let selectedVideoId = $state<string | null>(null);
+let fileRunStates = $state<Map<string, FileRunState>>(new Map());
 let outputConfig = $state<MergeOutputConfig>({
   outputPath: '',
   useSourceFilename: true,
   outputNamePattern: '{filename}_merged',
 });
-let batchJobs = $state<BatchMergeJob[]>([]);
 let status = $state<'idle' | 'processing' | 'completed' | 'error'>('idle');
 let progress = $state(0);
 let runtimeProgress = $state<MergeRuntimeProgress>({
@@ -87,6 +87,15 @@ function clampPercentage(value: number): number {
   return Math.min(100, Math.max(0, value));
 }
 
+function getDefaultFileRunState(): FileRunState {
+  return {
+    status: 'idle',
+    progress: 0,
+    speedBytesPerSec: undefined,
+    error: undefined,
+  };
+}
+
 function computeOverallProgress(value: MergeRuntimeProgress): number {
   if (value.totalFiles <= 0) {
     return 0;
@@ -116,8 +125,8 @@ export const mergeStore = {
   get selectedVideo(): MergeVideoFile | undefined {
     return videoFiles.find(f => f.id === selectedVideoId);
   },
+  get fileRunStates() { return fileRunStates; },
   get outputConfig() { return outputConfig; },
-  get batchJobs() { return batchJobs; },
   get status() { return status; },
   get progress() { return progress; },
   get runtimeProgress() { return runtimeProgress; },
@@ -174,7 +183,12 @@ export const mergeStore = {
   },
 
   removeVideoFile(fileId: string) {
+    const file = videoFiles.find(f => f.id === fileId);
     videoFiles = videoFiles.filter(f => f.id !== fileId);
+    if (file) {
+      fileRunStates = new Map(fileRunStates);
+      fileRunStates.delete(file.path);
+    }
     if (selectedVideoId === fileId) {
       selectedVideoId = videoFiles.length > 0 ? videoFiles[0].id : null;
     }
@@ -392,6 +406,83 @@ export const mergeStore = {
     progress = value;
   },
 
+  initializeFileRunStates(filePaths: string[]) {
+    const next = new Map<string, FileRunState>();
+    for (const path of filePaths) {
+      next.set(path, {
+        ...getDefaultFileRunState(),
+        status: 'queued',
+        progress: 0,
+      });
+    }
+    fileRunStates = next;
+  },
+
+  setFileRunState(filePath: string, updates: Partial<FileRunState>) {
+    const current = fileRunStates.get(filePath) ?? getDefaultFileRunState();
+    fileRunStates = new Map(fileRunStates);
+    fileRunStates.set(filePath, { ...current, ...updates });
+  },
+
+  setFileQueued(filePath: string) {
+    this.setFileRunState(filePath, {
+      status: 'queued',
+      progress: 0,
+      speedBytesPerSec: undefined,
+      error: undefined,
+    });
+  },
+
+  setFileProcessing(filePath: string) {
+    this.setFileRunState(filePath, {
+      status: 'processing',
+      progress: 0,
+      speedBytesPerSec: undefined,
+      error: undefined,
+    });
+  },
+
+  updateFileRunProgress(filePath: string, progressValue: number, speedBytesPerSec?: number) {
+    this.setFileRunState(filePath, {
+      status: 'processing',
+      progress: clampPercentage(progressValue),
+      speedBytesPerSec,
+      error: undefined,
+    });
+  },
+
+  setFileCompleted(filePath: string) {
+    this.setFileRunState(filePath, {
+      status: 'completed',
+      progress: 100,
+      speedBytesPerSec: undefined,
+      error: undefined,
+    });
+  },
+
+  setFileCancelled(filePath: string) {
+    this.setFileRunState(filePath, {
+      status: 'cancelled',
+      speedBytesPerSec: undefined,
+    });
+  },
+
+  setFileError(filePath: string, fileError?: string) {
+    this.setFileRunState(filePath, {
+      status: 'error',
+      speedBytesPerSec: undefined,
+      error: fileError,
+    });
+  },
+
+  getFileRunState(filePath: string): FileRunState {
+    return fileRunStates.get(filePath) ?? getDefaultFileRunState();
+  },
+
+  clearFileRunStates() {
+    fileRunStates = new Map();
+  },
+
   startRuntimeProgress(totalFiles: number) {
     runtimeProgress = {
       ...resetRuntimeProgressState(),
@@ -457,12 +548,12 @@ export const mergeStore = {
     importedTracks = [];
     sourceTrackConfigs = new Map();
     selectedVideoId = null;
+    fileRunStates = new Map();
     outputConfig = {
       outputPath: '',
       useSourceFilename: true,
       outputNamePattern: '{filename}_merged',
     };
-    batchJobs = [];
     status = 'idle';
     runtimeProgress = resetRuntimeProgressState();
     progress = 0;
@@ -474,7 +565,7 @@ export const mergeStore = {
     importedTracks = [];
     sourceTrackConfigs = new Map();
     selectedVideoId = null;
-    batchJobs = [];
+    fileRunStates = new Map();
     status = 'idle';
     runtimeProgress = resetRuntimeProgressState();
     progress = 0;

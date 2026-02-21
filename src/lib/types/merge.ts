@@ -80,15 +80,6 @@ export interface MergeOutputConfig {
   title?: string;
 }
 
-export interface BatchMergeJob {
-  videoFileId: string;
-  attachedTrackIds: string[];
-  outputPath: string;
-  status: 'pending' | 'processing' | 'completed' | 'error';
-  progress: number;
-  error?: string;
-}
-
 export interface MergeRuntimeProgress {
   totalFiles: number;
   completedFiles: number;

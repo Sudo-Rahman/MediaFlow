@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import { FileVideo, FileAudio, Subtitles, Video, Film, Volume2, Trash2, Plus, Loader2, XCircle, Wand2, Link, Unlink, Settings2, GripVertical, Clock, Layers, X } from '@lucide/svelte';
+  import { FileVideo, FileAudio, Subtitles, Video, Volume2, Trash2, Plus, Wand2, Link, Unlink, Settings2, GripVertical, Clock, Layers } from '@lucide/svelte';
   export interface MergeViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
@@ -40,8 +40,8 @@
   import * as Tooltip from '$lib/components/ui/tooltip';
   import * as Tabs from '$lib/components/ui/tabs';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
-  import { FileItemCard, ToolImportButton } from '$lib/components/shared';
-  import { MergeTrackSettings, MergeOutputPanel, MergeTrackGroups, MergeTrackTable } from '$lib/components/merge';
+  import { ProcessingRemoveDialog, ToolImportButton } from '$lib/components/shared';
+  import { MergeTrackSettings, MergeOutputPanel, MergeTrackGroups, MergeTrackTable, MergeFileList } from '$lib/components/merge';
 
   // Constants
   const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];
@@ -62,6 +62,11 @@
   let isCancelling = $state(false);
   let cancelAllRequested = $state(false);
   let cancelCurrentFileId = $state<string | null>(null);
+  let removeDialogOpen = $state(false);
+  let removeInProgress = $state(false);
+  let removeTarget = $state.raw<{ mode: 'single'; fileId: string } | { mode: 'all' } | null>(null);
+  let removeAfterCancelIds = new Set<string>();
+  let clearAllAfterCancel = false;
 
   // Derived states
   const editingImportedTrack = $derived(() => {
@@ -101,6 +106,11 @@
         }
 
         mergeStore.updateRuntimeCurrentFile(
+          event.payload.progress,
+          event.payload.speedBytesPerSec,
+        );
+        mergeStore.updateFileRunProgress(
+          runtime.currentFilePath,
           event.payload.progress,
           event.payload.speedBytesPerSec,
         );
@@ -163,13 +173,6 @@
     }
 
     mergedOutputItems = Array.from(byPath.values());
-  }
-
-  function getFileIcon(path: string) {
-    const ext = path.toLowerCase().substring(path.lastIndexOf('.'));
-    if (SUBTITLE_EXTENSIONS.includes(ext)) return Subtitles;
-    if (AUDIO_EXTENSIONS.includes(ext) || ext === '.mka') return FileAudio;
-    return FileVideo;
   }
 
   function getTrackTypeColor(type: string) {
@@ -467,10 +470,13 @@
 
     mergeStore.setStatus('processing');
     mergeStore.startRuntimeProgress(videosToMerge.length);
+    mergeStore.initializeFileRunStates(videosToMerge.map((video) => video.path));
     currentMergingId = null;
     isCancelling = false;
     cancelAllRequested = false;
     cancelCurrentFileId = null;
+    removeAfterCancelIds = new Set();
+    clearAllAfterCancel = false;
 
     const mergedPaths: string[] = [];
     let completed = 0;
@@ -481,6 +487,7 @@
       if (cancelAllRequested) break;
 
       currentMergingId = video.id;
+      mergeStore.setFileProcessing(video.path);
       mergeStore.setCurrentRuntimeFile(video.id, video.path, video.name);
       const attachedTracks = mergeStore.getAttachedTracks(video.id);
 
@@ -543,11 +550,14 @@
 
         mergedPaths.push(fullOutputPath);
         completed++;
+        mergeStore.setFileCompleted(video.path);
       } catch (error) {
         if (cancelAllRequested || cancelCurrentFileId === video.id) {
           cancelled++;
+          mergeStore.setFileCancelled(video.path);
         } else {
           mergeError = error instanceof Error ? error.message : String(error);
+          mergeStore.setFileError(video.path, mergeError);
           break;
         }
       } finally {
@@ -564,6 +574,18 @@
 
     currentMergingId = null;
 
+    if (cancelAllRequested) {
+      for (const video of videosToMerge) {
+        const runState = mergeStore.getFileRunState(video.path);
+        if (runState.status === 'queued') {
+          mergeStore.setFileCancelled(video.path);
+        }
+      }
+    }
+
+    const pendingRemoveIds = new Set(removeAfterCancelIds);
+    const shouldClearAllAfterCancel = clearAllAfterCancel;
+
     if (mergeError) {
       mergeStore.setError(mergeError);
       mergeStore.resetRuntimeProgress();
@@ -577,6 +599,15 @@
       mergeStore.resetRuntimeProgress();
 
       appendMergedOutputs(mergedPaths);
+
+      if (shouldClearAllAfterCancel) {
+        mergeStore.clearAll();
+        mergedOutputItems = [];
+      } else if (pendingRemoveIds.size > 0) {
+        for (const fileId of pendingRemoveIds) {
+          mergeStore.removeVideoFile(fileId);
+        }
+      }
 
       const parts = [];
       if (completed > 0) parts.push(`${completed} completed`);
@@ -593,15 +624,17 @@
     isCancelling = false;
     cancelAllRequested = false;
     cancelCurrentFileId = null;
+    clearAllAfterCancel = false;
+    removeAfterCancelIds = new Set();
   }
 
-  async function handleCancelFile(fileId: string) {
-    if (!mergeStore.isProcessing) return;
-    if (isCancelling) return;
-    if (currentMergingId !== fileId) return;
+  async function handleCancelFile(fileId: string): Promise<boolean> {
+    if (!mergeStore.isProcessing) return false;
+    if (isCancelling) return false;
+    if (currentMergingId !== fileId) return false;
 
     const video = mergeStore.videoFiles.find(v => v.id === fileId);
-    if (!video) return;
+    if (!video) return false;
 
     cancelCurrentFileId = fileId;
     isCancelling = true;
@@ -609,14 +642,22 @@
     try {
       await invoke('cancel_merge_file', { videoPath: video.path });
       toast.info('Cancelling current file...');
+      return true;
     } catch (error) {
-      console.error('Failed to cancel merge file:', error);
+      cancelCurrentFileId = null;
+      isCancelling = false;
+      logAndToast.error({
+        source: 'merge',
+        title: 'Cancel failed',
+        details: error instanceof Error ? error.message : String(error),
+      });
+      return false;
     }
   }
 
-  async function handleCancelAll() {
-    if (!mergeStore.isProcessing) return;
-    if (isCancelling) return;
+  async function handleCancelAll(): Promise<boolean> {
+    if (!mergeStore.isProcessing) return false;
+    if (isCancelling) return false;
 
     cancelAllRequested = true;
     isCancelling = true;
@@ -624,8 +665,16 @@
     try {
       await invoke('cancel_merge');
       toast.info('Cancelling merge...');
+      return true;
     } catch (error) {
-      console.error('Failed to cancel merge:', error);
+      cancelAllRequested = false;
+      isCancelling = false;
+      logAndToast.error({
+        source: 'merge',
+        title: 'Cancel failed',
+        details: error instanceof Error ? error.message : String(error),
+      });
+      return false;
     }
   }
 
@@ -637,6 +686,68 @@
     mergeStore.clearAll();
     mergedOutputItems = [];
     toast.info('Cleared all files');
+  }
+
+  function handleRequestRemoveFile(fileId: string) {
+    const isCurrentProcessing = mergeStore.isProcessing && currentMergingId === fileId;
+    if (isCurrentProcessing) {
+      removeTarget = { mode: 'single', fileId };
+      removeDialogOpen = true;
+      return;
+    }
+
+    if (!mergeStore.isProcessing) {
+      mergeStore.removeVideoFile(fileId);
+      return;
+    }
+  }
+
+  function handleRequestClearAll() {
+    if (mergeStore.isProcessing) {
+      removeTarget = { mode: 'all' };
+      removeDialogOpen = true;
+      return;
+    }
+
+    handleClearAll();
+  }
+
+  async function handleConfirmRemove() {
+    const target = removeTarget;
+    if (!target) return;
+
+    removeInProgress = true;
+
+    if (target.mode === 'single') {
+      removeAfterCancelIds = new Set([...removeAfterCancelIds, target.fileId]);
+      const cancelled = await handleCancelFile(target.fileId);
+      if (!cancelled) {
+        removeAfterCancelIds = new Set(
+          Array.from(removeAfterCancelIds).filter((fileId) => fileId !== target.fileId),
+        );
+        removeInProgress = false;
+        return;
+      }
+    } else {
+      clearAllAfterCancel = true;
+      const cancelled = await handleCancelAll();
+      if (!cancelled) {
+        clearAllAfterCancel = false;
+        removeInProgress = false;
+        return;
+      }
+    }
+
+    removeDialogOpen = false;
+    removeTarget = null;
+    removeInProgress = false;
+  }
+
+  function handleCancelRemoveDialog() {
+    removeDialogOpen = false;
+    removeTarget = null;
+    removeAfterCancelIds = new Set();
+    clearAllAfterCancel = false;
   }
 
   // Track editing
@@ -665,17 +776,6 @@
     } else {
       mergeStore.updateSourceTrackConfig(editingTrackId, updates);
     }
-  }
-
-  // Get track counts by type for a video
-  function getTrackCounts(tracks: MergeTrack[]) {
-    const counts = { video: 0, audio: 0, subtitle: 0 };
-    for (const track of tracks) {
-      if (track.type in counts) {
-        counts[track.type as keyof typeof counts]++;
-      }
-    }
-    return counts;
   }
 
   // Group source tracks by type
@@ -732,9 +832,8 @@
             <Button
               variant="ghost"
               size="icon-sm"
-              onclick={handleClearAll}
+              onclick={handleRequestClearAll}
               class="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-              disabled={isProcessing()}
             >
               <Trash2 class="size-4" />
             </Button>
@@ -748,93 +847,26 @@
         </div>
       </div>
 
-      <div class="flex-1 min-h-0 overflow-auto p-2 space-y-2">
-        {#each mergeStore.videoFiles as video (video.id)}
-          {@const FileIcon = getFileIcon(video.path)}
-          {@const attachedCount = video.attachedTracks.length}
-          {@const isSelected = mergeStore.selectedVideoId === video.id}
-          {@const isCurrentMerging = isProcessing() && currentMergingId === video.id}
-          {@const seriesInfo = formatSeriesInfo(video.seasonNumber, video.episodeNumber)}
-          {@const counts = getTrackCounts(video.tracks)}
-          <FileItemCard selected={isSelected} onclick={() => mergeStore.selectVideo(video.id)}>
-            {#snippet icon()}
-              {#if isCurrentMerging}
-                <Loader2 class="size-5 text-primary animate-spin" />
-              {:else if video.status === 'scanning'}
-                <Loader2 class="size-5 text-muted-foreground animate-spin" />
-              {:else if video.status === 'error'}
-                <XCircle class="size-5 text-destructive" />
-              {:else}
-                <FileIcon class="size-5 text-primary" />
-              {/if}
-            {/snippet}
-
-            {#snippet content()}
-              <p class="font-medium text-sm truncate">{video.name}</p>
-              <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                {#if seriesInfo}
-                  <Badge variant="outline" class="text-xs">{seriesInfo}</Badge>
-                {/if}
-                {#if counts.video > 0}
-                  <Badge variant="secondary" class="text-xs gap-1">
-                    <Film class="size-3" />
-                    {counts.video}
-                  </Badge>
-                {/if}
-                {#if counts.audio > 0}
-                  <Badge variant="secondary" class="text-xs gap-1">
-                    <Volume2 class="size-3" />
-                    {counts.audio}
-                  </Badge>
-                {/if}
-                {#if counts.subtitle > 0}
-                  <Badge variant="secondary" class="text-xs gap-1">
-                    <Subtitles class="size-3" />
-                    {counts.subtitle}
-                  </Badge>
-                {/if}
-                {#if attachedCount > 0}
-                  <Badge class="text-xs">+{attachedCount}</Badge>
-                {/if}
-              </div>
-            {/snippet}
-
-            {#snippet actions()}
-              {#if isCurrentMerging}
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  class="text-destructive hover:text-destructive hover:bg-destructive/10"
-                  onclick={(e: MouseEvent) => { e.stopPropagation(); handleCancelFile(video.id); }}
-                  disabled={isCancelling}
-                  title="Cancel merge"
-                >
-                  <X class="size-4" />
-                </Button>
-              {:else}
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  class="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                  onclick={(e: MouseEvent) => { e.stopPropagation(); mergeStore.removeVideoFile(video.id); }}
-                  disabled={isProcessing()}
-                  title="Remove"
-                >
-                  <Trash2 class="size-4" />
-                </Button>
-              {/if}
-            {/snippet}
-          </FileItemCard>
+      <div class="flex-1 min-h-0 overflow-auto p-2">
+        {#if mergeStore.videoFiles.length === 0}
+          <ImportDropZone
+            icon={Video}
+            title="Drop video files here"
+            formats={VIDEO_FORMATS}
+            onBrowse={handleAddVideoFiles}
+          />
         {:else}
-          <div>
-            <ImportDropZone
-              icon={Video}
-              title="Drop video files here"
-              formats={VIDEO_FORMATS}
-              onBrowse={handleAddVideoFiles}
-            />
-          </div>
-        {/each}
+          <MergeFileList
+            files={mergeStore.videoFiles}
+            selectedId={mergeStore.selectedVideoId}
+            fileRunStates={mergeStore.fileRunStates}
+            isProcessing={mergeStore.isProcessing}
+            currentProcessingPath={mergeStore.runtimeProgress.currentFilePath}
+            onSelect={(fileId) => mergeStore.selectVideo(fileId)}
+            onRemove={handleRequestRemoveFile}
+            showAddButton={false}
+          />
+        {/if}
       </div>
     </div>
 
@@ -1126,4 +1158,12 @@
       onSave={handleSaveTrackSettings}
     />
   </div>
+
+  <ProcessingRemoveDialog
+    bind:open={removeDialogOpen}
+    mode={removeTarget?.mode ?? null}
+    inProgress={removeInProgress}
+    onConfirm={handleConfirmRemove}
+    onCancel={handleCancelRemoveDialog}
+  />
 {/if}

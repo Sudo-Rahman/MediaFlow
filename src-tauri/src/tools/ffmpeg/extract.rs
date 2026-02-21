@@ -1,4 +1,5 @@
 use crate::shared::ffmpeg_progress::FfmpegProgressTracker;
+use crate::shared::process::terminate_process;
 use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::validation::{validate_media_path, validate_output_path};
@@ -9,6 +10,24 @@ use tokio::time::{Duration, timeout};
 
 /// Timeout for FFmpeg extraction operations (5 minutes)
 const FFMPEG_EXTRACT_TIMEOUT: Duration = Duration::from_secs(300);
+
+fn remove_partial_output(path: &str) {
+    let _ = std::fs::remove_file(path);
+}
+
+fn clear_extract_registration(input_path: &str) -> (Option<u32>, Option<String>) {
+    let pid = super::state::EXTRACT_PROCESS_IDS
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.remove(input_path));
+
+    let output_path = super::state::EXTRACT_OUTPUT_PATHS
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.remove(input_path));
+
+    (pid, output_path)
+}
 
 // ============================================================================
 // CODEC TO FFMPEG FORMAT MAPPING
@@ -179,6 +198,15 @@ async fn extract_track_with_ffmpeg_and_progress(
             )
         })?;
 
+    if let Some(pid) = child.id() {
+        if let Ok(mut guard) = super::state::EXTRACT_PROCESS_IDS.lock() {
+            guard.insert(input_path.to_string(), pid);
+        }
+    }
+    if let Ok(mut guard) = super::state::EXTRACT_OUTPUT_PATHS.lock() {
+        guard.insert(input_path.to_string(), output_path.to_string());
+    }
+
     if let Some(app_handle) = app {
         emit_extract_progress(
             app_handle,
@@ -233,14 +261,31 @@ async fn extract_track_with_ffmpeg_and_progress(
     let output = timeout(FFMPEG_EXTRACT_TIMEOUT, extract_future)
         .await
         .map_err(|_| {
+            let (pid, registered_output) = clear_extract_registration(input_path);
+            if let Some(pid) = pid {
+                terminate_process(pid);
+            }
+            if let Some(path) = registered_output {
+                remove_partial_output(&path);
+            }
+
             format!(
                 "FFmpeg extraction timeout after {} seconds",
                 FFMPEG_EXTRACT_TIMEOUT.as_secs()
             )
         })?
-        .map_err(|e| format!("Failed to execute ffmpeg: {}", e))?;
+        .map_err(|e| {
+            let (_pid, registered_output) = clear_extract_registration(input_path);
+            if let Some(path) = registered_output {
+                remove_partial_output(&path);
+            }
+            format!("Failed to execute ffmpeg: {}", e)
+        })?;
+
+    clear_extract_registration(input_path);
 
     if !output.status.success() {
+        remove_partial_output(output_path);
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("ffmpeg extraction failed: {}", stderr));
     }

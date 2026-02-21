@@ -26,7 +26,7 @@
     ExtractionPanel,
     BatchTrackSelector
   } from '$lib/components';
-  import { ToolImportButton } from '$lib/components/shared';
+  import { ProcessingRemoveDialog, ToolImportButton } from '$lib/components/shared';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
 
   const SUPPORTED_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'] as const;
@@ -43,8 +43,20 @@
 
   let extractedOutputItems = $state<ExtractedOutputItem[]>([]);
   let activeExtractionKey: string | null = null;
+  let activeExtractionFilePath = $state<string | null>(null);
   let runFileTrackTotals = new Map<string, number>();
   let runFileCompletedTracks = new Map<string, number>();
+  let runFileFailedTracks = new Map<string, number>();
+
+  let cancelAllRequested = $state(false);
+  let cancelCurrentFilePath = $state<string | null>(null);
+  let isCancelling = $state(false);
+
+  let removeDialogOpen = $state(false);
+  let removeInProgress = $state(false);
+  let removeTarget = $state.raw<{ mode: 'single'; filePath: string } | { mode: 'all' } | null>(null);
+  let removeAfterCancelPaths = new Set<string>();
+  let clearAllAfterCancel = false;
 
   function clampProgress(value: number): number {
     if (!Number.isFinite(value)) return 0;
@@ -57,8 +69,15 @@
 
   function clearExtractionRuntimeState() {
     activeExtractionKey = null;
+    activeExtractionFilePath = null;
     runFileTrackTotals = new Map();
     runFileCompletedTracks = new Map();
+    runFileFailedTracks = new Map();
+    cancelAllRequested = false;
+    cancelCurrentFilePath = null;
+    isCancelling = false;
+    removeAfterCancelPaths = new Set();
+    clearAllAfterCancel = false;
   }
 
   function toDurationUs(durationSeconds?: number): number | undefined {
@@ -96,6 +115,7 @@
           currentFileProgress,
           speedBytesPerSec,
         );
+        extractionStore.updateFileProgress(inputPath, currentFileProgress, speedBytesPerSec);
       });
 
       if (destroyed) {
@@ -137,7 +157,7 @@
       return;
     }
 
-    if (extractionStore.progress.status === 'completed') {
+    if (extractionStore.progress.status === 'completed' || extractionStore.progress.status === 'cancelled') {
       fileListStore.clear();
       extractionStore.reset();
       extractionStore.clearAllTracks();
@@ -288,6 +308,13 @@
     const fileIndexByPath = new Map<string, number>();
     runFileTrackTotals = new Map();
     runFileCompletedTracks = new Map();
+    runFileFailedTracks = new Map();
+    removeAfterCancelPaths = new Set();
+    clearAllAfterCancel = false;
+    cancelAllRequested = false;
+    cancelCurrentFilePath = null;
+    isCancelling = false;
+    const cancelledFiles = new Set<string>();
 
     for (const { file } of extractions) {
       if (!fileIndexByPath.has(file.path)) {
@@ -298,6 +325,13 @@
 
     for (const filePath of runFileTrackTotals.keys()) {
       runFileCompletedTracks.set(filePath, 0);
+      runFileFailedTracks.set(filePath, 0);
+    }
+
+    const runFilePaths = Array.from(runFileTrackTotals.keys());
+    extractionStore.initializeFileRunStates(runFilePaths);
+    for (const filePath of runFilePaths) {
+      extractionStore.setFileQueued(filePath);
     }
 
     extractionStore.updateProgress({
@@ -317,11 +351,20 @@
     const extractedOutputs: ExtractedOutputItem[] = [];
 
     for (let i = 0; i < extractions.length; i++) {
+      if (cancelAllRequested) {
+        break;
+      }
+
       const { file, track } = extractions[i];
+      if (cancelledFiles.has(file.path)) {
+        continue;
+      }
+
       const outputPath = buildOutputPath(file.path, track, outputDir);
       const fileCompletedTracks = runFileCompletedTracks.get(file.path) ?? 0;
       const fileTotalTracks = Math.max(runFileTrackTotals.get(file.path) ?? 1, 1);
 
+      extractionStore.setFileProcessing(file.path);
       extractionStore.updateProgress({
         currentFile: file.name,
         currentFileIndex: fileIndexByPath.get(file.path) ?? 1,
@@ -332,6 +375,7 @@
       });
 
       activeExtractionKey = buildExtractionKey(file.path, track.index);
+      activeExtractionFilePath = file.path;
       const result = await extractTrack({
         inputPath: file.path,
         outputPath,
@@ -341,6 +385,7 @@
         durationUs: toDurationUs(file.duration),
       });
       activeExtractionKey = null;
+      activeExtractionFilePath = null;
 
       extractionStore.addResult(result);
       extractionStore.markTrackCompleted();
@@ -352,6 +397,25 @@
         currentFileProgress: clampProgress((updatedCompletedTracks / fileTotalTracks) * 100),
         currentSpeedBytesPerSec: undefined,
       });
+
+      const wasCancelled = cancelAllRequested ||
+        cancelCurrentFilePath === file.path ||
+        (!!result.error && result.error.toLowerCase().includes('cancel'));
+
+      if (wasCancelled) {
+        cancelledFiles.add(file.path);
+        extractionStore.setFileCancelled(file.path);
+        if (cancelCurrentFilePath === file.path) {
+          cancelCurrentFilePath = null;
+          if (!cancelAllRequested) {
+            isCancelling = false;
+          }
+        }
+        if (cancelAllRequested) {
+          break;
+        }
+        continue;
+      }
 
       if (result.success) {
         successCount++;
@@ -367,16 +431,39 @@
         }
       } else {
         errorCount++;
+        runFileFailedTracks.set(file.path, (runFileFailedTracks.get(file.path) ?? 0) + 1);
+      }
+
+      if (updatedCompletedTracks >= fileTotalTracks) {
+        const failedTracks = runFileFailedTracks.get(file.path) ?? 0;
+        if (failedTracks > 0) {
+          extractionStore.setFileError(file.path, `${failedTracks} track(s) failed`);
+        } else {
+          extractionStore.setFileCompleted(file.path);
+        }
       }
     }
 
+    if (cancelAllRequested) {
+      for (const [filePath, totalTracks] of runFileTrackTotals) {
+        const completedTracks = runFileCompletedTracks.get(filePath) ?? 0;
+        if (completedTracks < totalTracks && !cancelledFiles.has(filePath)) {
+          cancelledFiles.add(filePath);
+          extractionStore.setFileCancelled(filePath);
+        }
+      }
+    }
+
+    const pendingRemovePaths = new Set(removeAfterCancelPaths);
+    const shouldClearAllAfterCancel = clearAllAfterCancel;
+    const wasCancelledRun = cancelledFiles.size > 0 || cancelAllRequested;
+
     extractionStore.updateProgress({
-      status: 'completed',
+      status: wasCancelledRun ? 'cancelled' : 'completed',
       currentTrackProgress: 0,
-      currentFileProgress: 100,
+      currentFileProgress: wasCancelledRun ? extractionStore.progress.currentFileProgress : 100,
       currentSpeedBytesPerSec: undefined,
     });
-    clearExtractionRuntimeState();
 
     if (extractedOutputs.length > 0) {
       const byPath = new Map(extractedOutputItems.map((item) => [item.path, item]));
@@ -386,11 +473,144 @@
       extractedOutputItems = Array.from(byPath.values());
     }
 
-    if (errorCount === 0) {
+    if (wasCancelledRun) {
+      if (shouldClearAllAfterCancel) {
+        fileListStore.clear();
+        extractionStore.reset();
+        extractionStore.clearAllTracks();
+        extractedOutputItems = [];
+      } else if (pendingRemovePaths.size > 0) {
+        for (const filePath of pendingRemovePaths) {
+          fileListStore.removeFile(filePath);
+          extractionStore.clearTracksForFile(filePath);
+          extractionStore.removeFileRunState(filePath);
+        }
+      }
+    }
+
+    const cancelledCount = cancelledFiles.size;
+    if (wasCancelledRun) {
+      const parts = [];
+      if (successCount > 0) parts.push(`${successCount} success`);
+      if (errorCount > 0) parts.push(`${errorCount} error`);
+      if (cancelledCount > 0) parts.push(`${cancelledCount} cancelled`);
+      toast.info(parts.length > 0 ? `Extraction finished: ${parts.join(', ')}` : 'Extraction cancelled');
+    } else if (errorCount === 0) {
       toast.success(`${successCount} track(s) extracted successfully`);
     } else {
       toast.warning(`${successCount} success, ${errorCount} error(s)`);
     }
+
+    clearExtractionRuntimeState();
+  }
+
+  async function handleCancelFile(filePath: string): Promise<boolean> {
+    if (!extractionStore.isExtracting) return false;
+    if (isCancelling) return false;
+    if (activeExtractionFilePath !== filePath) return false;
+
+    cancelCurrentFilePath = filePath;
+    isCancelling = true;
+
+    try {
+      await invoke('cancel_extract_file', { inputPath: filePath });
+      toast.info('Cancelling current file...');
+      return true;
+    } catch (error) {
+      cancelCurrentFilePath = null;
+      isCancelling = false;
+      logAndToast.error({
+        source: 'extraction',
+        title: 'Cancel failed',
+        details: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  }
+
+  async function handleCancelAll(): Promise<boolean> {
+    if (!extractionStore.isExtracting) return false;
+    if (isCancelling) return false;
+
+    cancelAllRequested = true;
+    isCancelling = true;
+
+    try {
+      await invoke('cancel_extract');
+      toast.info('Cancelling extraction...');
+      return true;
+    } catch (error) {
+      cancelAllRequested = false;
+      isCancelling = false;
+      logAndToast.error({
+        source: 'extraction',
+        title: 'Cancel failed',
+        details: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  }
+
+  function handleRequestRemoveFile(filePath: string) {
+    if (extractionStore.isExtracting && activeExtractionFilePath === filePath) {
+      removeTarget = { mode: 'single', filePath };
+      removeDialogOpen = true;
+      return;
+    }
+
+    if (!extractionStore.isExtracting) {
+      fileListStore.removeFile(filePath);
+      extractionStore.clearTracksForFile(filePath);
+      extractionStore.removeFileRunState(filePath);
+    }
+  }
+
+  function handleRequestClearAll() {
+    if (extractionStore.isExtracting) {
+      removeTarget = { mode: 'all' };
+      removeDialogOpen = true;
+      return;
+    }
+
+    handleClearAll();
+  }
+
+  async function handleConfirmRemove() {
+    const target = removeTarget;
+    if (!target) return;
+
+    removeInProgress = true;
+
+    if (target.mode === 'single') {
+      removeAfterCancelPaths = new Set([...removeAfterCancelPaths, target.filePath]);
+      const cancelled = await handleCancelFile(target.filePath);
+      if (!cancelled) {
+        removeAfterCancelPaths = new Set(
+          Array.from(removeAfterCancelPaths).filter((path) => path !== target.filePath),
+        );
+        removeInProgress = false;
+        return;
+      }
+    } else {
+      clearAllAfterCancel = true;
+      const cancelled = await handleCancelAll();
+      if (!cancelled) {
+        clearAllAfterCancel = false;
+        removeInProgress = false;
+        return;
+      }
+    }
+
+    removeDialogOpen = false;
+    removeTarget = null;
+    removeInProgress = false;
+  }
+
+  function handleCancelRemoveDialog() {
+    removeDialogOpen = false;
+    removeTarget = null;
+    removeAfterCancelPaths = new Set();
+    clearAllAfterCancel = false;
   }
 
   async function handleOpenFolder() {
@@ -463,7 +683,7 @@
           <Button
             variant="ghost"
             size="icon-sm"
-            onclick={handleClearAll}
+            onclick={handleRequestClearAll}
             class="text-muted-foreground hover:text-destructive"
           >
             <Trash2 class="size-4" />
@@ -491,8 +711,11 @@
         <FileList
           files={fileListStore.files}
           selectedPath={fileListStore.selectedFilePath}
+          fileRunStates={extractionStore.fileRunStates}
+          isProcessing={extractionStore.isExtracting}
+          currentProcessingPath={activeExtractionFilePath}
           onSelect={(path) => fileListStore.selectFile(path)}
-          onRemove={(path) => fileListStore.removeFile(path)}
+          onRemove={handleRequestRemoveFile}
         />
       </div>
     {/if}
@@ -537,6 +760,16 @@
       onExtract={handleExtract}
       onExtractAgain={handleExtractAgain}
       onOpenFolder={handleOpenFolder}
+      onCancel={handleCancelAll}
+      {isCancelling}
     />
   </div>
 </div>
+
+<ProcessingRemoveDialog
+  bind:open={removeDialogOpen}
+  mode={removeTarget?.mode ?? null}
+  inProgress={removeInProgress}
+  onConfirm={handleConfirmRemove}
+  onCancel={handleCancelRemoveDialog}
+/>

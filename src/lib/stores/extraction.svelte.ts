@@ -1,8 +1,9 @@
-import type { ExtractionProgress, ExtractionResult } from '$lib/types';
+import type { ExtractionProgress, ExtractionResult, FileRunState } from '$lib/types';
 
 // État de l'extraction
 let outputDir = $state<string>('');
 let selectedTracks = $state<Map<string, number[]>>(new Map());
+let fileRunStates = $state<Map<string, FileRunState>>(new Map());
 let progress = $state<ExtractionProgress>({
   currentFile: '',
   currentFileIndex: 0,
@@ -16,6 +17,20 @@ let progress = $state<ExtractionProgress>({
 });
 let results = $state<ExtractionResult[]>([]);
 
+function clampProgress(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, value));
+}
+
+function getDefaultFileRunState(): FileRunState {
+  return {
+    status: 'idle',
+    progress: 0,
+    speedBytesPerSec: undefined,
+    error: undefined,
+  };
+}
+
 export const extractionStore = {
   get outputDir() {
     return outputDir;
@@ -23,6 +38,10 @@ export const extractionStore = {
 
   get selectedTracks() {
     return selectedTracks;
+  },
+
+  get fileRunStates() {
+    return fileRunStates;
   },
 
   get progress() {
@@ -101,6 +120,83 @@ export const extractionStore = {
     progress = { ...progress, ...updates };
   },
 
+  initializeFileRunStates(filePaths: string[]) {
+    const next = new Map<string, FileRunState>();
+    for (const filePath of filePaths) {
+      next.set(filePath, {
+        ...getDefaultFileRunState(),
+        status: 'queued',
+      });
+    }
+    fileRunStates = next;
+  },
+
+  setFileRunState(filePath: string, updates: Partial<FileRunState>) {
+    const current = fileRunStates.get(filePath) ?? getDefaultFileRunState();
+    fileRunStates = new Map(fileRunStates);
+    fileRunStates.set(filePath, { ...current, ...updates });
+  },
+
+  setFileQueued(filePath: string) {
+    this.setFileRunState(filePath, {
+      status: 'queued',
+      progress: 0,
+      speedBytesPerSec: undefined,
+      error: undefined,
+    });
+  },
+
+  setFileProcessing(filePath: string) {
+    this.setFileRunState(filePath, {
+      status: 'processing',
+      progress: 0,
+      speedBytesPerSec: undefined,
+      error: undefined,
+    });
+  },
+
+  updateFileProgress(filePath: string, fileProgress: number, speedBytesPerSec?: number) {
+    this.setFileRunState(filePath, {
+      status: 'processing',
+      progress: clampProgress(fileProgress),
+      speedBytesPerSec,
+      error: undefined,
+    });
+  },
+
+  setFileCompleted(filePath: string) {
+    this.setFileRunState(filePath, {
+      status: 'completed',
+      progress: 100,
+      speedBytesPerSec: undefined,
+      error: undefined,
+    });
+  },
+
+  setFileCancelled(filePath: string) {
+    this.setFileRunState(filePath, {
+      status: 'cancelled',
+      speedBytesPerSec: undefined,
+    });
+  },
+
+  setFileError(filePath: string, error?: string) {
+    this.setFileRunState(filePath, {
+      status: 'error',
+      speedBytesPerSec: undefined,
+      error,
+    });
+  },
+
+  removeFileRunState(filePath: string) {
+    fileRunStates = new Map(fileRunStates);
+    fileRunStates.delete(filePath);
+  },
+
+  clearFileRunStates() {
+    fileRunStates = new Map();
+  },
+
   setLiveProgress(
     currentTrackProgress: number,
     currentFileProgress: number,
@@ -140,6 +236,7 @@ export const extractionStore = {
       status: 'idle'
     };
     results = [];
+    fileRunStates = new Map();
   },
 
   clearResults() {

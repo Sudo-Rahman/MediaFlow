@@ -55,7 +55,7 @@ export interface ExtractionProgress {
   currentTrackProgress: number;
   currentFileProgress: number;
   currentSpeedBytesPerSec?: number;
-  status: 'idle' | 'extracting' | 'completed' | 'error';
+  status: 'idle' | 'extracting' | 'completed' | 'cancelled' | 'error';
   error?: string;
 }
 

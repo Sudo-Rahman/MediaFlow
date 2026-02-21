@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Folder, Play, FolderOpen, Loader2, CheckCircle } from '@lucide/svelte';
+  import { Folder, Play, FolderOpen, Loader2, CheckCircle, X, CircleAlert } from '@lucide/svelte';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Progress } from '$lib/components/ui/progress';
@@ -16,6 +16,8 @@
     onExtract?: () => void;
     onExtractAgain?: () => void;
     onOpenFolder?: () => void;
+    onCancel?: () => void;
+    isCancelling?: boolean;
     class?: string;
   }
 
@@ -27,11 +29,14 @@
     onExtract,
     onExtractAgain,
     onOpenFolder,
+    onCancel,
+    isCancelling = false,
     class: className = ''
   }: ExtractionPanelProps = $props();
 
   const isExtracting = $derived(progress.status === 'extracting');
   const isCompleted = $derived(progress.status === 'completed');
+  const isCancelled = $derived(progress.status === 'cancelled');
   const canExtract = $derived(selectedCount > 0 && outputDir && !isExtracting);
 </script>
 
@@ -67,7 +72,7 @@
     </div>
 
     <!-- Progress -->
-    {#if isExtracting || isCompleted}
+    {#if isExtracting || isCompleted || isCancelled}
       <div class="space-y-3">
         {#if isCompleted}
           <Alert.Root class="border-green-500/50 bg-green-500/10">
@@ -75,6 +80,14 @@
             <Alert.Title>Extraction complete!</Alert.Title>
             <Alert.Description>
               All tracks have been successfully extracted.
+            </Alert.Description>
+          </Alert.Root>
+        {:else if isCancelled}
+          <Alert.Root class="border-orange-500/50 bg-orange-500/10">
+            <CircleAlert class="size-4 text-orange-500" />
+            <Alert.Title>Extraction cancelled</Alert.Title>
+            <Alert.Description>
+              Active extraction was cancelled before completion.
             </Alert.Description>
           </Alert.Root>
         {:else}
@@ -117,19 +130,29 @@
         <Play class="size-4 mr-2" />
         Extract again
       </Button>
+    {:else if isExtracting}
+      <Button
+        class="w-full"
+        variant="destructive"
+        onclick={onCancel}
+        disabled={!onCancel || isCancelling}
+      >
+        {#if isCancelling}
+          <Loader2 class="size-4 mr-2 animate-spin" />
+          Cancelling...
+        {:else}
+          <X class="size-4 mr-2" />
+          Cancel extraction
+        {/if}
+      </Button>
     {:else}
       <Button
         class="w-full"
         onclick={onExtract}
         disabled={!canExtract}
       >
-        {#if isExtracting}
-          <Loader2 class="size-4 mr-2 animate-spin" />
-          Extracting...
-        {:else}
-          <Play class="size-4 mr-2" />
-          Extract ({selectedCount} track{selectedCount > 1 ? 's' : ''})
-        {/if}
+        <Play class="size-4 mr-2" />
+        Extract ({selectedCount} track{selectedCount > 1 ? 's' : ''})
       </Button>
     {/if}
   </Card.Footer>

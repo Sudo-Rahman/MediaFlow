@@ -20,6 +20,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::ffprobe::probe_file,
             commands::ffmpeg_extract::extract_track,
+            commands::ffmpeg_cancel::cancel_extract,
+            commands::ffmpeg_cancel::cancel_extract_file,
             commands::fs_open_folder::open_folder,
             commands::ffmpeg_version::check_ffmpeg,
             commands::ffmpeg_version::get_ffmpeg_version,

@@ -1,3 +1,12 @@
+export type FileRunStatus = 'idle' | 'queued' | 'processing' | 'completed' | 'error' | 'cancelled';
+
+export interface FileRunState {
+  status: FileRunStatus;
+  progress: number;
+  speedBytesPerSec?: number;
+  error?: string;
+}
+
 export interface ExtractProgressEvent {
   inputPath: string;
   outputPath: string;

@@ -20,6 +20,29 @@ function generateModelSelectionId(): string {
   return `model_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function getVersionDrivenJobState(versions: TranslationVersion[]): Pick<
+  TranslationJob,
+  'status' | 'progress' | 'currentBatch' | 'totalBatches' | 'error'
+> {
+  if (versions.length > 0) {
+    return {
+      status: 'completed',
+      progress: 100,
+      currentBatch: 0,
+      totalBatches: 0,
+      error: undefined,
+    };
+  }
+
+  return {
+    status: 'pending',
+    progress: 0,
+    currentBatch: 0,
+    totalBatches: 0,
+    error: undefined,
+  };
+}
+
 // Translation state
 let jobs = $state<TranslationJob[]>([]);
 let config = $state<TranslationConfig>({
@@ -251,6 +274,7 @@ export const translationStore = {
   cancelJob(jobId: string) {
     const job = jobs.find(j => j.id === jobId);
     if (!job) return;
+    const hasVersions = job.translationVersions.length > 0;
 
     // Invalidate run first so late async results are ignored.
     this.invalidateRun(jobId);
@@ -267,8 +291,11 @@ export const translationStore = {
       }
       // Mark all pending/translating model jobs as cancelled
       this.updateJob(jobId, {
-        status: 'cancelled',
-        error: 'Cancelled by user',
+        status: hasVersions ? 'completed' : 'cancelled',
+        error: hasVersions ? undefined : 'Cancelled by user',
+        progress: hasVersions ? 100 : job.progress,
+        currentBatch: hasVersions ? 0 : job.currentBatch,
+        totalBatches: hasVersions ? 0 : job.totalBatches,
         abortController: undefined,
         modelJobs: job.modelJobs.map(mj =>
           mj.status === 'pending' || mj.status === 'translating'
@@ -283,8 +310,11 @@ export const translationStore = {
       });
     } else {
       this.updateJob(jobId, {
-        status: 'cancelled',
-        error: 'Cancelled by user',
+        status: hasVersions ? 'completed' : 'cancelled',
+        error: hasVersions ? undefined : 'Cancelled by user',
+        progress: hasVersions ? 100 : job.progress,
+        currentBatch: hasVersions ? 0 : job.currentBatch,
+        totalBatches: hasVersions ? 0 : job.totalBatches,
         abortController: undefined,
       });
     }
@@ -377,10 +407,12 @@ export const translationStore = {
   addTranslationVersion(jobId: string, version: TranslationVersion): void {
     jobs = jobs.map(j => {
       if (j.id !== jobId) return j;
+      const nextVersions = [...j.translationVersions, version];
       return {
         ...j,
-        translationVersions: [...j.translationVersions, version],
+        translationVersions: nextVersions,
         activeVersionId: version.id,
+        ...getVersionDrivenJobState(nextVersions),
       };
     });
   },
@@ -392,12 +424,13 @@ export const translationStore = {
       const newActiveId = j.activeVersionId === versionId
         ? (filtered.length > 0 ? filtered[filtered.length - 1].id : null)
         : j.activeVersionId;
+
       return {
         ...j,
         translationVersions: filtered,
         activeVersionId: newActiveId,
-        // If no versions remain, revert to unprocessed state
-        ...(filtered.length === 0 ? { status: 'pending' as const, result: undefined, progress: 0 } : {}),
+        ...getVersionDrivenJobState(filtered),
+        ...(filtered.length === 0 ? { result: undefined } : {}),
       };
     });
   },
@@ -405,10 +438,13 @@ export const translationStore = {
   setTranslationVersions(jobId: string, versions: TranslationVersion[]): void {
     jobs = jobs.map(j => {
       if (j.id !== jobId) return j;
+      const nextVersions = [...versions];
       return {
         ...j,
-        translationVersions: versions,
-        activeVersionId: versions.length > 0 ? versions[versions.length - 1].id : null,
+        translationVersions: nextVersions,
+        activeVersionId: nextVersions.length > 0 ? nextVersions[nextVersions.length - 1].id : null,
+        ...getVersionDrivenJobState(nextVersions),
+        ...(nextVersions.length === 0 ? { result: undefined } : {}),
       };
     });
   },

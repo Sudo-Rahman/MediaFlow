@@ -1,14 +1,18 @@
 <script lang="ts">
-  import { ArrowRight, RotateCw } from '@lucide/svelte';
+  import { ArrowRight } from '@lucide/svelte';
 
   import { LlmProviderModelSelector } from '$lib/components/llm';
-  import { Button } from '$lib/components/ui/button';
-  import * as Dialog from '$lib/components/ui/dialog';
+  import { RetryVersionDialogShell } from '$lib/components/shared';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import * as Select from '$lib/components/ui/select';
-  import { SUPPORTED_LANGUAGES } from '$lib/types';
-  import type { LLMProvider, LanguageCode, TranslationVersion } from '$lib/types';
+  import { LLM_PROVIDERS, SUPPORTED_LANGUAGES } from '$lib/types';
+  import type {
+    LLMProvider,
+    LanguageCode,
+    TranslationModelSelection,
+    TranslationVersion,
+  } from '$lib/types';
 
   interface TranslationRetryDialogProps {
     open: boolean;
@@ -20,6 +24,8 @@
     defaultSourceLanguage: LanguageCode;
     defaultTargetLanguage: LanguageCode;
     defaultBatchCount: number;
+    defaultModels: TranslationModelSelection[];
+    isCompareMode: boolean;
     onConfirm: (opts: {
       versionName: string;
       provider: LLMProvider;
@@ -27,6 +33,7 @@
       sourceLanguage: LanguageCode;
       targetLanguage: LanguageCode;
       batchCount: number;
+      models: TranslationModelSelection[];
     }) => void;
     onNavigateToSettings?: () => void;
   }
@@ -41,6 +48,8 @@
     defaultSourceLanguage,
     defaultTargetLanguage,
     defaultBatchCount,
+    defaultModels,
+    isCompareMode,
     onConfirm,
     onNavigateToSettings,
   }: TranslationRetryDialogProps = $props();
@@ -51,10 +60,18 @@
   let sourceLanguage = $state<LanguageCode>('auto');
   let targetLanguage = $state<LanguageCode>('fr');
   let batchCount = $state(1);
+  let models = $state<TranslationModelSelection[]>([]);
 
   const targetLanguages = SUPPORTED_LANGUAGES.filter((lang) => lang.code !== 'auto');
+  const compareModelDisplay = $derived(
+    models.map((entry) => {
+      const provider = LLM_PROVIDERS[entry.provider];
+      const modelName = provider.models.find((modelEntry) => modelEntry.id === entry.model)?.name ?? entry.model;
+      return `${provider.name} - ${modelName}`;
+    })
+  );
+  const canConfirm = $derived(isCompareMode || !!model);
 
-  // Reset local state when dialog opens
   $effect(() => {
     if (open) {
       versionName = `Version ${existingVersions.length + 1}`;
@@ -63,117 +80,118 @@
       sourceLanguage = defaultSourceLanguage;
       targetLanguage = defaultTargetLanguage;
       batchCount = defaultBatchCount;
+      models = defaultModels.map((entry) => ({ ...entry }));
     }
   });
 
   function handleConfirm(): void {
     onConfirm({
-      versionName,
+      versionName: versionName.trim() || `Version ${existingVersions.length + 1}`,
       provider,
       model,
       sourceLanguage,
       targetLanguage,
-      batchCount,
+      batchCount: Math.max(1, batchCount),
+      models: models.map((entry) => ({ ...entry })),
     });
     onOpenChange(false);
   }
 </script>
 
-<Dialog.Root {open} {onOpenChange}>
-  <Dialog.Content class="sm:max-w-md">
-    <Dialog.Header>
-      <Dialog.Title>Translate Again</Dialog.Title>
-      <Dialog.Description>
-        Create a new translation version for <span class="font-medium">{fileName}</span>
-      </Dialog.Description>
-    </Dialog.Header>
-
-    <div class="space-y-4 py-4">
-      <!-- Version name -->
-      <div class="space-y-2">
-        <Label for="version-name" class="text-sm">Version Name</Label>
-        <Input
-          id="version-name"
-          bind:value={versionName}
-          placeholder="Version name"
-          class="h-9"
-        />
-      </div>
-
-      <!-- Language selection -->
-      <div class="space-y-2">
-        <Label class="text-sm">Languages</Label>
-        <div class="flex items-center gap-3">
-          <div class="flex-1">
-            <Select.Root
-              type="single"
-              value={sourceLanguage}
-              onValueChange={(v) => { sourceLanguage = v as LanguageCode; }}
-            >
-              <Select.Trigger class="w-full h-9">
-                {SUPPORTED_LANGUAGES.find((l) => l.code === sourceLanguage)?.name || 'Source'}
-              </Select.Trigger>
-              <Select.Content>
-                {#each SUPPORTED_LANGUAGES as lang (lang.code)}
-                  <Select.Item value={lang.code}>{lang.name}</Select.Item>
-                {/each}
-              </Select.Content>
-            </Select.Root>
-          </div>
-
-          <ArrowRight class="size-4 text-muted-foreground shrink-0" />
-
-          <div class="flex-1">
-            <Select.Root
-              type="single"
-              value={targetLanguage}
-              onValueChange={(v) => { targetLanguage = v as LanguageCode; }}
-            >
-              <Select.Trigger class="w-full h-9">
-                {targetLanguages.find((l) => l.code === targetLanguage)?.name || 'Target'}
-              </Select.Trigger>
-              <Select.Content>
-                {#each targetLanguages as lang (lang.code)}
-                  <Select.Item value={lang.code}>{lang.name}</Select.Item>
-                {/each}
-              </Select.Content>
-            </Select.Root>
-          </div>
+<RetryVersionDialogShell
+  {open}
+  {onOpenChange}
+  title="Translate Again"
+  description={`Create a new translation version for ${fileName || 'this file'}`}
+  bind:versionName
+  versionNamePlaceholder="Version name"
+  confirmLabel="Translate"
+  maxWidthClass="max-w-md"
+  confirmDisabled={!canConfirm}
+  onConfirm={handleConfirm}
+>
+  {#snippet optionsContent()}
+    <div class="space-y-2">
+      <Label class="text-sm">Languages</Label>
+      <div class="flex items-center gap-3">
+        <div class="flex-1">
+          <Select.Root
+            type="single"
+            value={sourceLanguage}
+            onValueChange={(value) => sourceLanguage = value as LanguageCode}
+          >
+            <Select.Trigger class="w-full h-9">
+              {SUPPORTED_LANGUAGES.find((lang) => lang.code === sourceLanguage)?.name || 'Source'}
+            </Select.Trigger>
+            <Select.Content>
+              {#each SUPPORTED_LANGUAGES as lang (lang.code)}
+                <Select.Item value={lang.code}>{lang.name}</Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
         </div>
-      </div>
 
-      <!-- Provider/model -->
-      <LlmProviderModelSelector
-        {provider}
-        {model}
-        onProviderChange={(p) => { provider = p; model = ''; }}
-        onModelChange={(m) => { model = m; }}
-        {onNavigateToSettings}
-      />
+        <ArrowRight class="size-4 text-muted-foreground shrink-0" />
 
-      <!-- Batch count -->
-      <div class="space-y-2">
-        <Label for="retry-batch-count" class="text-sm">Number of batches</Label>
-        <Input
-          id="retry-batch-count"
-          type="number"
-          min="1"
-          max="20"
-          bind:value={batchCount}
-          class="h-9"
-        />
-        <p class="text-xs text-muted-foreground">
-          Split file into N parts to avoid token limits
-        </p>
+        <div class="flex-1">
+          <Select.Root
+            type="single"
+            value={targetLanguage}
+            onValueChange={(value) => targetLanguage = value as LanguageCode}
+          >
+            <Select.Trigger class="w-full h-9">
+              {targetLanguages.find((lang) => lang.code === targetLanguage)?.name || 'Target'}
+            </Select.Trigger>
+            <Select.Content>
+              {#each targetLanguages as lang (lang.code)}
+                <Select.Item value={lang.code}>{lang.name}</Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
+        </div>
       </div>
     </div>
 
-    <Dialog.Footer>
-      <Button variant="outline" onclick={() => onOpenChange(false)}>Cancel</Button>
-      <Button onclick={handleConfirm} disabled={!model}>
-        <RotateCw class="size-4 mr-2" />
-        Translate
-      </Button>
-    </Dialog.Footer>
-  </Dialog.Content>
-</Dialog.Root>
+    {#if isCompareMode}
+      <div class="space-y-2">
+        <Label class="text-sm">Compare models</Label>
+        <p class="text-xs text-muted-foreground">
+          Using active Compare Models selection from the tool.
+        </p>
+        <div class="rounded-md border p-2 space-y-1">
+          {#each compareModelDisplay as modelEntry}
+            <p class="text-xs">{modelEntry}</p>
+          {/each}
+        </div>
+      </div>
+    {:else}
+      <LlmProviderModelSelector
+        {provider}
+        {model}
+        onProviderChange={(nextProvider) => {
+          provider = nextProvider;
+          model = '';
+        }}
+        onModelChange={(nextModel) => {
+          model = nextModel;
+        }}
+        {onNavigateToSettings}
+      />
+    {/if}
+
+    <div class="space-y-2">
+      <Label for="retry-batch-count" class="text-sm">Number of batches</Label>
+      <Input
+        id="retry-batch-count"
+        type="number"
+        min="1"
+        max="20"
+        bind:value={batchCount}
+        class="h-9"
+      />
+      <p class="text-xs text-muted-foreground">
+        Split file into N parts to avoid token limits.
+      </p>
+    </div>
+  {/snippet}
+</RetryVersionDialogShell>

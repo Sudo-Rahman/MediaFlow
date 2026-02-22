@@ -49,6 +49,7 @@
     {@const isSelected = job.id === selectedId}
     {@const processing = isProcessing(job.status)}
     {@const versionCount = job.translationVersions?.length ?? 0}
+    {@const hasVersions = versionCount > 0}
     {@const hasModelJobs = !!job.modelJobs && job.modelJobs.length > 0}
     {@const completedModels = hasModelJobs ? job.modelJobs!.filter(mj => mj.status === 'completed').length : 0}
     {@const totalModels = hasModelJobs ? job.modelJobs!.length : 0}
@@ -100,7 +101,7 @@
       {#snippet actions()}
         <div class="flex flex-col items-end gap-1">
           <div class="flex items-center gap-1">
-            {#if versionCount > 0 && onViewResult}
+            {#if hasVersions && onViewResult}
               <Button
                 variant="ghost"
                 size="icon"
@@ -115,7 +116,7 @@
               </Button>
             {/if}
 
-            {#if (job.status === 'error' || job.status === 'completed' || job.status === 'cancelled') && onRetry && !processing}
+            {#if (job.status === 'error' || job.status === 'completed' || job.status === 'cancelled' || hasVersions) && onRetry && !processing}
               <Button
                 variant="ghost"
                 size="icon"
@@ -161,7 +162,7 @@
             {/if}
           </div>
 
-          {#if versionCount > 0}
+          {#if hasVersions}
             <Badge variant="secondary" class="text-[10px] px-1.5 py-0">
               {versionCount} version{versionCount > 1 ? 's' : ''}
             </Badge>

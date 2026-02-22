@@ -23,7 +23,14 @@
     saveTranslationData,
   } from '$lib/services/translation-storage';
   import { logAndToast, log } from '$lib/utils/log-toast';
-  import type { SubtitleFile, TranslationJob, ModelJob } from '$lib/types';
+  import type {
+    LanguageCode,
+    LLMProvider,
+    ModelJob,
+    SubtitleFile,
+    TranslationJob,
+    TranslationModelSelection,
+  } from '$lib/types';
   import { LLM_PROVIDERS, SUPPORTED_LANGUAGES } from '$lib/types';
   import type { ImportSelectionMode, ImportSourceId, VersionedImportItem } from '$lib/types/tool-import';
 
@@ -43,6 +50,7 @@
   import {
     TranslationConfigPanel,
     TranslationFileList,
+    TranslationRetryDialog,
     TranslationResultDialog,
   } from '$lib/components/translation';
 
@@ -341,9 +349,44 @@
     return jobs.filter((job) => job.status === 'completed');
   }
 
+  interface TranslationRunConfig {
+    provider: LLMProvider;
+    model: string;
+    sourceLanguage: LanguageCode;
+    targetLanguage: LanguageCode;
+    batchCount: number;
+    models: TranslationModelSelection[];
+  }
+
+  interface TranslationRetryConfirmPayload {
+    versionName: string;
+    provider: LLMProvider;
+    model: string;
+    sourceLanguage: LanguageCode;
+    targetLanguage: LanguageCode;
+    batchCount: number;
+    models: TranslationModelSelection[];
+  }
+
+  function createRunConfig(overrides?: Partial<TranslationRunConfig>): TranslationRunConfig {
+    const models = (overrides?.models ?? translationStore.config.models).map((entry) => ({ ...entry }));
+    return {
+      provider: overrides?.provider ?? translationStore.config.provider,
+      model: overrides?.model ?? translationStore.config.model,
+      sourceLanguage: overrides?.sourceLanguage ?? translationStore.config.sourceLanguage,
+      targetLanguage: overrides?.targetLanguage ?? translationStore.config.targetLanguage,
+      batchCount: Math.max(1, overrides?.batchCount ?? translationStore.config.batchCount),
+      models,
+    };
+  }
+
   /** Translate a single file with a single model (existing flow) */
-  async function translateJobSingleModel(job: TranslationJob) {
-    const { provider, model, sourceLanguage, targetLanguage, batchCount } = translationStore.config;
+  async function translateJobSingleModel(
+    job: TranslationJob,
+    runConfig: TranslationRunConfig,
+    versionNameOverride?: string,
+  ) {
+    const { provider, model, sourceLanguage, targetLanguage, batchCount } = runConfig;
     const runId = createRunId(job.id);
 
     // Validate API key
@@ -458,7 +501,7 @@
         const existingVersions = translationStore.selectedJob?.id === job.id
           ? (translationStore.selectedJob?.translationVersions ?? [])
           : (translationStore.jobs.find(j => j.id === job.id)?.translationVersions ?? []);
-        const versionName = generateTranslationVersionName(existingVersions);
+        const versionName = versionNameOverride?.trim() || generateTranslationVersionName(existingVersions);
         const version = createTranslationVersion(
           versionName,
           provider,
@@ -565,8 +608,12 @@
   }
 
   /** Translate a single file with multiple models in parallel */
-  async function translateJobMultiModel(job: TranslationJob) {
-    const { models, sourceLanguage, targetLanguage, batchCount } = translationStore.config;
+  async function translateJobMultiModel(
+    job: TranslationJob,
+    runConfig: TranslationRunConfig,
+    versionNamePrefix?: string,
+  ) {
+    const { models, sourceLanguage, targetLanguage, batchCount } = runConfig;
     const runId = createRunId(job.id);
 
     // Validate API keys for all models
@@ -689,7 +736,10 @@
           const model = modelJob.model;
           const modelDisplayName = getModelDisplayName(provider, model);
           const targetLangName = SUPPORTED_LANGUAGES.find(l => l.code === targetLanguage)?.name ?? targetLanguage;
-          const versionName = `${modelDisplayName} - ${targetLangName}`;
+          const cleanPrefix = versionNamePrefix?.trim();
+          const versionName = cleanPrefix
+            ? `${cleanPrefix} - ${modelDisplayName}`
+            : `${modelDisplayName} - ${targetLangName}`;
 
           if (!isRunActive(job.id, runId)) {
             log('info', 'translation', 'Late response dropped',
@@ -817,19 +867,27 @@
   }
 
   /** Dispatch to single-model or multi-model based on config */
-  async function translateJobInternal(job: TranslationJob) {
-    const { models } = translationStore.config;
+  async function translateJobInternal(
+    job: TranslationJob,
+    runConfig: TranslationRunConfig,
+    versionNameOverride?: string,
+  ) {
+    const { models } = runConfig;
     if (models.length > 0) {
-      await translateJobMultiModel(job);
+      await translateJobMultiModel(job, runConfig, versionNameOverride);
     } else {
-      await translateJobSingleModel(job);
+      await translateJobSingleModel(job, runConfig, versionNameOverride);
     }
   }
 
-  async function translateScopedJob(job: TranslationJob) {
+  async function translateScopedJob(
+    job: TranslationJob,
+    runConfig: TranslationRunConfig = createRunConfig(),
+    versionNameOverride?: string,
+  ) {
     translationStore.setActiveScopeJobIds([job.id]);
     try {
-      await translateJobInternal(job);
+      await translateJobInternal(job, runConfig, versionNameOverride);
     } finally {
       translationStore.clearActiveScopeJobIds();
     }
@@ -841,6 +899,7 @@
       toast.warning('No files to translate');
       return;
     }
+    const runConfig = createRunConfig();
 
     translationStore.setActiveScopeJobIds(targets.map((job) => job.id));
     translationStore.updateProgress({
@@ -873,7 +932,7 @@
             continue;
           }
 
-          const promise = translateJobInternal(job).finally(() => {
+          const promise = translateJobInternal(job, runConfig).finally(() => {
             activePromises.delete(jobId);
           });
           activePromises.set(jobId, promise);
@@ -1003,18 +1062,48 @@
     removeTarget = null;
   }
 
+  let retryDialogOpen = $state(false);
+  let retryDialogJobId = $state<string | null>(null);
+  const retryDialogJob = $derived(
+    retryDialogJobId ? translationStore.jobs.find((job) => job.id === retryDialogJobId) ?? null : null
+  );
+
+  function handleRetryRequest(job: TranslationJob): void {
+    retryDialogJobId = job.id;
+    retryDialogOpen = true;
+  }
+
+  async function handleRetryConfirm(opts: TranslationRetryConfirmPayload): Promise<void> {
+    if (!retryDialogJobId) {
+      return;
+    }
+
+    const retryJob = translationStore.jobs.find((job) => job.id === retryDialogJobId);
+    if (!retryJob) {
+      return;
+    }
+
+    const runConfig = createRunConfig({
+      provider: opts.provider,
+      model: opts.model,
+      sourceLanguage: opts.sourceLanguage,
+      targetLanguage: opts.targetLanguage,
+      batchCount: opts.batchCount,
+      models: opts.models,
+    });
+
+    await translateScopedJob(retryJob, runConfig, opts.versionName);
+  }
+
   async function retryWithMoreBatches(job: TranslationJob) {
     // Double the batch count (minimum +1)
     const currentBatchCount = translationStore.config.batchCount;
     const newBatchCount = Math.max(currentBatchCount + 1, currentBatchCount * 2);
 
-    // Temporarily set the higher batch count
-    translationStore.setBatchCount(newBatchCount);
-
     toast.info(`Retrying with ${newBatchCount} batches...`);
 
-    // Retry the job
-    await translateScopedJob(job);
+    const runConfig = createRunConfig({ batchCount: newBatchCount });
+    await translateScopedJob(job, runConfig);
   }
 
   async function handleCopyToClipboard(content: string) {
@@ -1150,7 +1239,7 @@
                 onRemove={handleRequestRemoveJob}
                 onCancel={handleCancelJob}
                 onViewResult={(job) => openResultDialog(job.id)}
-                onRetry={(job) => translateScopedJob(job)}
+                onRetry={handleRetryRequest}
                 disabled={isTranslating}
               />
             </div>
@@ -1409,6 +1498,27 @@
   fileFormat={resultDialogJob?.file.format ?? 'srt'}
   versions={resultDialogJob?.translationVersions ?? []}
   onDeleteVersion={handleDeleteTranslationVersion}
+/>
+
+<TranslationRetryDialog
+  open={retryDialogOpen}
+  onOpenChange={(open) => {
+    retryDialogOpen = open;
+    if (!open) {
+      retryDialogJobId = null;
+    }
+  }}
+  fileName={retryDialogJob?.file.name ?? ''}
+  existingVersions={retryDialogJob?.translationVersions ?? []}
+  defaultProvider={translationStore.config.provider}
+  defaultModel={translationStore.config.model}
+  defaultSourceLanguage={translationStore.config.sourceLanguage}
+  defaultTargetLanguage={translationStore.config.targetLanguage}
+  defaultBatchCount={translationStore.config.batchCount}
+  defaultModels={translationStore.config.models}
+  isCompareMode={translationStore.config.models.length > 0}
+  onConfirm={handleRetryConfirm}
+  onNavigateToSettings={onNavigateToSettings}
 />
 
 <ToolImportSourceDialog

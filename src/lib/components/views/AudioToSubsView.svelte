@@ -1080,24 +1080,6 @@
     retranscribeDialogOpen = true;
   }
 
-  async function handleRetryFile(file: AudioFile) {
-    // Reset the file status
-    audioToSubsStore.updateFile(file.id, { status: 'ready', error: undefined });
-    
-    // Get fresh file data from store
-    const freshFile = audioToSubsStore.audioFiles.find(f => f.id === file.id);
-    if (!freshFile) return;
-    
-    // Check if transcoding is needed first (e.g., OPUS file missing or never transcoded)
-    if (needsTranscoding(freshFile)) {
-      await transcodeFile(freshFile, freshFile.selectedTrackIndex);
-      // After transcoding (success or failure), file status is already updated
-      // User can manually click "Transcribe" to start transcription
-    }
-    // If transcoding not needed, file is already in 'ready' status
-    // User can manually click "Transcribe" to start transcription
-  }
-
   async function handleChangeTrack(file: AudioFile) {
     // Re-probe the file to get audio tracks
     try {
@@ -1326,6 +1308,7 @@
   bind:open={retranscribeDialogOpen}
   onOpenChange={(v) => { retranscribeDialogOpen = v; }}
   file={retranscribeDialogFile}
+  baseConfig={audioToSubsStore.deepgramConfig}
   onConfirm={handleRetranscribe}
 />
 

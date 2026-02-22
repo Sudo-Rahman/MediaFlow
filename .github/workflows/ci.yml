@@ -82,11 +82,13 @@ jobs:
         shell: pwsh
         run: |
           $vulkanLib = Join-Path $env:VULKAN_SDK "lib"
+          $vulkanBin = Join-Path $env:VULKAN_SDK "Bin"
           if (Test-Path "$vulkanLib\vulkan-1.lib") {
             Copy-Item "$vulkanLib\vulkan-1.lib" "$vulkanLib\vulkan.lib"
             Write-Host "Created vulkan.lib from vulkan-1.lib in $vulkanLib"
           }
           echo "LIB=$vulkanLib;$env:LIB" >> $env:GITHUB_ENV
+          echo "$vulkanBin" >> $env:GITHUB_PATH
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

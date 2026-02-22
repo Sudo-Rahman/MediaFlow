@@ -24,7 +24,11 @@ pub(crate) fn create_main_window(app: tauri::AppHandle) {
             y: 30.0,
         }));
 
+    #[cfg(target_os = "macos")]
     let window = window.build().unwrap();
+
+    #[cfg(not(target_os = "macos"))]
+    let _window = window.build().unwrap();
 
     #[cfg(target_os = "macos")]
     apply_vibrancy(&window, NSVisualEffectMaterial::Sidebar, None, Some(25.0))

@@ -6,9 +6,9 @@
 </script>
 
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { listen } from '@tauri-apps/api/event';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
   import { FileVideo, Trash2 } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
@@ -42,6 +42,7 @@
   }
 
   let extractedOutputItems = $state<ExtractedOutputItem[]>([]);
+  let unlistenExtractProgress: UnlistenFn | null = null;
   let activeExtractionKey: string | null = null;
   let activeExtractionFilePath = $state<string | null>(null);
   let runFileTrackTotals = new Map<string, number>();
@@ -87,51 +88,36 @@
     return Math.round(durationSeconds * 1_000_000);
   }
 
-  onMount(() => {
-    let destroyed = false;
-    let removeListener: (() => void) | null = null;
-
-    const registerProgressListener = async () => {
-      const unlisten = await listen<ExtractProgressEvent>('extract-progress', (event) => {
-        if (!extractionStore.isExtracting || !activeExtractionKey) {
-          return;
-        }
-
-        const { inputPath, trackIndex, progress, speedBytesPerSec } = event.payload;
-        const eventKey = buildExtractionKey(inputPath, trackIndex);
-        if (eventKey !== activeExtractionKey) {
-          return;
-        }
-
-        const currentTrackProgress = clampProgress(progress);
-        const fileCompletedTracks = runFileCompletedTracks.get(inputPath) ?? 0;
-        const fileTotalTracks = Math.max(runFileTrackTotals.get(inputPath) ?? 1, 1);
-        const currentFileProgress = clampProgress(
-          ((fileCompletedTracks + currentTrackProgress / 100) / fileTotalTracks) * 100,
-        );
-
-        extractionStore.setLiveProgress(
-          currentTrackProgress,
-          currentFileProgress,
-          speedBytesPerSec,
-        );
-        extractionStore.updateFileProgress(inputPath, currentFileProgress, speedBytesPerSec);
-      });
-
-      if (destroyed) {
-        unlisten();
+  onMount(async () => {
+    unlistenExtractProgress = await listen<ExtractProgressEvent>('extract-progress', (event) => {
+      if (!extractionStore.isExtracting || !activeExtractionKey) {
         return;
       }
 
-      removeListener = unlisten;
-    };
+      const { inputPath, trackIndex, progress, speedBytesPerSec } = event.payload;
+      const eventKey = buildExtractionKey(inputPath, trackIndex);
+      if (eventKey !== activeExtractionKey) {
+        return;
+      }
 
-    void registerProgressListener();
+      const currentTrackProgress = clampProgress(progress);
+      const fileCompletedTracks = runFileCompletedTracks.get(inputPath) ?? 0;
+      const fileTotalTracks = Math.max(runFileTrackTotals.get(inputPath) ?? 1, 1);
+      const currentFileProgress = clampProgress(
+        ((fileCompletedTracks + currentTrackProgress / 100) / fileTotalTracks) * 100,
+      );
 
-    return () => {
-      destroyed = true;
-      removeListener?.();
-    };
+      extractionStore.setLiveProgress(
+        currentTrackProgress,
+        currentFileProgress,
+        speedBytesPerSec,
+      );
+      extractionStore.updateFileProgress(inputPath, currentFileProgress, speedBytesPerSec);
+    });
+  });
+
+  onDestroy(() => {
+    unlistenExtractProgress?.();
   });
 
   function trackTypeToImportKind(type: Track['type']): ExtractedOutputItem['kind'] | null {

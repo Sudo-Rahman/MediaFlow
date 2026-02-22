@@ -6,9 +6,9 @@
 </script>
 
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { listen } from '@tauri-apps/api/event';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
   import { toast } from 'svelte-sonner';
   import { flip } from 'svelte/animate';
@@ -62,6 +62,7 @@
   let isCancelling = $state(false);
   let cancelAllRequested = $state(false);
   let cancelCurrentFileId = $state<string | null>(null);
+  let unlistenMergeProgress: UnlistenFn | null = null;
   let removeDialogOpen = $state(false);
   let removeInProgress = $state(false);
   let removeTarget = $state.raw<{ mode: 'single'; fileId: string } | { mode: 'all' } | null>(null);
@@ -90,46 +91,31 @@
     return mergeStore.videoFiles.find(v => v.id === currentMergingId)?.name || '';
   });
 
-  onMount(() => {
-    let destroyed = false;
-    let removeListener: (() => void) | null = null;
-
-    const registerProgressListener = async () => {
-      const unlisten = await listen<MergeProgressEvent>('merge-progress', (event) => {
-        if (!mergeStore.isProcessing) {
-          return;
-        }
-
-        const runtime = mergeStore.runtimeProgress;
-        if (!runtime.currentFilePath || runtime.currentFilePath !== event.payload.videoPath) {
-          return;
-        }
-
-        mergeStore.updateRuntimeCurrentFile(
-          event.payload.progress,
-          event.payload.speedBytesPerSec,
-        );
-        mergeStore.updateFileRunProgress(
-          runtime.currentFilePath,
-          event.payload.progress,
-          event.payload.speedBytesPerSec,
-        );
-      });
-
-      if (destroyed) {
-        unlisten();
+  onMount(async () => {
+    unlistenMergeProgress = await listen<MergeProgressEvent>('merge-progress', (event) => {
+      if (!mergeStore.isProcessing) {
         return;
       }
 
-      removeListener = unlisten;
-    };
+      const runtime = mergeStore.runtimeProgress;
+      if (!runtime.currentFilePath || runtime.currentFilePath !== event.payload.videoPath) {
+        return;
+      }
 
-    void registerProgressListener();
+      mergeStore.updateRuntimeCurrentFile(
+        event.payload.progress,
+        event.payload.speedBytesPerSec,
+      );
+      mergeStore.updateFileRunProgress(
+        runtime.currentFilePath,
+        event.payload.progress,
+        event.payload.speedBytesPerSec,
+      );
+    });
+  });
 
-    return () => {
-      destroyed = true;
-      removeListener?.();
-    };
+  onDestroy(() => {
+    unlistenMergeProgress?.();
   });
 
   // DnD items - mutable state required by svelte-dnd-action

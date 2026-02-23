@@ -18,6 +18,7 @@
     onGlobalRegionChange?: (region: OcrRegion | undefined) => void | Promise<void>;
     onFileRegionChange?: (region: OcrRegion | undefined) => void | Promise<void>;
     onUseGlobalRegion?: () => void;
+    onPlaybackError?: (fileId: string, reason: string) => void | Promise<void>;
     class?: string;
   }
 
@@ -29,6 +30,7 @@
     onGlobalRegionChange,
     onFileRegionChange,
     onUseGlobalRegion,
+    onPlaybackError,
     class: className = '',
   }: VideoPreviewProps = $props();
 
@@ -155,6 +157,34 @@
       currentTime = videoEl.currentTime;
     }
   }
+
+  function describeVideoPlaybackError(error: MediaError | null): string {
+    if (!error) {
+      return 'Unknown media error';
+    }
+
+    switch (error.code) {
+      case 1:
+        return 'Playback aborted';
+      case 2:
+        return 'Network error while loading media';
+      case 3:
+        return 'Media decoding failed';
+      case 4:
+        return 'Unsupported media format';
+      default:
+        return `Media error code ${error.code}`;
+    }
+  }
+
+  function handleVideoError() {
+    if (!file || !onPlaybackError) {
+      return;
+    }
+
+    const reason = describeVideoPlaybackError(videoEl?.error ?? null);
+    void onPlaybackError(file.id, reason);
+  }
   
   function updateVideoBounds() {
     if (!videoEl || !containerEl) return;
@@ -236,6 +266,7 @@
   <!-- Video container - scales to available space -->
   <div bind:this={containerEl} class="relative bg-black rounded-lg overflow-hidden flex-1 min-h-0">
     {#if videoSrc}
+      <!-- svelte-ignore a11y_media_has_caption -->
       <video
         bind:this={videoEl}
         src={videoSrc}
@@ -244,6 +275,7 @@
         ontimeupdate={handleTimeUpdate}
         onloadedmetadata={updateVideoBounds}
         onresize={updateVideoBounds}
+        onerror={handleVideoError}
       >
       </video>
 
@@ -271,7 +303,7 @@
             width: {displayedRegion.width * videoBounds.width * 100}%;
             height: {displayedRegion.height * videoBounds.height * 100}%;
           "
-        />
+        ></div>
       {/if}
     {:else if file}
       <div class="w-full h-full flex items-center justify-center">

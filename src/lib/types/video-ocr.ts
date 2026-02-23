@@ -21,8 +21,8 @@ export interface OcrVideoFile {
   status: OcrFileStatus;
   error?: string;
   
-  // Preview transcoding
-  previewPath?: string;        // Path to transcoded 480p MP4
+  // Preview source (either original compatible source or transcoded fallback)
+  previewPath?: string;        // Effective preview media path used by the player
   isTranscoding?: boolean;
   transcodingProgress?: number;
   transcodingCodec?: string;   // Active transcoding codec label (e.g. HEVC VideoToolbox)

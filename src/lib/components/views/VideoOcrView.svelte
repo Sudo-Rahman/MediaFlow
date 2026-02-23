@@ -29,6 +29,7 @@
   import { VIDEO_EXTENSIONS } from '$lib/types';
   import { settingsStore, toolImportStore, videoOcrStore } from '$lib/stores';
   import { cleanupOcrSubtitlesWithAi } from '$lib/services/ocr-ai-cleanup';
+  import { checkOcrSourcePreviewCompatibility } from '$lib/services/ocr-preview-compatibility';
   import { ocrVersionToSubtitleFile } from '$lib/services/subtitle-interop';
   import { createOcrVersion, generateOcrVersionName, loadOcrData, saveOcrData } from '$lib/services/ocr-storage';
   import {
@@ -82,6 +83,7 @@
 
   let unlistenOcrProgress: UnlistenFn | null = null;
   const aiCleanupControllers = new Map<string, AbortController>();
+  const sourcePreviewFallbackAttempts = new Set<string>();
 
   function buildOcrVersionKey(videoPath: string, versionId: string): string {
     return `${videoPath}::${versionId}`;
@@ -105,6 +107,10 @@
       Array.from(persistedOcrVersionKeys).filter((key) => !key.startsWith(prefix)),
     );
     persistedOcrVersionKeys = next;
+  }
+
+  function buildSourcePreviewFallbackKey(file: OcrVideoFile): string {
+    return `${file.id}::${file.path}`;
   }
 
   onMount(async () => {
@@ -157,6 +163,7 @@
       controller.abort();
     }
     aiCleanupControllers.clear();
+    sourcePreviewFallbackAttempts.clear();
     unlistenOcrProgress?.();
   });
 
@@ -524,7 +531,31 @@
 
         if (!hasCachedPreview) {
           const fresh = getFreshFile(file.id) ?? file;
-          await transcodeFileForPreview(fresh);
+          const compatibility = await checkOcrSourcePreviewCompatibility({
+            sourcePath: fresh.path,
+            tracks: probeResult.tracks,
+          });
+
+          if (compatibility.isCompatible) {
+            videoOcrStore.updateFile(file.id, {
+              previewPath: fresh.path,
+              status: fresh.ocrVersions.length > 0 ? 'completed' : 'ready',
+              error: undefined,
+            });
+            videoOcrStore.addLog('info', 'Source preview compatible, using original file', file.id);
+
+            const saved = await persistFileData(file.id);
+            if (!saved) {
+              videoOcrStore.addLog('warning', 'Failed to persist preview source path to rsext file', file.id);
+            }
+          } else {
+            videoOcrStore.addLog(
+              'warning',
+              `Source preview compatibility check failed (${compatibility.reason}). Falling back to transcoding.`,
+              file.id,
+            );
+            await transcodeFileForPreview(fresh);
+          }
         }
       } catch (error) {
         videoOcrStore.setFileStatus(
@@ -559,6 +590,27 @@
       });
       return false;
     }
+  }
+
+  async function handlePreviewPlaybackError(fileId: string, reason: string): Promise<void> {
+    const file = getFreshFile(fileId);
+    if (!file) {
+      return;
+    }
+
+    if (file.previewPath !== file.path) {
+      return;
+    }
+
+    const fallbackKey = buildSourcePreviewFallbackKey(file);
+    if (sourcePreviewFallbackAttempts.has(fallbackKey)) {
+      return;
+    }
+    sourcePreviewFallbackAttempts.add(fallbackKey);
+
+    videoOcrStore.addLog('warning', `Source preview playback error: ${reason}`, file.id);
+    videoOcrStore.addLog('info', 'Source preview failed at runtime, falling back to transcode', file.id);
+    await transcodeFileForPreview(file);
   }
 
   async function handleStartOcr() {
@@ -884,6 +936,7 @@
       onGlobalRegionChange={handleGlobalRegionChange}
       onFileRegionChange={handleFileRegionChange}
       onUseGlobalRegion={handleUseGlobalRegion}
+      onPlaybackError={handlePreviewPlaybackError}
       class="min-h-0"
     />
 

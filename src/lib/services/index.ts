@@ -2,6 +2,7 @@ export * from './ffprobe';
 export * from './ffmpeg';
 export * from './llm-client';
 export * from './ocr-ai-cleanup';
+export * from './ocr-preview-compatibility';
 export * from './translation';
 export * from './translation-versioned-export';
 export * from './presets';

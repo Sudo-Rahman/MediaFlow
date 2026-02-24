@@ -894,7 +894,7 @@
   }
 
   async function handleTranslateAll() {
-    const targets = selectTranslateAllTargets(translationStore.jobs);
+    const targets = [...translateAllTargets];
     if (targets.length === 0) {
       toast.warning('No files to translate');
       return;
@@ -1121,10 +1121,13 @@
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
+  const translateAllTargets = $derived(selectTranslateAllTargets(translationStore.jobs));
+  const translateAllTargetCount = $derived(translateAllTargets.length);
   const hasFiles = $derived(translationStore.hasFiles);
   const isTranslating = $derived(translationStore.isTranslating);
   const canTranslate = $derived(
     hasFiles &&
+    translateAllTargetCount > 0 &&
     translationStore.config.model &&
     hasApiKey
   );
@@ -1297,7 +1300,7 @@
             disabled={!canTranslate}
           >
             <Play class="size-4 mr-2" />
-            Translate {translationStore.jobs.length > 1 ? `(${translationStore.jobs.length})` : ''}
+            Translate ({translateAllTargetCount})
           </Button>
         {/if}
       </div>

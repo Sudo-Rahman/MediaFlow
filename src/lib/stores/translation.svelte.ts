@@ -49,7 +49,7 @@ let config = $state<TranslationConfig>({
   sourceLanguage: 'auto',
   targetLanguage: 'fr',
   provider: 'google',
-  model: 'gemini-2.5-flash',
+  model: 'gemini-3.1-pro-preview',
   batchCount: 1, // Default: no splitting
   models: [],
 });

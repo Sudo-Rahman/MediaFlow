@@ -432,6 +432,9 @@ async function callGoogle(params: ProviderCallParams): Promise<LlmResponse> {
           ],
           generationConfig: {
             temperature: params.temperature,
+            thinkingConfig: {
+              thinkingLevel: "medium"
+            },
             ...(params.responseMode === 'json' ? { responseMimeType: 'application/json' } : {}),
           },
         }),

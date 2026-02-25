@@ -115,6 +115,76 @@ function getLanguageName(code: LanguageCode): string {
   return lang?.name || code;
 }
 
+const NON_TRANSLATABLE_ASS_STYLES = new Set(['mask', 'masktop']);
+
+interface CuePartitionStats {
+  totalCues: number;
+  translatableCues: number;
+  skippedCues: number;
+  skippedMaskCount: number;
+  totalChars: number;
+  translatableChars: number;
+  estimatedReductionPct: number;
+}
+
+interface CuePartitionResult {
+  translatableCues: Cue[];
+  passthroughCues: TranslatedCue[];
+  translatableIdSet: Set<string>;
+  stats: CuePartitionStats;
+}
+
+function partitionCuesForLlm(cues: Cue[]): CuePartitionResult {
+  const translatableCues: Cue[] = [];
+  const passthroughCues: TranslatedCue[] = [];
+  const translatableIdSet = new Set<string>();
+
+  let skippedMaskCount = 0;
+  let totalChars = 0;
+  let translatableChars = 0;
+
+  for (const cue of cues) {
+    totalChars += cue.textSkeleton.length;
+
+    const normalizedStyle = cue.style?.trim().toLowerCase();
+    const isAssLike = cue.format === 'ass' || cue.format === 'ssa';
+    const isMaskStyle = isAssLike && !!normalizedStyle && NON_TRANSLATABLE_ASS_STYLES.has(normalizedStyle);
+
+    if (isMaskStyle) {
+      skippedMaskCount += 1;
+      passthroughCues.push({
+        id: cue.id,
+        translatedText: cue.textSkeleton
+      });
+      continue;
+    }
+
+    translatableCues.push(cue);
+    translatableIdSet.add(cue.id);
+    translatableChars += cue.textSkeleton.length;
+  }
+
+  const skippedCues = cues.length - translatableCues.length;
+  const estimatedReductionPct = totalChars > 0
+    ? Math.round(((totalChars - translatableChars) * 10000) / totalChars) / 100
+    : 0;
+
+  return {
+    translatableCues,
+    passthroughCues,
+    translatableIdSet,
+    stats: {
+      totalCues: cues.length,
+      translatableCues: translatableCues.length,
+      skippedCues,
+      skippedMaskCount,
+      totalChars,
+      translatableChars,
+      estimatedReductionPct
+    }
+  };
+}
+
 /**
  * Split array into N equal batches
  * @param array - The array to split
@@ -143,8 +213,6 @@ function buildTranslationRequest(
 ): TranslationRequest {
   const translationCues: TranslationCue[] = cues.map(cue => ({
     id: cue.id,
-    speaker: cue.speaker,
-    style: cue.style,
     text: cue.textSkeleton
   }));
 
@@ -167,7 +235,7 @@ function buildTranslationRequest(
 function buildUserPrompt(request: TranslationRequest): string {
   return `Translate the following subtitle cues from ${request.sourceLang} to ${request.targetLang}.
 
-${JSON.stringify(request, null, 2)}`;
+${JSON.stringify(request)}`;
 }
 
 /**
@@ -185,7 +253,8 @@ export function buildFullPromptForTokenCount(
     return TRANSLATION_SYSTEM_PROMPT + '\n\n' + content;
   }
 
-  const request = buildTranslationRequest(parsed.cues, sourceLang, targetLang);
+  const { translatableCues } = partitionCuesForLlm(parsed.cues);
+  const request = buildTranslationRequest(translatableCues, sourceLang, targetLang);
   const userPrompt = buildUserPrompt(request);
 
   return TRANSLATION_SYSTEM_PROMPT + '\n\n' + userPrompt;
@@ -422,8 +491,27 @@ export async function translateSubtitle(
 
     reportProgress({ progress: 10, currentBatch: 0, totalBatches: 0 });
 
+    const { translatableCues, passthroughCues, translatableIdSet, stats } = partitionCuesForLlm(parsed.cues);
+
+    log(
+      'info',
+      'translation',
+      'Prepared cues for LLM',
+      `Sending ${stats.translatableCues}/${stats.totalCues} cues to LLM. Skipped ${stats.skippedCues} cues (${stats.skippedMaskCount} mask cues). Estimated text reduction: ${stats.estimatedReductionPct}% (${stats.translatableChars}/${stats.totalChars} chars retained).`,
+      logContext
+    );
+
+    if (translatableCues.length === 0) {
+      reportProgress({ progress: 100, currentBatch: 0, totalBatches: 0 });
+      return {
+        originalFile: file,
+        translatedContent: file.content,
+        success: true,
+      };
+    }
+
     // Step 2: Split into N batches
-    const batches = splitIntoNBatches(parsed.cues, batchCount);
+    const batches = splitIntoNBatches(translatableCues, batchCount);
     const totalBatches = batches.length;
 
     if (signal?.aborted) {
@@ -515,9 +603,30 @@ export async function translateSubtitle(
         };
       }
 
+      const sanitizedCues = translationResponse.cues.filter(cue => translatableIdSet.has(cue.id));
+      const ignoredCueCount = translationResponse.cues.length - sanitizedCues.length;
+
+      if (ignoredCueCount > 0) {
+        const ignoredIds = translationResponse.cues
+          .filter(cue => !translatableIdSet.has(cue.id))
+          .map(cue => cue.id)
+          .filter(Boolean);
+
+        log(
+          'warning',
+          'translation',
+          'Ignored unexpected cue IDs from LLM response',
+          `Batch ${batchIndex + 1}/${totalBatches}: ignored ${ignoredCueCount} cue(s) with IDs outside the translatable set. IDs: ${ignoredIds.slice(0, 5).join(', ') || '(none)'}`,
+          {
+            ...logContext,
+            batchIndex: String(batchIndex + 1),
+          }
+        );
+      }
+
       return {
         batchIndex,
-        cues: translationResponse.cues,
+        cues: sanitizedCues,
         usage: llmResponse.usage
       };
     };
@@ -610,8 +719,9 @@ export async function translateSubtitle(
       }
     }
 
-    // Combine all translated cues in order
-    const allTranslatedCues: TranslatedCue[] = batchResults.flatMap(r => r.cues);
+    // Combine translated cues with passthrough cues to preserve filtered styles
+    const translatedFromLlm: TranslatedCue[] = batchResults.flatMap(r => r.cues);
+    const allTranslatedCues: TranslatedCue[] = [...translatedFromLlm, ...passthroughCues];
 
     if (signal?.aborted) {
       return buildCancelledResult(file);

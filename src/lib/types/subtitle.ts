@@ -45,7 +45,7 @@ export interface ParsedSubtitle {
 }
 
 /**
- * Translation request sent to LLM (minimal, text-only)
+ * Translation request sent to LLM (minimal, translation-only cues)
  */
 export interface TranslationRequest {
   sourceLang: string;
@@ -60,13 +60,11 @@ export interface TranslationRequest {
 }
 
 /**
- * Minimal cue for translation (only what LLM needs)
+ * Minimal cue for translation (only what the LLM needs)
  */
 export interface TranslationCue {
   id: string;
-  speaker?: string;
-  style?: string;
-  text: string;        // The skeleton text with placeholders
+  text: string;        // Skeleton text with placeholders
 }
 
 /**
@@ -102,4 +100,3 @@ export interface ValidationResult {
   valid: boolean;
   errors: ValidationError[];
 }
-

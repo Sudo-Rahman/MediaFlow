@@ -138,6 +138,17 @@ fn texts_are_similar(a_key: &str, b_key: &str, threshold: f64) -> bool {
     let min_len = a_len.min(b_len);
     let max_len = a_len.max(b_len);
 
+    // Substring optimization: if one is completely contained within another,
+    // and they represent a significant portion (to prevent tiny fragments matching huge sentences)
+    if a_key.contains(b_key) || b_key.contains(a_key) {
+        // If the size difference is very small (1 or 2 chars), or 
+        // the shorter text is at least a certain percentage of the longer text
+        // we consider them a match to fix OCR edge truncations.
+        if (max_len - min_len) <= 2 || (min_len as f64 / max_len as f64) >= 0.70 {
+            return true;
+        }
+    }
+
     // Conservative short-text path:
     // allow one-character OCR drift only when lengths are identical.
     if min_len < 6 {
@@ -169,6 +180,23 @@ fn texts_are_similar(a_key: &str, b_key: &str, threshold: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::tools::ocr::{OcrFrameResult, OcrSubtitleCleanupOptions};
+
+    #[test]
+    fn texts_are_similar_merges_short_substrings() {
+        assert!(super::texts_are_similar("关门", "关", 0.9));
+        assert!(super::texts_are_similar("关", "关门", 0.9));
+    }
+
+    #[test]
+    fn texts_are_similar_merges_long_substrings() {
+        assert!(super::texts_are_similar("hello world", "hello worl", 0.9));
+        assert!(super::texts_are_similar("这是一个长句子的开头", "这是一个长句子的开头和结尾", 0.8));
+    }
+
+    #[test]
+    fn texts_are_similar_rejects_too_short_substrings() {
+        assert!(!super::texts_are_similar("这是一个非常长的句子", "一", 0.9));
+    }
 
     #[test]
     fn texts_are_similar_merges_short_texts_with_single_char_difference() {
@@ -255,6 +283,60 @@ mod tests {
     }
 
     #[test]
+    fn select_segment_text_prefers_longest_when_confidence_is_close() {
+        let candidates = vec![
+            super::SegmentCandidate {
+                key: "关门".to_string(), // Longer but slightly less confident
+                text: "关门".to_string(),
+                confidence: 0.961,
+            },
+            super::SegmentCandidate {
+                key: "关".to_string(), // Shorter but slightly more confident
+                text: "关".to_string(),
+                confidence: 0.995,
+            },
+            super::SegmentCandidate {
+                key: "关门".to_string(), // Another slightly less confident longer one
+                text: "关门".to_string(),
+                confidence: 0.994, // 0.995 vs 0.994 is < 0.05
+            },
+        ];
+
+        let selected = super::select_segment_text(&candidates).expect("candidate should be selected");
+        assert_eq!(selected.0, "关门");
+    }
+
+    #[test]
+    fn select_segment_text_prefers_frequent_when_confidence_is_close() {
+        let candidates = vec![
+            super::SegmentCandidate {
+                key: "A".to_string(),
+                text: "A".to_string(),
+                confidence: 0.95,
+            },
+            super::SegmentCandidate {
+                key: "A".to_string(),
+                text: "A".to_string(),
+                confidence: 0.95,
+            },
+            super::SegmentCandidate {
+                key: "A".to_string(),
+                text: "A".to_string(),
+                confidence: 0.95,
+            },
+            super::SegmentCandidate {
+                key: "B".to_string(), // B is slightly more confident, but only appears once
+                text: "B".to_string(),
+                confidence: 0.96,
+            },
+        ];
+
+        let selected = super::select_segment_text(&candidates).expect("candidate should be selected");
+        // A should win due to frequency bonus
+        assert_eq!(selected.0, "A");
+    }
+
+    #[test]
     fn generate_subtitles_merges_similar_adjacent_frames() {
         let frames = vec![
             OcrFrameResult {
@@ -290,6 +372,55 @@ mod tests {
         assert_eq!(subtitles[0].id, "sub-1");
         assert!(subtitles[0].text.to_lowercase().contains("hello"));
         assert!(subtitles[0].end_time > subtitles[0].start_time);
+    }
+
+    #[test]
+    fn generate_subtitles_ignores_isolated_anomalous_frames() {
+        // A-B-A pattern
+        let frames = vec![
+            OcrFrameResult {
+                frame_index: 0,
+                time_ms: 0,
+                text: "Je suis une longue phrase".to_string(),
+                confidence: 0.95,
+            },
+            OcrFrameResult {
+                frame_index: 1,
+                time_ms: 500,
+                text: "Je su1s unel0ngu phrase".to_string(), // B: Anomalous
+                confidence: 0.96,
+            },
+            OcrFrameResult {
+                frame_index: 2,
+                time_ms: 1000,
+                text: "Je suis une longue phrase".to_string(), // A: Back to normal
+                confidence: 0.95,
+            },
+        ];
+
+        let cleanup = OcrSubtitleCleanupOptions {
+            merge_similar: true,
+            similarity_threshold: 0.95, // High threshold so B does NOT match A
+            max_gap_ms: 1000,
+            min_cue_duration_ms: 500,
+            filter_url_like: false,
+        };
+
+        // Before fix: This would create "A", then "B", then "A".
+        // After fix: It should create only "A" and absorb B.
+        let subtitles = super::generate_subtitles_core(
+            &frames,
+            2.0,
+            0.5,
+            cleanup,
+            |_current, _total| {},
+        )
+        .expect("subtitle generation should succeed");
+
+        assert_eq!(subtitles.len(), 1);
+        assert_eq!(subtitles[0].start_time, 0);
+        assert!(subtitles[0].end_time >= 1000);
+        assert_eq!(subtitles[0].text, "Je suis une longue phrase");
     }
 
     #[test]
@@ -545,22 +676,35 @@ fn select_segment_text(candidates: &[SegmentCandidate]) -> Option<(String, f64)>
     }
 
     let mut best_key: Option<&str> = None;
-    let mut best_count: u32 = 0;
-    let mut best_confidence: f64 = -1.0;
+    let mut best_score: f64 = -1.0;
+    let mut final_confidence: f64 = -1.0;
     let mut best_text: &str = "";
 
+    let total_candidates = candidates.len() as f64;
+
     for (key, (count, max_conf, text_at_max)) in stats {
-        if max_conf > best_confidence + 1e-9
-            || ((max_conf - best_confidence).abs() <= 1e-9 && count > best_count)
-        {
+        // Scoring system:
+        // Base score is the maximum confidence (0.0 to 1.0)
+        // Bonus for frequency: up to +0.05 if it appears in all frames
+        // Bonus for length: slight bias towards longer text to prevent OCR truncation bias
+        
+        let frequency_ratio = count as f64 / total_candidates;
+        let frequency_bonus = frequency_ratio * 0.05;
+        
+        // Small length bonus: 0.005 per character, capped at 0.05 (10 chars)
+        let length_bonus = (text_at_max.chars().count() as f64 * 0.005).min(0.05);
+
+        let score = max_conf + frequency_bonus + length_bonus;
+
+        if score > best_score {
             best_key = Some(key);
-            best_count = count;
-            best_confidence = max_conf;
+            best_score = score;
+            final_confidence = max_conf; // Keep the actual confidence for output
             best_text = text_at_max;
         }
     }
 
-    best_key.map(|_| (best_text.to_string(), best_confidence))
+    best_key.map(|_| (best_text.to_string(), final_confidence))
 }
 
 pub(crate) fn generate_subtitles_core<F>(
@@ -640,19 +784,52 @@ where
                     }
                     current = Some(seg);
                 } else {
-                    segments.push(seg);
-                    current = Some(SubtitleSegment {
-                        start_time: frame.time_ms,
-                        last_seen_time: frame.time_ms,
-                        last_seen_frame_index: frame.frame_index,
-                        baseline_key: key.clone(),
-                        baseline_confidence: frame.confidence,
-                        candidates: vec![SegmentCandidate {
-                            key,
-                            text: display_text,
-                            confidence: frame.confidence,
-                        }],
-                    });
+                    let mut is_blip = false;
+                    
+                    // Lookahead to smooth over OCR glitches (A-B-A pattern)
+                    for lookahead_offset in 1..=2 {
+                        if let Some(next_frame) = frame_results.get(i + lookahead_offset) {
+                            let next_display_text = collapse_whitespace(next_frame.text.as_str());
+                            let next_key = normalize_text_for_compare(&next_display_text);
+                            let next_is_valid = next_frame.confidence >= min_confidence && !next_key.is_empty();
+                            
+                            if next_is_valid {
+                                let next_similar = if cleanup.merge_similar {
+                                    texts_are_similar(&seg.baseline_key, &next_key, similarity_threshold)
+                                } else {
+                                    seg.baseline_key == next_key
+                                };
+                                
+                                if next_similar {
+                                    is_blip = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if is_blip {
+                        // This frame is likely an OCR glitch separating two identical valid frames.
+                        // We ignore its text but consider the segment still active.
+                        // Update last_seen_time so we don't trip max_gap_ms on the next valid frame.
+                        seg.last_seen_time = frame.time_ms;
+                        seg.last_seen_frame_index = frame.frame_index;
+                        current = Some(seg);
+                    } else {
+                        segments.push(seg);
+                        current = Some(SubtitleSegment {
+                            start_time: frame.time_ms,
+                            last_seen_time: frame.time_ms,
+                            last_seen_frame_index: frame.frame_index,
+                            baseline_key: key.clone(),
+                            baseline_confidence: frame.confidence,
+                            candidates: vec![SegmentCandidate {
+                                key,
+                                text: display_text,
+                                confidence: frame.confidence,
+                            }],
+                        });
+                    }
                 }
             }
         } else {

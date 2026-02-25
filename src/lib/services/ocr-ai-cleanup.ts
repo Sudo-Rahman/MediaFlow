@@ -13,11 +13,12 @@ const OCR_CLEANUP_SYSTEM_PROMPT = `You are an expert subtitle post-editor specia
 CRITICAL RULES:
 1. Return ONLY valid JSON.
 2. Keep EXACTLY the same cue IDs as input.
-3. Do NOT add, remove, merge, split, or reorder cues.
+3. Do NOT add, merge, split, or reorder cue IDs in the JSON array.
 4. Correct OCR mistakes only (spacing, missing letters, misread characters, punctuation).
-5. Preserve the original language.
-6. Keep each cue concise and natural as a subtitle.
-7. Do not output explanations.
+5. REMOVE NOISE: If a cue is clearly an OCR artifact, random disconnected letters, symbols, or watermarks (e.g., "M", "a", "品 JLE", "4") and NOT part of actual dialogue, set its "correctedText" to an empty string "".
+6. Preserve the original language.
+7. Keep each cue concise and natural as a subtitle.
+8. Do not output explanations.
 
 OUTPUT FORMAT:
 {
@@ -103,7 +104,7 @@ function parseCleanupResponse(responseText: string): OcrCleanupParsedResponse | 
       correctedText: String(cue.correctedText ?? cue.corrected_text ?? cue.text ?? '').trim(),
     }));
 
-    if (cues.length === 0 || cues.some((cue: any) => !cue.id || !cue.correctedText)) {
+    if (cues.length === 0 || cues.some((cue: any) => !cue.id || cue.correctedText === undefined)) {
       return null;
     }
 
@@ -126,8 +127,13 @@ function applyBatchCorrections(
   const corrected: OcrSubtitle[] = [];
   for (const cue of originals) {
     const correctedText = correctedById.get(cue.id);
-    if (!correctedText) {
+    if (correctedText === undefined) {
       return null;
+    }
+
+    // Skip cues that the AI has explicitly marked for deletion by returning an empty string
+    if (correctedText === '') {
+      continue;
     }
 
     corrected.push({

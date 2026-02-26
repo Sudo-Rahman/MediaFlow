@@ -544,6 +544,19 @@
         </div>
       </Card.Header>
       <Card.Content class="space-y-4">
+        <div class="flex items-center gap-3">
+          <img
+            src="/mediaflow-logo.svg"
+            alt="MediaFlow logo"
+            class="size-16 rounded-2xl object-contain shrink-0"
+            draggable="false"
+          />
+          <div>
+            <p class="font-semibold">MediaFlow</p>
+            <p class="text-xs text-muted-foreground">Desktop multimedia toolkit</p>
+          </div>
+        </div>
+        <Separator />
         <div class="flex items-center justify-between">
           <span class="text-muted-foreground">Version</span>
           <span class="font-mono text-sm">1.0.0</span>

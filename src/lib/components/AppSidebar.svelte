@@ -71,9 +71,12 @@
         <Sidebar.MenuButton size="lg" class="pointer-events-none">
           {#snippet child({ props })}
             <div {...props} class="flex items-center gap-2" class:pt-8={isMacOS} data-tauri-drag-region={isMacOS}>
-              <div class="bg-primary text-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg">
-                <span class="font-bold text-sm">MF</span>
-              </div>
+              <img
+                src="/mediaflow-logo.svg"
+                alt="MediaFlow logo"
+                class="size-10 rounded-lg object-contain shrink-0"
+                draggable="false"
+              />
               <div class="flex flex-col gap-0.5 leading-none">
                 <span class="font-semibold">MediaFlow</span>
                 <span class="text-xs text-muted-foreground">v1.0.0</span>

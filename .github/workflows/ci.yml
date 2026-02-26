@@ -109,8 +109,38 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $env:RUSTFLAGS = "-C target-feature=+crt-static"
-          Write-Host "Using RUSTFLAGS=$env:RUSTFLAGS for Windows test builds"
+          $manifestPath = Join-Path (Get-Location) "target\ci.common-controls.manifest"
+          @"
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*" />
+    </dependentAssembly>
+  </dependency>
+</assembly>
+"@ | Set-Content -Path $manifestPath -Encoding utf8
+
+          if (-not (Test-Path $manifestPath)) {
+            throw "Failed to create Common-Controls manifest at $manifestPath"
+          }
+
+          $encodedFlags = @(
+            "-C",
+            "target-feature=+crt-static",
+            "-C",
+            "link-arg=/MANIFEST:EMBED",
+            "-C",
+            "link-arg=/MANIFESTINPUT:$manifestPath"
+          ) -join [char]31
+          $env:CARGO_ENCODED_RUSTFLAGS = $encodedFlags
+          Write-Host "Configured CARGO_ENCODED_RUSTFLAGS for static CRT and Common-Controls v6 manifest input"
 
           function Get-LatestLibTestExe {
             $depsDir = Join-Path (Get-Location) "target\debug\deps"

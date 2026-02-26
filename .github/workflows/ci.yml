@@ -109,6 +109,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          $env:RUSTFLAGS = "-C target-feature=+crt-static"
+          Write-Host "Using RUSTFLAGS=$env:RUSTFLAGS for Windows test builds"
 
           function Get-LatestLibTestExe {
             $depsDir = Join-Path (Get-Location) "target\debug\deps"

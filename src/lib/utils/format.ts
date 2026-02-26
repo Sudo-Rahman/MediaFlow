@@ -105,16 +105,27 @@ export function formatChannels(channels?: number): string {
  * Format video resolution
  */
 export function formatResolution(width?: number, height?: number): string {
-  if (!width || !height) return 'N/A';
+  if (!width || !height || !Number.isFinite(width) || !Number.isFinite(height)) return 'N/A';
 
-  // Common resolution names
-  if (width >= 3840 && height >= 2160) return `4K (${width}×${height})`;
-  if (width >= 2560 && height >= 1440) return `1440p (${width}×${height})`;
-  if (width >= 1920 && height >= 1080) return `1080p (${width}×${height})`;
-  if (width >= 1280 && height >= 720) return `720p (${width}×${height})`;
-  if (width >= 854 && height >= 480) return `480p (${width}×${height})`;
+  const standardResolutionLabels: Record<string, string> = {
+    '3840x2160': '4K',
+    '4096x2160': '4K',
+    '2560x1440': '1440p',
+    '1920x1080': '1080p',
+    '1280x720': '720p',
+    '854x480': '480p',
+    '852x480': '480p',
+    '640x480': '480p',
+  };
 
-  return `${width}×${height}`;
+  const key = `${width}x${height}`;
+  const standardLabel = standardResolutionLabels[key];
+
+  if (standardLabel) {
+    return `${standardLabel} (${width}×${height})`;
+  }
+
+  return `${height}p`;
 }
 
 /**

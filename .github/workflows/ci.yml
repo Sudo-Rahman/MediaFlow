@@ -119,23 +119,31 @@ jobs:
 
           $ffmpegDir = Split-Path -Parent ((Get-Command ffmpeg).Source)
           $ffprobeDir = Split-Path -Parent ((Get-Command ffprobe).Source)
+          $vulkanDll = Join-Path $env:VULKAN_SDK "Bin\vulkan-1.dll"
+
+          if (-not (Test-Path $vulkanDll)) {
+            throw "Missing Vulkan loader DLL at $vulkanDll"
+          }
+
+          $vulkanDllInDeps = Join-Path $depsDir "vulkan-1.dll"
+          Copy-Item $vulkanDll $vulkanDllInDeps -Force
+          Write-Host "Copied Vulkan loader to $vulkanDllInDeps"
 
           $pathEntries = @(
-            (Join-Path $env:WINDIR "System32"),
-            $env:WINDIR,
-            (Join-Path $env:WINDIR "System32\Wbem"),
-            (Join-Path $env:WINDIR "System32\WindowsPowerShell\v1.0"),
-            (Join-Path $env:USERPROFILE ".cargo\bin"),
+            $depsDir,
+            (Split-Path -Parent $vulkanDll),
             $ffmpegDir,
-            $ffprobeDir,
-            $depsDir
+            $ffprobeDir
           ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
 
-          $env:PATH = ($pathEntries -join ';')
+          $env:PATH = (($pathEntries -join ';') + ';' + $env:PATH)
 
           where.exe ffmpeg
           where.exe ffprobe
           where.exe vulkan-1.dll
+          if ($LASTEXITCODE -ne 0) {
+            throw "vulkan-1.dll not found on PATH after setup"
+          }
 
           & $libTestExe.FullName
           if ($LASTEXITCODE -ne 0) {

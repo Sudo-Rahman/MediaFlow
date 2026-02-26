@@ -71,6 +71,11 @@ jobs:
         shell: pwsh
         run: choco install ffmpeg -y
 
+      - name: Install Visual C++ Runtime (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install vcredist140 -y
+
       - name: Setup Vulkan SDK (Windows)
         if: runner.os == 'Windows'
         uses: humbletim/setup-vulkan-sdk@v1.2.1
@@ -103,6 +108,62 @@ jobs:
         working-directory: src-tauri
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
+          function Get-LatestLibTestExe {
+            $depsDir = Join-Path (Get-Location) "target\debug\deps"
+            Get-ChildItem -Path $depsDir -Filter "mediaflow_lib-*.exe" |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1
+          }
+
+          function Show-WindowsCrashDiagnostics {
+            $libTestExe = Get-LatestLibTestExe
+            Write-Host "::group::Windows test crash diagnostics"
+            if ($libTestExe) {
+              Write-Host "lib test executable: $($libTestExe.FullName)"
+
+              $cdb = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\Debuggers\x64\cdb.exe"
+              if (Test-Path $cdb) {
+                Write-Host "Running cdb loader diagnostics..."
+                & $cdb -c "g;qd" $libTestExe.FullName
+              } else {
+                Write-Host "cdb.exe not found"
+              }
+
+              $dumpbin = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
+              if ($dumpbin) {
+                Write-Host "Dumping binary dependencies..."
+                & $dumpbin.Source /dependents $libTestExe.FullName
+              } else {
+                Write-Host "dumpbin.exe not found"
+              }
+            } else {
+              Write-Host "No lib test executable found for diagnostics"
+            }
+
+            Write-Host "Recent Application log entries:"
+            Get-WinEvent -FilterHashtable @{
+              LogName = "Application"
+              StartTime = (Get-Date).AddMinutes(-10)
+            } -ErrorAction SilentlyContinue |
+              Select-Object -First 20 |
+              Format-List TimeCreated, Id, ProviderName, LevelDisplayName, Message
+            Write-Host "::endgroup::"
+          }
+
+          function Invoke-CargoTestWithDiagnostics {
+            param([string[]]$Args)
+
+            & cargo test @Args
+            if ($LASTEXITCODE -eq 0) {
+              return
+            }
+
+            Show-WindowsCrashDiagnostics
+            throw "cargo test failed with exit code $LASTEXITCODE"
+          }
+
           cargo test --no-run
 
           $depsDir = Join-Path (Get-Location) "target\debug\deps"
@@ -130,9 +191,9 @@ jobs:
             throw "vulkan-1.dll not found on PATH after setup"
           }
 
-          cargo test
-          cargo test btbn_latest_page_contains_download_url_for_supported_variant -- --ignored
-          cargo test evermeet_release_endpoints_are_reachable -- --ignored
+          Invoke-CargoTestWithDiagnostics
+          Invoke-CargoTestWithDiagnostics "btbn_latest_page_contains_download_url_for_supported_variant", "--", "--ignored"
+          Invoke-CargoTestWithDiagnostics "evermeet_release_endpoints_are_reachable", "--", "--ignored"
 
       - name: Run Rust tests
         if: runner.os != 'Windows'

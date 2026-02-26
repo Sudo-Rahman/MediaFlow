@@ -106,19 +106,6 @@ jobs:
           cargo test --no-run
 
           $depsDir = Join-Path (Get-Location) "target\debug\deps"
-          $libTestExe = Get-ChildItem -Path $depsDir -Filter "mediaflow_lib-*.exe" |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-          if (-not $libTestExe) {
-            throw "Missing lib test executable in $depsDir"
-          }
-
-          $mainTestExe = Get-ChildItem -Path $depsDir -Filter "mediaflow-*.exe" |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-
-          $ffmpegDir = Split-Path -Parent ((Get-Command ffmpeg).Source)
-          $ffprobeDir = Split-Path -Parent ((Get-Command ffprobe).Source)
           $vulkanDll = Join-Path $env:VULKAN_SDK "Bin\vulkan-1.dll"
 
           if (-not (Test-Path $vulkanDll)) {
@@ -131,9 +118,7 @@ jobs:
 
           $pathEntries = @(
             $depsDir,
-            (Split-Path -Parent $vulkanDll),
-            $ffmpegDir,
-            $ffprobeDir
+            (Split-Path -Parent $vulkanDll)
           ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
 
           $env:PATH = (($pathEntries -join ';') + ';' + $env:PATH)
@@ -145,27 +130,9 @@ jobs:
             throw "vulkan-1.dll not found on PATH after setup"
           }
 
-          & $libTestExe.FullName
-          if ($LASTEXITCODE -ne 0) {
-            throw "lib tests failed with exit code $LASTEXITCODE"
-          }
-
-          & $libTestExe.FullName btbn_latest_page_contains_download_url_for_supported_variant --ignored
-          if ($LASTEXITCODE -ne 0) {
-            throw "ignored test btbn_latest_page_contains_download_url_for_supported_variant failed with exit code $LASTEXITCODE"
-          }
-
-          & $libTestExe.FullName evermeet_release_endpoints_are_reachable --ignored
-          if ($LASTEXITCODE -ne 0) {
-            throw "ignored test evermeet_release_endpoints_are_reachable failed with exit code $LASTEXITCODE"
-          }
-
-          if ($mainTestExe) {
-            & $mainTestExe.FullName
-            if ($LASTEXITCODE -ne 0) {
-              throw "main test binary failed with exit code $LASTEXITCODE"
-            }
-          }
+          cargo test
+          cargo test btbn_latest_page_contains_download_url_for_supported_variant -- --ignored
+          cargo test evermeet_release_endpoints_are_reachable -- --ignored
 
       - name: Run Rust tests
         if: runner.os != 'Windows'

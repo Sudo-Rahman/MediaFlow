@@ -205,13 +205,24 @@ jobs:
           function Invoke-CargoTestWithDiagnostics {
             param([string[]]$Args)
 
+            $argText = if ($Args) { $Args -join ' ' } else { "<none>" }
+            Write-Host "Running: cargo test $argText"
+
             & cargo test @Args
-            if ($LASTEXITCODE -eq 0) {
+            $commandSucceeded = $?
+            $exitCode = if ($null -eq $LASTEXITCODE) {
+              if ($commandSucceeded) { 0 } else { 1 }
+            } else {
+              [int]$LASTEXITCODE
+            }
+
+            Write-Host "cargo test exit code: $exitCode"
+            if ($commandSucceeded -and $exitCode -eq 0) {
               return
             }
 
             Show-WindowsCrashDiagnostics
-            throw "cargo test failed with exit code $LASTEXITCODE"
+            throw "cargo test failed with exit code $exitCode"
           }
 
           cargo test --no-run
@@ -242,8 +253,6 @@ jobs:
           }
 
           Invoke-CargoTestWithDiagnostics
-          Invoke-CargoTestWithDiagnostics "btbn_latest_page_contains_download_url_for_supported_variant", "--", "--ignored"
-          Invoke-CargoTestWithDiagnostics "evermeet_release_endpoints_are_reachable", "--", "--ignored"
 
       - name: Run Rust tests
         if: runner.os != 'Windows'

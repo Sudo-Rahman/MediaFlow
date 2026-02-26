@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - codex/**
 
 permissions:
   contents: read
@@ -98,20 +99,6 @@ jobs:
         run: |
           ffmpeg -version
           ffprobe -version
-
-      - name: Prepare Rust test runtime (Windows)
-        if: runner.os == 'Windows'
-        working-directory: src-tauri
-        shell: pwsh
-        run: |
-          cargo test --no-run
-          $depsDir = Join-Path (Get-Location) "target\debug\deps"
-          $vulkanDll = Join-Path $env:VULKAN_SDK "Bin\vulkan-1.dll"
-          if (!(Test-Path $vulkanDll)) {
-            throw "Missing Vulkan runtime DLL: $vulkanDll"
-          }
-          Copy-Item $vulkanDll (Join-Path $depsDir "vulkan-1.dll") -Force
-          Write-Host "Copied vulkan-1.dll to $depsDir"
 
       - name: Run Rust tests
         working-directory: src-tauri

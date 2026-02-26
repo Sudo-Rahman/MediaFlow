@@ -84,13 +84,11 @@ jobs:
         shell: pwsh
         run: |
           $vulkanLib = Join-Path $env:VULKAN_SDK "lib"
-          $vulkanBin = Join-Path $env:VULKAN_SDK "Bin"
           if (Test-Path "$vulkanLib\vulkan-1.lib") {
             Copy-Item "$vulkanLib\vulkan-1.lib" "$vulkanLib\vulkan.lib"
             Write-Host "Created vulkan.lib from vulkan-1.lib in $vulkanLib"
           }
           echo "LIB=$vulkanLib;$env:LIB" >> $env:GITHUB_ENV
-          echo "$vulkanBin" >> $env:GITHUB_PATH
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -100,7 +98,30 @@ jobs:
           ffmpeg -version
           ffprobe -version
 
+      - name: Run Rust tests (Windows)
+        if: runner.os == 'Windows'
+        working-directory: src-tauri
+        shell: pwsh
+        run: |
+          $blockedPaths = @(
+            (Join-Path $env:VULKAN_SDK "bin"),
+            (Join-Path $env:VULKAN_SDK "Bin")
+          ) | ForEach-Object { $_.Replace('/', '\').TrimEnd('\').ToLowerInvariant() } | Select-Object -Unique
+
+          $cleanPath = ($env:PATH -split ';' | Where-Object {
+            $candidate = $_.Replace('/', '\').TrimEnd('\').ToLowerInvariant()
+            $candidate -and ($blockedPaths -notcontains $candidate)
+          }) -join ';'
+
+          $env:PATH = $cleanPath
+          where.exe vulkan-1.dll
+
+          cargo test
+          cargo test btbn_latest_page_contains_download_url_for_supported_variant -- --ignored
+          cargo test evermeet_release_endpoints_are_reachable -- --ignored
+
       - name: Run Rust tests
+        if: runner.os != 'Windows'
         working-directory: src-tauri
         run: |
           cargo test

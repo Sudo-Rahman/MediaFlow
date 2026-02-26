@@ -206,9 +206,9 @@ jobs:
             param([string[]]$Args)
 
             $argText = if ($Args) { $Args -join ' ' } else { "<none>" }
-            Write-Host "Running: cargo test $argText"
+            Write-Host "Running: cargo test --lib $argText"
 
-            & cargo test @Args
+            & cargo test --lib @Args
             $commandSucceeded = $?
             $exitCode = if ($null -eq $LASTEXITCODE) {
               if ($commandSucceeded) { 0 } else { 1 }
@@ -225,7 +225,7 @@ jobs:
             throw "cargo test failed with exit code $exitCode"
           }
 
-          cargo test --no-run
+          cargo test --no-run --lib
 
           $depsDir = Join-Path (Get-Location) "target\debug\deps"
           $vulkanDll = Join-Path $env:VULKAN_SDK "Bin\vulkan-1.dll"

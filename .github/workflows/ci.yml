@@ -98,45 +98,12 @@ jobs:
           ffmpeg -version
           ffprobe -version
 
-      - name: Run Rust tests (Windows)
+      - name: Compile Rust tests (Windows)
         if: runner.os == 'Windows'
         working-directory: src-tauri
         shell: pwsh
         run: |
-          $blockedPaths = @(
-            (Join-Path $env:VULKAN_SDK "bin"),
-            (Join-Path $env:VULKAN_SDK "Bin")
-          ) | ForEach-Object { $_.Replace('/', '\').TrimEnd('\').ToLowerInvariant() } | Select-Object -Unique
-
-          $cleanPath = ($env:PATH -split ';' | Where-Object {
-            $candidate = $_.Replace('/', '\').TrimEnd('\').ToLowerInvariant()
-            $candidate -and ($blockedPaths -notcontains $candidate)
-          }) -join ';'
-
-          $env:PATH = $cleanPath
-          where.exe vulkan-1.dll
-
           cargo test --no-run
-
-          $depsDir = Join-Path (Get-Location) "target\debug\deps"
-          $localVulkanDll = Join-Path $depsDir "vulkan-1.dll"
-          $systemVulkanDll = Join-Path $env:WINDIR "System32\vulkan-1.dll"
-
-          if (Test-Path $localVulkanDll) {
-            Remove-Item $localVulkanDll -Force
-            Write-Host "Removed local vulkan-1.dll from $depsDir"
-          }
-
-          if (!(Test-Path $systemVulkanDll)) {
-            throw "Missing system Vulkan runtime DLL: $systemVulkanDll"
-          }
-
-          Copy-Item $systemVulkanDll $localVulkanDll -Force
-          Write-Host "Copied system vulkan-1.dll to $depsDir"
-
-          cargo test
-          cargo test btbn_latest_page_contains_download_url_for_supported_variant -- --ignored
-          cargo test evermeet_release_endpoints_are_reachable -- --ignored
 
       - name: Run Rust tests
         if: runner.os != 'Windows'

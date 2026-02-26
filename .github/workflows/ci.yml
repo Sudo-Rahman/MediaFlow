@@ -109,7 +109,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $manifestPath = Join-Path (Get-Location) "target\ci.common-controls.manifest"
+          $targetDir = Join-Path (Get-Location) "target"
+          New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+          $manifestPath = Join-Path $targetDir "ci.common-controls.manifest"
           @"
           <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
           <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">

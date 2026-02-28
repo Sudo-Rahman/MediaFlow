@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { Play, Settings, Square } from '@lucide/svelte';
+  import { ChevronDown, Play, RotateCw, Settings, Square } from '@lucide/svelte';
 
   import type { OcrConfig, OcrLanguage } from '$lib/types/video-ocr';
   import { OCR_LANGUAGES } from '$lib/types/video-ocr';
   import { LlmProviderModelSelector } from '$lib/components/llm';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { Button } from '$lib/components/ui/button';
+  import * as ButtonGroup from '$lib/components/ui/button-group';
   import { Label } from '$lib/components/ui/label';
   import * as Select from '$lib/components/ui/select';
   import { Slider } from '$lib/components/ui/slider';
@@ -13,11 +15,16 @@
   interface OcrOptionsPanelProps {
     config: OcrConfig;
     canStart: boolean;
+    canRetryAll: boolean;
     isProcessing: boolean;
+    startCount: number;
+    retryCount: number;
+    primaryAction: 'start' | 'retry';
     availableLanguages?: string[];  // Languages with installed models
     maxThreads?: number;            // Max available threads
     onConfigChange: (updates: Partial<OcrConfig>) => void;
     onStart: () => void;
+    onRetryAll: () => void;
     onCancel: () => void;
     onNavigateToSettings?: () => void;
   }
@@ -25,11 +32,16 @@
   let {
     config,
     canStart,
+    canRetryAll,
     isProcessing,
+    startCount,
+    retryCount,
+    primaryAction = 'start',
     availableLanguages = [],
     maxThreads = navigator.hardwareConcurrency || 4,
     onConfigChange,
     onStart,
+    onRetryAll,
     onCancel,
     onNavigateToSettings,
   }: OcrOptionsPanelProps = $props();
@@ -70,6 +82,46 @@
     onConfigChange({ minCueDurationMs: value });
   }
 
+  function handlePrimaryAction() {
+    if (primaryAction === 'retry') {
+      if (!canRetryAll) {
+        return;
+      }
+
+      onRetryAll();
+      return;
+    }
+
+    if (!canStart) {
+      return;
+    }
+
+    onStart();
+  }
+
+  function handleStartAction() {
+    if (!canStart) {
+      return;
+    }
+
+    onStart();
+  }
+
+  function handleRetryAllAction() {
+    if (!canRetryAll) {
+      return;
+    }
+
+    onRetryAll();
+  }
+
+  const hasAnyAction = $derived(canStart || canRetryAll);
+  const primaryLabel = $derived(
+    primaryAction === 'retry'
+      ? `Retry all (${retryCount})`
+      : `Start OCR (${startCount})`
+  );
+  const primaryIsRetry = $derived(primaryAction === 'retry');
 </script>
 
 <div class="space-y-6">
@@ -290,17 +342,46 @@
         Cancel OCR
       </Button>
     {:else}
-      <Button
-        class="w-full"
-        disabled={!canStart}
-        onclick={onStart}
-      >
-        <Play class="size-4 mr-2" />
-        Start OCR
-      </Button>
+      <ButtonGroup.Root class="w-full">
+        <Button
+          class="flex-1 rounded-r-none"
+          disabled={!hasAnyAction}
+          onclick={handlePrimaryAction}
+        >
+          {#if primaryIsRetry}
+            <RotateCw class="size-4 mr-2" />
+          {:else}
+            <Play class="size-4 mr-2" />
+          {/if}
+          {primaryLabel}
+        </Button>
+
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger>
+            {#snippet child({ props })}
+              <Button
+                {...props}
+                class="rounded-l-none px-2"
+                disabled={!hasAnyAction}
+                aria-label="Open OCR actions"
+              >
+                <ChevronDown class="size-4" />
+              </Button>
+            {/snippet}
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content align="end" class="w-52">
+            <DropdownMenu.Item onclick={handleStartAction} disabled={!canStart}>
+              Start OCR ({startCount})
+            </DropdownMenu.Item>
+            <DropdownMenu.Item onclick={handleRetryAllAction} disabled={!canRetryAll}>
+              Retry all... ({retryCount})
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
+      </ButtonGroup.Root>
     {/if}
 
-    {#if !canStart && !isProcessing}
+    {#if !hasAnyAction && !isProcessing}
       <p class="text-xs text-muted-foreground text-center">
         Add videos and wait for transcoding to complete
       </p>

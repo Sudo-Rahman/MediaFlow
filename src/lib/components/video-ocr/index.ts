@@ -7,3 +7,4 @@ export { default as OcrProgressBar } from './OcrProgressBar.svelte';
 export { default as OcrLogPanel } from './OcrLogPanel.svelte';
 export { default as OcrResultDialog } from './OcrResultDialog.svelte';
 export { default as OcrRetryDialog } from './OcrRetryDialog.svelte';
+export { default as OcrRetryAllDialog } from './OcrRetryAllDialog.svelte';

@@ -52,6 +52,7 @@
     OcrLogPanel,
     OcrResultDialog,
     OcrRetryDialog,
+    OcrRetryAllDialog,
   } from '$lib/components/video-ocr';
 
   const VIDEO_FORMATS = 'MP4, MKV, AVI, MOV';
@@ -63,6 +64,10 @@
   interface ProcessFileResult {
     success: boolean;
     effectiveMode: OcrRetryMode;
+  }
+
+  interface ProcessFileOptions {
+    suppressFallbackToast?: boolean;
   }
 
   let { onNavigateToSettings }: VideoOcrViewProps = $props();
@@ -77,6 +82,7 @@
 
   let retryDialogOpen = $state(false);
   let retryDialogFile = $state.raw<OcrVideoFile | null>(null);
+  let retryAllDialogOpen = $state(false);
   let removeDialogOpen = $state(false);
   let removeTarget = $state.raw<{ mode: 'single'; fileId: string } | { mode: 'all' } | null>(null);
   let persistedOcrVersionKeys = $state<Set<string>>(new Set());
@@ -379,6 +385,7 @@
     versionName: string,
     mode: OcrRetryMode,
     config: OcrConfig,
+    options: ProcessFileOptions = {},
   ): Promise<ProcessFileResult> {
     let effectiveMode = mode;
     let rawSource: OcrRawFrame[] = [];
@@ -389,7 +396,9 @@
       if (!sourceVersion) {
         effectiveMode = 'full_pipeline';
         videoOcrStore.addLog('warning', 'Raw OCR not found. Falling back to full pipeline.', file.id);
-        toast.info('Raw OCR not found for partial retry. Running full pipeline.');
+        if (!options.suppressFallbackToast) {
+          toast.info('Raw OCR not found for partial retry. Running full pipeline.');
+        }
       } else {
         rawSource = sourceVersion.rawOcr;
       }
@@ -613,20 +622,28 @@
     await transcodeFileForPreview(file);
   }
 
+  function getStartTargets(): OcrVideoFile[] {
+    return videoOcrStore.videoFiles.filter((file) => file.status === 'ready');
+  }
+
+  function getRetryTargets(): OcrVideoFile[] {
+    return videoOcrStore.videoFiles.filter((file) => file.ocrVersions.length > 0);
+  }
+
   async function handleStartOcr() {
-    if (!videoOcrStore.canStartOcr) {
+    const startTargets = getStartTargets();
+    if (startTargets.length === 0) {
+      toast.warning('No ready files to process');
       return;
     }
-
-    const readyFiles = videoOcrStore.readyFiles;
     let successCount = 0;
     let failCount = 0;
     let cancelledCount = 0;
 
-    videoOcrStore.setProcessingScope(readyFiles.map((file) => file.id));
+    videoOcrStore.setProcessingScope(startTargets.map((file) => file.id));
 
     try {
-      for (const entry of readyFiles) {
+      for (const entry of startTargets) {
         if (videoOcrStore.isCancelling) {
           break;
         }
@@ -658,6 +675,15 @@
     }
   }
 
+  function handleOpenRetryAllDialog() {
+    if (getRetryTargets().length === 0) {
+      toast.warning('No files with OCR versions available for retry');
+      return;
+    }
+
+    retryAllDialogOpen = true;
+  }
+
   async function handleRetryConfirm(fileId: string, versionName: string, mode: OcrRetryMode, config: OcrConfig) {
     const file = getFreshFile(fileId);
     if (!file) {
@@ -676,6 +702,59 @@
 
     if (result.success) {
       toast.success(`Created ${versionName} (${result.effectiveMode.replaceAll('_', ' ')})`);
+    }
+  }
+
+  async function handleRetryAllConfirm(mode: OcrRetryMode, config: OcrConfig) {
+    const retryTargets = getRetryTargets();
+    if (retryTargets.length === 0) {
+      return;
+    }
+
+    let successCount = 0;
+    let failCount = 0;
+    let cancelledCount = 0;
+    let fallbackCount = 0;
+
+    videoOcrStore.setProcessingScope(retryTargets.map((file) => file.id));
+
+    try {
+      for (const entry of retryTargets) {
+        if (videoOcrStore.isCancelling) {
+          break;
+        }
+
+        const file = getFreshFile(entry.id) ?? entry;
+        const versionName = generateOcrVersionName(file.ocrVersions);
+
+        videoOcrStore.startProcessing(file.id);
+        const result = await processFileOcr(file, versionName, mode, config, {
+          suppressFallbackToast: true,
+        });
+
+        if (mode !== 'full_pipeline' && result.effectiveMode === 'full_pipeline') {
+          fallbackCount += 1;
+        }
+
+        if (result.success) {
+          successCount += 1;
+        } else if (videoOcrStore.isFileCancelled(file.id)) {
+          cancelledCount += 1;
+        } else {
+          failCount += 1;
+        }
+      }
+    } finally {
+      videoOcrStore.stopProcessing();
+    }
+
+    if (successCount > 0 || failCount > 0 || cancelledCount > 0 || fallbackCount > 0) {
+      const parts: string[] = [];
+      if (successCount > 0) parts.push(`${successCount} completed`);
+      if (failCount > 0) parts.push(`${failCount} failed`);
+      if (cancelledCount > 0) parts.push(`${cancelledCount} cancelled`);
+      if (fallbackCount > 0) parts.push(`${fallbackCount} fallback to full pipeline`);
+      toast.success(`Retry all finished: ${parts.join(', ')}`);
     }
   }
 
@@ -867,6 +946,24 @@
     toolImportStore.publishVersionedSource('ocr_versions', 'video-ocr', 'OCR', versionedItems);
   });
 
+  const startTargets = $derived(getStartTargets());
+  const retryTargets = $derived(getRetryTargets());
+  const startCount = $derived(startTargets.length);
+  const retryCount = $derived(retryTargets.length);
+  const primaryAction = $derived.by<'start' | 'retry'>(() => {
+    if (startCount > 0) {
+      return 'start';
+    }
+    if (retryCount > 0) {
+      return 'retry';
+    }
+    return 'start';
+  });
+  const canStart = $derived(startCount > 0 && !videoOcrStore.isProcessing);
+  const canRetryAll = $derived(retryCount > 0 && !videoOcrStore.isProcessing);
+  const retryAllMissingRawCount = $derived(
+    retryTargets.filter((file) => getLatestRawVersion(file) === null).length,
+  );
   const transcodingCount = $derived(videoOcrStore.videoFiles.filter((file) => file.status === 'transcoding').length);
 </script>
 
@@ -931,8 +1028,8 @@
     <VideoPreview
       file={videoOcrStore.selectedFile}
       globalRegion={videoOcrStore.globalRegion}
-      showSubtitles={!resultDialogOpen && !retryDialogOpen}
-      suspendPlayback={resultDialogOpen || retryDialogOpen}
+      showSubtitles={!resultDialogOpen && !retryDialogOpen && !retryAllDialogOpen}
+      suspendPlayback={resultDialogOpen || retryDialogOpen || retryAllDialogOpen}
       onGlobalRegionChange={handleGlobalRegionChange}
       onFileRegionChange={handleFileRegionChange}
       onUseGlobalRegion={handleUseGlobalRegion}
@@ -952,11 +1049,16 @@
   <div class="w-80 border-l overflow-auto flex flex-col p-4">
     <OcrOptionsPanel
       config={videoOcrStore.config}
-      canStart={videoOcrStore.canStartOcr}
+      canStart={canStart}
+      canRetryAll={canRetryAll}
       isProcessing={videoOcrStore.isProcessing}
+      startCount={startCount}
+      retryCount={retryCount}
+      primaryAction={primaryAction}
       availableLanguages={videoOcrStore.availableLanguages}
       onConfigChange={(updates) => videoOcrStore.updateConfig(updates)}
       onStart={handleStartOcr}
+      onRetryAll={handleOpenRetryAllDialog}
       onCancel={handleCancelAll}
       onNavigateToSettings={onNavigateToSettings}
     />
@@ -985,6 +1087,17 @@
   file={retryDialogFile}
   baseConfig={videoOcrStore.config}
   onConfirm={handleRetryConfirm}
+/>
+
+<OcrRetryAllDialog
+  bind:open={retryAllDialogOpen}
+  onOpenChange={(open) => {
+    retryAllDialogOpen = open;
+  }}
+  targetCount={retryCount}
+  missingRawCount={retryAllMissingRawCount}
+  baseConfig={videoOcrStore.config}
+  onConfirm={handleRetryAllConfirm}
 />
 
 <AlertDialog.Root bind:open={removeDialogOpen}>

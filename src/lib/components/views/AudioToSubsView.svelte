@@ -818,6 +818,14 @@
     );
     if (readyFiles.length === 0) return;
 
+    for (const file of readyFiles) {
+      audioToSubsStore.updateFile(file.id, {
+        status: 'ready',
+        progress: 0,
+        error: undefined,
+      });
+    }
+
     audioToSubsStore.setTranscriptionScope(readyFiles.map((file) => file.id));
     audioToSubsStore.startTranscription();
 
@@ -939,6 +947,12 @@
     // Create abort controller for this file
     const controller = new AbortController();
     abortControllers.set(fileId, controller);
+
+    audioToSubsStore.updateFile(fileId, {
+      status: 'ready',
+      progress: 0,
+      error: undefined,
+    });
 
     audioToSubsStore.setTranscriptionScope([fileId]);
     audioToSubsStore.startTranscription(fileId);

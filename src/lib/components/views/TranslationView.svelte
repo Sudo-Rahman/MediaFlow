@@ -885,6 +885,17 @@
     runConfig: TranslationRunConfig = createRunConfig(),
     versionNameOverride?: string,
   ) {
+    translationStore.updateJob(job.id, {
+      status: 'pending',
+      progress: 0,
+      currentBatch: 0,
+      totalBatches: 0,
+      error: undefined,
+      activeRunId: null,
+      abortController: undefined,
+      modelJobs: undefined,
+    });
+
     translationStore.setActiveScopeJobIds([job.id]);
     try {
       await translateJobInternal(job, runConfig, versionNameOverride);
@@ -900,6 +911,19 @@
       return;
     }
     const runConfig = createRunConfig();
+
+    for (const target of targets) {
+      translationStore.updateJob(target.id, {
+        status: 'pending',
+        progress: 0,
+        currentBatch: 0,
+        totalBatches: 0,
+        error: undefined,
+        activeRunId: null,
+        abortController: undefined,
+        modelJobs: undefined,
+      });
+    }
 
     translationStore.setActiveScopeJobIds(targets.map((job) => job.id));
     translationStore.updateProgress({

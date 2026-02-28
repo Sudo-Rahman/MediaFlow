@@ -690,6 +690,12 @@
       return;
     }
 
+    videoOcrStore.updateFile(file.id, {
+      status: 'ready',
+      progress: undefined,
+      error: undefined,
+    });
+
     videoOcrStore.setProcessingScope([file.id]);
     videoOcrStore.startProcessing(file.id);
 
@@ -715,6 +721,14 @@
     let failCount = 0;
     let cancelledCount = 0;
     let fallbackCount = 0;
+
+    for (const target of retryTargets) {
+      videoOcrStore.updateFile(target.id, {
+        status: 'ready',
+        progress: undefined,
+        error: undefined,
+      });
+    }
 
     videoOcrStore.setProcessingScope(retryTargets.map((file) => file.id));
 

@@ -100,6 +100,7 @@ export interface OcrVersion {
   createdAt: string;
   mode: OcrRetryMode;
   configSnapshot: OcrConfig;
+  rawFrameRate?: number;
   rawOcr: OcrRawFrame[];
   finalSubtitles: OcrSubtitle[];
 }

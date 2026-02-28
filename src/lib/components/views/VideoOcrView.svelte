@@ -31,7 +31,13 @@
   import { cleanupOcrSubtitlesWithAi } from '$lib/services/ocr-ai-cleanup';
   import { checkOcrSourcePreviewCompatibility } from '$lib/services/ocr-preview-compatibility';
   import { ocrVersionToSubtitleFile } from '$lib/services/subtitle-interop';
-  import { createOcrVersion, generateOcrVersionName, loadOcrData, saveOcrData } from '$lib/services/ocr-storage';
+  import {
+    createOcrVersion,
+    generateOcrVersionName,
+    loadOcrData,
+    resolveOcrVersionRawFrameRate,
+    saveOcrData,
+  } from '$lib/services/ocr-storage';
   import {
     analyzeOcrSubtitles,
     formatOcrSubtitleAnalysis,
@@ -117,6 +123,12 @@
 
   function buildSourcePreviewFallbackKey(file: OcrVideoFile): string {
     return `${file.id}::${file.path}`;
+  }
+
+  function formatFrameRate(frameRate: number): string {
+    return Number.isInteger(frameRate)
+      ? `${frameRate}`
+      : frameRate.toFixed(2).replace(/\.?0+$/, '');
   }
 
   onMount(async () => {
@@ -288,6 +300,7 @@
     rawOcr: OcrRawFrame[],
     mode: OcrRetryMode,
     config: OcrConfig,
+    rawFrameRate: number = config.frameRate,
   ): Promise<OcrSubtitle[]> {
     const disableCleanup = mode === 'ai_only';
     const shouldRunAi = mode === 'cleanup_and_ai'
@@ -300,7 +313,7 @@
     const rawSubtitles = await invoke<OcrSubtitleLike[]>('generate_subtitles_from_ocr', {
       fileId: file.id,
       frameResults: toRustOcrFrames(rawOcr),
-      fps: config.frameRate,
+      fps: rawFrameRate,
       minConfidence: config.confidenceThreshold,
       cleanup: buildCleanupOptions(config, disableCleanup),
     });
@@ -389,6 +402,7 @@
   ): Promise<ProcessFileResult> {
     let effectiveMode = mode;
     let rawSource: OcrRawFrame[] = [];
+    let rawFrameRate = config.frameRate;
 
     const freshFile = getFreshFile(file.id) ?? file;
     if (mode !== 'full_pipeline') {
@@ -401,6 +415,7 @@
         }
       } else {
         rawSource = sourceVersion.rawOcr;
+        rawFrameRate = resolveOcrVersionRawFrameRate(sourceVersion, config.frameRate);
       }
     }
 
@@ -412,9 +427,15 @@
         const result = await runFullPipeline(file, config);
         rawOcr = result.rawOcr;
         finalSubtitles = result.finalSubtitles;
+        rawFrameRate = config.frameRate;
       } else {
         rawOcr = rawSource;
-        finalSubtitles = await runFromRaw(file, rawOcr, effectiveMode, config);
+        videoOcrStore.addLog(
+          'info',
+          `Partial retry reuses original raw OCR timing (${formatFrameRate(rawFrameRate)} fps)`,
+          file.id,
+        );
+        finalSubtitles = await runFromRaw(file, rawOcr, effectiveMode, config, rawFrameRate);
       }
 
       const version = createOcrVersion(
@@ -423,6 +444,7 @@
         config,
         rawOcr,
         finalSubtitles,
+        rawFrameRate,
       );
 
       videoOcrStore.addOcrVersion(file.id, version);

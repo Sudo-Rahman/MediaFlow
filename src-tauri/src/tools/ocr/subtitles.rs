@@ -28,6 +28,45 @@ fn frame_end_time_ms(frame_index: u32, fps: f64) -> u64 {
     (((frame_index as f64) + 1.0) * (1000.0 / fps)).round() as u64
 }
 
+fn infer_frame_step_ms(frame_results: &[OcrFrameResult]) -> Option<u64> {
+    if frame_results.len() < 2 {
+        return None;
+    }
+
+    let mut deltas: Vec<u64> = frame_results
+        .windows(2)
+        .filter_map(|pair| {
+            let delta = pair[1].time_ms.saturating_sub(pair[0].time_ms);
+            (delta > 0).then_some(delta)
+        })
+        .collect();
+
+    if deltas.is_empty() {
+        return None;
+    }
+
+    deltas.sort_unstable();
+    Some(deltas[deltas.len() / 2])
+}
+
+fn segment_end_time_ms(
+    start_time: u64,
+    last_seen_time: u64,
+    last_seen_frame_index: u32,
+    frame_step_ms: Option<u64>,
+    fps: f64,
+) -> u64 {
+    let mut end_time = frame_step_ms
+        .and_then(|step| last_seen_time.checked_add(step))
+        .unwrap_or_else(|| frame_end_time_ms(last_seen_frame_index, fps));
+
+    if end_time <= start_time {
+        end_time = start_time.saturating_add(1);
+    }
+
+    end_time
+}
+
 fn collapse_whitespace(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut last_was_space = false;
@@ -141,7 +180,7 @@ fn texts_are_similar(a_key: &str, b_key: &str, threshold: f64) -> bool {
     // Substring optimization: if one is completely contained within another,
     // and they represent a significant portion (to prevent tiny fragments matching huge sentences)
     if a_key.contains(b_key) || b_key.contains(a_key) {
-        // If the size difference is very small (1 or 2 chars), or 
+        // If the size difference is very small (1 or 2 chars), or
         // the shorter text is at least a certain percentage of the longer text
         // we consider them a match to fix OCR edge truncations.
         if (max_len - min_len) <= 2 || (min_len as f64 / max_len as f64) >= 0.70 {
@@ -190,7 +229,11 @@ mod tests {
     #[test]
     fn texts_are_similar_merges_long_substrings() {
         assert!(super::texts_are_similar("hello world", "hello worl", 0.9));
-        assert!(super::texts_are_similar("这是一个长句子的开头", "这是一个长句子的开头和结尾", 0.8));
+        assert!(super::texts_are_similar(
+            "这是一个长句子的开头",
+            "这是一个长句子的开头和结尾",
+            0.8
+        ));
     }
 
     #[test]
@@ -229,12 +272,18 @@ mod tests {
 
     #[test]
     fn collapse_whitespace_trims_and_deduplicates_spaces() {
-        assert_eq!(super::collapse_whitespace("  hello   world \n\t"), "hello world");
+        assert_eq!(
+            super::collapse_whitespace("  hello   world \n\t"),
+            "hello world"
+        );
     }
 
     #[test]
     fn normalize_text_for_compare_strips_punctuation() {
-        assert_eq!(super::normalize_text_for_compare("《Hello, World!》"), "hello, world");
+        assert_eq!(
+            super::normalize_text_for_compare("《Hello, World!》"),
+            "hello, world"
+        );
     }
 
     #[test]
@@ -277,7 +326,8 @@ mod tests {
             },
         ];
 
-        let selected = super::select_segment_text(&candidates).expect("candidate should be selected");
+        let selected =
+            super::select_segment_text(&candidates).expect("candidate should be selected");
         assert_eq!(selected.0, "hello!");
         assert!((selected.1 - 0.95).abs() < 1e-9);
     }
@@ -302,7 +352,8 @@ mod tests {
             },
         ];
 
-        let selected = super::select_segment_text(&candidates).expect("candidate should be selected");
+        let selected =
+            super::select_segment_text(&candidates).expect("candidate should be selected");
         assert_eq!(selected.0, "关门");
     }
 
@@ -331,7 +382,8 @@ mod tests {
             },
         ];
 
-        let selected = super::select_segment_text(&candidates).expect("candidate should be selected");
+        let selected =
+            super::select_segment_text(&candidates).expect("candidate should be selected");
         // A should win due to frequency bonus
         assert_eq!(selected.0, "A");
     }
@@ -375,6 +427,80 @@ mod tests {
     }
 
     #[test]
+    fn generate_subtitles_uses_time_ms_for_end_time_when_fps_is_wrong() {
+        let frames = vec![
+            OcrFrameResult {
+                frame_index: 0,
+                time_ms: 0,
+                text: "Timing test".to_string(),
+                confidence: 0.95,
+            },
+            OcrFrameResult {
+                frame_index: 1,
+                time_ms: 67,
+                text: "Timing test".to_string(),
+                confidence: 0.95,
+            },
+            OcrFrameResult {
+                frame_index: 2,
+                time_ms: 133,
+                text: "Timing test".to_string(),
+                confidence: 0.95,
+            },
+        ];
+
+        let subtitles = super::generate_subtitles_core(
+            &frames,
+            10.0,
+            0.5,
+            OcrSubtitleCleanupOptions::default(),
+            |_current, _total| {},
+        )
+        .expect("subtitle generation should succeed");
+
+        assert_eq!(subtitles.len(), 1);
+        assert_eq!(subtitles[0].start_time, 0);
+        assert_eq!(subtitles[0].end_time, 200);
+    }
+
+    #[test]
+    fn generate_subtitles_falls_back_to_fps_when_time_deltas_are_unusable() {
+        let frames = vec![
+            OcrFrameResult {
+                frame_index: 0,
+                time_ms: 0,
+                text: "Fallback timing".to_string(),
+                confidence: 0.95,
+            },
+            OcrFrameResult {
+                frame_index: 1,
+                time_ms: 0,
+                text: "Fallback timing".to_string(),
+                confidence: 0.95,
+            },
+            OcrFrameResult {
+                frame_index: 2,
+                time_ms: 0,
+                text: "Fallback timing".to_string(),
+                confidence: 0.95,
+            },
+        ];
+
+        let subtitles = super::generate_subtitles_core(
+            &frames,
+            10.0,
+            0.5,
+            OcrSubtitleCleanupOptions::default(),
+            |_current, _total| {},
+        )
+        .expect("subtitle generation should succeed");
+
+        assert_eq!(subtitles.len(), 1);
+        assert_eq!(subtitles[0].start_time, 0);
+        assert_eq!(subtitles[0].end_time, 300);
+    }
+
+    #[test]
     fn generate_subtitles_ignores_isolated_anomalous_frames() {
         // A-B-A pattern
         let frames = vec![
@@ -408,19 +534,61 @@ mod tests {
 
         // Before fix: This would create "A", then "B", then "A".
         // After fix: It should create only "A" and absorb B.
-        let subtitles = super::generate_subtitles_core(
-            &frames,
-            2.0,
-            0.5,
-            cleanup,
-            |_current, _total| {},
-        )
-        .expect("subtitle generation should succeed");
+        let subtitles =
+            super::generate_subtitles_core(&frames, 2.0, 0.5, cleanup, |_current, _total| {})
+                .expect("subtitle generation should succeed");
 
         assert_eq!(subtitles.len(), 1);
         assert_eq!(subtitles[0].start_time, 0);
         assert!(subtitles[0].end_time >= 1000);
         assert_eq!(subtitles[0].text, "Je suis une longue phrase");
+    }
+
+    #[test]
+    fn generate_subtitles_aba_blip_does_not_extend_past_last_matching_frame() {
+        let frames = vec![
+            OcrFrameResult {
+                frame_index: 0,
+                time_ms: 0,
+                text: "Je suis une longue phrase".to_string(),
+                confidence: 0.95,
+            },
+            OcrFrameResult {
+                frame_index: 1,
+                time_ms: 500,
+                text: "Je su1s unel0ngu phrase".to_string(),
+                confidence: 0.96,
+            },
+            OcrFrameResult {
+                frame_index: 2,
+                time_ms: 1000,
+                text: "Je suis une longue phrase".to_string(),
+                confidence: 0.95,
+            },
+            OcrFrameResult {
+                frame_index: 3,
+                time_ms: 1500,
+                text: "Une autre phrase".to_string(),
+                confidence: 0.95,
+            },
+        ];
+
+        let cleanup = OcrSubtitleCleanupOptions {
+            merge_similar: true,
+            similarity_threshold: 0.95,
+            max_gap_ms: 1000,
+            min_cue_duration_ms: 500,
+            filter_url_like: false,
+        };
+
+        let subtitles =
+            super::generate_subtitles_core(&frames, 2.0, 0.5, cleanup, |_current, _total| {})
+                .expect("subtitle generation should succeed");
+
+        assert_eq!(subtitles.len(), 2);
+        assert_eq!(subtitles[0].text, "Je suis une longue phrase");
+        assert_eq!(subtitles[0].end_time, 1500);
+        assert_eq!(subtitles[1].start_time, 1500);
     }
 
     #[test]
@@ -448,14 +616,9 @@ mod tests {
             filter_url_like: true,
         };
 
-        let subtitles = super::generate_subtitles_core(
-            &frames,
-            1.0,
-            0.5,
-            cleanup,
-            |_current, _total| {},
-        )
-        .expect("subtitle generation should succeed");
+        let subtitles =
+            super::generate_subtitles_core(&frames, 1.0, 0.5, cleanup, |_current, _total| {})
+                .expect("subtitle generation should succeed");
 
         assert_eq!(subtitles.len(), 1);
         assert_eq!(subtitles[0].text, "Real subtitle");
@@ -582,14 +745,9 @@ mod tests {
             filter_url_like: false,
         };
 
-        let subtitles = super::generate_subtitles_core(
-            &frames,
-            2.0,
-            0.5,
-            cleanup,
-            |_current, _total| {},
-        )
-        .expect("subtitle generation should succeed");
+        let subtitles =
+            super::generate_subtitles_core(&frames, 2.0, 0.5, cleanup, |_current, _total| {})
+                .expect("subtitle generation should succeed");
 
         assert_eq!(subtitles.len(), 1);
         assert_eq!(subtitles[0].start_time, 0);
@@ -687,10 +845,10 @@ fn select_segment_text(candidates: &[SegmentCandidate]) -> Option<(String, f64)>
         // Base score is the maximum confidence (0.0 to 1.0)
         // Bonus for frequency: up to +0.05 if it appears in all frames
         // Bonus for length: slight bias towards longer text to prevent OCR truncation bias
-        
+
         let frequency_ratio = count as f64 / total_candidates;
         let frequency_bonus = frequency_ratio * 0.05;
-        
+
         // Small length bonus: 0.005 per character, capped at 0.05 (10 chars)
         let length_bonus = (text_at_max.chars().count() as f64 * 0.005).min(0.05);
 
@@ -729,6 +887,7 @@ where
     let max_gap_ms = cleanup.max_gap_ms as u64;
     let min_confidence = clamp_f64(min_confidence, 0.0, 1.0);
     let min_cue_duration_ms = cleanup.min_cue_duration_ms as u64;
+    let inferred_frame_step_ms = infer_frame_step_ms(frame_results);
 
     let mut segments: Vec<SubtitleSegment> = Vec::new();
     let mut current: Option<SubtitleSegment> = None;
@@ -785,21 +944,26 @@ where
                     current = Some(seg);
                 } else {
                     let mut is_blip = false;
-                    
+
                     // Lookahead to smooth over OCR glitches (A-B-A pattern)
                     for lookahead_offset in 1..=2 {
                         if let Some(next_frame) = frame_results.get(i + lookahead_offset) {
                             let next_display_text = collapse_whitespace(next_frame.text.as_str());
                             let next_key = normalize_text_for_compare(&next_display_text);
-                            let next_is_valid = next_frame.confidence >= min_confidence && !next_key.is_empty();
-                            
+                            let next_is_valid =
+                                next_frame.confidence >= min_confidence && !next_key.is_empty();
+
                             if next_is_valid {
                                 let next_similar = if cleanup.merge_similar {
-                                    texts_are_similar(&seg.baseline_key, &next_key, similarity_threshold)
+                                    texts_are_similar(
+                                        &seg.baseline_key,
+                                        &next_key,
+                                        similarity_threshold,
+                                    )
                                 } else {
                                     seg.baseline_key == next_key
                                 };
-                                
+
                                 if next_similar {
                                     is_blip = true;
                                     break;
@@ -862,10 +1026,13 @@ where
             continue;
         };
 
-        let mut end_time = frame_end_time_ms(seg.last_seen_frame_index, fps);
-        if end_time <= seg.start_time {
-            end_time = seg.start_time.saturating_add(1);
-        }
+        let end_time = segment_end_time_ms(
+            seg.start_time,
+            seg.last_seen_time,
+            seg.last_seen_frame_index,
+            inferred_frame_step_ms,
+            fps,
+        );
 
         subtitles.push(OcrSubtitleEntry {
             id: format!("sub-{}", subtitles.len() + 1),

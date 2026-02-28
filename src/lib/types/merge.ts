@@ -164,10 +164,9 @@ export function extractSeriesInfo(filename: string): { season?: number; episode:
   }
 
   // 4. Safe Episode Patterns (No Season)
-  // "Ep. 01", "Episode 1", "Vol.1", "Part 1", "E01", "Episode - 01"
-  // Added [eE] to support "E01" shorthand
-  // Added [_-] to support "Episode - 01" separator style
-  const ep = /\b(?:ep|episode|vol|part|[eE])[\s._-]*(\d{1,4})\b/i;
+  // "Ep. 01", "Episode 1", "Vol.1", "Part 1", "E01", "Episode - 01", "EP11_Title"
+  // Use a lookahead after the number to allow separators like "_" (word char, so \b is not enough).
+  const ep = /\b(?:ep|episode|vol|part|e)[\s._-]*(\d{1,4})(?=\b|[\s._-]|$)/i;
   const epMatch = analysisName.match(ep);
   if (epMatch) {
     return { episode: parseInt(epMatch[1]) };

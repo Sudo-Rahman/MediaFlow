@@ -117,6 +117,12 @@
       </p>
     {/if}
 
+    {#if mode !== 'full_pipeline'}
+      <p class="text-xs text-muted-foreground bg-muted/40 border rounded-md p-2">
+        Partial retry reuses the original raw OCR frame rate for timing.
+      </p>
+    {/if}
+
     {#if showPipelineOptions}
       <div class="space-y-2">
         <Separator />

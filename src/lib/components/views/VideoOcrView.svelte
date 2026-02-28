@@ -627,7 +627,9 @@
   }
 
   function getRetryTargets(): OcrVideoFile[] {
-    return videoOcrStore.videoFiles.filter((file) => file.ocrVersions.length > 0);
+    return videoOcrStore.videoFiles.filter(
+      (file) => file.ocrVersions.length > 0 && !isOcrActiveStatus(file.status),
+    );
   }
 
   async function handleStartOcr() {

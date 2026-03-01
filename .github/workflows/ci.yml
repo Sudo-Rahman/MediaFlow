@@ -17,7 +17,7 @@ jobs:
         include:
           - os: macos-latest
           - os: ubuntu-22.04
-          - os: windows-2022
+          - os: windows-latest
 
     runs-on: ${{ matrix.os }}
 
@@ -39,12 +39,6 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Rust build artifacts
-        if: runner.os != 'Windows'
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
-
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-22.04'
         run: |
@@ -59,22 +53,15 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf
-
       - name: Install FFmpeg (macOS)
         if: runner.os == 'macOS'
         run: |
           brew update
           brew install ffmpeg
-
       - name: Install FFmpeg (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: choco install ffmpeg -y
-
-      - name: Install Visual C++ Runtime (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: choco install vcredist140 -y
 
       - name: Setup Vulkan SDK (Windows)
         if: runner.os == 'Windows'
@@ -94,7 +81,6 @@ jobs:
             Write-Host "Created vulkan.lib from vulkan-1.lib in $vulkanLib"
           }
           echo "LIB=$vulkanLib;$env:LIB" >> $env:GITHUB_ENV
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -102,165 +88,11 @@ jobs:
         run: |
           ffmpeg -version
           ffprobe -version
-
-      - name: Run Rust tests (Windows)
-        if: runner.os == 'Windows'
-        working-directory: src-tauri
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $targetDir = Join-Path (Get-Location) "target"
-          New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-          $manifestPath = Join-Path $targetDir "ci.common-controls.manifest"
-          @"
-          <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-          <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-            <dependency>
-              <dependentAssembly>
-                <assemblyIdentity
-                  type="win32"
-                  name="Microsoft.Windows.Common-Controls"
-                  version="6.0.0.0"
-                  processorArchitecture="*"
-                  publicKeyToken="6595b64144ccf1df"
-                  language="*" />
-              </dependentAssembly>
-            </dependency>
-          </assembly>
-          "@ | Set-Content -Path $manifestPath -Encoding utf8
-
-          if (-not (Test-Path $manifestPath)) {
-            throw "Failed to create Common-Controls manifest at $manifestPath"
-          }
-
-          $encodedFlags = @(
-            "-C",
-            "target-feature=+crt-static",
-            "-C",
-            "link-arg=/MANIFEST:EMBED",
-            "-C",
-            "link-arg=/MANIFESTINPUT:$manifestPath"
-          ) -join [char]31
-          $env:CARGO_ENCODED_RUSTFLAGS = $encodedFlags
-          Write-Host "Configured CARGO_ENCODED_RUSTFLAGS for static CRT and Common-Controls v6 manifest input"
-
-          function Get-LatestLibTestExe {
-            $depsDir = Join-Path (Get-Location) "target\debug\deps"
-            Get-ChildItem -Path $depsDir -Filter "mediaflow_lib-*.exe" |
-              Sort-Object LastWriteTime -Descending |
-              Select-Object -First 1
-          }
-
-          function Show-WindowsCrashDiagnostics {
-            $libTestExe = Get-LatestLibTestExe
-            Write-Host "::group::Windows test crash diagnostics"
-            if ($libTestExe) {
-              Write-Host "lib test executable: $($libTestExe.FullName)"
-
-              $cdb = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\Debuggers\x64\cdb.exe"
-              $gflags = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\Debuggers\x64\gflags.exe"
-              $enabledLoaderSnaps = $false
-
-              if (Test-Path $gflags) {
-                Write-Host "Enabling loader snaps for $($libTestExe.Name)..."
-                & $gflags /i $libTestExe.Name +sls
-                $enabledLoaderSnaps = $true
-              } else {
-                Write-Host "gflags.exe not found"
-              }
-
-              if (Test-Path $cdb) {
-                Write-Host "Running cdb loader diagnostics..."
-                & $cdb -c "g;qd" $libTestExe.FullName
-              } else {
-                Write-Host "cdb.exe not found"
-              }
-
-              if ($enabledLoaderSnaps) {
-                Write-Host "Disabling loader snaps for $($libTestExe.Name)..."
-                & $gflags /i $libTestExe.Name -sls
-              }
-
-              $dumpbin = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
-              if ($dumpbin) {
-                Write-Host "Dumping binary dependencies..."
-                & $dumpbin.Source /dependents $libTestExe.FullName
-              } else {
-                Write-Host "dumpbin.exe not found"
-              }
-            } else {
-              Write-Host "No lib test executable found for diagnostics"
-            }
-
-            Write-Host "Recent Application log entries:"
-            Get-WinEvent -FilterHashtable @{
-              LogName = "Application"
-              StartTime = (Get-Date).AddMinutes(-10)
-            } -ErrorAction SilentlyContinue |
-              Select-Object -First 20 |
-              Format-List TimeCreated, Id, ProviderName, LevelDisplayName, Message
-            Write-Host "::endgroup::"
-          }
-
-          function Invoke-CargoTestWithDiagnostics {
-            param([string[]]$Args)
-
-            $argText = if ($Args) { $Args -join ' ' } else { "<none>" }
-            Write-Host "Running: cargo test --lib $argText"
-
-            & cargo test --lib @Args
-            $commandSucceeded = $?
-            $exitCode = if ($null -eq $LASTEXITCODE) {
-              if ($commandSucceeded) { 0 } else { 1 }
-            } else {
-              [int]$LASTEXITCODE
-            }
-
-            Write-Host "cargo test exit code: $exitCode"
-            if ($commandSucceeded -and $exitCode -eq 0) {
-              return
-            }
-
-            Show-WindowsCrashDiagnostics
-            throw "cargo test failed with exit code $exitCode"
-          }
-
-          cargo test --no-run --lib
-
-          $depsDir = Join-Path (Get-Location) "target\debug\deps"
-          $vulkanDll = Join-Path $env:VULKAN_SDK "Bin\vulkan-1.dll"
-
-          if (-not (Test-Path $vulkanDll)) {
-            throw "Missing Vulkan loader DLL at $vulkanDll"
-          }
-
-          $vulkanDllInDeps = Join-Path $depsDir "vulkan-1.dll"
-          Copy-Item $vulkanDll $vulkanDllInDeps -Force
-          Write-Host "Copied Vulkan loader to $vulkanDllInDeps"
-
-          $pathEntries = @(
-            $depsDir,
-            (Split-Path -Parent $vulkanDll)
-          ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
-
-          $env:PATH = (($pathEntries -join ';') + ';' + $env:PATH)
-
-          where.exe ffmpeg
-          where.exe ffprobe
-          where.exe vulkan-1.dll
-          if ($LASTEXITCODE -ne 0) {
-            throw "vulkan-1.dll not found on PATH after setup"
-          }
-
-          Invoke-CargoTestWithDiagnostics
-
       - name: Run Rust tests
-        if: runner.os != 'Windows'
         working-directory: src-tauri
         run: |
           cargo test
           cargo test btbn_latest_page_contains_download_url_for_supported_variant -- --ignored
           cargo test evermeet_release_endpoints_are_reachable -- --ignored
-
       - name: Build Tauri app
         run: pnpm tauri build

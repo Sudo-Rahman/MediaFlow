@@ -19,6 +19,13 @@ import { reconstructSubtitle, validateTranslation } from './subtitle-reconstruct
 import { callLlm } from './llm-client';
 import type { LlmUsage } from './llm-client';
 import { withSleepInhibit } from './sleep-inhibit';
+import type { TranslationMemoryEntry } from './translation-memory';
+import {
+  getThemeMemoryEntries,
+  getTranslationMemoryScopeKey,
+  touchThemeMemoryEntries,
+  upsertThemeMemoryEntries
+} from './translation-memory';
 
 // ============================================================================
 // SYSTEM PROMPT (for JSON-based translation)
@@ -116,42 +123,175 @@ function getLanguageName(code: LanguageCode): string {
 }
 
 const NON_TRANSLATABLE_ASS_STYLES = new Set(['mask', 'masktop']);
+const THEME_STYLE_KEYWORDS = ['opening', 'ending', 'song', 'karaoke', 'lyrics', 'romaji', 'credit'] as const;
+const THEME_LAYER_KEYWORDS = ['layer0', 'layer1'] as const;
+const ASS_DRAWING_PATTERN = /^(?:[mnlbspc](?:\s+-?\d+(?:\.\d+)?)+\s*)+$/i;
+const KARAOKE_TAG_PATTERN = /\\(?:k|K|kf|ko)\d+/;
+const CANONICAL_PLACEHOLDER_PREFIX = '~p';
+const CANONICAL_PLACEHOLDER_SUFFIX = ':';
 
-interface CuePartitionStats {
+type CueRole = 'passthroughNonText' | 'themeCandidate' | 'mainTranslatable';
+
+interface TranslationCueStats {
   totalCues: number;
-  translatableCues: number;
-  skippedCues: number;
+  passthroughCues: number;
+  themeCandidateCues: number;
+  mainTranslatableCues: number;
   skippedMaskCount: number;
   totalChars: number;
-  translatableChars: number;
+  retainedChars: number;
   estimatedReductionPct: number;
 }
 
-interface CuePartitionResult {
-  translatableCues: Cue[];
-  passthroughCues: TranslatedCue[];
-  translatableIdSet: Set<string>;
-  stats: CuePartitionStats;
+interface ThemeCueOccurrence {
+  cue: Cue;
+  signature: string;
+  canonicalSkeleton: string;
+  placeholderOrder: string[];
 }
 
-function partitionCuesForLlm(cues: Cue[]): CuePartitionResult {
-  const translatableCues: Cue[] = [];
+interface ThemeSignatureGroup {
+  signature: string;
+  canonicalSkeleton: string;
+  occurrences: ThemeCueOccurrence[];
+}
+
+interface TranslationCuePlan {
+  passthroughCues: TranslatedCue[];
+  themeCueOccurrences: ThemeCueOccurrence[];
+  mainTranslatableCues: Cue[];
+  stats: TranslationCueStats;
+}
+
+interface ThemePromptPlan {
+  promptCues: TranslationCue[];
+  groupByPromptId: Map<string, ThemeSignatureGroup>;
+}
+
+interface BatchedTranslationResult {
+  cues: TranslatedCue[];
+  usage?: LlmUsage;
+  error?: string;
+  truncated?: boolean;
+  cancelled?: boolean;
+  failedIds: Set<string>;
+  totalBatches: number;
+}
+
+function getCanonicalPlaceholderToken(index: number): string {
+  return `${CANONICAL_PLACEHOLDER_PREFIX}${index.toString(36)}${CANONICAL_PLACEHOLDER_SUFFIX}`;
+}
+
+function hasVisibleCueText(cue: Cue): boolean {
+  let visibleText = cue.textSkeleton;
+
+  for (const placeholder of cue.placeholders) {
+    visibleText = visibleText.split(placeholder.token).join('');
+  }
+
+  return visibleText.trim().length > 0;
+}
+
+function isAssDrawingCue(cue: Cue): boolean {
+  if (cue.format !== 'ass' && cue.format !== 'ssa') {
+    return false;
+  }
+
+  const stripped = cue.textOriginal.replace(/\{[^}]*\}/g, ' ').trim();
+  if (!stripped) {
+    return false;
+  }
+
+  return ASS_DRAWING_PATTERN.test(stripped);
+}
+
+function isThemeCue(cue: Cue): boolean {
+  if (cue.format !== 'ass' && cue.format !== 'ssa') {
+    return false;
+  }
+
+  const normalizedStyle = cue.style?.trim().toLowerCase() ?? '';
+  const hasThemeKeyword = THEME_STYLE_KEYWORDS.some(keyword => normalizedStyle.includes(keyword));
+  const hasLayerKeyword = THEME_LAYER_KEYWORDS.some(keyword => normalizedStyle.includes(keyword));
+  const hasLayerThemeKeyword = hasLayerKeyword
+    && ['opening', 'ending', 'romaji', 'song'].some(keyword => normalizedStyle.includes(keyword));
+
+  return hasThemeKeyword || hasLayerThemeKeyword || KARAOKE_TAG_PATTERN.test(cue.textOriginal);
+}
+
+function classifyCueRole(cue: Cue): CueRole {
+  const normalizedStyle = cue.style?.trim().toLowerCase();
+  const isAssLike = cue.format === 'ass' || cue.format === 'ssa';
+  const isMaskStyle = isAssLike && !!normalizedStyle && NON_TRANSLATABLE_ASS_STYLES.has(normalizedStyle);
+
+  if (isMaskStyle || isAssDrawingCue(cue) || !hasVisibleCueText(cue)) {
+    return 'passthroughNonText';
+  }
+
+  if (isThemeCue(cue)) {
+    return 'themeCandidate';
+  }
+
+  return 'mainTranslatable';
+}
+
+function normalizeThemeSignature(value: string): string {
+  return value
+    .replace(/\r\n?/g, '\n')
+    .trim()
+    .replace(/[^\S\r\n]+/g, ' ');
+}
+
+function buildCanonicalThemeTemplate(cue: Cue): ThemeCueOccurrence {
+  const placeholderOrder = cue.placeholders.map(placeholder => placeholder.token);
+  let canonicalSkeleton = cue.textSkeleton;
+
+  placeholderOrder.forEach((token, index) => {
+    canonicalSkeleton = canonicalSkeleton.split(token).join(getCanonicalPlaceholderToken(index));
+  });
+
+  return {
+    cue,
+    signature: normalizeThemeSignature(canonicalSkeleton),
+    canonicalSkeleton,
+    placeholderOrder
+  };
+}
+
+function applyCanonicalTranslation(
+  translatedCanonicalSkeleton: string,
+  placeholderOrder: string[]
+): string {
+  let translatedSkeleton = translatedCanonicalSkeleton;
+
+  placeholderOrder.forEach((token, index) => {
+    translatedSkeleton = translatedSkeleton
+      .split(getCanonicalPlaceholderToken(index))
+      .join(token);
+  });
+
+  return translatedSkeleton;
+}
+
+function buildTranslationCuePlan(cues: Cue[]): TranslationCuePlan {
   const passthroughCues: TranslatedCue[] = [];
-  const translatableIdSet = new Set<string>();
+  const themeCueOccurrences: ThemeCueOccurrence[] = [];
+  const mainTranslatableCues: Cue[] = [];
 
   let skippedMaskCount = 0;
   let totalChars = 0;
-  let translatableChars = 0;
+  let retainedChars = 0;
 
   for (const cue of cues) {
     totalChars += cue.textSkeleton.length;
+    const role = classifyCueRole(cue);
 
-    const normalizedStyle = cue.style?.trim().toLowerCase();
-    const isAssLike = cue.format === 'ass' || cue.format === 'ssa';
-    const isMaskStyle = isAssLike && !!normalizedStyle && NON_TRANSLATABLE_ASS_STYLES.has(normalizedStyle);
+    if (role === 'passthroughNonText') {
+      const normalizedStyle = cue.style?.trim().toLowerCase();
+      if (normalizedStyle && NON_TRANSLATABLE_ASS_STYLES.has(normalizedStyle)) {
+        skippedMaskCount += 1;
+      }
 
-    if (isMaskStyle) {
-      skippedMaskCount += 1;
       passthroughCues.push({
         id: cue.id,
         translatedText: cue.textSkeleton
@@ -159,30 +299,79 @@ function partitionCuesForLlm(cues: Cue[]): CuePartitionResult {
       continue;
     }
 
-    translatableCues.push(cue);
-    translatableIdSet.add(cue.id);
-    translatableChars += cue.textSkeleton.length;
+    retainedChars += cue.textSkeleton.length;
+
+    if (role === 'themeCandidate') {
+      themeCueOccurrences.push(buildCanonicalThemeTemplate(cue));
+      continue;
+    }
+
+    mainTranslatableCues.push(cue);
   }
 
-  const skippedCues = cues.length - translatableCues.length;
+  const passthroughCount = cues.length - (themeCueOccurrences.length + mainTranslatableCues.length);
   const estimatedReductionPct = totalChars > 0
-    ? Math.round(((totalChars - translatableChars) * 10000) / totalChars) / 100
+    ? Math.round(((totalChars - retainedChars) * 10000) / totalChars) / 100
     : 0;
 
   return {
-    translatableCues,
     passthroughCues,
-    translatableIdSet,
+    themeCueOccurrences,
+    mainTranslatableCues,
     stats: {
       totalCues: cues.length,
-      translatableCues: translatableCues.length,
-      skippedCues,
+      passthroughCues: passthroughCount,
+      themeCandidateCues: themeCueOccurrences.length,
+      mainTranslatableCues: mainTranslatableCues.length,
       skippedMaskCount,
       totalChars,
-      translatableChars,
+      retainedChars,
       estimatedReductionPct
     }
   };
+}
+
+function groupThemeCueOccurrencesBySignature(occurrences: ThemeCueOccurrence[]): ThemeSignatureGroup[] {
+  const groups = new Map<string, ThemeSignatureGroup>();
+
+  for (const occurrence of occurrences) {
+    const existing = groups.get(occurrence.signature);
+    if (existing) {
+      existing.occurrences.push(occurrence);
+      continue;
+    }
+
+    groups.set(occurrence.signature, {
+      signature: occurrence.signature,
+      canonicalSkeleton: occurrence.canonicalSkeleton,
+      occurrences: [occurrence]
+    });
+  }
+
+  return Array.from(groups.values());
+}
+
+function buildThemeMemoryKey(
+  sourceLang: LanguageCode,
+  targetLang: LanguageCode,
+  provider: LLMProvider,
+  model: string,
+  signature: string
+): string {
+  return `${sourceLang}:${targetLang}:${provider}:${model}:${signature}`;
+}
+
+function expandThemeGroupTranslation(
+  group: ThemeSignatureGroup,
+  translatedCanonicalSkeleton: string
+): TranslatedCue[] {
+  return group.occurrences.map(occurrence => ({
+    id: occurrence.cue.id,
+    translatedText: applyCanonicalTranslation(
+      translatedCanonicalSkeleton,
+      occurrence.placeholderOrder
+    )
+  }));
 }
 
 /**
@@ -207,15 +396,10 @@ function splitIntoNBatches<T>(array: T[], batchCount: number): T[][] {
  * Build translation request from parsed subtitle
  */
 function buildTranslationRequest(
-  cues: Cue[],
+  cues: TranslationCue[],
   sourceLang: LanguageCode,
   targetLang: LanguageCode
 ): TranslationRequest {
-  const translationCues: TranslationCue[] = cues.map(cue => ({
-    id: cue.id,
-    text: cue.textSkeleton
-  }));
-
   return {
     sourceLang: sourceLang === 'auto' ? 'auto-detect' : getLanguageName(sourceLang),
     targetLang: getLanguageName(targetLang),
@@ -225,8 +409,31 @@ function buildTranslationRequest(
       noMerging: true,
       noSplitting: true
     },
-    cues: translationCues
+    cues
   };
+}
+
+function buildPromptCuesFromParsedCues(cues: Cue[]): TranslationCue[] {
+  return cues.map(cue => ({
+    id: cue.id,
+    text: cue.textSkeleton
+  }));
+}
+
+function buildThemePromptPlan(groups: ThemeSignatureGroup[]): ThemePromptPlan {
+  const promptCues: TranslationCue[] = [];
+  const groupByPromptId = new Map<string, ThemeSignatureGroup>();
+
+  groups.forEach((group, index) => {
+    const promptId = `THEME_${index.toString(36)}`;
+    promptCues.push({
+      id: promptId,
+      text: group.canonicalSkeleton
+    });
+    groupByPromptId.set(promptId, group);
+  });
+
+  return { promptCues, groupByPromptId };
 }
 
 /**
@@ -253,11 +460,33 @@ export function buildFullPromptForTokenCount(
     return TRANSLATION_SYSTEM_PROMPT + '\n\n' + content;
   }
 
-  const { translatableCues } = partitionCuesForLlm(parsed.cues);
-  const request = buildTranslationRequest(translatableCues, sourceLang, targetLang);
-  const userPrompt = buildUserPrompt(request);
+  const cuePlan = buildTranslationCuePlan(parsed.cues);
+  const promptParts: string[] = [];
 
-  return TRANSLATION_SYSTEM_PROMPT + '\n\n' + userPrompt;
+  const themeGroups = groupThemeCueOccurrencesBySignature(cuePlan.themeCueOccurrences);
+  if (themeGroups.length > 0) {
+    const themeRequest = buildTranslationRequest(
+      buildThemePromptPlan(themeGroups).promptCues,
+      sourceLang,
+      targetLang
+    );
+    promptParts.push(`${TRANSLATION_SYSTEM_PROMPT}\n\n${buildUserPrompt(themeRequest)}`);
+  }
+
+  if (cuePlan.mainTranslatableCues.length > 0) {
+    const mainRequest = buildTranslationRequest(
+      buildPromptCuesFromParsedCues(cuePlan.mainTranslatableCues),
+      sourceLang,
+      targetLang
+    );
+    promptParts.push(`${TRANSLATION_SYSTEM_PROMPT}\n\n${buildUserPrompt(mainRequest)}`);
+  }
+
+  if (promptParts.length === 0) {
+    return TRANSLATION_SYSTEM_PROMPT;
+  }
+
+  return promptParts.join('\n\n');
 }
 
 /**
@@ -406,6 +635,342 @@ function buildCancelledResult(file: SubtitleFile): TranslationResult {
   };
 }
 
+interface TranslatePromptCueBatchesOptions {
+  promptCues: TranslationCue[];
+  provider: LLMProvider;
+  apiKey: string;
+  model: string;
+  sourceLang: LanguageCode;
+  targetLang: LanguageCode;
+  batchCount: number;
+  batchConcurrency: number;
+  signal?: AbortSignal;
+  logContext: Record<string, string>;
+  reportProgress: (info: BatchProgressInfo) => void;
+  progressStart: number;
+  progressEnd: number;
+  phaseLabel: string;
+  allowPartial: boolean;
+}
+
+async function translatePromptCueBatches(
+  options: TranslatePromptCueBatchesOptions
+): Promise<BatchedTranslationResult> {
+  const {
+    promptCues,
+    provider,
+    apiKey,
+    model,
+    sourceLang,
+    targetLang,
+    batchCount,
+    batchConcurrency,
+    signal,
+    logContext,
+    reportProgress,
+    progressStart,
+    progressEnd,
+    phaseLabel,
+    allowPartial
+  } = options;
+
+  if (promptCues.length === 0) {
+    return {
+      cues: [],
+      failedIds: new Set<string>(),
+      totalBatches: 0
+    };
+  }
+
+  const batches = splitIntoNBatches(promptCues, batchCount);
+  const totalBatches = batches.length;
+
+  interface BatchResult {
+    batchIndex: number;
+    cues: TranslatedCue[];
+    failedIds: Set<string>;
+    error?: string;
+    truncated?: boolean;
+    usage?: LlmUsage;
+    cancelled?: boolean;
+  }
+
+  const translateBatch = async (
+    batch: TranslationCue[],
+    batchIndex: number
+  ): Promise<BatchResult> => {
+    if (signal?.aborted) {
+      return {
+        batchIndex,
+        cues: [],
+        failedIds: new Set(batch.map(cue => cue.id)),
+        error: 'Translation cancelled',
+        cancelled: true
+      };
+    }
+
+    const translationRequest = buildTranslationRequest(batch, sourceLang, targetLang);
+    const userPrompt = buildUserPrompt(translationRequest);
+
+    const llmResponse = await callLlm({
+      provider,
+      apiKey,
+      model,
+      systemPrompt: TRANSLATION_SYSTEM_PROMPT,
+      userPrompt,
+      signal,
+      responseMode: 'json',
+      temperature: 0.3,
+      logSource: 'translation',
+    });
+
+    if (signal?.aborted) {
+      return {
+        batchIndex,
+        cues: [],
+        failedIds: new Set(batch.map(cue => cue.id)),
+        error: 'Translation cancelled',
+        cancelled: true
+      };
+    }
+
+    if (llmResponse.cancelled || isCancelledError(llmResponse.error)) {
+      return {
+        batchIndex,
+        cues: [],
+        failedIds: new Set(batch.map(cue => cue.id)),
+        error: 'Translation cancelled',
+        cancelled: true
+      };
+    }
+
+    if (llmResponse.error) {
+      return {
+        batchIndex,
+        cues: [],
+        failedIds: new Set(batch.map(cue => cue.id)),
+        error: `${phaseLabel} batch ${batchIndex + 1}/${totalBatches} failed: ${llmResponse.error}`
+      };
+    }
+
+    if (llmResponse.truncated) {
+      const error = `${phaseLabel} batch ${batchIndex + 1}/${totalBatches}: Response truncated (increase batch count)`;
+      log(
+        'warning',
+        'translation',
+        `${phaseLabel} response truncated`,
+        `The API response was truncated (finish_reason: ${llmResponse.finishReason}). Try increasing the number of batches.`,
+        { ...logContext, batchIndex: String(batchIndex + 1) }
+      );
+
+      return {
+        batchIndex,
+        cues: [],
+        failedIds: new Set(batch.map(cue => cue.id)),
+        error,
+        truncated: true,
+        usage: llmResponse.usage
+      };
+    }
+
+    if (!llmResponse.content || !llmResponse.content.trim()) {
+      const error = `${phaseLabel} batch ${batchIndex + 1}/${totalBatches}: ${provider} returned empty content`;
+      log(
+        'error',
+        'translation',
+        `Empty response during ${phaseLabel}`,
+        `The translation request succeeded but ${provider} returned no content. This may be caused by rate limits, content filtering, or API issues.`,
+        { ...logContext, batchIndex: String(batchIndex + 1) }
+      );
+
+      return {
+        batchIndex,
+        cues: [],
+        failedIds: new Set(batch.map(cue => cue.id)),
+        error,
+        usage: llmResponse.usage
+      };
+    }
+
+    const translationResponse = parseTranslationResponse(llmResponse.content, provider);
+    if (!translationResponse) {
+      return {
+        batchIndex,
+        cues: [],
+        failedIds: new Set(batch.map(cue => cue.id)),
+        error: `${phaseLabel} batch ${batchIndex + 1}/${totalBatches}: Failed to parse ${provider} response (check Logs for details)`,
+        usage: llmResponse.usage
+      };
+    }
+
+    const batchIdSet = new Set(batch.map(cue => cue.id));
+    const sanitizedCues = translationResponse.cues.filter(cue => batchIdSet.has(cue.id));
+    const ignoredCueCount = translationResponse.cues.length - sanitizedCues.length;
+
+    if (ignoredCueCount > 0) {
+      const ignoredIds = translationResponse.cues
+        .filter(cue => !batchIdSet.has(cue.id))
+        .map(cue => cue.id)
+        .filter(Boolean);
+
+      log(
+        'warning',
+        'translation',
+        'Ignored unexpected cue IDs from LLM response',
+        `${phaseLabel} batch ${batchIndex + 1}/${totalBatches}: ignored ${ignoredCueCount} cue(s) with IDs outside the requested batch. IDs: ${ignoredIds.slice(0, 5).join(', ') || '(none)'}`,
+        {
+          ...logContext,
+          batchIndex: String(batchIndex + 1)
+        }
+      );
+    }
+
+    const translatedIds = new Set(sanitizedCues.map(cue => cue.id));
+    const failedIds = new Set(
+      batch
+        .map(cue => cue.id)
+        .filter(id => !translatedIds.has(id))
+    );
+
+    if (failedIds.size > 0) {
+      log(
+        'warning',
+        'translation',
+        'Missing cue IDs from LLM response',
+        `${phaseLabel} batch ${batchIndex + 1}/${totalBatches}: ${failedIds.size} requested cue(s) were not returned by the model.`,
+        {
+          ...logContext,
+          batchIndex: String(batchIndex + 1)
+        }
+      );
+    }
+
+    return {
+      batchIndex,
+      cues: sanitizedCues,
+      failedIds,
+      usage: llmResponse.usage
+    };
+  };
+
+  let completedBatches = 0;
+  const batchResults: BatchResult[] = [];
+  let nextBatchIndex = 0;
+  let stopScheduling = false;
+  const workerCount = Math.min(batchConcurrency, totalBatches);
+
+  reportProgress({ progress: progressStart, currentBatch: 0, totalBatches });
+
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (!stopScheduling) {
+      if (signal?.aborted) {
+        stopScheduling = true;
+        return;
+      }
+
+      const batchIndex = nextBatchIndex;
+      if (batchIndex >= totalBatches) {
+        return;
+      }
+
+      nextBatchIndex += 1;
+      const result = await translateBatch(batches[batchIndex], batchIndex);
+      batchResults.push(result);
+
+      completedBatches += 1;
+      const phaseProgress = progressStart
+        + ((completedBatches / totalBatches) * (progressEnd - progressStart));
+
+      reportProgress({
+        progress: Math.round(phaseProgress),
+        currentBatch: completedBatches,
+        totalBatches
+      });
+
+      if (signal?.aborted || result.cancelled) {
+        stopScheduling = true;
+      }
+    }
+  });
+
+  const workerResults = await Promise.allSettled(workers);
+  for (const workerResult of workerResults) {
+    if (workerResult.status === 'rejected') {
+      return {
+        cues: [],
+        failedIds: new Set(promptCues.map(cue => cue.id)),
+        totalBatches,
+        error: `${phaseLabel} worker failed: ${String(workerResult.reason)}`
+      };
+    }
+  }
+
+  if (signal?.aborted || batchResults.some(result => result.cancelled)) {
+    return {
+      cues: [],
+      failedIds: new Set(promptCues.map(cue => cue.id)),
+      totalBatches,
+      cancelled: true
+    };
+  }
+
+  if (batchResults.length !== totalBatches) {
+    return {
+      cues: [],
+      failedIds: new Set(promptCues.map(cue => cue.id)),
+      totalBatches,
+      error: `${phaseLabel} incomplete: ${batchResults.length}/${totalBatches} batches finished`
+    };
+  }
+
+  batchResults.sort((a, b) => a.batchIndex - b.batchIndex);
+
+  let totalUsage: LlmUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  const failedIds = new Set<string>();
+  const translatedCues: TranslatedCue[] = [];
+  let firstError: string | undefined;
+  let truncated = false;
+
+  for (const result of batchResults) {
+    if (result.usage) {
+      totalUsage.promptTokens += result.usage.promptTokens;
+      totalUsage.completionTokens += result.usage.completionTokens;
+      totalUsage.totalTokens += result.usage.totalTokens;
+    }
+
+    result.failedIds.forEach(id => failedIds.add(id));
+    translatedCues.push(...result.cues);
+
+    if (result.truncated) {
+      truncated = true;
+    }
+
+    if (result.error && !firstError) {
+      firstError = result.error;
+    }
+  }
+
+  if (!allowPartial && firstError) {
+    return {
+      cues: translatedCues,
+      usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
+      error: firstError,
+      truncated,
+      failedIds,
+      totalBatches
+    };
+  }
+
+  return {
+    cues: translatedCues,
+    usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
+    error: allowPartial ? firstError : undefined,
+    truncated,
+    failedIds,
+    totalBatches
+  };
+}
+
 // ============================================================================
 // MAIN TRANSLATION FUNCTION WITH BATCHING
 // ============================================================================
@@ -462,11 +1027,19 @@ export async function translateSubtitle(
       }
     };
 
+    const addUsage = (target: LlmUsage, usage?: LlmUsage) => {
+      if (!usage) {
+        return;
+      }
+
+      target.promptTokens += usage.promptTokens;
+      target.completionTokens += usage.completionTokens;
+      target.totalTokens += usage.totalTokens;
+    };
+
     reportProgress({ progress: 5, currentBatch: 0, totalBatches: 0 });
 
-    // Step 1: Parse the subtitle file
     const parsed = parseSubtitle(file.content);
-
     if (!parsed) {
       return {
         originalFile: file,
@@ -491,17 +1064,18 @@ export async function translateSubtitle(
 
     reportProgress({ progress: 10, currentBatch: 0, totalBatches: 0 });
 
-    const { translatableCues, passthroughCues, translatableIdSet, stats } = partitionCuesForLlm(parsed.cues);
+    const cuePlan = buildTranslationCuePlan(parsed.cues);
+    const themeGroups = groupThemeCueOccurrencesBySignature(cuePlan.themeCueOccurrences);
 
     log(
       'info',
       'translation',
-      'Prepared cues for LLM',
-      `Sending ${stats.translatableCues}/${stats.totalCues} cues to LLM. Skipped ${stats.skippedCues} cues (${stats.skippedMaskCount} mask cues). Estimated text reduction: ${stats.estimatedReductionPct}% (${stats.translatableChars}/${stats.totalChars} chars retained).`,
+      'Prepared cues for translation',
+      `Retained ${cuePlan.stats.themeCandidateCues + cuePlan.stats.mainTranslatableCues}/${cuePlan.stats.totalCues} text cues. Theme candidates: ${cuePlan.stats.themeCandidateCues}. Main cues: ${cuePlan.stats.mainTranslatableCues}. Passthrough: ${cuePlan.stats.passthroughCues} (${cuePlan.stats.skippedMaskCount} mask cues). Estimated non-text reduction: ${cuePlan.stats.estimatedReductionPct}% (${cuePlan.stats.retainedChars}/${cuePlan.stats.totalChars} chars retained).`,
       logContext
     );
 
-    if (translatableCues.length === 0) {
+    if (cuePlan.passthroughCues.length === parsed.cues.length) {
       reportProgress({ progress: 100, currentBatch: 0, totalBatches: 0 });
       return {
         originalFile: file,
@@ -510,250 +1084,299 @@ export async function translateSubtitle(
       };
     }
 
-    // Step 2: Split into N batches
-    const batches = splitIntoNBatches(translatableCues, batchCount);
-    const totalBatches = batches.length;
+    const totalUsage: LlmUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const translatedThemeCues: TranslatedCue[] = [];
+    const unresolvedThemeCues: Cue[] = [];
+    const scopeKey = getTranslationMemoryScopeKey(file.path);
 
-    if (signal?.aborted) {
-      return buildCancelledResult(file);
-    }
+    if (themeGroups.length > 0) {
+      log(
+        'info',
+        'translation',
+        'Theme preflight started',
+        `Processing ${cuePlan.themeCueOccurrences.length} theme cue occurrence(s) across ${themeGroups.length} unique signature(s). Scope: ${scopeKey}`,
+        logContext
+      );
 
-    reportProgress({ progress: 15, currentBatch: 0, totalBatches });
-
-    // Step 3: Translate batches with a bounded worker pool
-    interface BatchResult {
-      batchIndex: number;
-      cues: TranslatedCue[];
-      error?: string;
-      truncated?: boolean;
-      usage?: LlmUsage;
-      cancelled?: boolean;
-    }
-
-    const translateBatch = async (batch: Cue[], batchIndex: number): Promise<BatchResult> => {
-      // Check for cancellation before starting
-      if (signal?.aborted) {
-        return { batchIndex, cues: [], error: 'Translation cancelled', cancelled: true };
-      }
-
-      // Build translation request for this batch
-      const translationRequest = buildTranslationRequest(batch, sourceLang, targetLang);
-      const userPrompt = buildUserPrompt(translationRequest);
-
-      // Call LLM for translation
-      const llmResponse = await callLlm({
-        provider,
-        apiKey,
-        model,
-        systemPrompt: TRANSLATION_SYSTEM_PROMPT,
-        userPrompt,
-        signal,
-        responseMode: 'json',
-        temperature: 0.3,
-        logSource: 'translation',
-      });
-
-      if (signal?.aborted) {
-        return { batchIndex, cues: [], error: 'Translation cancelled', cancelled: true };
-      }
-
-      if (llmResponse.cancelled || isCancelledError(llmResponse.error)) {
-        return { batchIndex, cues: [], error: 'Translation cancelled', cancelled: true };
-      }
-
-      if (llmResponse.error) {
-        return { batchIndex, cues: [], error: `Batch ${batchIndex + 1}/${totalBatches} failed: ${llmResponse.error}` };
-      }
-
-      // Check for truncated response (finish_reason === "length")
-      if (llmResponse.truncated) {
-        const errorMsg = `Batch ${batchIndex + 1}/${totalBatches}: Response truncated (increase batch count)`;
-        log('warning', 'translation', 'Response truncated',
-          `The API response was truncated (finish_reason: ${llmResponse.finishReason}). Try increasing the number of batches.`,
-          { ...logContext, batchIndex: String(batchIndex + 1) }
+      const memoryKeyBySignature = new Map<string, string>();
+      for (const group of themeGroups) {
+        memoryKeyBySignature.set(
+          group.signature,
+          buildThemeMemoryKey(sourceLang, targetLang, provider, model, group.signature)
         );
-        return {
-          batchIndex,
-          cues: [],
-          error: errorMsg,
-          truncated: true,
-          usage: llmResponse.usage
-        };
       }
 
-      // Check for empty content before parsing
-      if (!llmResponse.content || !llmResponse.content.trim()) {
-        const errorMsg = `Batch ${batchIndex + 1}/${totalBatches}: ${provider} returned empty content`;
-        log('error', 'translation', 'Empty response from AI',
-          `The translation request succeeded but ${provider} returned no content. This may be caused by rate limits, content filtering, or API issues.`,
-          { ...logContext, batchIndex: String(batchIndex + 1) }
+      let memoryEntries = new Map<string, TranslationMemoryEntry>();
+      try {
+        memoryEntries = await getThemeMemoryEntries(
+          scopeKey,
+          Array.from(memoryKeyBySignature.values())
         );
-        return { batchIndex, cues: [], error: errorMsg, usage: llmResponse.usage };
-      }
-
-      // Parse LLM response with provider context for better error logging
-      const translationResponse = parseTranslationResponse(llmResponse.content, provider);
-
-      if (!translationResponse) {
-        return {
-          batchIndex,
-          cues: [],
-          error: `Batch ${batchIndex + 1}/${totalBatches}: Failed to parse ${provider} response (check Logs for details)`,
-          usage: llmResponse.usage
-        };
-      }
-
-      const sanitizedCues = translationResponse.cues.filter(cue => translatableIdSet.has(cue.id));
-      const ignoredCueCount = translationResponse.cues.length - sanitizedCues.length;
-
-      if (ignoredCueCount > 0) {
-        const ignoredIds = translationResponse.cues
-          .filter(cue => !translatableIdSet.has(cue.id))
-          .map(cue => cue.id)
-          .filter(Boolean);
-
+      } catch (error) {
         log(
           'warning',
           'translation',
-          'Ignored unexpected cue IDs from LLM response',
-          `Batch ${batchIndex + 1}/${totalBatches}: ignored ${ignoredCueCount} cue(s) with IDs outside the translatable set. IDs: ${ignoredIds.slice(0, 5).join(', ') || '(none)'}`,
-          {
-            ...logContext,
-            batchIndex: String(batchIndex + 1),
-          }
+          'Theme memory lookup failed',
+          `Theme cache read failed for scope ${scopeKey}. Falling back to live translation for missing theme segments.\n\nError: ${String(error)}`,
+          logContext
         );
       }
 
-      return {
-        batchIndex,
-        cues: sanitizedCues,
-        usage: llmResponse.usage
-      };
-    };
+      const memoryHitKeys: string[] = [];
+      const missingThemeGroups: ThemeSignatureGroup[] = [];
 
-    // Track progress as batches complete
-    let completedBatches = 0;
-    const batchResults: BatchResult[] = [];
-    let nextBatchIndex = 0;
-    let stopScheduling = false;
-    const workerCount = Math.min(batchConcurrency, totalBatches);
-
-    const workers = Array.from({ length: workerCount }, async () => {
-      while (!stopScheduling) {
-        if (signal?.aborted) {
-          stopScheduling = true;
-          return;
+      for (const group of themeGroups) {
+        const memoryKey = memoryKeyBySignature.get(group.signature);
+        if (!memoryKey) {
+          missingThemeGroups.push(group);
+          continue;
         }
 
-        const batchIndex = nextBatchIndex;
-        if (batchIndex >= totalBatches) {
-          return;
+        const cachedEntry = memoryEntries.get(memoryKey);
+        if (cachedEntry) {
+          memoryHitKeys.push(memoryKey);
+          translatedThemeCues.push(
+            ...expandThemeGroupTranslation(group, cachedEntry.translatedCanonicalSkeleton)
+          );
+          continue;
         }
-        nextBatchIndex += 1;
 
-        const result = await translateBatch(batches[batchIndex], batchIndex);
-        batchResults.push(result);
+        missingThemeGroups.push(group);
+      }
 
-        completedBatches++;
-        const batchProgress = 15 + ((completedBatches / totalBatches) * 70);
-        reportProgress({
-          progress: Math.round(batchProgress),
-          currentBatch: completedBatches,
-          totalBatches
+      if (memoryHitKeys.length > 0) {
+        try {
+          await touchThemeMemoryEntries(scopeKey, memoryHitKeys);
+        } catch (error) {
+          log(
+            'warning',
+            'translation',
+            'Theme memory touch failed',
+            `Theme cache hit counters could not be updated for scope ${scopeKey}.\n\nError: ${String(error)}`,
+            logContext
+          );
+        }
+      }
+
+      log(
+        'info',
+        'translation',
+        'Theme memory hits',
+        `Resolved ${themeGroups.length - missingThemeGroups.length}/${themeGroups.length} unique theme signature(s) from cache for scope ${scopeKey}.`,
+        logContext
+      );
+
+      if (signal?.aborted) {
+        return buildCancelledResult(file);
+      }
+
+      if (missingThemeGroups.length > 0) {
+        const themePromptPlan = buildThemePromptPlan(missingThemeGroups);
+        const promptIdBySignature = new Map<string, string>();
+
+        for (const [promptId, group] of themePromptPlan.groupByPromptId.entries()) {
+          promptIdBySignature.set(group.signature, promptId);
+        }
+
+        log(
+          'info',
+          'translation',
+          'Theme preflight LLM dispatch',
+          `Sending ${missingThemeGroups.length} unique theme signature(s) to the LLM across up to ${Math.max(1, Math.min(batchCount, missingThemeGroups.length))} batch(es). Scope: ${scopeKey}`,
+          logContext
+        );
+
+        const themeResult = await translatePromptCueBatches({
+          promptCues: themePromptPlan.promptCues,
+          provider,
+          apiKey,
+          model,
+          sourceLang,
+          targetLang,
+          batchCount,
+          batchConcurrency,
+          signal,
+          logContext,
+          reportProgress,
+          progressStart: 15,
+          progressEnd: 30,
+          phaseLabel: 'Theme preflight',
+          allowPartial: true
         });
 
-        if (signal?.aborted || result.cancelled) {
-          stopScheduling = true;
+        if (themeResult.cancelled) {
+          return buildCancelledResult(file);
         }
+
+        addUsage(totalUsage, themeResult.usage);
+
+        const groupsResolvedByLlm = new Set<string>();
+        const memoryUpserts = new Map<
+          string,
+          {
+            signature: string;
+            sourceLanguage: string;
+            targetLanguage: string;
+            provider: string;
+            model: string;
+            translatedCanonicalSkeleton: string;
+          }
+        >();
+
+        for (const translatedCue of themeResult.cues) {
+          const group = themePromptPlan.groupByPromptId.get(translatedCue.id);
+          if (!group) {
+            continue;
+          }
+
+          groupsResolvedByLlm.add(group.signature);
+          translatedThemeCues.push(
+            ...expandThemeGroupTranslation(group, translatedCue.translatedText)
+          );
+
+          const memoryKey = memoryKeyBySignature.get(group.signature);
+          if (memoryKey) {
+            memoryUpserts.set(memoryKey, {
+              signature: group.signature,
+              sourceLanguage: sourceLang,
+              targetLanguage: targetLang,
+              provider,
+              model,
+              translatedCanonicalSkeleton: translatedCue.translatedText
+            });
+          }
+        }
+
+        if (memoryUpserts.size > 0) {
+          try {
+            await upsertThemeMemoryEntries(scopeKey, memoryUpserts);
+            log(
+              'info',
+              'translation',
+              'Theme memory updated',
+              `Stored ${memoryUpserts.size} new theme translation signature(s) for scope ${scopeKey}.`,
+              logContext
+            );
+          } catch (error) {
+            log(
+              'warning',
+              'translation',
+              'Theme memory update failed',
+              `Theme translations were produced but could not be saved to cache for scope ${scopeKey}.\n\nError: ${String(error)}`,
+              logContext
+            );
+          }
+        }
+
+        for (const group of missingThemeGroups) {
+          const promptId = promptIdBySignature.get(group.signature);
+          const promptFailed = promptId ? themeResult.failedIds.has(promptId) : true;
+
+          if (promptFailed || !groupsResolvedByLlm.has(group.signature)) {
+            unresolvedThemeCues.push(...group.occurrences.map(occurrence => occurrence.cue));
+          }
+        }
+
+        if (themeResult.error) {
+          log(
+            'warning',
+            'translation',
+            'Theme preflight failed',
+            `Theme preflight did not resolve every unique theme segment for scope ${scopeKey}. Unresolved theme cues will fall back to the main translation phase.\n\nError: ${themeResult.error}`,
+            logContext
+          );
+        }
+      } else {
+        reportProgress({ progress: 30, currentBatch: 0, totalBatches: 0 });
       }
-    });
-
-    const workerResults = await Promise.allSettled(workers);
-
-    for (const workerResult of workerResults) {
-      if (workerResult.status === 'rejected') {
-        return {
-          originalFile: file,
-          translatedContent: '',
-          success: false,
-          error: `Batch worker failed: ${String(workerResult.reason)}`,
-        };
-      }
+    } else {
+      reportProgress({ progress: 30, currentBatch: 0, totalBatches: 0 });
     }
-
-    if (signal?.aborted || batchResults.some(result => result.cancelled)) {
-      return buildCancelledResult(file);
-    }
-
-    // Collect results and check for errors
-    let totalUsage: LlmUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-
-    if (batchResults.length !== totalBatches) {
-      return {
-        originalFile: file,
-        translatedContent: '',
-        success: false,
-        error: `Batch translation incomplete: ${batchResults.length}/${totalBatches} finished`,
-      };
-    }
-
-    // Sort results by batch index to maintain order
-    batchResults.sort((a, b) => a.batchIndex - b.batchIndex);
-
-    for (const result of batchResults) {
-      if (result.usage) {
-        totalUsage.promptTokens += result.usage.promptTokens;
-        totalUsage.completionTokens += result.usage.completionTokens;
-        totalUsage.totalTokens += result.usage.totalTokens;
-      }
-
-      if (result.error) {
-        return {
-          originalFile: file,
-          translatedContent: '',
-          success: false,
-          error: result.error,
-          truncated: result.truncated,
-          usage: totalUsage.totalTokens > 0 ? totalUsage : undefined
-        };
-      }
-    }
-
-    // Combine translated cues with passthrough cues to preserve filtered styles
-    const translatedFromLlm: TranslatedCue[] = batchResults.flatMap(r => r.cues);
-    const allTranslatedCues: TranslatedCue[] = [...translatedFromLlm, ...passthroughCues];
 
     if (signal?.aborted) {
       return buildCancelledResult(file);
     }
 
-    reportProgress({ progress: 85, currentBatch: totalBatches, totalBatches });
+    const mainPhaseCues = [...cuePlan.mainTranslatableCues, ...unresolvedThemeCues];
+    let translatedMainCues: TranslatedCue[] = [];
 
-    // Step 4: Validate all translations
+    log(
+      'info',
+      'translation',
+      'Main translation started',
+      `Sending ${mainPhaseCues.length} cue(s) to the main translation phase. Theme cues resolved before main pass: ${translatedThemeCues.length}. Theme fallback cues: ${unresolvedThemeCues.length}. Scope: ${scopeKey}`,
+      logContext
+    );
+
+    if (mainPhaseCues.length > 0) {
+      const mainResult = await translatePromptCueBatches({
+        promptCues: buildPromptCuesFromParsedCues(mainPhaseCues),
+        provider,
+        apiKey,
+        model,
+        sourceLang,
+        targetLang,
+        batchCount,
+        batchConcurrency,
+        signal,
+        logContext,
+        reportProgress,
+        progressStart: 35,
+        progressEnd: 85,
+        phaseLabel: 'Main translation',
+        allowPartial: false
+      });
+
+      if (mainResult.cancelled) {
+        return buildCancelledResult(file);
+      }
+
+      addUsage(totalUsage, mainResult.usage);
+
+      if (mainResult.error) {
+        return {
+          originalFile: file,
+          translatedContent: '',
+          success: false,
+          error: mainResult.error,
+          truncated: mainResult.truncated,
+          usage: totalUsage.totalTokens > 0 ? totalUsage : undefined
+        };
+      }
+
+      translatedMainCues = mainResult.cues;
+    } else {
+      reportProgress({ progress: 85, currentBatch: 0, totalBatches: 0 });
+    }
+
+    const allTranslatedCues: TranslatedCue[] = [
+      ...translatedThemeCues,
+      ...translatedMainCues,
+      ...cuePlan.passthroughCues
+    ];
+
     if (signal?.aborted) {
       return buildCancelledResult(file);
     }
 
     const validation = validateTranslation(parsed.cues, allTranslatedCues);
-
     if (!validation.valid) {
       console.warn('Translation validation errors:', validation.errors);
     }
 
-    reportProgress({ progress: 90, currentBatch: totalBatches, totalBatches });
+    reportProgress({ progress: 90, currentBatch: 0, totalBatches: 0 });
 
     if (signal?.aborted) {
       return buildCancelledResult(file);
     }
 
-    // Step 5: Reconstruct subtitle file
     const { content: translatedContent } = reconstructSubtitle(
       parsed,
       allTranslatedCues,
       file.content
     );
 
-    reportProgress({ progress: 100, currentBatch: totalBatches, totalBatches });
+    reportProgress({ progress: 100, currentBatch: 0, totalBatches: 0 });
 
     return {
       originalFile: file,

@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - codex/**
 
 permissions:
   contents: read
@@ -38,12 +39,6 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Rust build artifacts
-        if: runner.os != 'Windows'
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
-
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-22.04'
         run: |
@@ -58,13 +53,11 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf
-
       - name: Install FFmpeg (macOS)
         if: runner.os == 'macOS'
         run: |
           brew update
           brew install ffmpeg
-
       - name: Install FFmpeg (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -83,14 +76,11 @@ jobs:
         shell: pwsh
         run: |
           $vulkanLib = Join-Path $env:VULKAN_SDK "lib"
-          $vulkanBin = Join-Path $env:VULKAN_SDK "Bin"
           if (Test-Path "$vulkanLib\vulkan-1.lib") {
             Copy-Item "$vulkanLib\vulkan-1.lib" "$vulkanLib\vulkan.lib"
             Write-Host "Created vulkan.lib from vulkan-1.lib in $vulkanLib"
           }
           echo "LIB=$vulkanLib;$env:LIB" >> $env:GITHUB_ENV
-          echo "$vulkanBin" >> $env:GITHUB_PATH
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -98,27 +88,11 @@ jobs:
         run: |
           ffmpeg -version
           ffprobe -version
-
-      - name: Prepare Rust test runtime (Windows)
-        if: runner.os == 'Windows'
-        working-directory: src-tauri
-        shell: pwsh
-        run: |
-          cargo test --no-run
-          $depsDir = Join-Path (Get-Location) "target\debug\deps"
-          $vulkanDll = Join-Path $env:VULKAN_SDK "Bin\vulkan-1.dll"
-          if (!(Test-Path $vulkanDll)) {
-            throw "Missing Vulkan runtime DLL: $vulkanDll"
-          }
-          Copy-Item $vulkanDll (Join-Path $depsDir "vulkan-1.dll") -Force
-          Write-Host "Copied vulkan-1.dll to $depsDir"
-
       - name: Run Rust tests
         working-directory: src-tauri
         run: |
           cargo test
           cargo test btbn_latest_page_contains_download_url_for_supported_variant -- --ignored
           cargo test evermeet_release_endpoints_are_reachable -- --ignored
-
       - name: Build Tauri app
         run: pnpm tauri build

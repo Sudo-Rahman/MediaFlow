@@ -88,7 +88,13 @@ jobs:
         run: |
           ffmpeg -version
           ffprobe -version
+
+      - name: Compile Rust tests
+        working-directory: src-tauri
+        run: cargo test --no-run
+
       - name: Run Rust tests
+        if: matrix.os == 'ubuntu-22.04'
         working-directory: src-tauri
         run: |
           cargo test

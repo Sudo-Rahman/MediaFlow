@@ -68,6 +68,38 @@ jobs:
         shell: pwsh
         run: choco install ffmpeg -y
 
+      - name: Setup OpenCL SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $sdkVersion = 'v2025.07.23'
+          $archivePath = Join-Path $env:RUNNER_TEMP "OpenCL-SDK-$sdkVersion-Win-x64.zip"
+          $extractRoot = Join-Path $env:RUNNER_TEMP 'opencl-sdk'
+          $downloadUrl = "https://github.com/KhronosGroup/OpenCL-SDK/releases/download/$sdkVersion/OpenCL-SDK-$sdkVersion-Win-x64.zip"
+
+          Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath
+          Expand-Archive -Path $archivePath -DestinationPath $extractRoot -Force
+
+          $sdkDir = Get-ChildItem -Path $extractRoot -Directory | Select-Object -First 1
+          if (-not $sdkDir) {
+            throw 'OpenCL SDK extraction failed: root directory not found.'
+          }
+
+          $includeDir = Join-Path $sdkDir.FullName 'include'
+          $libDir = Join-Path $sdkDir.FullName 'lib'
+          $binDir = Join-Path $sdkDir.FullName 'bin'
+          $openclLib = Join-Path $libDir 'OpenCL.lib'
+
+          if (-not (Test-Path $openclLib)) {
+            throw "OpenCL SDK setup failed: missing $openclLib"
+          }
+
+          "OpenCL_INCLUDE_DIR=$includeDir" >> $env:GITHUB_ENV
+          "OpenCL_LIBRARY=$openclLib" >> $env:GITHUB_ENV
+          "CMAKE_PREFIX_PATH=$($sdkDir.FullName);$env:CMAKE_PREFIX_PATH" >> $env:GITHUB_ENV
+          "LIB=$libDir;$env:LIB" >> $env:GITHUB_ENV
+          $binDir >> $env:GITHUB_PATH
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 

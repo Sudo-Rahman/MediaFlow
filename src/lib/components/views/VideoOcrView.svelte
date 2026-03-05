@@ -61,7 +61,7 @@
     OcrRetryAllDialog,
   } from '$lib/components/video-ocr';
 
-  const VIDEO_FORMATS = 'MP4, MKV, AVI, MOV';
+  const VIDEO_FORMATS = VIDEO_EXTENSIONS.map((ext) => ext.toUpperCase()).join(', ');
 
   interface VideoOcrViewProps {
     onNavigateToSettings?: () => void;

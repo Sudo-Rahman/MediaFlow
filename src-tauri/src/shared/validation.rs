@@ -101,6 +101,15 @@ mod tests {
     }
 
     #[test]
+    fn validate_media_path_accepts_webm_extension() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let file = dir.path().join("clip.WEBM");
+        std::fs::write(&file, b"data").expect("failed to create media file");
+
+        validate_media_path(file.to_string_lossy().as_ref()).expect("webm media path should be valid");
+    }
+
+    #[test]
     fn validate_media_path_rejects_unsupported_extension() {
         let dir = tempfile::tempdir().expect("failed to create tempdir");
         let file = dir.path().join("input.xyz");

@@ -249,7 +249,7 @@ export interface OcrLogEntry {
 // SUPPORTED VIDEO FORMATS
 // ============================================================================
 
-export const VIDEO_EXTENSIONS = ['mp4', 'mkv', 'avi', 'mov'] as const;
+export const VIDEO_EXTENSIONS = ['mp4', 'mkv', 'avi', 'mov', 'webm'] as const;
 export type VideoExtension = typeof VIDEO_EXTENSIONS[number];
 
 export function isVideoExtension(ext: string): ext is VideoExtension {

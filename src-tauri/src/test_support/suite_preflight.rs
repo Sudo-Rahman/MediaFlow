@@ -76,20 +76,17 @@ where
 }
 
 fn ensure_binary_available(binary: &str) -> Result<(), String> {
-    let output = Command::new(binary)
-        .arg("-version")
-        .output()
-        .map_err(|e| {
-            format!(
-                "Missing dependency: `{}` is not available.\n\
+    let output = Command::new(binary).arg("-version").output().map_err(|e| {
+        format!(
+            "Missing dependency: `{}` is not available.\n\
                  Install commands:\n\
                  - macOS: brew install ffmpeg\n\
                  - Ubuntu/Debian: sudo apt install ffmpeg\n\
                  - Windows (Chocolatey): choco install ffmpeg -y\n\
                  Details: {}",
-                binary, e
-            )
-        })?;
+            binary, e
+        )
+    })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -115,7 +112,10 @@ mod tests {
     #[test]
     fn should_skip_suite_preflight_for_filtered_run() {
         assert!(!should_run_suite_preflight_from(["archive_type_from_url"]));
-        assert!(!should_run_suite_preflight_from(["archive_type_from_url", "--exact"]));
+        assert!(!should_run_suite_preflight_from([
+            "archive_type_from_url",
+            "--exact"
+        ]));
     }
 
     #[test]

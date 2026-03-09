@@ -155,8 +155,8 @@ mod tests {
             <a href="/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-8.0.tar.xz">tar</a>
         "#;
 
-        let url_zip = find_btbn_url_with_ext(page, "win64-gpl-8.0", ".zip")
-            .expect("zip url should be found");
+        let url_zip =
+            find_btbn_url_with_ext(page, "win64-gpl-8.0", ".zip").expect("zip url should be found");
         assert!(url_zip.ends_with(".zip"));
 
         let url_tar = find_btbn_url_with_ext(page, "win64-gpl-8.0", ".tar.xz")

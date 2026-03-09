@@ -44,10 +44,7 @@ impl FfmpegProgressTracker {
             }
             "total_size" => {
                 let total_size_bytes = value.parse::<u64>().ok()?;
-                self.update_speed(
-                    total_size_bytes,
-                    self.start_instant.elapsed().as_secs_f64(),
-                );
+                self.update_speed(total_size_bytes, self.start_instant.elapsed().as_secs_f64());
                 self.smoothed_speed_bytes_per_sec
                     .map(|speed_bytes_per_sec| FfmpegProgressUpdate {
                         progress: None,
@@ -117,8 +114,14 @@ mod tests {
 
     #[test]
     fn parse_progress_kv_extracts_key_and_value() {
-        assert_eq!(parse_progress_kv("out_time_us=123456"), Some(("out_time_us", "123456")));
-        assert_eq!(parse_progress_kv("total_size = 1024"), Some(("total_size", "1024")));
+        assert_eq!(
+            parse_progress_kv("out_time_us=123456"),
+            Some(("out_time_us", "123456"))
+        );
+        assert_eq!(
+            parse_progress_kv("total_size = 1024"),
+            Some(("total_size", "1024"))
+        );
         assert_eq!(parse_progress_kv("invalid"), None);
     }
 

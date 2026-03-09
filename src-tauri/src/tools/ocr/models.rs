@@ -33,10 +33,26 @@ const LANGUAGE_MODELS: &[(&str, &str, &str)] = &[
         "ppocr_keys_devanagari.txt",
         "devanagari",
     ),
-    ("th_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_th.txt", "thai"),
-    ("el_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_el.txt", "greek"),
-    ("ta_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_ta.txt", "tamil"),
-    ("te_PP-OCRv5_mobile_rec_infer.mnn", "ppocr_keys_te.txt", "telugu"),
+    (
+        "th_PP-OCRv5_mobile_rec_infer.mnn",
+        "ppocr_keys_th.txt",
+        "thai",
+    ),
+    (
+        "el_PP-OCRv5_mobile_rec_infer.mnn",
+        "ppocr_keys_el.txt",
+        "greek",
+    ),
+    (
+        "ta_PP-OCRv5_mobile_rec_infer.mnn",
+        "ppocr_keys_ta.txt",
+        "tamil",
+    ),
+    (
+        "te_PP-OCRv5_mobile_rec_infer.mnn",
+        "ppocr_keys_te.txt",
+        "telugu",
+    ),
 ];
 
 fn collect_model_status(models_dir: &std::path::Path) -> (Vec<String>, Vec<String>, bool) {
@@ -133,16 +149,10 @@ mod tests {
     #[test]
     fn collect_model_status_marks_multi_language_as_available() {
         let dir = tempfile::tempdir().expect("failed to create tempdir");
-        std::fs::write(
-            dir.path().join("PP-OCRv5_mobile_det.mnn"),
-            b"det",
-        )
-        .expect("failed to create det model");
-        std::fs::write(
-            dir.path().join("PP-OCRv5_mobile_rec.mnn"),
-            b"rec",
-        )
-        .expect("failed to create rec model");
+        std::fs::write(dir.path().join("PP-OCRv5_mobile_det.mnn"), b"det")
+            .expect("failed to create det model");
+        std::fs::write(dir.path().join("PP-OCRv5_mobile_rec.mnn"), b"rec")
+            .expect("failed to create rec model");
         std::fs::write(dir.path().join("ppocr_keys_v5.txt"), b"charset")
             .expect("failed to create charset file");
 

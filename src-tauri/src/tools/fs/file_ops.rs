@@ -101,8 +101,10 @@ fn copy_file_with_progress<F>(
 where
     F: FnMut(CopyProgressUpdate, u64, u64),
 {
-    let source_file = File::open(source_path).map_err(|e| format!("Failed to open source: {}", e))?;
-    let dest_file = File::create(dest_path).map_err(|e| format!("Failed to create destination: {}", e))?;
+    let source_file =
+        File::open(source_path).map_err(|e| format!("Failed to open source: {}", e))?;
+    let dest_file =
+        File::create(dest_path).map_err(|e| format!("Failed to create destination: {}", e))?;
 
     let mut reader = BufReader::with_capacity(COPY_BUFFER_SIZE_BYTES, source_file);
     let mut writer = BufWriter::with_capacity(COPY_BUFFER_SIZE_BYTES, dest_file);
@@ -348,7 +350,10 @@ mod tests {
         )
         .expect("copy should succeed");
 
-        assert!(!progress_samples.is_empty(), "expected at least one progress sample");
+        assert!(
+            !progress_samples.is_empty(),
+            "expected at least one progress sample"
+        );
         for sample in progress_samples.windows(2) {
             let previous = sample[0];
             let current = sample[1];

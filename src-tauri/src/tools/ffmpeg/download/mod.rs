@@ -187,11 +187,12 @@ mod tests {
         let root = tempfile::tempdir().expect("failed to create tempdir");
         let dir = create_temp_dir_in(root.path(), "ffmpeg_test", 123).expect("temp dir expected");
         assert!(dir.exists());
-        assert!(dir
-            .file_name()
-            .expect("missing file name")
-            .to_string_lossy()
-            .starts_with("ffmpeg_test_123"));
+        assert!(
+            dir.file_name()
+                .expect("missing file name")
+                .to_string_lossy()
+                .starts_with("ffmpeg_test_123")
+        );
     }
 
     #[tokio::test]
@@ -206,9 +207,10 @@ mod tests {
         std::fs::write(&ffmpeg_src, b"ffmpeg-bin").expect("failed to write ffmpeg source");
         std::fs::write(&ffprobe_src, b"ffprobe-bin").expect("failed to write ffprobe source");
 
-        let (ffmpeg_dest, ffprobe_dest) = install_binaries_to_dir(&dst_dir, &ffmpeg_src, &ffprobe_src)
-            .await
-            .expect("install should succeed");
+        let (ffmpeg_dest, ffprobe_dest) =
+            install_binaries_to_dir(&dst_dir, &ffmpeg_src, &ffprobe_src)
+                .await
+                .expect("install should succeed");
 
         assert!(ffmpeg_dest.exists());
         assert!(ffprobe_dest.exists());

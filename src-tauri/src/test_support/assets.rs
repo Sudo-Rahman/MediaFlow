@@ -61,7 +61,8 @@ pub(crate) fn ensure_ocr_video_sync() -> Result<PathBuf, String> {
 }
 
 pub(crate) fn verify_file_checksum(path: &Path, expected_sha256: &str) -> Result<(), String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
     verify_checksum_bytes(&bytes, expected_sha256, path.to_string_lossy().as_ref())
 }
 

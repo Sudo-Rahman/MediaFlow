@@ -84,7 +84,9 @@ fn format_vtt_time(ms: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{export_ocr_subtitles, format_srt, format_srt_time, format_txt, format_vtt, format_vtt_time};
+    use super::{
+        export_ocr_subtitles, format_srt, format_srt_time, format_txt, format_vtt, format_vtt_time,
+    };
     use crate::tools::ocr::OcrSubtitleEntry;
 
     fn sample_subtitles() -> Vec<OcrSubtitleEntry> {

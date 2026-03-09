@@ -82,7 +82,9 @@ pub(super) fn find_binary_path(root: &Path, binary_name: &str) -> Result<PathBuf
 mod tests {
     use std::io::Write;
 
-    use super::{ArchiveType, archive_type_from_url, binary_file_name, extract_archive, find_binary_path};
+    use super::{
+        ArchiveType, archive_type_from_url, binary_file_name, extract_archive, find_binary_path,
+    };
 
     #[test]
     fn archive_type_from_url_detects_supported_extensions() {
@@ -120,7 +122,9 @@ mod tests {
         writer
             .start_file("bin/ffmpeg", zip::write::SimpleFileOptions::default())
             .expect("failed to start zip file entry");
-        writer.write_all(b"binary").expect("failed to write zip content");
+        writer
+            .write_all(b"binary")
+            .expect("failed to write zip content");
         writer.finish().expect("failed to finish zip file");
 
         extract_archive(archive, extract_dir.clone(), ArchiveType::Zip)
@@ -147,7 +151,9 @@ mod tests {
         builder
             .append_data(&mut header, "bin/ffmpeg", &data[..])
             .expect("failed to append tar entry");
-        let encoder = builder.into_inner().expect("failed to finalize tar builder");
+        let encoder = builder
+            .into_inner()
+            .expect("failed to finalize tar builder");
         encoder.finish().expect("failed to finish xz stream");
 
         extract_archive(archive, extract_dir.clone(), ArchiveType::TarXz)

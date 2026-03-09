@@ -69,7 +69,6 @@ mod tests {
 
     #[tokio::test]
     async fn ffmpeg_commands_detect_installed_ffmpeg() {
-
         let available = check_ffmpeg_paths("ffprobe", "ffmpeg")
             .await
             .expect("check_ffmpeg command should succeed");

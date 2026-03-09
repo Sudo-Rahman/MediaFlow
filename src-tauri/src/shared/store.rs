@@ -78,9 +78,12 @@ mod tests {
 
     #[test]
     fn resolve_binary_path_from_custom_rejects_nonexistent_path() {
-        let error =
-            resolve_binary_path_from_custom("/tmp/definitely-not-a-real-binary", "ffmpeg", "FFmpeg")
-                .expect_err("path should not exist");
+        let error = resolve_binary_path_from_custom(
+            "/tmp/definitely-not-a-real-binary",
+            "ffmpeg",
+            "FFmpeg",
+        )
+        .expect_err("path should not exist");
         assert!(error.contains("does not exist"));
     }
 
@@ -102,12 +105,9 @@ mod tests {
         let file = dir.path().join("ffmpeg-custom");
         std::fs::write(&file, b"").expect("failed to create file");
 
-        let resolved = resolve_binary_path_from_custom(
-            file.to_string_lossy().as_ref(),
-            "ffmpeg",
-            "FFmpeg",
-        )
-        .expect("existing file should be accepted");
+        let resolved =
+            resolve_binary_path_from_custom(file.to_string_lossy().as_ref(), "ffmpeg", "FFmpeg")
+                .expect("existing file should be accepted");
         assert_eq!(resolved, file.to_string_lossy().to_string());
     }
 }

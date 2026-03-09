@@ -106,7 +106,8 @@ mod tests {
         let file = dir.path().join("clip.WEBM");
         std::fs::write(&file, b"data").expect("failed to create media file");
 
-        validate_media_path(file.to_string_lossy().as_ref()).expect("webm media path should be valid");
+        validate_media_path(file.to_string_lossy().as_ref())
+            .expect("webm media path should be valid");
     }
 
     #[test]
@@ -139,13 +140,15 @@ mod tests {
     fn validate_output_path_accepts_existing_parent() {
         let dir = tempfile::tempdir().expect("failed to create tempdir");
         let output = dir.path().join("out.mp4");
-        validate_output_path(output.to_string_lossy().as_ref()).expect("output path should be valid");
+        validate_output_path(output.to_string_lossy().as_ref())
+            .expect("output path should be valid");
     }
 
     #[test]
     fn validate_directory_path_checks_directory_existence() {
         let dir = tempfile::tempdir().expect("failed to create tempdir");
-        validate_directory_path(dir.path().to_string_lossy().as_ref()).expect("directory should pass");
+        validate_directory_path(dir.path().to_string_lossy().as_ref())
+            .expect("directory should pass");
 
         let missing = dir.path().join("missing");
         let error = validate_directory_path(missing.to_string_lossy().as_ref())

@@ -4,8 +4,8 @@ use std::process::Stdio;
 use tauri::Emitter;
 use tokio::time::{Duration, timeout};
 
-use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
+use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::validation::{validate_media_path, validate_output_path};
 use crate::tools::ffprobe::{get_media_duration_us, get_media_duration_us_with_ffprobe};
 

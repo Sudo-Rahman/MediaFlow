@@ -18,4 +18,3 @@ pub(crate) fn terminate_process(pid: u32) {
             .output();
     }
 }
-

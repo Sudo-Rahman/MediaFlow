@@ -1,7 +1,7 @@
 use crate::shared::ffmpeg_progress::FfmpegProgressTracker;
 use crate::shared::process::terminate_process;
-use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
+use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::validation::{validate_media_path, validate_output_path};
 use std::process::Stdio;
 use tauri::Emitter;
@@ -208,14 +208,7 @@ async fn extract_track_with_ffmpeg_and_progress(
     }
 
     if let Some(app_handle) = app {
-        emit_extract_progress(
-            app_handle,
-            input_path,
-            output_path,
-            track_index,
-            0,
-            None,
-        );
+        emit_extract_progress(app_handle, input_path, output_path, track_index, 0, None);
     }
 
     if let Some(stdout) = child.stdout.take() {
@@ -291,14 +284,7 @@ async fn extract_track_with_ffmpeg_and_progress(
     }
 
     if let Some(app_handle) = app {
-        emit_extract_progress(
-            app_handle,
-            input_path,
-            output_path,
-            track_index,
-            100,
-            None,
-        );
+        emit_extract_progress(app_handle, input_path, output_path, track_index, 100, None);
     }
 
     Ok(())
@@ -375,38 +361,20 @@ mod tests {
 
     #[test]
     fn build_extract_args_adds_explicit_format_for_audio_codec_when_needed() {
-        let args = build_extract_args(
-            "/tmp/input.mkv",
-            "/tmp/output.bin",
-            1,
-            "audio",
-            "wmav2",
-        );
+        let args = build_extract_args("/tmp/input.mkv", "/tmp/output.bin", 1, "audio", "wmav2");
         assert!(args.windows(2).any(|w| w == ["-f", "asf"]));
     }
 
     #[test]
     fn build_extract_args_for_video_disables_audio_and_subtitles() {
-        let args = build_extract_args(
-            "/tmp/input.mkv",
-            "/tmp/output.mkv",
-            0,
-            "video",
-            "h264",
-        );
+        let args = build_extract_args("/tmp/input.mkv", "/tmp/output.mkv", 0, "video", "h264");
         assert!(args.contains(&"-an".to_string()));
         assert!(args.contains(&"-sn".to_string()));
     }
 
     #[test]
     fn build_extract_args_enables_progress_output() {
-        let args = build_extract_args(
-            "/tmp/input.mkv",
-            "/tmp/output.mkv",
-            0,
-            "video",
-            "h264",
-        );
+        let args = build_extract_args("/tmp/input.mkv", "/tmp/output.mkv", 0, "video", "h264");
         assert!(args.windows(2).any(|w| w == ["-progress", "pipe:1"]));
     }
 
@@ -418,10 +386,12 @@ mod tests {
         let temp = tempfile::tempdir().expect("failed to create tempdir");
         let output = temp.path().join("video.mkv");
 
-        let probe_json =
-            crate::tools::ffprobe::probe::probe_file_with_ffprobe("ffprobe", video.to_string_lossy().as_ref())
-                .await
-                .expect("probe should succeed");
+        let probe_json = crate::tools::ffprobe::probe::probe_file_with_ffprobe(
+            "ffprobe",
+            video.to_string_lossy().as_ref(),
+        )
+        .await
+        .expect("probe should succeed");
         let probe_value: serde_json::Value =
             serde_json::from_str(&probe_json).expect("valid probe json expected");
         let track_index = probe_value
@@ -479,7 +449,8 @@ mod tests {
     async fn extract_track_rejects_corrupted_media_input() {
         let temp = tempfile::tempdir().expect("failed to create tempdir");
         let input = temp.path().join("corrupted.mp4");
-        std::fs::write(&input, b"this-is-not-valid-media").expect("failed to write corrupted input");
+        std::fs::write(&input, b"this-is-not-valid-media")
+            .expect("failed to write corrupted input");
         let output = temp.path().join("out.mkv");
 
         let error = extract_track_with_ffmpeg(

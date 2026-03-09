@@ -55,15 +55,17 @@ impl CopyProgressTracker {
             return;
         }
 
-        let (window_start_bytes, window_start_elapsed_seconds) =
-            match (self.speed_window_start_bytes, self.speed_window_start_elapsed_seconds) {
-                (Some(bytes), Some(seconds)) => (bytes, seconds),
-                _ => {
-                    self.speed_window_start_bytes = Some(total_size_bytes);
-                    self.speed_window_start_elapsed_seconds = Some(elapsed_seconds);
-                    return;
-                }
-            };
+        let (window_start_bytes, window_start_elapsed_seconds) = match (
+            self.speed_window_start_bytes,
+            self.speed_window_start_elapsed_seconds,
+        ) {
+            (Some(bytes), Some(seconds)) => (bytes, seconds),
+            _ => {
+                self.speed_window_start_bytes = Some(total_size_bytes);
+                self.speed_window_start_elapsed_seconds = Some(elapsed_seconds);
+                return;
+            }
+        };
 
         if total_size_bytes < window_start_bytes {
             self.speed_window_start_bytes = Some(total_size_bytes);
@@ -85,13 +87,12 @@ impl CopyProgressTracker {
         if bytes_delta > 0 {
             let instant_speed = bytes_delta as f64 / elapsed_delta;
             if instant_speed.is_finite() && instant_speed > 0.0 {
-                self.smoothed_speed_bytes_per_sec =
-                    Some(match self.smoothed_speed_bytes_per_sec {
-                        Some(previous) => {
-                            (self.ema_alpha * instant_speed) + ((1.0 - self.ema_alpha) * previous)
-                        }
-                        None => instant_speed,
-                    });
+                self.smoothed_speed_bytes_per_sec = Some(match self.smoothed_speed_bytes_per_sec {
+                    Some(previous) => {
+                        (self.ema_alpha * instant_speed) + ((1.0 - self.ema_alpha) * previous)
+                    }
+                    None => instant_speed,
+                });
             }
         }
 

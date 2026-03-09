@@ -14,7 +14,10 @@ pub(crate) async fn probe_file(app: tauri::AppHandle, path: String) -> Result<St
     probe_file_with_ffprobe(&ffprobe_path, &path).await
 }
 
-pub(crate) async fn probe_file_with_ffprobe(ffprobe_path: &str, path: &str) -> Result<String, String> {
+pub(crate) async fn probe_file_with_ffprobe(
+    ffprobe_path: &str,
+    path: &str,
+) -> Result<String, String> {
     let probe_future = async move {
         Command::new(ffprobe_path)
             .args([

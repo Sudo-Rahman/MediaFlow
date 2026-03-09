@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::mpsc;
 use std::sync::LazyLock;
+use std::sync::mpsc;
 use std::thread;
 
 static SERVICE: LazyLock<SleepInhibitService> = LazyLock::new(SleepInhibitService::new);
@@ -258,7 +258,9 @@ mod macos {
     fn cf_string(s: &str) -> Result<CFStringRef, String> {
         let cstr = CString::new(s).map_err(|_| "Invalid string for CFString".to_string())?;
         // SAFETY: `cstr` is NUL-terminated and stays alive for the duration of the call.
-        let cf = unsafe { CFStringCreateWithCString(std::ptr::null(), cstr.as_ptr(), K_CFSTRING_ENCODING_UTF8) };
+        let cf = unsafe {
+            CFStringCreateWithCString(std::ptr::null(), cstr.as_ptr(), K_CFSTRING_ENCODING_UTF8)
+        };
         if cf.is_null() {
             return Err("Failed to create CFString".to_string());
         }

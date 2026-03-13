@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - fix-windows-ci-test-manifest
 
 permissions:
   contents: read
@@ -104,7 +105,32 @@ jobs:
         working-directory: src-tauri
         shell: pwsh
         run: |
+          # Create test manifest to fix STATUS_ENTRYPOINT_NOT_FOUND (Tauri Windows tests missing comctl32.dll v6)
+          $manifestPath = (Join-Path (Get-Location) "test.manifest").Replace('\', '/')
+          $manifestContent = @(
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+            '<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">',
+            '  <dependency>',
+            '    <dependentAssembly>',
+            '      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*" />',
+            '    </dependentAssembly>',
+            '  </dependency>',
+            '</assembly>'
+          )
+          Set-Content -Path $manifestPath -Value $manifestContent -Encoding utf8
+
+          New-Item -ItemType Directory -Force -Path .cargo
+          $cargoConfig = @(
+            "[target.'cfg(windows)']",
+            "rustflags = [",
+            '  "-C", "link-arg=/MANIFEST:EMBED",',
+            "  `"-C`", `"link-arg=/MANIFESTINPUT:$manifestPath`",",
+            "]"
+          )
+          Set-Content -Path .cargo\config.toml -Value $cargoConfig -Encoding utf8
+
           cargo test --no-run
+          
           $depsDir = Join-Path (Get-Location) "target\debug\deps"
           $vulkanDll = Join-Path $env:VULKAN_SDK "Bin\vulkan-1.dll"
           if (!(Test-Path $vulkanDll)) {
@@ -115,10 +141,16 @@ jobs:
 
       - name: Run Rust tests
         working-directory: src-tauri
+        shell: pwsh
         run: |
           cargo test
           cargo test btbn_latest_page_contains_download_url_for_supported_variant -- --ignored
           cargo test evermeet_release_endpoints_are_reachable -- --ignored
+          
+          if (Test-Path .cargo) {
+            Remove-Item -Recurse -Force .cargo
+            Write-Host "Removed .cargo config so it doesn't interfere with tauri build"
+          }
 
       - name: Build Tauri app
         run: pnpm tauri build

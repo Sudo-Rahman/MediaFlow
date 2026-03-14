@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - fix-windows-ci-test-manifest
 
 permissions:
   contents: read
@@ -16,7 +17,7 @@ jobs:
         include:
           - os: macos-latest
           - os: ubuntu-22.04
-          - os: windows-latest
+          - os: windows-2022
 
     runs-on: ${{ matrix.os }}
 
@@ -70,6 +71,11 @@ jobs:
         shell: pwsh
         run: choco install ffmpeg -y
 
+      - name: Install Visual C++ Runtime (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install vcredist140 -y
+
       - name: Setup Vulkan SDK (Windows)
         if: runner.os == 'Windows'
         uses: humbletim/setup-vulkan-sdk@v1.2.1
@@ -99,21 +105,45 @@ jobs:
           ffmpeg -version
           ffprobe -version
 
-      - name: Prepare Rust test runtime (Windows)
+      - name: Run Rust tests (Windows)
         if: runner.os == 'Windows'
         working-directory: src-tauri
         shell: pwsh
         run: |
-          cargo test --no-run
+          $blockedPaths = @(
+            (Join-Path $env:VULKAN_SDK "bin"),
+            (Join-Path $env:VULKAN_SDK "Bin")
+          ) | ForEach-Object { $_.Replace('/', '\').TrimEnd('\').ToLowerInvariant() } | Select-Object -Unique
+
+          $env:PATH = ($env:PATH -split ';' | Where-Object {
+            $candidate = $_.Replace('/', '\').TrimEnd('\').ToLowerInvariant()
+            $candidate -and ($blockedPaths -notcontains $candidate)
+          }) -join ';'
+
+          # Avoid the Tauri bin test target on Windows: it collides with the embedded app manifest.
+          cargo test --no-run --lib
+
           $depsDir = Join-Path (Get-Location) "target\debug\deps"
-          $vulkanDll = Join-Path $env:VULKAN_SDK "Bin\vulkan-1.dll"
-          if (!(Test-Path $vulkanDll)) {
-            throw "Missing Vulkan runtime DLL: $vulkanDll"
+          $localVulkanDll = Join-Path $depsDir "vulkan-1.dll"
+          $systemVulkanDll = Join-Path $env:WINDIR "System32\vulkan-1.dll"
+
+          if (Test-Path $localVulkanDll) {
+            Remove-Item $localVulkanDll -Force
           }
-          Copy-Item $vulkanDll (Join-Path $depsDir "vulkan-1.dll") -Force
-          Write-Host "Copied vulkan-1.dll to $depsDir"
+
+          if (!(Test-Path $systemVulkanDll)) {
+            throw "Missing system Vulkan runtime DLL: $systemVulkanDll"
+          }
+
+          Copy-Item $systemVulkanDll $localVulkanDll -Force
+          Write-Host "Copied system vulkan-1.dll to $localVulkanDll"
+
+          cargo test --lib
+          cargo test --lib btbn_latest_page_contains_download_url_for_supported_variant -- --ignored
+          cargo test --lib evermeet_release_endpoints_are_reachable -- --ignored
 
       - name: Run Rust tests
+        if: runner.os != 'Windows'
         working-directory: src-tauri
         run: |
           cargo test

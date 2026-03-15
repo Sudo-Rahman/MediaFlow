@@ -110,6 +110,71 @@ jobs:
         working-directory: src-tauri
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+          $targetDir = Join-Path (Get-Location) "target"
+          New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+          $manifestPath = Join-Path $targetDir "ci.common-controls.manifest"
+          @"
+          <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+            <dependency>
+              <dependentAssembly>
+                <assemblyIdentity
+                  type="win32"
+                  name="Microsoft.Windows.Common-Controls"
+                  version="6.0.0.0"
+                  processorArchitecture="*"
+                  publicKeyToken="6595b64144ccf1df"
+                  language="*" />
+              </dependentAssembly>
+            </dependency>
+          </assembly>
+          "@ | Set-Content -Path $manifestPath -Encoding utf8
+
+          $env:CARGO_ENCODED_RUSTFLAGS = @(
+            "-C",
+            "target-feature=+crt-static",
+            "-C",
+            "link-arg=/MANIFEST:EMBED",
+            "-C",
+            "link-arg=/MANIFESTINPUT:$manifestPath"
+          ) -join [char]31
+
+          function Show-WindowsCrashDiagnostics {
+            $depsDir = Join-Path (Get-Location) "target\debug\deps"
+            $libTestExe = Get-ChildItem -Path $depsDir -Filter "mediaflow_lib-*.exe" |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1
+
+            Write-Host "::group::Windows test crash diagnostics"
+            if ($libTestExe) {
+              Write-Host "lib test executable: $($libTestExe.FullName)"
+
+              $cdb = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\Debuggers\x64\cdb.exe"
+              if (Test-Path $cdb) {
+                & $cdb -c "g;qd" $libTestExe.FullName
+              }
+
+              $dumpbin = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
+              if ($dumpbin) {
+                & $dumpbin.Source /dependents $libTestExe.FullName
+              }
+            }
+            Write-Host "::endgroup::"
+          }
+
+          function Invoke-CargoLibTest {
+            param([string[]]$Args)
+
+            & cargo test --lib @Args
+            if ($LASTEXITCODE -eq 0) {
+              return
+            }
+
+            Show-WindowsCrashDiagnostics
+            throw "cargo test --lib failed with exit code $LASTEXITCODE"
+          }
+
           # Avoid the Tauri bin test target on Windows: it collides with the embedded app manifest.
           cargo test --no-run --lib
 
@@ -138,9 +203,9 @@ jobs:
             throw "vulkan-1.dll not found on PATH after setup"
           }
 
-          cargo test --lib
-          cargo test --lib btbn_latest_page_contains_download_url_for_supported_variant -- --ignored
-          cargo test --lib evermeet_release_endpoints_are_reachable -- --ignored
+          Invoke-CargoLibTest
+          Invoke-CargoLibTest "btbn_latest_page_contains_download_url_for_supported_variant", "--", "--ignored"
+          Invoke-CargoLibTest "evermeet_release_endpoints_are_reachable", "--", "--ignored"
 
       - name: Run Rust tests
         if: runner.os != 'Windows'

@@ -24,6 +24,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -34,6 +35,14 @@
     ],
     "resources": {
       "ocr-models/*": "ocr-models"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Sudo-Rahman/RsExtractor/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU1ODQxOTc5NzcyMTBGRUUKUldUdUR5RjNlUm1FVmZqdmdGTVJkbHZoU2RXOFA4ZmYwcFFXUDhnS3ZleG5oWStjMFZtajhSUXUK"
     }
   }
 }

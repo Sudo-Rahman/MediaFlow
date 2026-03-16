@@ -1,4 +1,5 @@
 export { fileListStore } from './files.svelte';
+export { appUpdateStore } from './app-update.svelte';
 export { extractionStore } from './extraction.svelte';
 export { uiStore } from './ui.svelte';
 export { mergeStore } from './merge.svelte';

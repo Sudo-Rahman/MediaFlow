@@ -157,12 +157,23 @@ jobs:
           echo "UPDATER_SIG_PATH=${UPDATER_SIG_PATH}" >> "$GITHUB_ENV"
           echo "UPDATER_TAR_NAME=$(basename "$UPDATER_TAR_PATH")" >> "$GITHUB_ENV"
 
+      - name: Notarize and staple DMG
+        run: |
+          xcrun notarytool submit "$DMG_PATH" \
+            --key "$APPLE_API_KEY_PATH" \
+            --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+
+          xcrun stapler staple "$DMG_PATH"
+
       - name: Verify code signing and notarization
         run: |
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           xcrun stapler validate "$APP_PATH"
           xcrun stapler validate "$DMG_PATH"
           spctl -a -vv --type exec "$APP_PATH"
+          spctl -a -vv --type open "$DMG_PATH"
 
       - name: Ensure GitHub release exists
         if: github.ref_type == 'tag'

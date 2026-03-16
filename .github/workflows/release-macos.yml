@@ -63,16 +63,14 @@ jobs:
 
       - name: Validate version metadata
         run: |
-          node <<'NODE' >> "$GITHUB_ENV"
-          const packageJson = JSON.parse(require('node:fs').readFileSync('package.json', 'utf8'));
-          console.log(`APP_VERSION=${packageJson.version}`);
-          NODE
           node <<'NODE'
           const fs = require('node:fs');
 
+          const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          fs.appendFileSync(process.env.GITHUB_ENV, `APP_VERSION=${packageJson.version}\n`);
+
           const gitRefType = process.env.GITHUB_REF_TYPE;
           const gitRefName = process.env.GITHUB_REF_NAME;
-          const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           const tauriConfig = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
           const cargoToml = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
           const cargoVersionMatch = cargoToml.match(/^version\s*=\s*"([^"]+)"/m);
@@ -126,6 +124,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH"
           security default-keychain -s "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
           echo "APPLE_API_KEY_PATH=${API_KEY_PATH}" >> "$GITHUB_ENV"
           echo "KEYCHAIN_PATH=${KEYCHAIN_PATH}" >> "$GITHUB_ENV"

@@ -63,7 +63,7 @@ jobs:
 
       - name: Validate version metadata
         run: |
-          APP_VERSION="$(node -p 'require(\"./package.json\").version')"
+          APP_VERSION="$(node -e "console.log(require('./package.json').version)")"
           node <<'NODE'
           const fs = require('node:fs');
 

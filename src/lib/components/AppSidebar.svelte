@@ -1,9 +1,10 @@
 <script lang="ts">
-  import * as Sidebar from '$lib/components/ui/sidebar';
-  import { Badge } from '$lib/components/ui/badge';
   import { FileOutput, GitMerge, Info, Settings, Languages, PenLine, AudioLines, ScanText } from '@lucide/svelte';
   import type { ComponentProps } from 'svelte';
-  import {OS} from "$lib/utils";
+  import * as Sidebar from '$lib/components/ui/sidebar';
+  import { Badge } from '$lib/components/ui/badge';
+  import { appUpdateStore } from '$lib/stores';
+  import { OS } from '$lib/utils';
 
   interface NavItem {
     id: string;
@@ -79,7 +80,7 @@
               />
               <div class="flex flex-col gap-0.5 leading-none">
                 <span class="font-semibold">MediaFlow</span>
-                <span class="text-xs text-muted-foreground">v1.0.0</span>
+                <span class="text-xs text-muted-foreground">v{appUpdateStore.currentVersion ?? '...'}</span>
               </div>
             </div>
           {/snippet}

@@ -50,6 +50,8 @@
     "store:default",
     "http:default",
     "http:allow-fetch",
-    "http:allow-fetch-cancel"
+    "http:allow-fetch-cancel",
+    "process:default",
+    "updater:default"
   ]
 }

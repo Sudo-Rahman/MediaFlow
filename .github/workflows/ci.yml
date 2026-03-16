@@ -7,7 +7,7 @@ on:
       - fix-windows-ci-test-manifest
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -223,3 +223,72 @@ jobs:
 
       - name: Build Tauri app
         run: pnpm tauri build
+
+  create-version-tag:
+    name: Create Version Tag
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Resolve release version
+        id: version
+        run: |
+          node <<'NODE' >> "$GITHUB_OUTPUT"
+          const fs = require('node:fs');
+
+          const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const tauriConfig = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+          const cargoToml = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
+          const cargoVersionMatch = cargoToml.match(/^version\s*=\s*"([^"]+)"/m);
+
+          if (!cargoVersionMatch) {
+            throw new Error('Unable to read version from src-tauri/Cargo.toml');
+          }
+
+          const versions = {
+            packageJson: packageJson.version,
+            tauriConfig: tauriConfig.version,
+            cargoToml: cargoVersionMatch[1]
+          };
+
+          const uniqueVersions = [...new Set(Object.values(versions))];
+          if (uniqueVersions.length !== 1) {
+            const details = Object.entries(versions).map(([name, value]) => `${name}=${value}`).join(', ');
+            throw new Error(`Project versions are not aligned: ${details}`);
+          }
+
+          console.log(`version=${packageJson.version}`);
+          console.log(`tag=v${packageJson.version}`);
+          NODE
+
+      - name: Check if tag already exists
+        id: tag_check
+        run: |
+          if git rev-parse "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create and push tag
+        if: steps.tag_check.outputs.exists != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Skip existing tag
+        if: steps.tag_check.outputs.exists == 'true'
+        run: echo "Tag ${{ steps.version.outputs.tag }} already exists. Skipping auto-tagging."

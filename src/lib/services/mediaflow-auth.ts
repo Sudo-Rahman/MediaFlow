@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
 import { fetch as httpFetch } from '@tauri-apps/plugin-http';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { mediaFlowUrl, resolveMediaFlowBaseUrl } from '$lib/config/api';
 import { settingsStore, type MediaFlowUser } from '$lib/stores/settings.svelte';
 import { logStore } from '$lib/stores/logs.svelte';
 
@@ -51,33 +52,29 @@ let restorePromise: Promise<void> | null = null;
 let refreshPromise: Promise<string> | null = null;
 const callbackStatesInProgress = new Set<string>();
 
-function trimTrailingSlash(value: string): string {
-  return value.trim().replace(/\/+$/, '');
-}
-
 export function getMediaFlowBaseUrl(): string {
-  return trimTrailingSlash(settingsStore.settings.mediaflowBaseUrl || 'http://localhost:5173');
+  return resolveMediaFlowBaseUrl(settingsStore.settings.mediaflowBaseUrl);
 }
 
 function authBaseUrl(): string {
-  return `${getMediaFlowBaseUrl()}/api/auth`;
+  return mediaFlowUrl('/api/auth', settingsStore.settings.mediaflowBaseUrl);
 }
 
 function authBaseUrlFor(baseUrl: string): string {
-  return `${trimTrailingSlash(baseUrl)}/api/auth`;
+  return mediaFlowUrl('/api/auth', baseUrl);
 }
 
 function webRedirectUriFor(baseUrl: string): string {
-  return `${trimTrailingSlash(baseUrl)}${WEB_OAUTH_CALLBACK_PATH}`;
+  return mediaFlowUrl(WEB_OAUTH_CALLBACK_PATH, baseUrl);
 }
 
 function loginUrlFor(baseUrl: string, redirectTo: string): string {
   const params = new URLSearchParams({ redirectTo });
-  return `${trimTrailingSlash(baseUrl)}/auth/login?${params}`;
+  return `${mediaFlowUrl('/auth/login', baseUrl)}?${params}`;
 }
 
 function apiUrl(path: string): string {
-  return `${getMediaFlowBaseUrl()}${path.startsWith('/') ? path : `/${path}`}`;
+  return mediaFlowUrl(path, settingsStore.settings.mediaflowBaseUrl);
 }
 
 function bytesToBase64Url(bytes: Uint8Array): string {

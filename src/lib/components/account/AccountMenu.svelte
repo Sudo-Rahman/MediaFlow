@@ -19,6 +19,7 @@
   import { mediaflowUsageStore, settingsStore } from '$lib/stores';
   import {
     cancelPendingMediaFlowSignIn,
+    getMediaFlowBaseUrl,
     signInWithMediaFlow,
     signOutMediaFlow,
   } from '$lib/services/mediaflow-auth';
@@ -87,7 +88,7 @@
   });
 
   function dashboardUrl(): string {
-    return `${(settingsStore.settings.mediaflowBaseUrl || 'http://localhost:5173').replace(/\/+$/, '')}/dashboard`;
+    return `${getMediaFlowBaseUrl()}/dashboard`;
   }
 
   async function handleOpenDashboard(): Promise<void> {

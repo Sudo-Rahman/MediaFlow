@@ -7,6 +7,7 @@
   import { mode, setMode } from 'mode-watcher';
   import { toast } from 'svelte-sonner';
 
+  import { IS_MEDIAFLOW_BASE_URL_OVERRIDE_ALLOWED } from '$lib/config/api';
   import { settingsStore } from '$lib/stores';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
@@ -63,6 +64,7 @@
   let unlistenProgress: (() => void) | null = null;
 
   const isDebugBuild = import.meta.env.DEV;
+  const allowMediaFlowBaseUrlOverride = IS_MEDIAFLOW_BASE_URL_OVERRIDE_ALLOWED;
 
   // Deepgram API key visibility
   let showDeepgramApiKey = $state(false);
@@ -333,7 +335,7 @@
            </Item.Actions>
          </Item.Root>
 
-        {#if !isDebugBuild}
+        {#if isDebugBuild}
           <!-- FFmpeg path -->
           <div class="space-y-2">
             <Label for="ffmpeg-path">FFmpeg Path (optional)</Label>
@@ -453,20 +455,22 @@
             </div>
           </div>
 
-          <div class="space-y-2">
-            <Label for="mediaflow-backend-url">Backend URL</Label>
-            <div class="flex gap-2">
-              <div class="relative flex-1">
-                <Globe class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  id="mediaflow-backend-url"
-                  value={settingsStore.settings.mediaflowBaseUrl}
-                  oninput={(e) => settingsStore.setMediaFlowBaseUrl(e.currentTarget.value)}
-                  class="pl-9"
-                />
+          {#if allowMediaFlowBaseUrlOverride}
+            <div class="space-y-2">
+              <Label for="mediaflow-backend-url">Backend URL</Label>
+              <div class="flex gap-2">
+                <div class="relative flex-1">
+                  <Globe class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="mediaflow-backend-url"
+                    value={settingsStore.settings.mediaflowBaseUrl}
+                    oninput={(e) => settingsStore.setMediaFlowBaseUrl(e.currentTarget.value)}
+                    class="pl-9"
+                  />
+                </div>
               </div>
             </div>
-          </div>
+          {/if}
 
           <div class="flex flex-wrap gap-2">
             {#if mediaflowUser}

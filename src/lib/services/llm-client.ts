@@ -1,5 +1,11 @@
 import type { LogSource } from '$lib/stores/logs.svelte';
 import type { LLMProvider } from '$lib/types';
+import {
+  APP_PUBLIC_BASE_URL,
+  OPENROUTER_APP_TITLE,
+  PROVIDER_API_URLS,
+  googleGenerateContentUrl,
+} from '$lib/config/api';
 import { log } from '$lib/utils/log-toast';
 import { fetchMediaFlowBillableApi } from './mediaflow-billing';
 
@@ -363,7 +369,7 @@ async function callOpenAi(params: ProviderCallParams): Promise<LlmResponse> {
 
   try {
     const response = await fetchWithTimeout(
-      'https://api.openai.com/v1/chat/completions',
+      PROVIDER_API_URLS.openAiChatCompletions,
       {
         method: 'POST',
         headers: {
@@ -446,7 +452,7 @@ async function callAnthropic(params: ProviderCallParams): Promise<LlmResponse> {
 
   try {
     const response = await fetchWithTimeout(
-      'https://api.anthropic.com/v1/messages',
+      PROVIDER_API_URLS.anthropicMessages,
       {
         method: 'POST',
         headers: {
@@ -533,7 +539,7 @@ async function callGoogle(params: ProviderCallParams): Promise<LlmResponse> {
 
   try {
     const response = await fetchWithTimeout(
-      `https://generativelanguage.googleapis.com/v1beta/models/${params.model}:generateContent?key=${params.apiKey}`,
+      googleGenerateContentUrl(params.model, params.apiKey),
       {
         method: 'POST',
         headers: {
@@ -630,14 +636,14 @@ async function callOpenRouter(params: ProviderCallParams): Promise<LlmResponse> 
 
   try {
     const response = await fetchWithTimeout(
-      'https://openrouter.ai/api/v1/chat/completions',
+      PROVIDER_API_URLS.openRouterChatCompletions,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${params.apiKey}`,
-          'HTTP-Referer': 'https://mediaflow.app',
-          'X-Title': 'MediaFlow',
+          'HTTP-Referer': APP_PUBLIC_BASE_URL,
+          'X-Title': OPENROUTER_APP_TITLE,
         },
         body: JSON.stringify({
           model: params.model,

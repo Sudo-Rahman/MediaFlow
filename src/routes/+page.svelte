@@ -651,7 +651,7 @@
                 <span class="text-[11px] font-medium tabular-nums">{Math.round(globalToolProgress.percentage)}%</span>
               </div>
             </HoverCard.Trigger>
-            <HoverCard.Content align="end" class="w-80 p-3">
+            <HoverCard.Content align="end" class="w-68 p-3">
               <div class="mb-2 border-b pb-2">
                 <div class="mb-2 flex items-center justify-between">
                   <p class="text-[11px] uppercase tracking-wide text-muted-foreground">Global Progress</p>

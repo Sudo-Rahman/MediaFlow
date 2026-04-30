@@ -1,4 +1,9 @@
 import { Store } from '@tauri-apps/plugin-store';
+import {
+  DEFAULT_MEDIAFLOW_BASE_URL,
+  IS_MEDIAFLOW_BASE_URL_OVERRIDE_ALLOWED,
+  resolveMediaFlowBaseUrl,
+} from '$lib/config/api';
 import { DEFAULT_OCR_REGION } from '$lib/types';
 import type { LLMApiKeyProvider, LLMApiKeys, LLMProvider, OcrRegion, TranslationSettings } from '$lib/types';
 
@@ -39,7 +44,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   },
   openRouterModels: [],
   deepgramApiKey: '',
-  mediaflowBaseUrl: 'http://localhost:5173',
+  mediaflowBaseUrl: DEFAULT_MEDIAFLOW_BASE_URL,
   mediaflowUser: null,
   videoOcrGlobalRegion: { ...DEFAULT_OCR_REGION }
 };
@@ -85,7 +90,7 @@ export const settingsStore = {
         translationSettings: translationSettings ?? DEFAULT_SETTINGS.translationSettings,
         openRouterModels: openRouterModels ?? DEFAULT_SETTINGS.openRouterModels,
         deepgramApiKey: deepgramApiKey ?? DEFAULT_SETTINGS.deepgramApiKey,
-        mediaflowBaseUrl: mediaflowBaseUrl ?? DEFAULT_SETTINGS.mediaflowBaseUrl,
+        mediaflowBaseUrl: resolveMediaFlowBaseUrl(mediaflowBaseUrl),
         mediaflowUser: mediaflowUser ?? DEFAULT_SETTINGS.mediaflowUser,
         videoOcrGlobalRegion: videoOcrGlobalRegion ?? { ...DEFAULT_SETTINGS.videoOcrGlobalRegion }
       };
@@ -190,8 +195,10 @@ export const settingsStore = {
   },
 
   async setMediaFlowBaseUrl(baseUrl: string) {
-    const normalized = baseUrl.trim().replace(/\/+$/, '') || DEFAULT_SETTINGS.mediaflowBaseUrl;
+    const normalized = resolveMediaFlowBaseUrl(baseUrl);
     settings = { ...settings, mediaflowBaseUrl: normalized };
+    if (!IS_MEDIAFLOW_BASE_URL_OVERRIDE_ALLOWED) return;
+
     const s = await getStore();
     await s.set('mediaflowBaseUrl', normalized);
   },

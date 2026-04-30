@@ -4,6 +4,7 @@
  */
 
 import { readFile } from '@tauri-apps/plugin-fs';
+import { PROVIDER_API_URLS } from '$lib/config/api';
 import { settingsStore } from '$lib/stores/settings.svelte';
 import { logStore } from '$lib/stores/logs.svelte';
 import type {
@@ -17,8 +18,6 @@ import type {
   TranscriptionJSONOutput,
 } from '$lib/types';
 import { withSleepInhibit } from './sleep-inhibit';
-
-const DEEPGRAM_API_URL = 'https://api.deepgram.com/v1/listen';
 
 // ============================================================================
 // SUBTITLE SEGMENTATION CONFIG
@@ -161,7 +160,7 @@ export async function transcribeWithDeepgram(options: TranscribeOptions): Promis
       });
       
       // Make API request with abort signal
-      const response = await fetch(`${DEEPGRAM_API_URL}?${params}`, {
+      const response = await fetch(`${PROVIDER_API_URLS.deepgramListen}?${params}`, {
         method: 'POST',
         headers: {
           'Authorization': `Token ${apiKey}`,

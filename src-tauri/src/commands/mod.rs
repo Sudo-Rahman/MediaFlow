@@ -25,4 +25,5 @@ pub(crate) use crate::tools::transcode::capabilities as transcode_capabilities;
 pub(crate) use crate::tools::transcode::transcode;
 pub(crate) use crate::tools::transcription::cancel as transcription_cancel;
 pub(crate) use crate::tools::transcription::transcode_opus as transcription_transcode;
+pub(crate) use crate::tools::transcription::upload as transcription_upload;
 pub(crate) use crate::tools::transcription::waveform as transcription_waveform;

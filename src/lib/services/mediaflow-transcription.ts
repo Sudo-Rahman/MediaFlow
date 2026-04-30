@@ -1,8 +1,18 @@
-import { readFile } from '@tauri-apps/plugin-fs';
+import { invoke } from '@tauri-apps/api/core';
+import { joinApiUrl } from '$lib/config/api';
 import { logStore } from '$lib/stores/logs.svelte';
+import { mediaflowUsageStore } from '$lib/stores/mediaflow-usage.svelte';
 import type { DeepgramAPIResponse, DeepgramConfig, DeepgramResult } from '$lib/types';
-import { fetchMediaFlowBillableApi } from './mediaflow-billing';
-import { processDeepgramResponse, type TranscribeResult } from './deepgram';
+import { getMediaFlowAccessToken, getMediaFlowBaseUrl, refreshMediaFlowSession } from './mediaflow-auth';
+import {
+  attachTranscriptionUploadCancel,
+  createTranscriptionRequestId,
+  errorToMessage,
+  isTranscriptionCancelledError,
+  processDeepgramResponse,
+  type TranscribeResult,
+  type TranscriptionUploadResponse,
+} from './deepgram';
 import { withSleepInhibit } from './sleep-inhibit';
 
 export interface MediaFlowTranscribeOptions {
@@ -20,21 +30,6 @@ interface MediaFlowTranscriptionResponse {
     request_id?: string;
     duration?: number;
   };
-}
-
-export function buildMediaFlowTranscriptionForm(audioBlob: Blob, config: DeepgramConfig): FormData {
-  const form = new FormData();
-  form.set('file', audioBlob, 'audio.opus');
-  form.set('model', config.model);
-  form.set('punctuate', String(config.punctuate));
-  form.set('paragraphs', String(config.paragraphs));
-  form.set('smart_format', String(config.smartFormat));
-  form.set('utterances', String(config.utterances));
-  form.set('utt_split', String(config.uttSplit));
-  form.set('diarize', String(config.diarize));
-  form.set('language', config.language === 'auto' ? 'multi' : config.language);
-
-  return form;
 }
 
 function normalizedToDeepgramResponse(body: MediaFlowTranscriptionResponse): DeepgramAPIResponse {
@@ -80,15 +75,11 @@ export async function transcribeWithMediaFlow(options: MediaFlowTranscribeOption
   }
 
   return withSleepInhibit('MediaFlow: Transcription', async () => {
+    const requestId = createTranscriptionRequestId('mediaflow');
+    const detachCancel = attachTranscriptionUploadCancel(signal, requestId);
+
     try {
       onProgress?.(5, 'uploading');
-      const audioData = await readFile(audioPath);
-
-      if (signal?.aborted) {
-        return { success: false, error: 'Transcription cancelled' };
-      }
-
-      const audioBlob = new Blob([new Uint8Array(audioData)], { type: 'audio/opus' });
       onProgress?.(15, 'uploading');
 
       logStore.addLog({
@@ -99,27 +90,43 @@ export async function transcribeWithMediaFlow(options: MediaFlowTranscribeOption
         context: { filePath: audioPath },
       });
 
-      const response = await fetchMediaFlowBillableApi('/api/v1/audio/transcriptions', () => ({
-        method: 'POST',
-        body: buildMediaFlowTranscriptionForm(audioBlob, config),
-        signal,
-      }));
+      const transcribeWithToken = (accessToken: string) =>
+        invoke<TranscriptionUploadResponse>('transcribe_mediaflow_audio_file', {
+          requestId,
+          audioPath,
+          config,
+          accessToken,
+          url: joinApiUrl(getMediaFlowBaseUrl(), '/api/v1/audio/transcriptions'),
+        });
+
+      let response = await transcribeWithToken(await getMediaFlowAccessToken());
+      if (response.status === 401 && !signal?.aborted) {
+        const refreshedToken = await refreshMediaFlowSession();
+        if (signal?.aborted) {
+          return { success: false, error: 'Transcription cancelled' };
+        }
+        response = await transcribeWithToken(refreshedToken);
+      }
+
+      if (signal?.aborted) {
+        return { success: false, error: 'Transcription cancelled' };
+      }
 
       onProgress?.(50, 'processing');
 
-      if (!response.ok) {
-        const errorText = await response.text();
+      if (response.status < 200 || response.status >= 300) {
         logStore.addLog({
           level: 'error',
           source: 'mediaflow',
           title: 'MediaFlow transcription error',
-          details: `Status: ${response.status} - ${errorText}`,
-          context: { filePath: audioPath, apiError: errorText },
+          details: `Status: ${response.status} - ${response.body}`,
+          context: { filePath: audioPath, apiError: response.body },
         });
-        return { success: false, error: `API Error: ${response.status} - ${errorText}` };
+        return { success: false, error: `API Error: ${response.status} - ${response.body}` };
       }
 
-      const data = await response.json() as MediaFlowTranscriptionResponse;
+      mediaflowUsageStore.scheduleRefresh();
+      const data = JSON.parse(response.body) as MediaFlowTranscriptionResponse;
       const result: DeepgramResult = processDeepgramResponse(normalizedToDeepgramResponse(data));
 
       if (result.transcript.trim().length === 0 && result.phrases.length === 0) {
@@ -150,11 +157,11 @@ export async function transcribeWithMediaFlow(options: MediaFlowTranscribeOption
 
       return { success: true, result };
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
+      if (isTranscriptionCancelledError(error)) {
         return { success: false, error: 'Transcription cancelled' };
       }
 
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = errorToMessage(error, 'Transcription failed');
       logStore.addLog({
         level: 'error',
         source: 'mediaflow',
@@ -163,6 +170,8 @@ export async function transcribeWithMediaFlow(options: MediaFlowTranscribeOption
         context: { filePath: audioPath },
       });
       return { success: false, error: errorMessage };
+    } finally {
+      detachCancel();
     }
   });
 }

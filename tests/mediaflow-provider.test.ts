@@ -2,11 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchMediaFlowApiMock = vi.hoisted(() => vi.fn());
 const fetchMediaFlowBillableApiMock = vi.hoisted(() => vi.fn());
-const readFileMock = vi.hoisted(() => vi.fn());
+const getMediaFlowAccessTokenMock = vi.hoisted(() => vi.fn());
+const getMediaFlowBaseUrlMock = vi.hoisted(() => vi.fn());
+const refreshMediaFlowSessionMock = vi.hoisted(() => vi.fn());
+const invokeMock = vi.hoisted(() => vi.fn());
 const addLogMock = vi.hoisted(() => vi.fn());
+const scheduleUsageRefreshMock = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/services/mediaflow-auth', () => ({
   fetchMediaFlowApi: fetchMediaFlowApiMock,
+  getMediaFlowAccessToken: getMediaFlowAccessTokenMock,
+  getMediaFlowBaseUrl: getMediaFlowBaseUrlMock,
+  refreshMediaFlowSession: refreshMediaFlowSessionMock,
 }));
 
 vi.mock('$lib/services/mediaflow-billing', () => ({
@@ -19,20 +26,31 @@ vi.mock('$lib/stores/logs.svelte', () => ({
   },
 }));
 
-vi.mock('@tauri-apps/plugin-fs', () => ({
-  readFile: readFileMock,
+vi.mock('$lib/stores/mediaflow-usage.svelte', () => ({
+  mediaflowUsageStore: {
+    scheduleRefresh: scheduleUsageRefreshMock,
+  },
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn().mockResolvedValue(null),
+  invoke: invokeMock,
 }));
 
 describe('MediaFlow provider adapters', () => {
   beforeEach(() => {
     fetchMediaFlowApiMock.mockReset();
     fetchMediaFlowBillableApiMock.mockReset();
-    readFileMock.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
+    getMediaFlowAccessTokenMock.mockReset().mockResolvedValue('access-token');
+    getMediaFlowBaseUrlMock.mockReset().mockReturnValue('http://localhost:5173');
+    refreshMediaFlowSessionMock.mockReset().mockResolvedValue('refreshed-token');
+    invokeMock.mockReset().mockImplementation((command: string) => {
+      if (command === 'acquire_sleep_inhibit') {
+        return Promise.resolve(1);
+      }
+      return Promise.resolve(null);
+    });
     addLogMock.mockReset();
+    scheduleUsageRefreshMock.mockReset();
   });
 
   it('maps a MediaFlow chat completion response to the internal LLM shape', async () => {
@@ -66,10 +84,9 @@ describe('MediaFlow provider adapters', () => {
     }));
   });
 
-  it('builds the MediaFlow audio payload using the same Deepgram options', async () => {
-    const { buildMediaFlowTranscriptionForm } = await import('../src/lib/services/mediaflow-transcription');
-    const form = buildMediaFlowTranscriptionForm(new Blob(['audio'], { type: 'audio/opus' }), {
-      model: 'nova-3',
+  it('maps a MediaFlow transcription response to the internal transcription result', async () => {
+    const config = {
+      model: 'nova-3' as const,
       language: 'multi',
       punctuate: true,
       paragraphs: true,
@@ -77,59 +94,62 @@ describe('MediaFlow provider adapters', () => {
       utterances: true,
       uttSplit: 0.8,
       diarize: false,
+    };
+
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'acquire_sleep_inhibit') {
+        return Promise.resolve(1);
+      }
+      if (command === 'transcribe_mediaflow_audio_file') {
+        return Promise.resolve({
+          status: 200,
+          body: JSON.stringify({
+            transcript: 'hello world',
+            words: [
+              { word: 'hello', punctuated_word: 'hello', start: 0, end: 0.4, confidence: 0.99 },
+              { word: 'world', punctuated_word: 'world', start: 0.5, end: 0.9, confidence: 0.98 },
+            ],
+            metadata: { request_id: 'dg_1', duration: 1.2 },
+          }),
+        });
+      }
+      return Promise.resolve(null);
     });
-
-    expect(form.get('file')).toBeInstanceOf(File);
-    expect(form.get('model')).toBe('nova-3');
-    expect(form.get('language')).toBe('multi');
-    expect(form.get('punctuate')).toBe('true');
-    expect(form.get('paragraphs')).toBe('true');
-    expect(form.get('smart_format')).toBe('true');
-    expect(form.get('utterances')).toBe('true');
-    expect(form.get('utt_split')).toBe('0.8');
-    expect(form.get('diarize')).toBe('false');
-    expect(form.has('detect_language')).toBe(false);
-  });
-
-  it('maps a MediaFlow transcription response to the internal transcription result', async () => {
-    fetchMediaFlowBillableApiMock.mockResolvedValueOnce(new Response(JSON.stringify({
-      transcript: 'hello world',
-      words: [
-        { word: 'hello', punctuated_word: 'hello', start: 0, end: 0.4, confidence: 0.99 },
-        { word: 'world', punctuated_word: 'world', start: 0.5, end: 0.9, confidence: 0.98 },
-      ],
-      metadata: { request_id: 'dg_1', duration: 1.2 },
-    }), { status: 200 }));
 
     const { transcribeWithMediaFlow } = await import('../src/lib/services/mediaflow-transcription');
     const result = await transcribeWithMediaFlow({
       audioPath: '/tmp/audio.opus',
-      config: {
-        model: 'nova-3',
-        language: 'multi',
-        punctuate: true,
-        paragraphs: true,
-        smartFormat: true,
-        utterances: true,
-        uttSplit: 0.8,
-        diarize: false,
-      },
+      config,
     });
 
     expect(result.success).toBe(true);
     expect(result.result?.transcript).toBe('hello world');
-    expect(fetchMediaFlowBillableApiMock).toHaveBeenCalledWith(
-      '/api/v1/audio/transcriptions',
-      expect.any(Function),
-    );
+    expect(invokeMock).toHaveBeenCalledWith('transcribe_mediaflow_audio_file', expect.objectContaining({
+      audioPath: '/tmp/audio.opus',
+      config,
+      accessToken: 'access-token',
+      url: expect.stringContaining('/api/v1/audio/transcriptions'),
+    }));
+    expect(scheduleUsageRefreshMock).toHaveBeenCalled();
   });
 
   it('rejects empty MediaFlow transcription responses instead of creating blank versions', async () => {
-    fetchMediaFlowBillableApiMock.mockResolvedValueOnce(new Response(JSON.stringify({
-      transcript: '',
-      words: [],
-      metadata: { request_id: 'dg_empty', duration: 840 },
-    }), { status: 200 }));
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'acquire_sleep_inhibit') {
+        return Promise.resolve(1);
+      }
+      if (command === 'transcribe_mediaflow_audio_file') {
+        return Promise.resolve({
+          status: 200,
+          body: JSON.stringify({
+            transcript: '',
+            words: [],
+            metadata: { request_id: 'dg_empty', duration: 840 },
+          }),
+        });
+      }
+      return Promise.resolve(null);
+    });
 
     const { transcribeWithMediaFlow } = await import('../src/lib/services/mediaflow-transcription');
     const result = await transcribeWithMediaFlow({

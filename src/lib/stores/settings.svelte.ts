@@ -1,9 +1,4 @@
 import { Store } from '@tauri-apps/plugin-store';
-import {
-  DEFAULT_MEDIAFLOW_BASE_URL,
-  IS_MEDIAFLOW_BASE_URL_OVERRIDE_ALLOWED,
-  resolveMediaFlowBaseUrl,
-} from '$lib/config/api';
 import { DEFAULT_OCR_REGION } from '$lib/types';
 import type { LLMApiKeyProvider, LLMApiKeys, LLMProvider, OcrRegion, TranslationSettings } from '$lib/types';
 
@@ -22,7 +17,6 @@ export interface AppSettings {
   translationSettings: TranslationSettings;
   openRouterModels: string[]; // Saved OpenRouter model IDs
   deepgramApiKey: string;     // Deepgram API key for transcription
-  mediaflowBaseUrl: string;
   mediaflowUser: MediaFlowUser | null;
   videoOcrGlobalRegion: OcrRegion;
 }
@@ -44,7 +38,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   },
   openRouterModels: [],
   deepgramApiKey: '',
-  mediaflowBaseUrl: DEFAULT_MEDIAFLOW_BASE_URL,
   mediaflowUser: null,
   videoOcrGlobalRegion: { ...DEFAULT_OCR_REGION }
 };
@@ -77,7 +70,6 @@ export const settingsStore = {
       const translationSettings = await s.get<TranslationSettings>('translationSettings');
       const openRouterModels = await s.get<string[]>('openRouterModels');
       const deepgramApiKey = await s.get<string>('deepgramApiKey');
-      const mediaflowBaseUrl = await s.get<string>('mediaflowBaseUrl');
       const mediaflowUser = await s.get<MediaFlowUser | null>('mediaflowUser');
       const videoOcrGlobalRegion = await s.get<OcrRegion>('videoOcrGlobalRegion');
 
@@ -90,7 +82,6 @@ export const settingsStore = {
         translationSettings: translationSettings ?? DEFAULT_SETTINGS.translationSettings,
         openRouterModels: openRouterModels ?? DEFAULT_SETTINGS.openRouterModels,
         deepgramApiKey: deepgramApiKey ?? DEFAULT_SETTINGS.deepgramApiKey,
-        mediaflowBaseUrl: resolveMediaFlowBaseUrl(mediaflowBaseUrl),
         mediaflowUser: mediaflowUser ?? DEFAULT_SETTINGS.mediaflowUser,
         videoOcrGlobalRegion: videoOcrGlobalRegion ?? { ...DEFAULT_SETTINGS.videoOcrGlobalRegion }
       };
@@ -192,15 +183,6 @@ export const settingsStore = {
 
   hasMediaFlowSession(): boolean {
     return Boolean(settings.mediaflowUser);
-  },
-
-  async setMediaFlowBaseUrl(baseUrl: string) {
-    const normalized = resolveMediaFlowBaseUrl(baseUrl);
-    settings = { ...settings, mediaflowBaseUrl: normalized };
-    if (!IS_MEDIAFLOW_BASE_URL_OVERRIDE_ALLOWED) return;
-
-    const s = await getStore();
-    await s.set('mediaflowBaseUrl', normalized);
   },
 
   async setMediaFlowUser(user: MediaFlowUser | null) {

@@ -6,9 +6,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::validation::validate_media_path;
+use crate::tools::mediaflow_api;
 
 static TRANSCRIPTION_UPLOAD_ABORTS: LazyLock<Mutex<HashMap<String, AbortHandle>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+const DEEPGRAM_LISTEN_URL: &str = "https://api.deepgram.com/v1/listen";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,11 +71,8 @@ fn deepgram_query_params(config: &TranscriptionUploadConfig) -> Vec<(&'static st
     ]
 }
 
-fn deepgram_request_url(
-    listen_url: &str,
-    config: &TranscriptionUploadConfig,
-) -> Result<reqwest::Url, String> {
-    let mut url = reqwest::Url::parse(listen_url)
+fn deepgram_request_url(config: &TranscriptionUploadConfig) -> Result<reqwest::Url, String> {
+    let mut url = reqwest::Url::parse(DEEPGRAM_LISTEN_URL)
         .map_err(|e| format!("Invalid Deepgram transcription URL: {}", e))?;
     {
         let mut query = url.query_pairs_mut();
@@ -156,12 +155,11 @@ pub(crate) async fn transcribe_deepgram_audio_file(
     audio_path: String,
     config: TranscriptionUploadConfig,
     api_key: String,
-    listen_url: String,
 ) -> Result<TranscriptionHttpResponse, String> {
     run_abortable_upload(request_id, async move {
         let _sleep_guard = SleepInhibitGuard::try_acquire("MediaFlow: Transcription").ok();
         let client = http_client()?;
-        let url = deepgram_request_url(&listen_url, &config)?;
+        let url = deepgram_request_url(&config)?;
         let (file, length) = open_audio_file(&audio_path).await?;
 
         let response = client
@@ -185,12 +183,11 @@ pub(crate) async fn transcribe_mediaflow_audio_file(
     audio_path: String,
     config: TranscriptionUploadConfig,
     access_token: String,
-    url: String,
 ) -> Result<TranscriptionHttpResponse, String> {
     run_abortable_upload(request_id, async move {
         let _sleep_guard = SleepInhibitGuard::try_acquire("MediaFlow: Transcription").ok();
         let client = http_client()?;
-        let url = reqwest::Url::parse(&url)
+        let url = reqwest::Url::parse(&mediaflow_api::audio_transcriptions_url())
             .map_err(|e| format!("Invalid MediaFlow transcription URL: {}", e))?;
         let (file, length) = open_audio_file(&audio_path).await?;
 
@@ -235,8 +232,8 @@ pub(crate) fn cancel_audio_transcription_upload(request_id: String) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::{
-        TranscriptionUploadConfig, deepgram_model_for_language, deepgram_query_params,
-        deepgram_request_url, mediaflow_form_params,
+        DEEPGRAM_LISTEN_URL, TranscriptionUploadConfig, deepgram_model_for_language,
+        deepgram_query_params, deepgram_request_url, mediaflow_form_params,
     };
 
     fn config() -> TranscriptionUploadConfig {
@@ -275,10 +272,10 @@ mod tests {
 
     #[test]
     fn deepgram_request_url_maps_config_to_query_params() {
-        let url = deepgram_request_url("https://api.deepgram.com/v1/listen", &config())
-            .expect("valid URL expected");
+        let url = deepgram_request_url(&config()).expect("valid URL expected");
         let query = url.query().expect("query should be present");
 
+        assert_eq!(url.as_str().split('?').next(), Some(DEEPGRAM_LISTEN_URL));
         assert!(query.contains("model=nova-3-general"));
         assert!(query.contains("language=fr"));
         assert!(query.contains("smart_format=true"));

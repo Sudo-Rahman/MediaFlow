@@ -17,7 +17,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {
@@ -41,6 +40,16 @@ pub fn run() {
             commands::fs_cancel::cancel_copy_file,
             commands::fs_metadata::get_file_metadata,
             commands::tokens::count_tokens,
+            commands::llm::llm_complete,
+            commands::llm::cancel_llm_request,
+            commands::translation::parse_translation_response,
+            commands::mediaflow_api::open_mediaflow_sign_in,
+            commands::mediaflow_api::open_mediaflow_dashboard,
+            commands::mediaflow_api::exchange_mediaflow_authorization_code,
+            commands::mediaflow_api::refresh_mediaflow_access_token,
+            commands::mediaflow_api::fetch_mediaflow_user_info,
+            commands::mediaflow_api::revoke_mediaflow_refresh_token,
+            commands::mediaflow_api::fetch_mediaflow_account_usage,
             commands::sleep_inhibit::acquire_sleep_inhibit,
             commands::sleep_inhibit::release_sleep_inhibit,
             // Audio transcription commands

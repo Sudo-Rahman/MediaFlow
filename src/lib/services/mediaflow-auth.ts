@@ -1,16 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
-import { fetch as httpFetch } from '@tauri-apps/plugin-http';
-import { openUrl } from '@tauri-apps/plugin-opener';
-import { mediaFlowUrl, resolveMediaFlowBaseUrl } from '$lib/config/api';
 import { settingsStore, type MediaFlowUser } from '$lib/stores/settings.svelte';
 import { logStore } from '$lib/stores/logs.svelte';
 
-const CLIENT_ID = 'mediaflow-desktop';
-const APP_REDIRECT_URI = 'mediaflow://oauth/callback';
-const WEB_OAUTH_CALLBACK_PATH = '/desktop/oauth/callback';
-const AUTH_SCOPE = 'openid profile email offline_access';
 const ACCESS_TOKEN_REFRESH_BUFFER_MS = 60_000;
 const PENDING_LOGIN_STORAGE_KEY = 'mediaflow.oauth.pendingLogin';
 const PENDING_LOGIN_TTL_MS = 10 * 60 * 1000;
@@ -38,8 +31,6 @@ interface ApplyTokenOptions {
 interface PendingLogin {
   state: string;
   codeVerifier: string;
-  baseUrl: string;
-  redirectUri?: string;
   createdAt: number;
 }
 
@@ -51,31 +42,6 @@ let unlistenNativeDeepLink: (() => void) | null = null;
 let restorePromise: Promise<void> | null = null;
 let refreshPromise: Promise<string> | null = null;
 const callbackStatesInProgress = new Set<string>();
-
-export function getMediaFlowBaseUrl(): string {
-  return resolveMediaFlowBaseUrl(settingsStore.settings.mediaflowBaseUrl);
-}
-
-function authBaseUrl(): string {
-  return mediaFlowUrl('/api/auth', settingsStore.settings.mediaflowBaseUrl);
-}
-
-function authBaseUrlFor(baseUrl: string): string {
-  return mediaFlowUrl('/api/auth', baseUrl);
-}
-
-function webRedirectUriFor(baseUrl: string): string {
-  return mediaFlowUrl(WEB_OAUTH_CALLBACK_PATH, baseUrl);
-}
-
-function loginUrlFor(baseUrl: string, redirectTo: string): string {
-  const params = new URLSearchParams({ redirectTo });
-  return `${mediaFlowUrl('/auth/login', baseUrl)}?${params}`;
-}
-
-function apiUrl(path: string): string {
-  return mediaFlowUrl(path, settingsStore.settings.mediaflowBaseUrl);
-}
 
 function bytesToBase64Url(bytes: Uint8Array): string {
   let binary = '';
@@ -110,7 +76,6 @@ function isPendingLogin(value: unknown): value is PendingLogin {
   return (
     typeof candidate.state === 'string' &&
     typeof candidate.codeVerifier === 'string' &&
-    typeof candidate.baseUrl === 'string' &&
     typeof candidate.createdAt === 'number'
   );
 }
@@ -205,38 +170,8 @@ export function isMediaFlowOAuthCallbackUrl(url: string): boolean {
   }
 }
 
-async function tokenRequest(body: URLSearchParams, baseUrl = getMediaFlowBaseUrl()): Promise<TokenResponse> {
-  const response = await httpFetch(`${authBaseUrlFor(baseUrl)}/oauth2/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`MediaFlow OAuth token request failed (${response.status}): ${errorText}`);
-  }
-
-  return await response.json() as TokenResponse;
-}
-
 async function fetchUserInfo(token: string): Promise<MediaFlowUser> {
-  const response = await httpFetch(`${authBaseUrl()}/oauth2/userinfo`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to fetch MediaFlow account information.');
-  }
-
-  const body = await response.json() as Record<string, unknown>;
-  const email = typeof body.email === 'string' ? body.email : '';
-  if (!email) {
-    throw new Error('MediaFlow account response did not include an email.');
-  }
-
-  const name = typeof body.name === 'string' ? body.name : undefined;
-  return { email, name };
+  return invoke<MediaFlowUser>('fetch_mediaflow_user_info', { accessToken: token });
 }
 
 function refreshTokenFromResponse(tokenResponse: TokenResponse): string | null {
@@ -277,16 +212,11 @@ async function applyTokenResponse(
 async function exchangeAuthorizationCode(
   code: string,
   codeVerifier: string,
-  baseUrl: string,
-  redirectUri: string,
 ): Promise<string> {
-  return applyTokenResponse(await tokenRequest(new URLSearchParams({
-    grant_type: 'authorization_code',
-    client_id: CLIENT_ID,
-    redirect_uri: redirectUri,
+  return applyTokenResponse(await invoke<TokenResponse>('exchange_mediaflow_authorization_code', {
     code,
-    code_verifier: codeVerifier,
-  }), baseUrl), { requireRefreshToken: true });
+    codeVerifier,
+  }), { requireRefreshToken: true });
 }
 
 async function handleOAuthCallbackUrl(url: string): Promise<void> {
@@ -319,8 +249,6 @@ async function handleOAuthCallbackUrl(url: string): Promise<void> {
     await exchangeAuthorizationCode(
       callback.code,
       login.codeVerifier,
-      login.baseUrl,
-      login.redirectUri ?? APP_REDIRECT_URI,
     );
     logStore.addLog({
       level: 'success',
@@ -404,28 +332,16 @@ export async function signInWithMediaFlow(): Promise<void> {
   await initMediaFlowAuth();
   const { codeVerifier, codeChallenge } = await createPkcePair();
   const state = randomBase64Url(24);
-  const baseUrl = getMediaFlowBaseUrl();
-  const redirectUri = webRedirectUriFor(baseUrl);
-  storePendingLogin({ state, codeVerifier, baseUrl, redirectUri, createdAt: Date.now() });
+  storePendingLogin({ state, codeVerifier, createdAt: Date.now() });
   logStore.addLog({
     level: 'info',
     source: 'mediaflow',
     title: 'OAuth sign-in started',
-    details: `Waiting for browser callback from ${baseUrl}.`,
-  });
-
-  const params = new URLSearchParams({
-    client_id: CLIENT_ID,
-    redirect_uri: redirectUri,
-    response_type: 'code',
-    scope: AUTH_SCOPE,
-    code_challenge: codeChallenge,
-    code_challenge_method: 'S256',
-    state,
+    details: 'Waiting for MediaFlow browser callback.',
   });
 
   try {
-    await openUrl(loginUrlFor(baseUrl, `/api/auth/oauth2/authorize?${params}`));
+    await invoke('open_mediaflow_sign_in', { codeChallenge, state });
   } catch (error) {
     clearPendingLogin();
     logStore.addLog({
@@ -454,11 +370,9 @@ export async function refreshMediaFlowSession(): Promise<string> {
     }
 
     try {
-      return await applyTokenResponse(await tokenRequest(new URLSearchParams({
-        grant_type: 'refresh_token',
-        client_id: CLIENT_ID,
-        refresh_token: refreshToken,
-      })), { fallbackRefreshToken: refreshToken });
+      return await applyTokenResponse(await invoke<TokenResponse>('refresh_mediaflow_access_token', {
+        refreshToken,
+      }), { fallbackRefreshToken: refreshToken });
     } catch (error) {
       accessToken = null;
       accessTokenExpiresAt = 0;
@@ -488,15 +402,7 @@ export async function signOutMediaFlow(): Promise<void> {
 
   if (refreshToken) {
     try {
-      await httpFetch(`${authBaseUrl()}/oauth2/revoke`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: CLIENT_ID,
-          token: refreshToken,
-          token_type_hint: 'refresh_token',
-        }),
-      });
+      await invoke('revoke_mediaflow_refresh_token', { refreshToken });
     } catch (error) {
       console.warn('MediaFlow token revocation failed:', error);
     }
@@ -508,26 +414,25 @@ export async function signOutMediaFlow(): Promise<void> {
   await settingsStore.setMediaFlowUser(null);
 }
 
-export async function fetchMediaFlowApi(
-  path: string,
-  init: RequestInit | (() => RequestInit | Promise<RequestInit>),
-): Promise<Response> {
-  const makeInit = typeof init === 'function' ? init : () => init;
-  const buildRequest = async (token: string) => {
-    const requestInit = await makeInit();
-    const headers = new Headers(requestInit.headers);
-    headers.set('Authorization', `Bearer ${token}`);
-    return {
-      ...requestInit,
-      headers,
-    };
-  };
+export interface MediaFlowHttpResponse {
+  status: number;
+  body: string;
+}
 
-  let response = await httpFetch(apiUrl(path), await buildRequest(await getMediaFlowAccessToken()));
+export async function fetchMediaFlowAccountUsage(): Promise<MediaFlowHttpResponse> {
+  let response = await invoke<MediaFlowHttpResponse>('fetch_mediaflow_account_usage', {
+    accessToken: await getMediaFlowAccessToken(),
+  });
   if (response.status !== 401) {
     return response;
   }
 
-  response = await httpFetch(apiUrl(path), await buildRequest(await refreshMediaFlowSession()));
+  response = await invoke<MediaFlowHttpResponse>('fetch_mediaflow_account_usage', {
+    accessToken: await refreshMediaFlowSession(),
+  });
   return response;
+}
+
+export async function openMediaFlowDashboard(): Promise<void> {
+  await invoke('open_mediaflow_dashboard');
 }

@@ -1,9 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
-import { joinApiUrl } from '$lib/config/api';
 import { logStore } from '$lib/stores/logs.svelte';
 import { mediaflowUsageStore } from '$lib/stores/mediaflow-usage.svelte';
 import type { DeepgramAPIResponse, DeepgramConfig, DeepgramResult } from '$lib/types';
-import { getMediaFlowAccessToken, getMediaFlowBaseUrl, refreshMediaFlowSession } from './mediaflow-auth';
+import { getMediaFlowAccessToken, refreshMediaFlowSession } from './mediaflow-auth';
 import {
   attachTranscriptionUploadCancel,
   createTranscriptionRequestId,
@@ -96,7 +95,6 @@ export async function transcribeWithMediaFlow(options: MediaFlowTranscribeOption
           audioPath,
           config,
           accessToken,
-          url: joinApiUrl(getMediaFlowBaseUrl(), '/api/v1/audio/transcriptions'),
         });
 
       let response = await transcribeWithToken(await getMediaFlowAccessToken());

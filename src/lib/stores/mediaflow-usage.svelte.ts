@@ -1,4 +1,4 @@
-import { fetchMediaFlowApi } from '$lib/services/mediaflow-auth';
+import { fetchMediaFlowAccountUsage, type MediaFlowHttpResponse } from '$lib/services/mediaflow-auth';
 
 export type MediaFlowUsageStatus = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -27,7 +27,6 @@ interface MediaFlowApiErrorBody {
   };
 }
 
-const USAGE_ENDPOINT = '/api/v1/account/usage';
 const SCHEDULE_REFRESH_DELAY_MS = 250;
 
 let usage = $state<MediaFlowUsage | null>(null);
@@ -67,9 +66,9 @@ function normalizeUsage(payload: unknown): MediaFlowUsage {
   };
 }
 
-async function responseErrorMessage(response: Response): Promise<string> {
+async function responseErrorMessage(response: MediaFlowHttpResponse): Promise<string> {
   try {
-    const body = await response.json() as MediaFlowApiErrorBody;
+    const body = JSON.parse(response.body) as MediaFlowApiErrorBody;
     const code = body.error?.code;
     const message = body.error?.message;
     if (code && message) return `${message} (${code})`;
@@ -83,9 +82,9 @@ async function responseErrorMessage(response: Response): Promise<string> {
 }
 
 async function fetchUsage(): Promise<MediaFlowUsage> {
-  const response = await fetchMediaFlowApi(USAGE_ENDPOINT, { method: 'GET' });
-  if (response.ok) {
-    return normalizeUsage(await response.json());
+  const response = await fetchMediaFlowAccountUsage();
+  if (response.status >= 200 && response.status < 300) {
+    return normalizeUsage(JSON.parse(response.body));
   }
 
   throw new Error(await responseErrorMessage(response));

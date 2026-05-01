@@ -1,6 +1,5 @@
 <script lang="ts">
   import { toast } from 'svelte-sonner';
-  import { openUrl } from '@tauri-apps/plugin-opener';
   import {
     ChevronsUpDown,
     LayoutDashboard,
@@ -19,7 +18,7 @@
   import { mediaflowUsageStore, settingsStore } from '$lib/stores';
   import {
     cancelPendingMediaFlowSignIn,
-    getMediaFlowBaseUrl,
+    openMediaFlowDashboard,
     signInWithMediaFlow,
     signOutMediaFlow,
   } from '$lib/services/mediaflow-auth';
@@ -87,13 +86,9 @@
     });
   });
 
-  function dashboardUrl(): string {
-    return `${getMediaFlowBaseUrl()}/dashboard`;
-  }
-
   async function handleOpenDashboard(): Promise<void> {
     try {
-      await openUrl(dashboardUrl());
+      await openMediaFlowDashboard();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       toast.error(message);

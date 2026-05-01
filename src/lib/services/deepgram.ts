@@ -4,7 +4,6 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import { PROVIDER_API_URLS } from '$lib/config/api';
 import { settingsStore } from '$lib/stores/settings.svelte';
 import { logStore } from '$lib/stores/logs.svelte';
 import type {
@@ -172,7 +171,6 @@ export async function transcribeWithDeepgram(options: TranscribeOptions): Promis
         audioPath,
         config,
         apiKey,
-        listenUrl: PROVIDER_API_URLS.deepgramListen,
       });
       if (signal?.aborted) {
         return { success: false, error: 'Transcription cancelled' };

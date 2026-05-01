@@ -3,12 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const invokeMock = vi.hoisted(() => vi.fn());
 const getCurrentMock = vi.hoisted(() => vi.fn<() => Promise<string[] | null>>(async () => null));
 const onOpenUrlMock = vi.hoisted(() => vi.fn<() => Promise<() => void>>(async () => () => {}));
-const openUrlMock = vi.hoisted(() => vi.fn<(url: string) => Promise<void>>(async () => undefined));
 const listenMock = vi.hoisted(() => vi.fn<() => Promise<() => void>>(async () => () => {}));
-const httpFetchMock = vi.hoisted(() => vi.fn<typeof fetch>());
 const settingsStoreMock = vi.hoisted(() => ({
   settings: {
-    mediaflowBaseUrl: 'http://localhost:5173',
     mediaflowUser: null,
   },
   setMediaFlowUser: vi.fn(async (user) => {
@@ -29,14 +26,6 @@ vi.mock('@tauri-apps/plugin-deep-link', () => ({
   onOpenUrl: onOpenUrlMock,
 }));
 
-vi.mock('@tauri-apps/plugin-opener', () => ({
-  openUrl: openUrlMock,
-}));
-
-vi.mock('@tauri-apps/plugin-http', () => ({
-  fetch: httpFetchMock,
-}));
-
 vi.mock('$lib/stores/settings.svelte', () => ({
   settingsStore: settingsStoreMock,
 }));
@@ -47,34 +36,28 @@ vi.mock('$lib/stores/logs.svelte', () => ({
   },
 }));
 
-function getAuthorizeUrlFromOpenedLogin(): URL {
-  const loginUrl = new URL(openUrlMock.mock.calls[0]?.[0] as string);
-  expect(loginUrl.pathname).toBe('/auth/login');
-
-  const redirectTo = loginUrl.searchParams.get('redirectTo');
-  expect(redirectTo).toMatch(/^\/api\/auth\/oauth2\/authorize\?/);
-
-  const authorizeUrl = new URL(redirectTo as string, loginUrl.origin);
-  expect(authorizeUrl.searchParams.get('redirect_uri')).toBe('http://localhost:5173/desktop/oauth/callback');
-  return authorizeUrl;
+function getOpenSignInArgs(): { codeChallenge: string; state: string } {
+  const call = invokeMock.mock.calls.find(([command]) => command === 'open_mediaflow_sign_in');
+  expect(call).toBeTruthy();
+  return call?.[1] as { codeChallenge: string; state: string };
 }
 
 describe('MediaFlow OAuth helpers', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
-    settingsStoreMock.settings.mediaflowBaseUrl = 'http://localhost:5173';
     settingsStoreMock.settings.mediaflowUser = null;
     invokeMock.mockReset();
     getCurrentMock.mockReset();
     getCurrentMock.mockResolvedValue(null);
     onOpenUrlMock.mockReset();
     onOpenUrlMock.mockResolvedValue(() => {});
-    openUrlMock.mockReset();
-    openUrlMock.mockResolvedValue(undefined);
     listenMock.mockReset();
     listenMock.mockResolvedValue(() => {});
-    httpFetchMock.mockReset();
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === 'open_mediaflow_sign_in') return undefined;
+      throw new Error(`Unexpected command: ${command}`);
+    });
 
     const storage = new Map<string, string>();
     vi.stubGlobal('localStorage', {
@@ -114,39 +97,40 @@ describe('MediaFlow OAuth helpers', () => {
 
     await signInWithMediaFlow();
 
-    const authorizeUrl = getAuthorizeUrlFromOpenedLogin();
-    const callbackUrl = `mediaflow://oauth/callback?code=auth-code&state=${authorizeUrl.searchParams.get('state')}`;
+    const { state } = getOpenSignInArgs();
+    const callbackUrl = `mediaflow://oauth/callback?code=auth-code&state=${state}`;
 
     vi.resetModules();
     getCurrentMock.mockResolvedValue([callbackUrl]);
-    invokeMock.mockImplementation(async (command: string) => {
+    invokeMock.mockImplementation(async (command: string, args?: { refreshToken?: string }) => {
+      if (command === 'exchange_mediaflow_authorization_code') {
+        return {
+          access_token: 'access-token',
+          refresh_token: 'refresh-token',
+          expires_in: 3600,
+        };
+      }
       if (command === 'store_refresh_token') return undefined;
       if (command === 'get_refresh_token') return 'refresh-token';
+      if (command === 'fetch_mediaflow_user_info') {
+        return {
+          email: 'local@example.com',
+          name: 'Local User',
+        };
+      }
       throw new Error(`Unexpected command: ${command}`);
     });
-
-    httpFetchMock
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        access_token: 'access-token',
-        refresh_token: 'refresh-token',
-        expires_in: 3600,
-      }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        email: 'local@example.com',
-        name: 'Local User',
-      }), { status: 200 }));
 
     const { initMediaFlowAuth } = await import('../src/lib/services/mediaflow-auth');
     await initMediaFlowAuth();
 
-    expect(httpFetchMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock).toHaveBeenCalledWith('exchange_mediaflow_authorization_code', expect.objectContaining({
+      code: 'auth-code',
+      codeVerifier: expect.any(String),
+    }));
     expect(invokeMock).toHaveBeenCalledWith('store_refresh_token', { refreshToken: 'refresh-token' });
     expect(invokeMock).toHaveBeenCalledWith('get_refresh_token');
-    const body = httpFetchMock.mock.calls[0]?.[1]?.body as URLSearchParams;
-    expect(body.get('grant_type')).toBe('authorization_code');
-    expect(body.get('code')).toBe('auth-code');
-    expect(body.get('code_verifier')).toBeTruthy();
-    expect(body.get('redirect_uri')).toBe('http://localhost:5173/desktop/oauth/callback');
+    expect(invokeMock).toHaveBeenCalledWith('fetch_mediaflow_user_info', { accessToken: 'access-token' });
     expect(settingsStoreMock.settings.mediaflowUser).toEqual({
       email: 'local@example.com',
       name: 'Local User',
@@ -158,24 +142,26 @@ describe('MediaFlow OAuth helpers', () => {
 
     await signInWithMediaFlow();
 
-    const authorizeUrl = getAuthorizeUrlFromOpenedLogin();
-    const callbackUrl = `mediaflow://oauth/callback?code=auth-code&state=${authorizeUrl.searchParams.get('state')}`;
+    const { state } = getOpenSignInArgs();
+    const callbackUrl = `mediaflow://oauth/callback?code=auth-code&state=${state}`;
 
     vi.resetModules();
     getCurrentMock.mockResolvedValue([callbackUrl]);
     invokeMock.mockImplementation(async (command: string) => {
+      if (command === 'exchange_mediaflow_authorization_code') {
+        return {
+          access_token: 'access-token',
+          expires_in: 3600,
+        };
+      }
       throw new Error(`Unexpected command: ${command}`);
     });
-
-    httpFetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
-      access_token: 'access-token',
-      expires_in: 3600,
-    }), { status: 200 }));
 
     const { initMediaFlowAuth } = await import('../src/lib/services/mediaflow-auth');
     await expect(initMediaFlowAuth()).rejects.toThrow(/refresh token/i);
 
-    expect(invokeMock).not.toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith('exchange_mediaflow_authorization_code', expect.any(Object));
+    expect(invokeMock).not.toHaveBeenCalledWith('store_refresh_token', expect.any(Object));
     expect(settingsStoreMock.settings.mediaflowUser).toBeNull();
   });
 
@@ -187,7 +173,7 @@ describe('MediaFlow OAuth helpers', () => {
     await expect(initMediaFlowAuth()).resolves.toBeUndefined();
   });
 
-  it('refreshes a token and retries once after an invalid bearer response', async () => {
+  it('refreshes a token and retries usage once after an invalid bearer response', async () => {
     let storedRefreshToken = 'refresh-token';
     invokeMock.mockImplementation(async (command: string, args?: { refreshToken?: string }) => {
       if (command === 'get_refresh_token') return storedRefreshToken;
@@ -195,41 +181,44 @@ describe('MediaFlow OAuth helpers', () => {
         storedRefreshToken = args?.refreshToken ?? storedRefreshToken;
         return undefined;
       }
+      if (command === 'refresh_mediaflow_access_token') {
+        const token = storedRefreshToken === 'refresh-token' ? 'access-1' : 'access-2';
+        const refreshToken = storedRefreshToken === 'refresh-token' ? 'refresh-1' : 'refresh-2';
+        return {
+          access_token: token,
+          refresh_token: refreshToken,
+          expires_in: 3600,
+        };
+      }
+      if (command === 'fetch_mediaflow_user_info') {
+        return {
+          email: 'local@example.com',
+          name: 'Local User',
+        };
+      }
+      if (command === 'fetch_mediaflow_account_usage') {
+        const accessToken = (args as { accessToken?: string } | undefined)?.accessToken;
+        if (accessToken === 'access-1') {
+          return {
+            status: 401,
+            body: JSON.stringify({
+              error: { code: 'invalid_token', message: 'Invalid or expired token.' },
+            }),
+          };
+        }
+        return {
+          status: 200,
+          body: JSON.stringify({ ok: true }),
+        };
+      }
       throw new Error(`Unexpected command: ${command}`);
     });
 
-    httpFetchMock
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        access_token: 'access-1',
-        refresh_token: 'refresh-1',
-        expires_in: 3600,
-      }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        email: 'local@example.com',
-        name: 'Local User',
-      }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        error: { code: 'invalid_token', message: 'Invalid or expired token.' },
-      }), { status: 401 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        access_token: 'access-2',
-        refresh_token: 'refresh-2',
-        expires_in: 3600,
-      }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        email: 'local@example.com',
-        name: 'Local User',
-      }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const { fetchMediaFlowAccountUsage } = await import('../src/lib/services/mediaflow-auth');
+    const response = await fetchMediaFlowAccountUsage();
 
-    const { fetchMediaFlowApi } = await import('../src/lib/services/mediaflow-auth');
-    const response = await fetchMediaFlowApi('/api/v1/models', { method: 'GET' });
-
-    await expect(response.json()).resolves.toEqual({ ok: true });
-    expect(httpFetchMock).toHaveBeenCalledTimes(6);
-    const firstApiHeaders = new Headers(httpFetchMock.mock.calls[2]?.[1]?.headers);
-    const retriedApiHeaders = new Headers(httpFetchMock.mock.calls[5]?.[1]?.headers);
-    expect(firstApiHeaders.get('Authorization')).toBe('Bearer access-1');
-    expect(retriedApiHeaders.get('Authorization')).toBe('Bearer access-2');
+    expect(JSON.parse(response.body)).toEqual({ ok: true });
+    expect(invokeMock).toHaveBeenCalledWith('fetch_mediaflow_account_usage', { accessToken: 'access-1' });
+    expect(invokeMock).toHaveBeenCalledWith('fetch_mediaflow_account_usage', { accessToken: 'access-2' });
   });
 });

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Component } from 'svelte';
   import type { IconProps } from '@lucide/svelte';
+  import * as Item from '$lib/components/ui/item'
 
   import { cn } from '$lib/utils';
 
@@ -71,9 +72,11 @@
 >
   <div class="flex flex-col items-center text-center">
     <div class="relative mb-4">
-      <div class="flex items-center justify-center size-20 rounded-full bg-muted/50">
-        <Icon class="size-12 text-muted-foreground" />
-      </div>
+        <Item.Root variant="muted" class="flex items-center justify-center size-20 rounded-full">
+            <Item.Title>
+                <Icon class="size-12 text-muted-foreground" />
+            </Item.Title>
+        </Item.Root>
     </div>
 
     <p class="text-lg font-medium text-muted-foreground">
@@ -83,10 +86,12 @@
       {subtitle}
     </p>
 
-    <div class="mt-4 px-4 py-2 bg-muted/50 rounded-md">
-      <p class="text-xs text-muted-foreground/70">
-        Supported formats: {formatText}
-      </p>
-    </div>
+    <Item.Root variant="muted" class="mt-4 px-4 py-2 ">
+        <Item.Title>
+            <p class="text-xs text-muted-foreground/70">
+              Supported formats: {formatText}
+            </p>
+        </Item.Title>
+    </Item.Root>
   </div>
 </div>

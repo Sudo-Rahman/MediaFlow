@@ -6,7 +6,7 @@
 </script>
 
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
@@ -87,36 +87,51 @@
     return Math.round(durationSeconds * 1_000_000);
   }
 
-  onMount(async () => {
-    unlistenExtractProgress = await listen<ExtractProgressEvent>('extract-progress', (event) => {
-      if (!extractionStore.isExtracting || !activeExtractionKey) {
+  onMount(() => {
+    let destroyed = false;
+
+    const setup = async () => {
+      const unlisten = await listen<ExtractProgressEvent>('extract-progress', (event) => {
+        if (!extractionStore.isExtracting || !activeExtractionKey) {
+          return;
+        }
+
+        const { inputPath, trackIndex, progress, speedBytesPerSec } = event.payload;
+        const eventKey = buildExtractionKey(inputPath, trackIndex);
+        if (eventKey !== activeExtractionKey) {
+          return;
+        }
+
+        const currentTrackProgress = clampProgress(progress);
+        const fileCompletedTracks = runFileCompletedTracks.get(inputPath) ?? 0;
+        const fileTotalTracks = Math.max(runFileTrackTotals.get(inputPath) ?? 1, 1);
+        const currentFileProgress = clampProgress(
+          ((fileCompletedTracks + currentTrackProgress / 100) / fileTotalTracks) * 100,
+        );
+
+        extractionStore.setLiveProgress(
+          currentTrackProgress,
+          currentFileProgress,
+          speedBytesPerSec,
+        );
+        extractionStore.updateFileProgress(inputPath, currentFileProgress, speedBytesPerSec);
+      });
+
+      if (destroyed) {
+        unlisten();
         return;
       }
 
-      const { inputPath, trackIndex, progress, speedBytesPerSec } = event.payload;
-      const eventKey = buildExtractionKey(inputPath, trackIndex);
-      if (eventKey !== activeExtractionKey) {
-        return;
-      }
+      unlistenExtractProgress = unlisten;
+    };
 
-      const currentTrackProgress = clampProgress(progress);
-      const fileCompletedTracks = runFileCompletedTracks.get(inputPath) ?? 0;
-      const fileTotalTracks = Math.max(runFileTrackTotals.get(inputPath) ?? 1, 1);
-      const currentFileProgress = clampProgress(
-        ((fileCompletedTracks + currentTrackProgress / 100) / fileTotalTracks) * 100,
-      );
+    void setup();
 
-      extractionStore.setLiveProgress(
-        currentTrackProgress,
-        currentFileProgress,
-        speedBytesPerSec,
-      );
-      extractionStore.updateFileProgress(inputPath, currentFileProgress, speedBytesPerSec);
-    });
-  });
-
-  onDestroy(() => {
-    unlistenExtractProgress?.();
+    return () => {
+      destroyed = true;
+      unlistenExtractProgress?.();
+      unlistenExtractProgress = null;
+    };
   });
 
   function trackTypeToImportKind(type: Track['type']): ExtractedOutputItem['kind'] | null {
@@ -668,6 +683,10 @@
       EXTRACTION_SOURCE_LABEL,
       extractedOutputItems,
     );
+
+    return () => {
+      toolImportStore.clearSource('extraction_outputs');
+    };
   });
 
   $effect(() => {
@@ -677,6 +696,10 @@
       EXTRACTION_SOURCE_LABEL,
       mediaImportItems,
     );
+
+    return () => {
+      toolImportStore.clearSource('extraction_media');
+    };
   });
 </script>
 

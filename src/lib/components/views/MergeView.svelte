@@ -885,28 +885,51 @@
     mergeStore.updateSourceTrackConfig(editingTrackId, updates);
   }
 
-  onMount(async () => {
-    await mergeStore.loadUiPreferences();
-    unlistenMergeProgress = await listen<MergeProgressEvent>('merge-progress', (event) => {
-      if (!mergeStore.isProcessing) {
+  onMount(() => {
+    let destroyed = false;
+
+    const setup = async () => {
+      await mergeStore.loadUiPreferences();
+      if (destroyed) {
         return;
       }
 
-      const runtime = mergeStore.runtimeProgress;
-      if (!runtime.currentFilePath || runtime.currentFilePath !== event.payload.videoPath) {
+      const unlisten = await listen<MergeProgressEvent>('merge-progress', (event) => {
+        if (!mergeStore.isProcessing) {
+          return;
+        }
+
+        const runtime = mergeStore.runtimeProgress;
+        if (!runtime.currentFilePath || runtime.currentFilePath !== event.payload.videoPath) {
+          return;
+        }
+
+        mergeStore.updateRuntimeCurrentFile(
+          event.payload.progress,
+          event.payload.speedBytesPerSec,
+        );
+        mergeStore.updateFileRunProgress(
+          runtime.currentFilePath,
+          event.payload.progress,
+          event.payload.speedBytesPerSec,
+        );
+      });
+
+      if (destroyed) {
+        unlisten();
         return;
       }
 
-      mergeStore.updateRuntimeCurrentFile(
-        event.payload.progress,
-        event.payload.speedBytesPerSec,
-      );
-      mergeStore.updateFileRunProgress(
-        runtime.currentFilePath,
-        event.payload.progress,
-        event.payload.speedBytesPerSec,
-      );
-    });
+      unlistenMergeProgress = unlisten;
+    };
+
+    void setup();
+
+    return () => {
+      destroyed = true;
+      unlistenMergeProgress?.();
+      unlistenMergeProgress = null;
+    };
   });
 
   $effect(() => {
@@ -937,10 +960,18 @@
       }));
 
     toolImportStore.publishPathSource('merge_media', 'merge', 'Merge', mediaItems);
+
+    return () => {
+      toolImportStore.clearSource('merge_media');
+    };
   });
 
   $effect(() => {
     toolImportStore.publishPathSource('merge_outputs', 'merge', 'Merge', mergedOutputItems);
+
+    return () => {
+      toolImportStore.clearSource('merge_outputs');
+    };
   });
 
   $effect(() => {
@@ -961,14 +992,19 @@
   });
 
   $effect(() => {
-    toolHeader.setHeader('merge', {
+    const headerConfig = {
       title: mergeHeaderTitle,
       actions: mergeHeaderActions,
-    });
+    };
+
+    toolHeader.setHeader('merge', headerConfig);
+
+    return () => {
+      toolHeader.clearHeader('merge', headerConfig);
+    };
   });
 
   onDestroy(() => {
-    unlistenMergeProgress?.();
     outputNamingWorkspace.destroy();
     toolHeader.clearHeader('merge');
   });

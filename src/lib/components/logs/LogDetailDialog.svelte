@@ -1,5 +1,6 @@
 <script lang="ts">
   import { CheckCircle, AlertCircle, AlertTriangle, Info, Copy, Check, FileText, Terminal } from '@lucide/svelte';
+  import { onDestroy } from 'svelte';
   import type { LogEntry } from '$lib/stores/logs.svelte';
   import { getSourceColor, getLevelColor } from '$lib/stores/logs.svelte';
   import * as Dialog from '$lib/components/ui/dialog';
@@ -18,6 +19,7 @@
   let { log, open, onClose }: LogDetailDialogProps = $props();
 
   let copiedField = $state<string | null>(null);
+  let resetCopiedFieldTimeout: ReturnType<typeof setTimeout> | null = null;
 
   function getLevelIcon(level: LogEntry['level']) {
     switch (level) {
@@ -44,13 +46,23 @@
     try {
       await navigator.clipboard.writeText(text);
       copiedField = field;
-      setTimeout(() => {
+      if (resetCopiedFieldTimeout) {
+        clearTimeout(resetCopiedFieldTimeout);
+      }
+      resetCopiedFieldTimeout = setTimeout(() => {
         copiedField = null;
+        resetCopiedFieldTimeout = null;
       }, 2000);
     } catch {
       toast.error('Failed to copy to clipboard');
     }
   }
+
+  onDestroy(() => {
+    if (resetCopiedFieldTimeout) {
+      clearTimeout(resetCopiedFieldTimeout);
+    }
+  });
 
   function copyAll() {
     if (!log) return;

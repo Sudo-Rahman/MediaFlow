@@ -556,20 +556,27 @@
   const activeHeaderDescription = $derived(activeToolHeader?.description);
 
   onMount(() => {
-    initApp();
+    let destroyed = false;
+
+    void initApp(() => destroyed);
 
     return () => {
-      if (unlistenDragDrop) {
-        unlistenDragDrop();
-      }
+      destroyed = true;
+      unlistenDragDrop?.();
+      unlistenDragDrop = null;
     };
   });
 
-  async function initApp() {
+  async function initApp(isDestroyed: () => boolean): Promise<void> {
     // Check if FFmpeg is available
     try {
-      ffmpegAvailable = await invoke<boolean>('check_ffmpeg');
-      if (!ffmpegAvailable) {
+      const available = await invoke<boolean>('check_ffmpeg');
+      if (isDestroyed()) {
+        return;
+      }
+
+      ffmpegAvailable = available;
+      if (!available) {
         logAndToast.error({
           source: 'system',
           title: 'FFmpeg not found',
@@ -577,6 +584,10 @@
         });
       }
     } catch (e) {
+      if (isDestroyed()) {
+        return;
+      }
+
       ffmpegAvailable = false;
       logAndToast.error({
         source: 'system',
@@ -585,8 +596,12 @@
       });
     }
 
+    if (isDestroyed()) {
+      return;
+    }
+
     // Listen for drag & drop events from Tauri
-    unlistenDragDrop = await listen<{ paths: string[] }>('tauri://drag-drop', async (event) => {
+    const unlisten = await listen<{ paths: string[] }>('tauri://drag-drop', async (event) => {
       // Forward to the appropriate view based on current view
       if (currentView === 'extract' && extractViewRef) {
         await extractViewRef.handleFileDrop(event.payload.paths);
@@ -606,6 +621,13 @@
         await videoOcrViewRef.handleFileDrop(event.payload.paths);
       }
     });
+
+    if (isDestroyed()) {
+      unlisten();
+      return;
+    }
+
+    unlistenDragDrop = unlisten;
   }
 
   function handleNavigate(viewId: string) {

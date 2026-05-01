@@ -18,7 +18,7 @@
   ];
 
   // Preview of numbering
-  const preview = $derived(() => {
+  const preview = $derived.by(() => {
     const num1 = String(config.start).padStart(config.padding, '0');
     const num2 = String(config.start + config.step).padStart(config.padding, '0');
     const num3 = String(config.start + config.step * 2).padStart(config.padding, '0');
@@ -117,6 +117,6 @@
   {/if}
 
   <div class="p-2 rounded-md bg-muted">
-    <p class="text-xs text-muted-foreground">Preview: <span class="font-mono">{preview()}</span></p>
+    <p class="text-xs text-muted-foreground">Preview: <span class="font-mono">{preview}</span></p>
   </div>
 </div>

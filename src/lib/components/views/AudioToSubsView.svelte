@@ -5,7 +5,7 @@
 </script>
 
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { invoke } from '@tauri-apps/api/core';
   import { tempDir } from '@tauri-apps/api/path';
@@ -276,26 +276,43 @@
   }
 
   // Initialize on mount
-  onMount(async () => {
-    await settingsStore.load();
-    
-    // Set up event listener for transcode progress
-    unlistenTranscodeProgress = await listen<{ progress: number; inputPath: string }>(
-      'transcode-progress',
-      (event) => {
-        const { progress, inputPath } = event.payload;
-        // Find file by path and update progress
-        const file = audioToSubsStore.audioFiles.find(f => f.path === inputPath);
-        if (file) {
-          audioToSubsStore.updateTranscodingProgress(file.id, progress);
-        }
-      }
-    );
-  });
+  onMount(() => {
+    let destroyed = false;
 
-  // Cleanup on destroy
-  onDestroy(() => {
-    unlistenTranscodeProgress?.();
+    const setup = async () => {
+      await settingsStore.load();
+      if (destroyed) {
+        return;
+      }
+
+      // Set up event listener for transcode progress
+      const unlisten = await listen<{ progress: number; inputPath: string }>(
+        'transcode-progress',
+        (event) => {
+          const { progress, inputPath } = event.payload;
+          // Find file by path and update progress
+          const file = audioToSubsStore.audioFiles.find(f => f.path === inputPath);
+          if (file) {
+            audioToSubsStore.updateTranscodingProgress(file.id, progress);
+          }
+        }
+      );
+
+      if (destroyed) {
+        unlisten();
+        return;
+      }
+
+      unlistenTranscodeProgress = unlisten;
+    };
+
+    void setup();
+
+    return () => {
+      destroyed = true;
+      unlistenTranscodeProgress?.();
+      unlistenTranscodeProgress = null;
+    };
   });
 
   // Exposed API for drag & drop

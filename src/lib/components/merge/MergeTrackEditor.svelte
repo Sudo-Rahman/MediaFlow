@@ -41,7 +41,7 @@
     return getConfig(trackId)?.enabled ?? true;
   }
 
-  const groupedTracks = $derived(() => {
+  const groupedTracks = $derived.by(() => {
     const groups: Record<string, MergeTrack[]> = { video: [], audio: [], subtitle: [] };
     for (const track of tracks) {
       if (groups[track.type]) {
@@ -86,7 +86,7 @@
 </script>
 
 <div class={cn('space-y-4', className)}>
-  {#each Object.entries(groupedTracks()) as [type, typeTracks]}
+  {#each Object.entries(groupedTracks) as [type, typeTracks]}
     {#if typeTracks.length > 0}
       {@const typeConfig = TYPE_CONFIG[type as keyof typeof TYPE_CONFIG]}
       {@const Icon = typeConfig?.icon}
@@ -208,4 +208,3 @@
     </Card.Root>
   {/if}
 </div>
-

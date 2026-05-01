@@ -96,28 +96,52 @@
   }
 
   onMount(() => {
+    let destroyed = false;
+
     const setup = async () => {
       await settingsStore.load();
+      if (destroyed) return;
+
       await restoreMediaFlowSession();
+      if (destroyed) return;
+
       try {
-        appVersion = await loadAppVersion();
+        const version = await loadAppVersion();
+        if (destroyed) return;
+        appVersion = version;
       } catch {
+        if (destroyed) return;
         appVersion = 'Unavailable';
       }
-      await checkFFmpeg();
 
-      unlistenProgress = await listen<DownloadProgressEvent>('ffmpeg-download-progress', (event) => {
+      if (destroyed) return;
+      await checkFFmpeg();
+      if (destroyed) return;
+
+      const unlisten = await listen<DownloadProgressEvent>('ffmpeg-download-progress', (event) => {
         const next = Math.max(0, Math.min(100, event.payload.progress));
         downloadProgress = next;
         downloadStage = event.payload.stage;
       });
+
+      if (destroyed) {
+        unlisten();
+        return;
+      }
+
+      unlistenProgress = unlisten;
     };
 
     void setup();
 
     return () => {
-      if (unlistenProgress) {
-        unlistenProgress();
+      destroyed = true;
+      unlistenProgress?.();
+      unlistenProgress = null;
+
+      if (checkTimeout) {
+        clearTimeout(checkTimeout);
+        checkTimeout = null;
       }
     };
   });

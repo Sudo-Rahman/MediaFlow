@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
   import type { OcrVideoFile, OcrRegion, OcrSubtitle } from '$lib/types';
   import { DEFAULT_OCR_REGION } from '$lib/types';
   import { cn } from '$lib/utils';
@@ -46,28 +45,24 @@
   // These are relative values (0-1) within the container
   let videoBounds = $state({ x: 0, y: 0, width: 1, height: 1 });
   
-  // ResizeObserver for container size changes
-  let resizeObserver: ResizeObserver | undefined;
-  
-  onMount(() => {
-    // Create ResizeObserver to watch for container size changes
-    resizeObserver = new ResizeObserver(() => {
-      updateVideoBounds();
-    });
-  });
-  
-  onDestroy(() => {
-    resizeObserver?.disconnect();
-  });
-  
   // Watch containerEl and observe it
   $effect(() => {
-    if (containerEl && resizeObserver) {
-      resizeObserver.observe(containerEl);
-      return () => {
-        resizeObserver?.unobserve(containerEl!);
-      };
+    if (!containerEl) {
+      return;
     }
+
+    const observedElement = containerEl;
+    const observer = new ResizeObserver(() => {
+      updateVideoBounds();
+    });
+
+    observer.observe(observedElement);
+    updateVideoBounds();
+
+    return () => {
+      observer.unobserve(observedElement);
+      observer.disconnect();
+    };
   });
 
   // Pause playback while dialogs are open to reduce background render work

@@ -71,7 +71,11 @@
   }
 
   async function handleExport(): Promise<void> {
-    if (!currentVersion || !file) return;
+    const exportVersion = currentVersion;
+    const exportFile = file;
+    const format = exportFormat;
+
+    if (!exportVersion || !exportFile) return;
 
     const extensions: Record<TranscriptionOutputFormat, string> = {
       srt: 'srt',
@@ -79,9 +83,9 @@
       json: 'json',
     };
 
-    const ext = extensions[exportFormat];
-    const baseName = file.name.replace(/\.[^/.]+$/, '');
-    const versionSuffix = sanitizeVersionName(currentVersion.name);
+    const ext = extensions[format];
+    const baseName = exportFile.name.replace(/\.[^/.]+$/, '');
+    const versionSuffix = sanitizeVersionName(exportVersion.name);
     const defaultName = `${baseName}_${versionSuffix}.${ext}`;
 
     const savePath = await save({
@@ -92,7 +96,7 @@
     if (!savePath) return;
 
     try {
-      const content = getFormattedContent(currentVersion, exportFormat);
+      const content = getFormattedContent(exportVersion, format);
       await writeTextFile(savePath, content);
       toast.success(`Exported to ${savePath.split('/').pop()}`);
     } catch {

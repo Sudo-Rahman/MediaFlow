@@ -106,7 +106,7 @@
   }
 
   // Validation
-  const isValid = $derived(() => {
+  const isValid = $derived.by(() => {
     if (selectedStrategy === 'language' && !selectedLanguage) return false;
     if (selectedStrategy === 'index' && (trackIndex < 0 || isNaN(trackIndex))) return false;
     return true;
@@ -219,7 +219,7 @@
       <Button variant="outline" onclick={handleCancel}>
         Cancel
       </Button>
-      <Button onclick={handleConfirm} disabled={!isValid()}>
+      <Button onclick={handleConfirm} disabled={!isValid}>
         Apply to All
       </Button>
     </Dialog.Footer>

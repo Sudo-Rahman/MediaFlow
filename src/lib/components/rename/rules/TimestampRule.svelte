@@ -31,7 +31,7 @@
   ];
 
   // Preview timestamp
-  const preview = $derived(() => {
+  const preview = $derived.by(() => {
     const now = new Date();
     const pad = (n: number, len = 2) => String(n).padStart(len, '0');
     
@@ -139,7 +139,7 @@
 
   <div class="p-2 rounded-md bg-muted">
     <p class="text-xs text-muted-foreground">
-      Preview: <span class="font-mono">{preview()}</span>
+      Preview: <span class="font-mono">{preview}</span>
     </p>
   </div>
 

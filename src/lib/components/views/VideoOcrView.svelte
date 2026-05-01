@@ -166,9 +166,19 @@
     if (!settingsStore.isLoaded) {
       try {
         await settingsStore.load();
+        if (isDestroyed) {
+          return;
+        }
       } catch (error) {
+        if (isDestroyed) {
+          return;
+        }
         console.error('Failed to load settings:', error);
       }
+    }
+
+    if (isDestroyed) {
+      return;
     }
 
     videoOcrStore.setGlobalRegion(settingsStore.getVideoOcrGlobalRegion());
@@ -176,14 +186,25 @@
     if (!videoOcrStore.modelsChecked) {
       try {
         const status = await invoke<OcrModelsStatus>('check_ocr_models');
+        if (isDestroyed) {
+          return;
+        }
+
         videoOcrStore.setModelsStatus(status);
 
         if (!status.installed) {
           toast.warning('OCR models not found. Some languages may not be available.');
         }
       } catch (error) {
+        if (isDestroyed) {
+          return;
+        }
         console.error('Failed to check OCR models:', error);
       }
+    }
+
+    if (isDestroyed) {
+      return;
     }
 
     const unlisten = await listen<OcrProgressEvent>('ocr-progress', (event) => {

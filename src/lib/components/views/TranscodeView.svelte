@@ -811,12 +811,24 @@
 
   async function initializeView(): Promise<void> {
     await transcodeStore.loadPresets();
+    if (isDestroyed) {
+      return;
+    }
+
     transcodeStore.setCapabilitiesLoading();
 
     try {
       const capabilities = await getTranscodeCapabilities();
+      if (isDestroyed) {
+        return;
+      }
+
       transcodeStore.setCapabilities(capabilities);
     } catch (error) {
+      if (isDestroyed) {
+        return;
+      }
+
       const message = error instanceof Error ? error.message : String(error);
       transcodeStore.setCapabilitiesError(message);
       logAndToast.error({
@@ -826,7 +838,11 @@
       });
     }
 
-    unlistenTranscodeProgress = await listen<TranscodeProgressEvent>('media-transcode-progress', (event) => {
+    if (isDestroyed) {
+      return;
+    }
+
+    const unlisten = await listen<TranscodeProgressEvent>('media-transcode-progress', (event) => {
       if (!transcodeStore.isProcessing) {
         return;
       }
@@ -848,9 +864,11 @@
     });
 
     if (isDestroyed) {
-      unlistenTranscodeProgress?.();
-      unlistenTranscodeProgress = null;
+      unlisten();
+      return;
     }
+
+    unlistenTranscodeProgress = unlisten;
   }
 
   onMount(() => {
@@ -876,13 +894,19 @@
   });
 
   $effect(() => {
-    toolHeader.setHeader('transcode', {
+    const headerConfig = {
       title: transcodeInternalView === 'output-naming' ? 'Output Naming' : undefined,
       description: transcodeInternalView === 'output-naming'
         ? 'Review selected outputs and resolve naming conflicts before transcoding.'
         : undefined,
       actions: transcodeHeaderActions,
-    });
+    };
+
+    toolHeader.setHeader('transcode', headerConfig);
+
+    return () => {
+      toolHeader.clearHeader('transcode', headerConfig);
+    };
   });
 </script>
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { Download, Loader2 } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
 
@@ -55,6 +55,11 @@
   let selectedFormat = $state('');
   let isExporting = $state(false);
   let exportFailures = $state<VersionedExportFailure[]>([]);
+  let isDestroyed = false;
+
+  onDestroy(() => {
+    isDestroyed = true;
+  });
 
   function getTimestamp(iso: string): number {
     const timestamp = Date.parse(iso);
@@ -229,7 +234,14 @@
   }
 
   async function handleExport(): Promise<void> {
-    if (!canExport) {
+    const request: VersionedExportRequest = {
+      mode,
+      format: selectedFormat,
+      outputDir: outputDir.trim(),
+      targets: exportTargets,
+    };
+
+    if (request.outputDir.length === 0 || request.targets.length === 0 || isExporting) {
       return;
     }
 
@@ -237,12 +249,11 @@
     exportFailures = [];
 
     try {
-      const result = await onExport({
-        mode,
-        format: selectedFormat,
-        outputDir: outputDir.trim(),
-        targets: exportTargets,
-      });
+      const result = await onExport(request);
+      if (isDestroyed) {
+        return;
+      }
+
       exportFailures = result.failures;
 
       if (result.successCount > 0) {
@@ -257,11 +268,17 @@
         onOpenChange(false);
       }
     } catch (error) {
+      if (isDestroyed) {
+        return;
+      }
+
       exportFailures = [];
       const message = error instanceof Error ? error.message : 'Export failed';
       toast.error(message);
     } finally {
-      isExporting = false;
+      if (!isDestroyed) {
+        isExporting = false;
+      }
     }
   }
 </script>
@@ -328,7 +345,7 @@
             </Select.Trigger>
             <Select.Content>
               <Select.Group>
-                {#each formatOptions as formatOption}
+                {#each formatOptions as formatOption (formatOption.value)}
                   <Select.Item value={formatOption.value}>{formatOption.label}</Select.Item>
                 {/each}
               </Select.Group>
@@ -344,7 +361,7 @@
 
           <ScrollArea class="h-40">
             <div class="space-y-2 p-3">
-              {#each sortedGroups as group}
+              {#each sortedGroups as group (group.fileId)}
                 <label class="flex items-center justify-between gap-2 rounded-md border p-2">
                   <div class="flex items-center gap-2 min-w-0">
                     <Checkbox
@@ -374,11 +391,11 @@
 
             <ScrollArea class="h-56">
               <div class="space-y-4 p-3">
-                {#each sortedGroups as group}
+                {#each sortedGroups as group (group.fileId)}
                   <section class="space-y-2">
                     <p class="text-sm font-medium truncate">{group.fileName}</p>
                     <div class="space-y-1.5">
-                      {#each group.versions as version}
+                      {#each group.versions as version (version.key)}
                         <label class="flex items-center justify-between gap-2 rounded-md border p-2">
                           <div class="flex items-center gap-2 min-w-0">
                             <Checkbox
@@ -417,7 +434,7 @@
           <div class="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
             <p class="text-sm font-medium text-destructive">Export issues</p>
             <ul class="space-y-1 text-xs text-destructive/90">
-              {#each displayedFailures as failure}
+              {#each displayedFailures as failure (`${failure.fileId}:${failure.versionId}:${failure.message}`)}
                 <li class="break-words">
                   {failure.fileName}/{formatFailureVersionLabel(failure)}: {failure.message}
                 </li>

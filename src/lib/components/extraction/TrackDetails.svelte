@@ -20,7 +20,7 @@
   let { file, selectedTrackIds, onToggleTrack, onSelectAll, onDeselectAll, class: className = '' }: TrackDetailsProps = $props();
 
   // Group tracks by type
-  const groupedTracks = $derived(() => {
+  const groupedTracks = $derived.by(() => {
     const groups: Record<string, Track[]> = {
       video: [],
       audio: [],
@@ -56,12 +56,12 @@
   }
 
   function areAllSelected(type: Track['type']) {
-    const tracks = groupedTracks()[type];
+    const tracks = groupedTracks[type];
     return tracks.length > 0 && tracks.every(t => selectedTrackIds.includes(t.id));
   }
 
   function areNoneSelected(type: Track['type']) {
-    const tracks = groupedTracks()[type];
+    const tracks = groupedTracks[type];
     return tracks.every(t => !selectedTrackIds.includes(t.id));
   }
 </script>
@@ -76,7 +76,7 @@
     </Card.Header>
   </Card.Root>
 
-  {#each Object.entries(groupedTracks()) as [type, tracks]}
+  {#each Object.entries(groupedTracks) as [type, tracks]}
     {#if tracks.length > 0}
       {@const Icon = typeIcons[type]}
       {@const allSelected = areAllSelected(type as Track['type'])}
@@ -187,4 +187,3 @@
     </Card.Root>
   {/if}
 </div>
-

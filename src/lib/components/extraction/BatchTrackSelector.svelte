@@ -22,7 +22,7 @@
   }: BatchTrackSelectorProps = $props();
 
   // Compute all available track types and languages
-  const trackStats = $derived(() => {
+  const trackStats = $derived.by(() => {
     const stats = {
       types: new Map<TrackType, number>(),
       languages: new Map<string, { count: number; type: TrackType }[]>(),
@@ -49,7 +49,7 @@
     return stats;
   });
 
-  const totalSelectedCount = $derived(() => {
+  const totalSelectedCount = $derived.by(() => {
     let count = 0;
     for (const tracks of selectedTracks.values()) {
       count += tracks.length;
@@ -176,9 +176,9 @@
 <div class="flex flex-col gap-3 p-4 rounded-lg border bg-card {className}">
   <div class="flex items-center justify-between">
     <h3 class="text-sm font-semibold">Quick Selection</h3>
-    {#if totalSelectedCount() > 0}
+    {#if totalSelectedCount > 0}
       <Badge variant="secondary">
-        {totalSelectedCount()} track{totalSelectedCount() > 1 ? 's' : ''}
+        {totalSelectedCount} track{totalSelectedCount > 1 ? 's' : ''}
       </Badge>
     {/if}
   </div>
@@ -201,7 +201,7 @@
         </DropdownMenu.Item>
         <DropdownMenu.Separator />
         <DropdownMenu.Label>By language</DropdownMenu.Label>
-        {#each Array.from(trackStats().subtitleLanguages) as lang}
+        {#each Array.from(trackStats.subtitleLanguages) as lang}
           {@const isSelected = isLanguageFullySelected('subtitle', lang)}
           <DropdownMenu.Item onclick={() => toggleLanguage('subtitle', lang)}>
             <div class="flex items-center gap-2 w-full">
@@ -233,7 +233,7 @@
         </DropdownMenu.Item>
         <DropdownMenu.Separator />
         <DropdownMenu.Label>By language</DropdownMenu.Label>
-        {#each Array.from(trackStats().audioLanguages) as lang}
+        {#each Array.from(trackStats.audioLanguages) as lang}
           {@const isSelected = isLanguageFullySelected('audio', lang)}
           <DropdownMenu.Item onclick={() => toggleLanguage('audio', lang)}>
             <div class="flex items-center gap-2 w-full">
@@ -254,7 +254,7 @@
       Video
     </Button>
 
-    {#if totalSelectedCount() > 0}
+    {#if totalSelectedCount > 0}
       <Button variant="ghost" size="sm" onclick={() => applyPreset('clear')}>
         <X class="size-4 mr-1.5" />
         Clear
@@ -263,10 +263,10 @@
   </div>
 
   <!-- Quick language chips for common selections -->
-  {#if trackStats().subtitleLanguages.size > 0 || trackStats().audioLanguages.size > 0}
+  {#if trackStats.subtitleLanguages.size > 0 || trackStats.audioLanguages.size > 0}
     <Separator />
     <div class="flex flex-wrap gap-1.5">
-      {#each Array.from(trackStats().subtitleLanguages) as lang}
+      {#each Array.from(trackStats.subtitleLanguages) as lang}
         {@const isSelected = isLanguageFullySelected('subtitle', lang)}
         <button
           class="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full transition-colors
@@ -279,7 +279,7 @@
           {formatLanguage(lang)}
         </button>
       {/each}
-      {#each Array.from(trackStats().audioLanguages) as lang}
+      {#each Array.from(trackStats.audioLanguages) as lang}
         {@const isSelected = isLanguageFullySelected('audio', lang)}
         <button
           class="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full transition-colors
@@ -295,4 +295,3 @@
     </div>
   {/if}
 </div>
-

@@ -3,6 +3,7 @@ import { LLM_PROVIDERS } from '$lib/types';
 
 export const SUBTITLE_EXTENSIONS = ['.srt', '.ass', '.vtt', '.ssa'] as const;
 export const SUBTITLE_FORMATS = SUBTITLE_EXTENSIONS.map((extension) => extension.slice(1).toUpperCase());
+export const PENDING_TRANSLATION_VERSION_ID = '__pending_translation__';
 
 export function createModelJobId(runId: string, index: number): string {
   return `${runId}_model_${index}_${Math.random().toString(36).slice(2, 8)}`;
@@ -29,6 +30,14 @@ export function getModelDisplayName(provider: string, model: string): string {
 
   const foundModel = providerConfig.models.find((entry) => entry.id === model);
   return foundModel?.name ?? model;
+}
+
+export function getPendingTranslationVersionName(completedVersionCount: number): string {
+  return `Version ${completedVersionCount + 1}`;
+}
+
+export function isPendingTranslationVersionId(versionId: string | null | undefined): boolean {
+  return versionId === PENDING_TRANSLATION_VERSION_ID;
 }
 
 export function isPrimaryRetryableStatus(status: TranslationJob['status']): boolean {

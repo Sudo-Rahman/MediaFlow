@@ -11,6 +11,8 @@ import type {
   LanguageCode
 } from '$lib/types';
 
+const PENDING_TRANSLATION_VERSION_ID = '__pending_translation__';
+
 // Generate unique ID
 function generateId(): string {
   return `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -44,7 +46,7 @@ function getVersionDrivenJobState(versions: TranslationVersion[]): Pick<
 }
 
 // Translation state
-let jobs = $state<TranslationJob[]>([]);
+let jobs = $state.raw<TranslationJob[]>([]);
 let config = $state<TranslationConfig>({
   sourceLanguage: 'auto',
   targetLanguage: 'fr',
@@ -218,9 +220,22 @@ export const translationStore = {
 
   // Update job status
   updateJob(jobId: string, updates: Partial<TranslationJob>) {
-    jobs = jobs.map(j =>
-      j.id === jobId ? { ...j, ...updates } : j
-    );
+    jobs = jobs.map(j => {
+      if (j.id !== jobId) return j;
+
+      const shouldRestoreVersion = updates.activeVersionId === undefined
+        && updates.status !== undefined
+        && updates.status !== 'translating'
+        && j.activeVersionId === PENDING_TRANSLATION_VERSION_ID;
+
+      return {
+        ...j,
+        ...updates,
+        ...(shouldRestoreVersion
+          ? { activeVersionId: j.translationVersions.at(-1)?.id ?? null }
+          : {}),
+      };
+    });
   },
 
   startRun(jobId: string, runId: string) {

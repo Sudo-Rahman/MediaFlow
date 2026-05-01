@@ -46,7 +46,10 @@
     createModelJobId,
     createRunId,
     createTokenCountCacheKey,
+    getPendingTranslationVersionName,
     getModelDisplayName,
+    isPendingTranslationVersionId,
+    PENDING_TRANSLATION_VERSION_ID,
     selectTranslateAllTargets,
     SUBTITLE_EXTENSIONS,
   } from '$lib/components/translation/translation-view-utils';
@@ -194,15 +197,7 @@
 
       clearTokenCountCacheForPath(path);
       translationStore.addFile(subtitleFile);
-
-      // Load persisted translation versions if any
-      const existingData = await loadTranslationData(path);
-      if (existingData && existingData.translationVersions.length > 0) {
-        const job = translationStore.jobs.find(j => j.file.path === path);
-        if (job) {
-          translationStore.setTranslationVersions(job.id, existingData.translationVersions);
-        }
-      }
+      deferPersistedTranslationHydration(path);
 
       toast.success(`Loaded: ${name}`);
     } catch (error) {
@@ -213,6 +208,24 @@
         context: { filePath: path }
       });
     }
+  }
+
+  function deferPersistedTranslationHydration(path: string): void {
+    const hydrate = async () => {
+      const existingData = await loadTranslationData(path);
+      if (existingData && existingData.translationVersions.length > 0) {
+        const job = translationStore.jobs.find(j => j.file.path === path);
+        if (job) {
+          translationStore.setTranslationVersions(job.id, existingData.translationVersions);
+        }
+      }
+    };
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        void hydrate();
+      });
+    });
   }
 
   async function handleImportClick() {
@@ -272,15 +285,7 @@
       translationStore.addFile(file);
       existingPaths.add(file.path);
       imported++;
-
-      // Load persisted translation versions if any
-      const existingData = await loadTranslationData(file.path);
-      if (existingData && existingData.translationVersions.length > 0) {
-        const job = translationStore.jobs.find(j => j.file.path === file.path);
-        if (job) {
-          translationStore.setTranslationVersions(job.id, existingData.translationVersions);
-        }
-      }
+      deferPersistedTranslationHydration(file.path);
     }
 
     return { imported, skipped };
@@ -428,6 +433,7 @@
     }
     translationStore.updateJobIfActive(job.id, runId, {
       status: 'translating',
+      activeVersionId: PENDING_TRANSLATION_VERSION_ID,
       progress: 0,
       currentBatch: 0,
       totalBatches: 0,
@@ -666,6 +672,7 @@
     }
     translationStore.updateJobIfActive(job.id, runId, {
       status: 'translating',
+      activeVersionId: PENDING_TRANSLATION_VERSION_ID,
       progress: 0,
       currentBatch: 0,
       totalBatches: 0,
@@ -1161,11 +1168,21 @@
   // Active version for the selected job
   const selectedJobVersions = $derived(selectedJob?.translationVersions ?? []);
   const activeVersionId = $derived(selectedJob?.activeVersionId ?? null);
+  const isPendingVersionSelected = $derived(isPendingTranslationVersionId(activeVersionId));
+  const pendingVersionName = $derived(
+    selectedJob?.status === 'translating'
+      ? getPendingTranslationVersionName(selectedJobVersions.length)
+      : null
+  );
   const activeVersion = $derived(
-    activeVersionId ? selectedJobVersions.find(v => v.id === activeVersionId) ?? null : null
+    activeVersionId && !isPendingVersionSelected
+      ? selectedJobVersions.find(v => v.id === activeVersionId) ?? null
+      : null
   );
   // Content to display in the right panel: prefer active version, fall back to result
-  const displayedContent = $derived(activeVersion?.translatedContent ?? selectedJob?.result?.translatedContent ?? '');
+  const displayedContent = $derived(
+    isPendingVersionSelected ? '' : activeVersion?.translatedContent ?? selectedJob?.result?.translatedContent ?? ''
+  );
 
   // Debounced persistence for version edits
   let persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -1323,6 +1340,8 @@
       {tokenCount}
       {isCountingTokens}
       {isTranslating}
+      {isPendingVersionSelected}
+      {pendingVersionName}
       onSelectVersion={handleSelectedVersionChange}
       onCopyContent={handleCopyToClipboard}
       onEditContent={handleSelectedContentEdit}

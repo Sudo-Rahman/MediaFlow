@@ -7,3 +7,4 @@ export { default as VersionBrowserDialog } from './version-browser-dialog.svelte
 export { default as VersionedExportDialog } from './versioned-export-dialog.svelte';
 export { default as ProcessingRemoveDialog } from './processing-remove-dialog.svelte';
 export { default as RetryVersionDialogShell } from './retry-version-dialog-shell.svelte';
+export { default as VirtualizedTextPreview } from './virtualized-text-preview.svelte';

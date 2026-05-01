@@ -3,8 +3,10 @@ use serde_json::Value;
 use tauri_plugin_opener::open_url;
 
 const USER_AGENT: &str = "MediaFlow/1.0";
-const MEDIAFLOW_DEVELOPMENT_BASE_URL: &str = "http://localhost:5173";
-const MEDIAFLOW_RELEASE_BASE_URL: &str = "http://localhost:5173";
+#[cfg(debug_assertions)]
+const MEDIAFLOW_BASE_URL: &str = "http://localhost:5173";
+#[cfg(not(debug_assertions))]
+const MEDIAFLOW_BASE_URL: &str = "https://mediaflow.app";
 const CLIENT_ID: &str = "mediaflow-desktop";
 const AUTH_SCOPE: &str = "openid profile email offline_access";
 const WEB_OAUTH_CALLBACK_PATH: &str = "/desktop/oauth/callback";
@@ -33,21 +35,12 @@ pub(crate) struct MediaFlowUser {
     name: Option<String>,
 }
 
-fn mediaflow_base_url() -> &'static str {
-    if cfg!(debug_assertions) {
-        MEDIAFLOW_DEVELOPMENT_BASE_URL
-    } else {
-        MEDIAFLOW_RELEASE_BASE_URL
-    }
+pub(crate) fn public_base_url() -> &'static str {
+    MEDIAFLOW_BASE_URL
 }
 
 fn mediaflow_url(path: &str) -> String {
-    let normalized_path = if path.starts_with('/') {
-        path.to_string()
-    } else {
-        format!("/{path}")
-    };
-    format!("{}{}", mediaflow_base_url(), normalized_path)
+    format!("{}/{}", MEDIAFLOW_BASE_URL, path.trim_start_matches('/'))
 }
 
 pub(crate) fn chat_completions_url() -> String {
@@ -243,20 +236,25 @@ pub(crate) async fn fetch_mediaflow_account_usage(
 #[cfg(test)]
 mod tests {
     use super::{
-        MEDIAFLOW_DEVELOPMENT_BASE_URL, audio_transcriptions_url, authorize_redirect_to,
-        chat_completions_url, login_url, mediaflow_base_url,
+        MEDIAFLOW_BASE_URL, audio_transcriptions_url, authorize_redirect_to, chat_completions_url,
+        login_url, public_base_url,
     };
 
     #[test]
-    fn mediaflow_base_url_uses_development_constant_for_debug_builds() {
-        assert_eq!(mediaflow_base_url(), MEDIAFLOW_DEVELOPMENT_BASE_URL);
+    fn mediaflow_base_url_uses_debug_url_for_debug_builds() {
+        assert_eq!(MEDIAFLOW_BASE_URL, "http://localhost:5173");
+    }
+
+    #[test]
+    fn public_base_url_uses_selected_mediaflow_base_url() {
+        assert_eq!(public_base_url(), MEDIAFLOW_BASE_URL);
     }
 
     #[test]
     fn chat_completions_url_uses_selected_base_url() {
         assert_eq!(
             chat_completions_url(),
-            format!("{}/api/v1/chat/completions", mediaflow_base_url())
+            format!("{MEDIAFLOW_BASE_URL}/api/v1/chat/completions")
         );
     }
 
@@ -264,7 +262,7 @@ mod tests {
     fn audio_transcriptions_url_uses_selected_base_url() {
         assert_eq!(
             audio_transcriptions_url(),
-            format!("{}/api/v1/audio/transcriptions", mediaflow_base_url())
+            format!("{MEDIAFLOW_BASE_URL}/api/v1/audio/transcriptions")
         );
     }
 

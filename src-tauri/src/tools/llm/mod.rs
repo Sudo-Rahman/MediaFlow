@@ -15,7 +15,6 @@ const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/comple
 const ANTHROPIC_MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
 const GOOGLE_GENERATE_CONTENT_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 const OPENROUTER_CHAT_COMPLETIONS_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
-const OPENROUTER_REFERER: &str = "https://mediaflow.app";
 const OPENROUTER_TITLE: &str = "MediaFlow";
 
 static LLM_ABORTS: LazyLock<Mutex<HashMap<String, AbortHandle>>> =
@@ -228,6 +227,44 @@ fn build_openai_content(parts: &[LlmContentPart]) -> Vec<Value> {
             }),
         })
         .collect()
+}
+
+fn build_openai_chat_body(request: &LlmRequest, include_temperature: bool) -> Value {
+    let content_parts = ensure_content_parts(request);
+    let mut body = json!({
+        "model": &request.model,
+        "messages": [
+            { "role": "system", "content": &request.system_prompt },
+            { "role": "user", "content": build_openai_content(&content_parts) },
+        ],
+    });
+
+    if include_temperature {
+        body["temperature"] = json!(request.temperature.unwrap_or(0.3));
+    }
+
+    if request.response_mode == LlmResponseMode::Json {
+        body["response_format"] = json!({ "type": "json_object" });
+    }
+
+    body
+}
+
+fn openai_chat_response(response: Value) -> LlmResponse {
+    let finish_reason = response
+        .pointer("/choices/0/finish_reason")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let content = response
+        .pointer("/choices/0/message/content")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let mut output = empty_success(content);
+    output.truncated = Some(finish_reason.as_deref() == Some("length"));
+    output.finish_reason = finish_reason;
+    output.usage = normalize_openai_usage(response.get("usage"));
+    output
 }
 
 fn build_anthropic_content(parts: &[LlmContentPart]) -> Vec<Value> {
@@ -543,47 +580,27 @@ async fn send_json_request(
     })
 }
 
-async fn call_openai(client: &reqwest::Client, request: &LlmRequest) -> LlmResponse {
-    let content_parts = ensure_content_parts(request);
-    let mut body = json!({
-        "model": &request.model,
-        "messages": [
-            { "role": "system", "content": &request.system_prompt },
-            { "role": "user", "content": build_openai_content(&content_parts) },
-        ],
-        "temperature": request.temperature.unwrap_or(0.3),
-    });
-    if request.response_mode == LlmResponseMode::Json {
-        body["response_format"] = json!({ "type": "json_object" });
+async fn call_openai_compatible(
+    request_builder: reqwest::RequestBuilder,
+    request: &LlmRequest,
+    include_temperature: bool,
+) -> LlmResponse {
+    let body = build_openai_chat_body(request, include_temperature);
+    match send_json_request(request_builder, body, request.provider).await {
+        Ok(response) => openai_chat_response(response),
+        Err(error) => error,
     }
+}
 
-    let response = match send_json_request(
+async fn call_openai(client: &reqwest::Client, request: &LlmRequest) -> LlmResponse {
+    call_openai_compatible(
         client
             .post(OPENAI_CHAT_COMPLETIONS_URL)
             .bearer_auth(&request.api_key),
-        body,
-        request.provider,
+        request,
+        true,
     )
     .await
-    {
-        Ok(response) => response,
-        Err(error) => return error,
-    };
-
-    let finish_reason = response
-        .pointer("/choices/0/finish_reason")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let content = response
-        .pointer("/choices/0/message/content")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let mut output = empty_success(content);
-    output.truncated = Some(finish_reason.as_deref() == Some("length"));
-    output.finish_reason = finish_reason;
-    output.usage = normalize_openai_usage(response.get("usage"));
-    output
 }
 
 async fn call_anthropic(client: &reqwest::Client, request: &LlmRequest) -> LlmResponse {
@@ -682,48 +699,16 @@ async fn call_google(client: &reqwest::Client, request: &LlmRequest) -> LlmRespo
 }
 
 async fn call_openrouter(client: &reqwest::Client, request: &LlmRequest) -> LlmResponse {
-    let content_parts = ensure_content_parts(request);
-    let mut body = json!({
-        "model": &request.model,
-        "messages": [
-            { "role": "system", "content": &request.system_prompt },
-            { "role": "user", "content": build_openai_content(&content_parts) },
-        ],
-        "temperature": request.temperature.unwrap_or(0.3),
-    });
-    if request.response_mode == LlmResponseMode::Json {
-        body["response_format"] = json!({ "type": "json_object" });
-    }
-
-    let response = match send_json_request(
+    call_openai_compatible(
         client
             .post(OPENROUTER_CHAT_COMPLETIONS_URL)
             .bearer_auth(&request.api_key)
-            .header("HTTP-Referer", OPENROUTER_REFERER)
+            .header("HTTP-Referer", mediaflow_api::public_base_url())
             .header("X-Title", OPENROUTER_TITLE),
-        body,
-        request.provider,
+        request,
+        true,
     )
     .await
-    {
-        Ok(response) => response,
-        Err(error) => return error,
-    };
-
-    let finish_reason = response
-        .pointer("/choices/0/finish_reason")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let content = response
-        .pointer("/choices/0/message/content")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let mut output = empty_success(content);
-    output.truncated = Some(finish_reason.as_deref() == Some("length"));
-    output.finish_reason = finish_reason;
-    output.usage = normalize_openai_usage(response.get("usage"));
-    output
 }
 
 async fn call_mediaflow(client: &reqwest::Client, request: &LlmRequest) -> LlmResponse {
@@ -736,45 +721,14 @@ async fn call_mediaflow(client: &reqwest::Client, request: &LlmRequest) -> LlmRe
         );
     }
 
-    let content_parts = ensure_content_parts(request);
-    let mut body = json!({
-        "model": &request.model,
-        "messages": [
-            { "role": "system", "content": &request.system_prompt },
-            { "role": "user", "content": build_openai_content(&content_parts) },
-        ],
-    });
-    if request.response_mode == LlmResponseMode::Json {
-        body["response_format"] = json!({ "type": "json_object" });
-    }
-
-    let response = match send_json_request(
+    call_openai_compatible(
         client
             .post(mediaflow_api::chat_completions_url())
             .bearer_auth(&request.mediaflow_access_token),
-        body,
-        request.provider,
+        request,
+        false,
     )
     .await
-    {
-        Ok(response) => response,
-        Err(error) => return error,
-    };
-
-    let finish_reason = response
-        .pointer("/choices/0/finish_reason")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let content = response
-        .pointer("/choices/0/message/content")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let mut output = empty_success(content);
-    output.truncated = Some(finish_reason.as_deref() == Some("length"));
-    output.finish_reason = finish_reason;
-    output.usage = normalize_openai_usage(response.get("usage"));
-    output
 }
 
 async fn call_provider(request: LlmRequest) -> LlmResponse {
@@ -856,8 +810,8 @@ pub(crate) fn cancel_llm_request(request_id: String) -> Result<(), String> {
 mod tests {
     use super::{
         LlmContentPart, LlmProvider, LlmRequest, LlmResponseMode, build_google_parts,
-        build_openai_content, google_generate_content_url, mediaflow_api_error_message,
-        parse_api_error,
+        build_openai_chat_body, build_openai_content, google_generate_content_url,
+        mediaflow_api_error_message, parse_api_error,
     };
 
     fn request(provider: LlmProvider) -> LlmRequest {
@@ -890,6 +844,26 @@ mod tests {
 
         assert_eq!(content[0]["type"], "text");
         assert_eq!(content[1]["image_url"]["url"], "data:image/png;base64,abc");
+    }
+
+    #[test]
+    fn build_openai_chat_body_includes_temperature_when_provider_supports_it() {
+        let mut request = request(LlmProvider::Openai);
+        request.temperature = Some(0.7);
+
+        let body = build_openai_chat_body(&request, true);
+
+        assert_eq!(body["temperature"].as_f64(), Some(0.7));
+    }
+
+    #[test]
+    fn build_openai_chat_body_omits_temperature_when_provider_does_not_support_it() {
+        let mut request = request(LlmProvider::Mediaflow);
+        request.temperature = Some(0.7);
+
+        let body = build_openai_chat_body(&request, false);
+
+        assert!(body.get("temperature").is_none());
     }
 
     #[test]

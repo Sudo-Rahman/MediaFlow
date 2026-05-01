@@ -132,3 +132,15 @@
 		@apply font-sans;
   }
 }
+
+@layer components {
+  .dialog-scroll-body {
+    min-height: 0;
+    flex: 1 1 0%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-inline-end: 1rem;
+    margin-inline-end: -1rem;
+    scrollbar-gutter: stable;
+  }
+}

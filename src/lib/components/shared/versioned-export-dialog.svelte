@@ -267,12 +267,13 @@
 </script>
 
 <Dialog.Root bind:open onOpenChange={onOpenChange}>
-  <Dialog.Content class="max-w-4xl max-h-[85vh] flex flex-col overflow-scroll">
-    <Dialog.Header>
+  <Dialog.Content class="max-w-4xl max-h-[85vh] flex flex-col">
+    <Dialog.Header class="shrink-0">
       <Dialog.Title>{title}</Dialog.Title>
       <Dialog.Description>{description}</Dialog.Description>
     </Dialog.Header>
 
+    <div class="dialog-scroll-body py-1">
     {#if !hasExportableData}
       <div class="rounded-md border p-4 text-sm text-muted-foreground">
         No exportable versions are available yet.
@@ -431,8 +432,9 @@
         {/if}
       </div>
     {/if}
+    </div>
 
-    <Dialog.Footer>
+    <Dialog.Footer class="shrink-0">
       <Button variant="outline" onclick={() => onOpenChange(false)} disabled={isExporting}>
         Cancel
       </Button>

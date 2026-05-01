@@ -114,8 +114,8 @@
 </script>
 
 <Dialog.Root bind:open onOpenChange={onOpenChange}>
-  <Dialog.Content class="max-w-lg max-h-[80vh] overflow-y-scroll">
-    <Dialog.Header>
+  <Dialog.Content class="max-w-lg max-h-[80vh] flex flex-col">
+    <Dialog.Header class="shrink-0">
       <Dialog.Title class="flex items-center gap-2">
         <AudioLines class="size-5" />
         Batch Track Selection
@@ -125,7 +125,7 @@
       </Dialog.Description>
     </Dialog.Header>
 
-    <div class="py-4 space-y-3">
+    <div class="dialog-scroll-body space-y-3 py-4">
       {#each strategies as strategy (strategy.type)}
         {@const isSelected = selectedStrategy === strategy.type}
         {@const Icon = strategy.icon}
@@ -215,7 +215,7 @@
       {/each}
     </div>
 
-    <Dialog.Footer>
+    <Dialog.Footer class="shrink-0">
       <Button variant="outline" onclick={handleCancel}>
         Cancel
       </Button>

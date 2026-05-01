@@ -83,11 +83,11 @@
 </script>
 
 <Dialog.Root bind:open onOpenChange={(isOpen) => { if (!isOpen) onClose?.(); }}>
-  <Dialog.Content class="max-w-2xl max-h-[85vh] overflow-scroll flex flex-col">
+  <Dialog.Content class="max-w-2xl max-h-[85vh] flex flex-col">
     {#if log}
       {@const Icon = getLevelIcon(log.level)}
       
-      <Dialog.Header>
+      <Dialog.Header class="shrink-0">
         <div class="flex items-center gap-3">
           <div class="shrink-0 p-2 rounded-lg {getLevelColor(log.level)} bg-current/10">
             <Icon class="size-5 {getLevelColor(log.level)}" />
@@ -106,7 +106,7 @@
         </div>
       </Dialog.Header>
 
-      <ScrollArea class="flex-1 -mx-6 px-6">
+      <ScrollArea class="min-h-0 flex-1 -mx-6 px-6">
         <div class="space-y-4 py-4">
           <!-- Details -->
           <div class="space-y-2">
@@ -230,7 +230,7 @@
         </div>
       </ScrollArea>
 
-      <Dialog.Footer class="gap-2">
+      <Dialog.Footer class="shrink-0 gap-2">
         <Button variant="outline" onclick={copyAll}>
           {#if copiedField === 'all'}
             <Check class="size-4 mr-2" />

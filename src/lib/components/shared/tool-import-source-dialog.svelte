@@ -6,7 +6,6 @@
   import { Checkbox } from '$lib/components/ui/checkbox';
   import * as Dialog from '$lib/components/ui/dialog';
   import * as RadioGroup from '$lib/components/ui/radio-group';
-  import { ScrollArea } from '$lib/components/ui/scroll-area';
   import type { ImportSelectionMode, VersionedImportItem } from '$lib/types/tool-import';
 
   interface ToolImportSourceDialogProps {
@@ -89,13 +88,13 @@
 </script>
 
 <Dialog.Root bind:open onOpenChange={onOpenChange}>
-    <Dialog.Content class="max-w-3xl max-h-[80vh] flex flex-col overflow-scroll">
-    <Dialog.Header>
+  <Dialog.Content class="max-w-3xl max-h-[80vh] flex flex-col">
+    <Dialog.Header class="shrink-0">
       <Dialog.Title>Import from {sourceLabel}</Dialog.Title>
       <Dialog.Description>Select how you want to import versions.</Dialog.Description>
     </Dialog.Header>
 
-    <div class="space-y-4">
+    <div class="dialog-scroll-body space-y-4 py-1">
       <RadioGroup.Root value={mode} onValueChange={(value) => value && setMode(value as ImportSelectionMode)}>
         <div class="space-y-2">
           <label class="flex items-center gap-2 rounded-md border p-3">
@@ -166,7 +165,7 @@
       {/if}
     </div>
 
-    <Dialog.Footer>
+    <Dialog.Footer class="shrink-0">
       <Button variant="outline" onclick={() => onOpenChange(false)}>Cancel</Button>
       <Button onclick={handleConfirm} disabled={!canConfirm}>Import</Button>
     </Dialog.Footer>

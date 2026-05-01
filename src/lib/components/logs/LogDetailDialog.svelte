@@ -6,7 +6,6 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
-  import { ScrollArea } from '$lib/components/ui/scroll-area';
 
   import { toast } from 'svelte-sonner';
 
@@ -95,11 +94,11 @@
 </script>
 
 <Dialog.Root bind:open onOpenChange={(isOpen) => { if (!isOpen) onClose?.(); }}>
-  <Dialog.Content class="max-w-2xl max-h-[85vh] flex flex-col">
+  <Dialog.Content class="max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
     {#if log}
       {@const Icon = getLevelIcon(log.level)}
       
-      <Dialog.Header class="shrink-0">
+      <Dialog.Header class="shrink-0 pr-12">
         <div class="flex items-center gap-3">
           <div class="shrink-0 p-2 rounded-lg {getLevelColor(log.level)} bg-current/10">
             <Icon class="size-5 {getLevelColor(log.level)}" />
@@ -118,19 +117,59 @@
         </div>
       </Dialog.Header>
 
-      <ScrollArea class="min-h-0 flex-1 -mx-6 px-6">
-        <div class="space-y-4 py-4">
-          <!-- Details -->
+      <div class="dialog-scroll-body space-y-4 py-4">
+        <!-- Details -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-sm font-medium">Details</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              class="h-7 text-xs"
+              onclick={() => copyToClipboard(log.details, 'details')}
+            >
+              {#if copiedField === 'details'}
+                <Check class="size-3 mr-1" />
+                Copied
+              {:else}
+                <Copy class="size-3 mr-1" />
+                Copy
+              {/if}
+            </Button>
+          </div>
+          <div class="rounded-lg bg-muted p-3 font-mono text-sm whitespace-pre-wrap break-all max-h-48 overflow-auto">
+            {log.details}
+          </div>
+        </div>
+
+        <!-- Context: File Path -->
+        {#if log.context?.filePath}
+          <div class="space-y-2">
+            <div class="flex items-center gap-2">
+              <FileText class="size-4 text-muted-foreground" />
+              <span class="text-sm font-medium">File</span>
+            </div>
+            <div class="rounded-lg bg-muted p-3 font-mono text-sm break-all">
+              {log.context.filePath}
+            </div>
+          </div>
+        {/if}
+
+        <!-- Context: Command -->
+        {#if log.context?.command}
           <div class="space-y-2">
             <div class="flex items-center justify-between">
-              <span class="text-sm font-medium">Details</span>
+              <div class="flex items-center gap-2">
+                <Terminal class="size-4 text-muted-foreground" />
+                <span class="text-sm font-medium">Command</span>
+              </div>
               <Button
                 variant="ghost"
                 size="sm"
                 class="h-7 text-xs"
-                onclick={() => copyToClipboard(log.details, 'details')}
+                onclick={() => copyToClipboard(log.context!.command!, 'command')}
               >
-                {#if copiedField === 'details'}
+                {#if copiedField === 'command'}
                   <Check class="size-3 mr-1" />
                   Copied
                 {:else}
@@ -139,108 +178,66 @@
                 {/if}
               </Button>
             </div>
-            <div class="rounded-lg bg-muted p-3 font-mono text-sm whitespace-pre-wrap break-all max-h-48 overflow-auto">
-              {log.details}
+            <div class="rounded-lg bg-muted p-3 font-mono text-xs whitespace-pre-wrap break-all max-h-32 overflow-auto">
+              {log.context.command}
             </div>
           </div>
+        {/if}
 
-          <!-- Context: File Path -->
-          {#if log.context?.filePath}
-            <div class="space-y-2">
-              <div class="flex items-center gap-2">
-                <FileText class="size-4 text-muted-foreground" />
-                <span class="text-sm font-medium">File</span>
-              </div>
-              <div class="rounded-lg bg-muted p-3 font-mono text-sm break-all">
-                {log.context.filePath}
-              </div>
+        <!-- Context: Provider -->
+        {#if log.context?.provider}
+          <div class="space-y-2">
+            <span class="text-sm font-medium">Provider</span>
+            <div class="rounded-lg bg-muted p-3 font-mono text-sm">
+              {log.context.provider}
             </div>
-          {/if}
+          </div>
+        {/if}
 
-          <!-- Context: Command -->
-          {#if log.context?.command}
-            <div class="space-y-2">
-              <div class="flex items-center justify-between">
-                <div class="flex items-center gap-2">
-                  <Terminal class="size-4 text-muted-foreground" />
-                  <span class="text-sm font-medium">Command</span>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="h-7 text-xs"
-                  onclick={() => copyToClipboard(log.context!.command!, 'command')}
-                >
-                  {#if copiedField === 'command'}
-                    <Check class="size-3 mr-1" />
-                    Copied
-                  {:else}
-                    <Copy class="size-3 mr-1" />
-                    Copy
-                  {/if}
-                </Button>
-              </div>
-              <div class="rounded-lg bg-muted p-3 font-mono text-xs whitespace-pre-wrap break-all max-h-32 overflow-auto">
-                {log.context.command}
-              </div>
+        <!-- Context: API Error -->
+        {#if log.context?.apiError}
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-sm font-medium text-destructive">API Error</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                class="h-7 text-xs"
+                onclick={() => copyToClipboard(log.context!.apiError!, 'apiError')}
+              >
+                {#if copiedField === 'apiError'}
+                  <Check class="size-3 mr-1" />
+                  Copied
+                {:else}
+                  <Copy class="size-3 mr-1" />
+                  Copy
+                {/if}
+              </Button>
             </div>
-          {/if}
+            <div class="rounded-lg bg-destructive/10 border border-destructive/30 p-3 font-mono text-sm whitespace-pre-wrap break-all max-h-48 overflow-auto">
+              {log.context.apiError}
+            </div>
+          </div>
+        {/if}
 
-          <!-- Context: Provider -->
-          {#if log.context?.provider}
-            <div class="space-y-2">
-              <span class="text-sm font-medium">Provider</span>
-              <div class="rounded-lg bg-muted p-3 font-mono text-sm">
-                {log.context.provider}
-              </div>
+        <!-- Context: Output Path -->
+        {#if log.context?.outputPath}
+          <div class="space-y-2">
+            <span class="text-sm font-medium">Output Path</span>
+            <div class="rounded-lg bg-muted p-3 font-mono text-sm break-all">
+              {log.context.outputPath}
             </div>
-          {/if}
+          </div>
+        {/if}
 
-          <!-- Context: API Error -->
-          {#if log.context?.apiError}
-            <div class="space-y-2">
-              <div class="flex items-center justify-between">
-                <span class="text-sm font-medium text-destructive">API Error</span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="h-7 text-xs"
-                  onclick={() => copyToClipboard(log.context!.apiError!, 'apiError')}
-                >
-                  {#if copiedField === 'apiError'}
-                    <Check class="size-3 mr-1" />
-                    Copied
-                  {:else}
-                    <Copy class="size-3 mr-1" />
-                    Copy
-                  {/if}
-                </Button>
-              </div>
-              <div class="rounded-lg bg-destructive/10 border border-destructive/30 p-3 font-mono text-sm whitespace-pre-wrap break-all max-h-48 overflow-auto">
-                {log.context.apiError}
-              </div>
-            </div>
-          {/if}
-
-          <!-- Context: Output Path -->
-          {#if log.context?.outputPath}
-            <div class="space-y-2">
-              <span class="text-sm font-medium">Output Path</span>
-              <div class="rounded-lg bg-muted p-3 font-mono text-sm break-all">
-                {log.context.outputPath}
-              </div>
-            </div>
-          {/if}
-
-          <!-- Context: Track Index -->
-          {#if log.context?.trackIndex !== undefined}
-            <div class="flex items-center gap-2">
-              <span class="text-sm font-medium">Track Index:</span>
-              <Badge variant="outline">{log.context.trackIndex}</Badge>
-            </div>
-          {/if}
-        </div>
-      </ScrollArea>
+        <!-- Context: Track Index -->
+        {#if log.context?.trackIndex !== undefined}
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-medium">Track Index:</span>
+            <Badge variant="outline">{log.context.trackIndex}</Badge>
+          </div>
+        {/if}
+      </div>
 
       <Dialog.Footer class="shrink-0 gap-2">
         <Button variant="outline" onclick={copyAll}>

@@ -14,3 +14,5 @@ export { toolImportStore } from './tool-import.svelte';
 export { transcodeStore } from './transcode.svelte';
 export { mediaflowUsageStore } from './mediaflow-usage.svelte';
 export type { MediaFlowUsage, MediaFlowUsageStatus } from './mediaflow-usage.svelte';
+export { updaterStore } from './updater.svelte';
+export type { UpdaterProgress, UpdaterStatus } from './updater.svelte';

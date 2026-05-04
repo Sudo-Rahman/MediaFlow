@@ -86,11 +86,15 @@ export type AudioFileStatus =
 // ============================================================================
 
 export interface TranscriptionConfig {
+  provider: TranscriptionProvider;
   deepgramConfig: DeepgramConfig;
   maxConcurrentTranscriptions: number;
 }
 
+export type TranscriptionProvider = 'deepgram' | 'mediaflow';
+
 export const DEFAULT_TRANSCRIPTION_CONFIG: TranscriptionConfig = {
+  provider: 'deepgram',
   deepgramConfig: {
     model: 'nova-3',
     language: 'multi',

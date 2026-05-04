@@ -556,20 +556,27 @@
   const activeHeaderDescription = $derived(activeToolHeader?.description);
 
   onMount(() => {
-    initApp();
+    let destroyed = false;
+
+    void initApp(() => destroyed);
 
     return () => {
-      if (unlistenDragDrop) {
-        unlistenDragDrop();
-      }
+      destroyed = true;
+      unlistenDragDrop?.();
+      unlistenDragDrop = null;
     };
   });
 
-  async function initApp() {
+  async function initApp(isDestroyed: () => boolean): Promise<void> {
     // Check if FFmpeg is available
     try {
-      ffmpegAvailable = await invoke<boolean>('check_ffmpeg');
-      if (!ffmpegAvailable) {
+      const available = await invoke<boolean>('check_ffmpeg');
+      if (isDestroyed()) {
+        return;
+      }
+
+      ffmpegAvailable = available;
+      if (!available) {
         logAndToast.error({
           source: 'system',
           title: 'FFmpeg not found',
@@ -577,6 +584,10 @@
         });
       }
     } catch (e) {
+      if (isDestroyed()) {
+        return;
+      }
+
       ffmpegAvailable = false;
       logAndToast.error({
         source: 'system',
@@ -585,8 +596,12 @@
       });
     }
 
+    if (isDestroyed()) {
+      return;
+    }
+
     // Listen for drag & drop events from Tauri
-    unlistenDragDrop = await listen<{ paths: string[] }>('tauri://drag-drop', async (event) => {
+    const unlisten = await listen<{ paths: string[] }>('tauri://drag-drop', async (event) => {
       // Forward to the appropriate view based on current view
       if (currentView === 'extract' && extractViewRef) {
         await extractViewRef.handleFileDrop(event.payload.paths);
@@ -606,6 +621,13 @@
         await videoOcrViewRef.handleFileDrop(event.payload.paths);
       }
     });
+
+    if (isDestroyed()) {
+      unlisten();
+      return;
+    }
+
+    unlistenDragDrop = unlisten;
   }
 
   function handleNavigate(viewId: string) {
@@ -651,7 +673,7 @@
                 <span class="text-[11px] font-medium tabular-nums">{Math.round(globalToolProgress.percentage)}%</span>
               </div>
             </HoverCard.Trigger>
-            <HoverCard.Content align="end" class="w-80 p-3">
+            <HoverCard.Content align="end" class="w-68 p-3">
               <div class="mb-2 border-b pb-2">
                 <div class="mb-2 flex items-center justify-between">
                   <p class="text-[11px] uppercase tracking-wide text-muted-foreground">Global Progress</p>

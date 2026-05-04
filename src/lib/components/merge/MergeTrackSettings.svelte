@@ -61,8 +61,8 @@
 </script>
 
 <Dialog.Root bind:open onOpenChange={handleOpenChange}>
-  <Dialog.Content class="max-w-lg max-h-[90vh] overflow-y-auto">
-    <Dialog.Header>
+  <Dialog.Content class="max-w-lg max-h-[90vh] flex flex-col">
+    <Dialog.Header class="shrink-0">
       <Dialog.Title class="flex items-center gap-2">
         {#if track}
           {@const Icon = typeIcons[track.type as keyof typeof typeIcons]}
@@ -80,7 +80,7 @@
     </Dialog.Header>
 
     {#if track && config}
-      <div class="space-y-4 py-4">
+      <div class="dialog-scroll-body space-y-4 py-4">
         <div class="rounded-md bg-muted/50 p-3 text-sm">
           <div class="flex items-center gap-2 flex-wrap">
             <span class="font-medium">{track.codec.toUpperCase()}</span>
@@ -178,7 +178,7 @@
         </div>
       </div>
 
-      <Dialog.Footer>
+      <Dialog.Footer class="shrink-0">
         <Button variant="outline" onclick={onClose}>
           Cancel
         </Button>

@@ -17,7 +17,7 @@
   let { class: className = '' }: MergeTrackTableProps = $props();
 
   // Get all tracks (source + imported)
-  const allTracks = $derived(() => {
+  const allTracks = $derived.by(() => {
     const tracks: Array<{
       track: MergeTrack | ImportedTrack;
       config: MergeTrackConfig | undefined;
@@ -138,7 +138,7 @@
     </div>
 
     <Badge variant="secondary">
-      {allTracks().length} track{allTracks().length > 1 ? 's' : ''}
+      {allTracks.length} track{allTracks.length > 1 ? 's' : ''}
     </Badge>
   </div>
 
@@ -159,7 +159,7 @@
 
       <!-- Table Body -->
       <div class="divide-y">
-        {#each allTracks() as { track, config, source, videoName }}
+        {#each allTracks as { track, config, source, videoName }}
           <div class="grid grid-cols-[40px_200px_80px_120px_200px_80px_80px_100px] gap-2 p-3 items-center hover:bg-muted/30 transition-colors">
             <!-- Enable Checkbox -->
             <div>
@@ -258,7 +258,7 @@
         {/each}
       </div>
 
-      {#if allTracks().length === 0}
+      {#if allTracks.length === 0}
         <div class="text-center py-12 text-muted-foreground">
           <Table class="size-12 mx-auto mb-4 opacity-50" />
           <p>No tracks to display</p>

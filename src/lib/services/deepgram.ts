@@ -3,7 +3,7 @@
  * Handles transcription with Deepgram Nova models
  */
 
-import { readFile } from '@tauri-apps/plugin-fs';
+import { invoke } from '@tauri-apps/api/core';
 import { settingsStore } from '$lib/stores/settings.svelte';
 import { logStore } from '$lib/stores/logs.svelte';
 import type {
@@ -17,8 +17,6 @@ import type {
   TranscriptionJSONOutput,
 } from '$lib/types';
 import { withSleepInhibit } from './sleep-inhibit';
-
-const DEEPGRAM_API_URL = 'https://api.deepgram.com/v1/listen';
 
 // ============================================================================
 // SUBTITLE SEGMENTATION CONFIG
@@ -98,6 +96,38 @@ export interface TranscribeResult {
   error?: string;
 }
 
+export interface TranscriptionUploadResponse {
+  status: number;
+  body: string;
+}
+
+export function createTranscriptionRequestId(provider: string): string {
+  return `${provider}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+export function errorToMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : String(error || fallback);
+}
+
+export function isTranscriptionCancelledError(error: unknown): boolean {
+  return errorToMessage(error, '').includes('Transcription cancelled');
+}
+
+export function attachTranscriptionUploadCancel(signal: AbortSignal | undefined, requestId: string): () => void {
+  if (!signal) {
+    return () => {};
+  }
+
+  const cancelUpload = () => {
+    void invoke('cancel_audio_transcription_upload', { requestId }).catch(() => {
+      // Upload may already have finished.
+    });
+  };
+
+  signal.addEventListener('abort', cancelUpload, { once: true });
+  return () => signal.removeEventListener('abort', cancelUpload);
+}
+
 /**
  * Transcribe audio using Deepgram API
  */
@@ -115,40 +145,12 @@ export async function transcribeWithDeepgram(options: TranscribeOptions): Promis
   }
   
   return withSleepInhibit('MediaFlow: Transcription', async () => {
-    try {
-      // Read audio file
-      onProgress?.(5, 'uploading');
-      const audioData = await readFile(audioPath);
+    const requestId = createTranscriptionRequestId('deepgram');
+    const detachCancel = attachTranscriptionUploadCancel(signal, requestId);
 
-      // Check abort after file read
-      if (signal?.aborted) {
-        return { success: false, error: 'Transcription cancelled' };
-      }
-      
-      const audioBlob = new Blob([new Uint8Array(audioData)], { type: 'audio/opus' });
-      
+    try {
+      onProgress?.(5, 'uploading');
       onProgress?.(10, 'uploading');
-      
-      // Determine model based on language
-      // For non-English languages, use the general variant if not already specified
-      const isNonEnglish = config.language !== 'en' && config.language !== 'multi';
-      let model = config.model;
-      if (isNonEnglish && !model.includes('general')) {
-        model = `${model}-general` as typeof config.model;
-      }
-      
-      // Build query parameters
-      const params = new URLSearchParams({
-        model,
-        punctuate: String(config.punctuate),
-        paragraphs: String(config.paragraphs),
-        smart_format: String(config.smartFormat),
-        utterances: String(config.utterances),
-        utt_split: String(config.uttSplit),
-        diarize: String(config.diarize),
-        language: config.language === 'auto' ? 'multi' : config.language,
-      });
-      
       onProgress?.(15, 'uploading');
       
       // Log the API call
@@ -156,43 +158,45 @@ export async function transcribeWithDeepgram(options: TranscribeOptions): Promis
         level: 'info',
         source: 'deepgram',
         title: 'Transcription started',
-        details: `Model: ${model}, Language: ${config.language}`,
+        details: `Model: ${config.model}, Language: ${config.language}`,
         context: { filePath: audioPath },
       });
+
+      if (signal?.aborted) {
+        return { success: false, error: 'Transcription cancelled' };
+      }
       
-      // Make API request with abort signal
-      const response = await fetch(`${DEEPGRAM_API_URL}?${params}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Token ${apiKey}`,
-          'Content-Type': audioBlob.type || 'audio/opus',
-        },
-        body: audioBlob,
-        signal,
+      const response = await invoke<TranscriptionUploadResponse>('transcribe_deepgram_audio_file', {
+        requestId,
+        audioPath,
+        config,
+        apiKey,
       });
-      
+      if (signal?.aborted) {
+        return { success: false, error: 'Transcription cancelled' };
+      }
+
       onProgress?.(50, 'processing');
-      
-      if (!response.ok) {
-        const errorText = await response.text();
+
+      if (response.status < 200 || response.status >= 300) {
         logStore.addLog({
           level: 'error',
           source: 'deepgram',
           title: 'Deepgram API Error',
-          details: `Status: ${response.status} - ${errorText}`,
-          context: { filePath: audioPath, apiError: errorText },
+          details: `Status: ${response.status} - ${response.body}`,
+          context: { filePath: audioPath, apiError: response.body },
         });
-        return { success: false, error: `API Error: ${response.status} - ${errorText}` };
+        return { success: false, error: `API Error: ${response.status} - ${response.body}` };
       }
-      
-      const data: DeepgramAPIResponse = await response.json();
+
+      const data = JSON.parse(response.body) as DeepgramAPIResponse;
       onProgress?.(90, 'processing');
-      
+
       // Process response into our format
       const result = processDeepgramResponse(data);
-      
+
       onProgress?.(100, 'processing');
-      
+
       logStore.addLog({
         level: 'success',
         source: 'deepgram',
@@ -200,12 +204,12 @@ export async function transcribeWithDeepgram(options: TranscribeOptions): Promis
         details: `Duration: ${formatDuration(result.duration)}, Confidence: ${Math.round(result.confidence * 100)}%`,
         context: { filePath: audioPath },
       });
-      
+
       return { success: true, result };
-      
+
     } catch (error) {
       // Handle abort error specifically
-      if (error instanceof Error && error.name === 'AbortError') {
+      if (isTranscriptionCancelledError(error)) {
         logStore.addLog({
           level: 'info',
           source: 'deepgram',
@@ -215,20 +219,21 @@ export async function transcribeWithDeepgram(options: TranscribeOptions): Promis
         });
         return { success: false, error: 'Transcription cancelled' };
       }
-      
-      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      const errorMessage = errorToMessage(error, 'Transcription failed');
       logStore.addLog({
         level: 'error',
         source: 'deepgram',
-        title: 'Transcription error',
+        title: 'Transcription failed',
         details: errorMessage,
         context: { filePath: audioPath },
       });
       return { success: false, error: errorMessage };
+    } finally {
+      detachCancel();
     }
   });
 }
-
 // ============================================================================
 // RESPONSE PROCESSING
 // ============================================================================
@@ -359,7 +364,7 @@ function fixLeadingPunctuation(phrases: TranscriptionPhrase[]): TranscriptionPhr
  * Uses utterances (if available) for better natural speech segmentation,
  * with fallback to word-based segmentation if utterances are not present.
  */
-function processDeepgramResponse(response: DeepgramAPIResponse): DeepgramResult {
+export function processDeepgramResponse(response: DeepgramAPIResponse): DeepgramResult {
   const { metadata, results } = response;
   
   // Get the main transcript

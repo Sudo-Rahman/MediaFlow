@@ -3,6 +3,7 @@ use std::sync::{LazyLock, Mutex};
 
 pub(crate) mod cancel;
 pub(crate) mod transcode_opus;
+pub(crate) mod upload;
 pub(crate) mod waveform;
 
 /// Store transcode process IDs keyed by input path for individual cancellation

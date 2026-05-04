@@ -54,7 +54,7 @@
   }
 
   // Whether the current primary selection can be added
-  const canAddCurrent = $derived(() => {
+  const canAddCurrent = $derived.by(() => {
     const { provider, model } = translationStore.config;
     if (!model) return false;
     return !!settingsStore.getLLMApiKey(provider);
@@ -162,7 +162,7 @@
         size="sm"
         class="w-full"
         onclick={handleAddCurrentModel}
-        disabled={!canAddCurrent()}
+        disabled={!canAddCurrent}
       >
         <Plus class="size-3.5 mr-1.5" />
         Add Current Model

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ChevronLeft, ChevronRight, Copy, Download, Check, Trash2, Loader2 } from '@lucide/svelte';
-  import type { Snippet } from 'svelte';
+  import { onDestroy, type Snippet } from 'svelte';
 
   import * as Dialog from '$lib/components/ui/dialog';
   import { Button } from '$lib/components/ui/button';
@@ -63,6 +63,7 @@
   }: VersionBrowserDialogProps = $props();
 
   let copied = $state(false);
+  let resetCopiedTimeout: ReturnType<typeof setTimeout> | null = null;
 
   const currentVersion = $derived(versions[currentIndex] ?? null);
   const hasMultipleVersions = $derived(versions.length > 1);
@@ -91,11 +92,23 @@
       await navigator.clipboard.writeText(previewContent);
       copied = true;
       toast.success('Copied to clipboard');
-      setTimeout(() => { copied = false; }, 2000);
+      if (resetCopiedTimeout) {
+        clearTimeout(resetCopiedTimeout);
+      }
+      resetCopiedTimeout = setTimeout(() => {
+        copied = false;
+        resetCopiedTimeout = null;
+      }, 2000);
     } catch {
       toast.error('Copy failed');
     }
   }
+
+  onDestroy(() => {
+    if (resetCopiedTimeout) {
+      clearTimeout(resetCopiedTimeout);
+    }
+  });
 
   function handleDelete(): void {
     if (!currentVersion || !onDelete) return;

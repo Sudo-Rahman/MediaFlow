@@ -6,9 +6,12 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Cpu, Sparkles, Zap } from '@lucide/svelte';
 
+  type DeepgramModelOption = typeof DEEPGRAM_MODELS[number];
+
   interface ModelSelectorProps {
     value: DeepgramModel;
     onValueChange: (model: DeepgramModel) => void;
+    models?: readonly DeepgramModelOption[];
     disabled?: boolean;
     class?: string;
   }
@@ -16,11 +19,12 @@
   let {
     value,
     onValueChange,
+    models = DEEPGRAM_MODELS,
     disabled = false,
     class: className = ''
   }: ModelSelectorProps = $props();
 
-  const selectedModel = $derived(DEEPGRAM_MODELS.find(m => m.id === value));
+  const selectedModel = $derived(models.find(m => m.id === value) ?? DEEPGRAM_MODELS.find(m => m.id === value));
 
   function getTierBadge(tier: string): { variant: 'default' | 'secondary' | 'outline'; text: string } {
     switch (tier) {
@@ -35,7 +39,7 @@
 </script>
 
 <div class={cn("space-y-2", className)}>
-  <Label class="text-sm font-medium">Deepgram Model</Label>
+  <Label class="text-sm font-medium">Model</Label>
   
   <Select.Root 
     type="single"
@@ -58,7 +62,7 @@
     </Select.Trigger>
     <Select.Content>
       <Select.Group>
-        {#each DEEPGRAM_MODELS as model (model.id)}
+        {#each models as model (model.id)}
           {@const tierBadge = getTierBadge(model.tier)}
           <Select.Item value={model.id} label={model.name}>
             <div class="flex items-center justify-between w-full gap-4">

@@ -27,7 +27,7 @@
   );
 
   // Grouped by type for display
-  const groupsByType = $derived(() => {
+  const groupsByType = $derived.by(() => {
     const byType = new Map<string, TrackGroup[]>();
     
     groups.forEach(group => {
@@ -146,7 +146,7 @@
           <p class="text-sm mt-1">Import videos and tracks to get started</p>
         </div>
       {:else}
-        {#each Array.from(groupsByType().entries()) as [type, typeGroups]}
+        {#each Array.from(groupsByType.entries()) as [type, typeGroups]}
           <div class="space-y-3">
             <!-- Type Header -->
             <div class="flex items-center gap-2">

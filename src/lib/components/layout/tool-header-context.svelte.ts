@@ -15,7 +15,11 @@ class ToolHeaderContext {
     this.#headers.set(toolId, config);
   }
 
-  clearHeader(toolId: ToolId): void {
+  clearHeader(toolId: ToolId, expectedConfig?: ToolHeaderConfig): void {
+    if (expectedConfig && this.#headers.get(toolId) !== expectedConfig) {
+      return;
+    }
+
     this.#headers.delete(toolId);
   }
 

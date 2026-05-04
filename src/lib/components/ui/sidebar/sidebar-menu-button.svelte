@@ -66,24 +66,26 @@
 	});
 </script>
 
-{#snippet Button({ props }: { props?: Record<string, unknown> })}
-	{@const mergedProps = mergeProps(buttonProps, props)}
+{#if !tooltipContent}
 	{#if child}
-		{@render child({ props: mergedProps })}
+		{@render child({ props: buttonProps })}
 	{:else}
-		<button bind:this={ref} {...mergedProps}>
+		<button bind:this={ref} {...buttonProps}>
 			{@render children?.()}
 		</button>
 	{/if}
-{/snippet}
-
-{#if !tooltipContent}
-	{@render Button({})}
 {:else}
 	<Tooltip.Root>
 		<Tooltip.Trigger>
 			{#snippet child({ props })}
-				{@render Button({ props })}
+				{@const mergedProps = mergeProps(buttonProps, props)}
+				{#if child}
+					{@render child({ props: mergedProps })}
+				{:else}
+					<button bind:this={ref} {...mergedProps}>
+						{@render children?.()}
+					</button>
+				{/if}
 			{/snippet}
 		</Tooltip.Trigger>
 		<Tooltip.Content

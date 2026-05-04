@@ -23,9 +23,8 @@
 </script>
 
 {#if file}
-  <div class="p-4 border-b">
-    <h2 class="text-lg font-semibold truncate">{file.name}</h2>
-    <p class="text-sm text-muted-foreground truncate mt-0.5">{file.path}</p>
+  <div class="flex items-center p-4 border-b">
+    <h2 class="font-semibold truncate" title={file.name}>{file.name}</h2>
   </div>
 
   <div class="flex-1 min-h-0 overflow-auto">

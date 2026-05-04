@@ -26,7 +26,7 @@
   }
 
   // Visual example
-  const example = $derived(() => {
+  const example = $derived.by(() => {
     const original = "example_file";
     const from = Math.max(0, Math.min(config.from, original.length));
     const length = Math.max(0, config.length);
@@ -83,10 +83,10 @@
 
   <div class="p-2 rounded-md bg-muted space-y-1">
     <p class="text-xs text-muted-foreground">
-      Original: <span class="font-mono">{example().original}</span>
+      Original: <span class="font-mono">{example.original}</span>
     </p>
     <p class="text-xs text-muted-foreground">
-      Result: <span class="font-mono">{example().result}</span>
+      Result: <span class="font-mono">{example.result}</span>
     </p>
   </div>
 </div>

@@ -1,6 +1,11 @@
 import { Store } from '@tauri-apps/plugin-store';
 import { DEFAULT_OCR_REGION } from '$lib/types';
-import type { LLMApiKeys, OcrRegion, TranslationSettings } from '$lib/types';
+import type { LLMApiKeyProvider, LLMApiKeys, LLMProvider, OcrRegion, TranslationSettings } from '$lib/types';
+
+export interface MediaFlowUser {
+  email: string;
+  name?: string;
+}
 
 // Settings interface
 export interface AppSettings {
@@ -12,6 +17,7 @@ export interface AppSettings {
   translationSettings: TranslationSettings;
   openRouterModels: string[]; // Saved OpenRouter model IDs
   deepgramApiKey: string;     // Deepgram API key for transcription
+  mediaflowUser: MediaFlowUser | null;
   videoOcrGlobalRegion: OcrRegion;
 }
 
@@ -32,6 +38,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   },
   openRouterModels: [],
   deepgramApiKey: '',
+  mediaflowUser: null,
   videoOcrGlobalRegion: { ...DEFAULT_OCR_REGION }
 };
 
@@ -63,6 +70,7 @@ export const settingsStore = {
       const translationSettings = await s.get<TranslationSettings>('translationSettings');
       const openRouterModels = await s.get<string[]>('openRouterModels');
       const deepgramApiKey = await s.get<string>('deepgramApiKey');
+      const mediaflowUser = await s.get<MediaFlowUser | null>('mediaflowUser');
       const videoOcrGlobalRegion = await s.get<OcrRegion>('videoOcrGlobalRegion');
 
       settings = {
@@ -74,6 +82,7 @@ export const settingsStore = {
         translationSettings: translationSettings ?? DEFAULT_SETTINGS.translationSettings,
         openRouterModels: openRouterModels ?? DEFAULT_SETTINGS.openRouterModels,
         deepgramApiKey: deepgramApiKey ?? DEFAULT_SETTINGS.deepgramApiKey,
+        mediaflowUser: mediaflowUser ?? DEFAULT_SETTINGS.mediaflowUser,
         videoOcrGlobalRegion: videoOcrGlobalRegion ?? { ...DEFAULT_SETTINGS.videoOcrGlobalRegion }
       };
 
@@ -103,14 +112,18 @@ export const settingsStore = {
     await s.set('theme', theme);
   },
 
-  async setLLMApiKey(provider: keyof LLMApiKeys, key: string) {
+  async setLLMApiKey(provider: LLMApiKeyProvider, key: string) {
     const newKeys = { ...settings.llmApiKeys, [provider]: key };
     settings = { ...settings, llmApiKeys: newKeys };
     const s = await getStore();
     await s.set('llmApiKeys', newKeys);
   },
 
-  getLLMApiKey(provider: keyof LLMApiKeys): string {
+  getLLMApiKey(provider: LLMProvider): string {
+    if (provider === 'mediaflow') {
+      return settings.mediaflowUser ? 'oauth' : '';
+    }
+
     return settings.llmApiKeys[provider] || '';
   },
 
@@ -166,6 +179,20 @@ export const settingsStore = {
 
   hasDeepgramApiKey(): boolean {
     return (settings.deepgramApiKey?.length ?? 0) > 0;
+  },
+
+  hasMediaFlowSession(): boolean {
+    return Boolean(settings.mediaflowUser);
+  },
+
+  async setMediaFlowUser(user: MediaFlowUser | null) {
+    settings = { ...settings, mediaflowUser: user };
+    const s = await getStore();
+    if (user) {
+      await s.set('mediaflowUser', user);
+    } else {
+      await s.delete('mediaflowUser');
+    }
   },
 
   async setVideoOcrGlobalRegion(region: OcrRegion) {

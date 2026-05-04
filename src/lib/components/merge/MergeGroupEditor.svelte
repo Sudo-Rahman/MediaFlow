@@ -141,9 +141,9 @@
 </script>
 
 <Dialog.Root bind:open onOpenChange={handleOpenChange}>
-  <Dialog.Content class="max-w-lg max-h-[90vh] overflow-y-auto">
+  <Dialog.Content class="max-w-lg max-h-[90vh] flex flex-col">
     {#if group}
-      <Dialog.Header>
+      <Dialog.Header class="shrink-0">
         <Dialog.Title class="flex items-center gap-2">
           {#if group.type === 'video'}
             <Video class="size-5" />
@@ -159,6 +159,7 @@
         </Dialog.Description>
       </Dialog.Header>
 
+      <div class="dialog-scroll-body py-1">
       <Tabs.Root value={activeTab} onValueChange={(v) => activeTab = v} class="mt-4">
         <Tabs.List class="grid w-full grid-cols-2">
           <Tabs.Trigger value="edit">Edit</Tabs.Trigger>
@@ -332,8 +333,9 @@
           </div>
         </Tabs.Content>
       </Tabs.Root>
+      </div>
 
-      <Dialog.Footer class="mt-6">
+      <Dialog.Footer class="mt-6 shrink-0">
         <Button variant="outline" onclick={onClose}>
           Cancel
         </Button>

@@ -2,14 +2,33 @@
 use objc2_app_kit::{NSColor, NSView, NSWindow};
 #[cfg(target_os = "macos")]
 use objc2_core_foundation::CGFloat;
+use tauri::Manager;
 
 #[cfg(target_os = "macos")]
 const WINDOW_CORNER_RADIUS: CGFloat = 25.0;
 
 pub(crate) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(any(windows, target_os = "linux"))]
+    {
+        use tauri_plugin_deep_link::DeepLinkExt;
+        app.deep_link().register_all()?;
+    }
+
     let handle = app.handle().clone();
     create_main_window(handle);
     Ok(())
+}
+
+pub(crate) fn handle_run_event(app: &tauri::AppHandle, event: &tauri::RunEvent) {
+    #[cfg(target_os = "macos")]
+    if let tauri::RunEvent::Opened { urls } = event {
+        use tauri::Emitter;
+
+        show_main_window(app);
+
+        let urls = urls.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let _ = app.emit("mediaflow://oauth-callback", urls);
+    }
 }
 
 pub(crate) fn create_main_window(app: tauri::AppHandle) {
@@ -37,6 +56,16 @@ pub(crate) fn create_main_window(app: tauri::AppHandle) {
 
     #[cfg(not(target_os = "macos"))]
     let _window = window.build().unwrap();
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    } else {
+        create_main_window(app.clone());
+    }
 }
 
 #[cfg(target_os = "macos")]

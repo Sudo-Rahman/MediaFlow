@@ -21,6 +21,13 @@
       }
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["mediaflow"]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

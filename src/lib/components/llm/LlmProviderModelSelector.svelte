@@ -30,7 +30,7 @@
     class: className = '',
   }: LlmProviderModelSelectorProps = $props();
 
-  const providerKeys: LLMProvider[] = ['google', 'anthropic', 'openai', 'openrouter'];
+  const providerKeys: LLMProvider[] = ['mediaflow', 'google', 'anthropic', 'openai', 'openrouter'];
 
   const currentProvider = $derived(LLM_PROVIDERS[provider]);
   const hasModels = $derived(currentProvider.models.length > 0);
@@ -113,7 +113,9 @@
           <Bot class="size-4" />
           <span>{currentProvider.name}</span>
           {#if !hasApiKey}
-            <Badge variant="destructive" class="ml-auto text-xs">No API Key</Badge>
+            <Badge variant="destructive" class="ml-auto text-xs">
+              {provider === 'mediaflow' ? 'Sign in' : 'No API Key'}
+            </Badge>
           {/if}
         </div>
       </Select.Trigger>
@@ -125,7 +127,9 @@
                 <div class="flex items-center gap-2">
                 <span>{providerItem.name}</span>
                 {#if !getProviderApiKey(providerKey)}
-                    <Badge variant="outline" class="text-xs">No key</Badge>
+                    <Badge variant="outline" class="text-xs">
+                      {providerKey === 'mediaflow' ? 'Sign in' : 'No key'}
+                    </Badge>
                 {/if}
                 </div>
             </Select.Item>
@@ -245,9 +249,13 @@
     <div class="flex items-center gap-3 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
       <Key class="size-4 text-destructive shrink-0" />
       <div class="flex-1 text-sm">
-        <p class="font-medium text-destructive">API key required</p>
+        <p class="font-medium text-destructive">
+          {provider === 'mediaflow' ? 'MediaFlow sign-in required' : 'API key required'}
+        </p>
         <p class="text-muted-foreground">
-          Configure your {currentProvider.name} API key in Settings
+          {provider === 'mediaflow'
+            ? 'Sign in to your MediaFlow account in Settings'
+            : `Configure your ${currentProvider.name} API key in Settings`}
         </p>
       </div>
       {#if onNavigateToSettings}

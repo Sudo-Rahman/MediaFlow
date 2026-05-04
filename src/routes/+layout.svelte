@@ -4,12 +4,16 @@
   import { ModeWatcher } from 'mode-watcher';
   import { Toaster } from '$lib/components/ui/sonner';
   import { settingsStore } from '$lib/stores';
+  import { restoreMediaFlowSession } from '$lib/services/mediaflow-auth';
 
   let { children } = $props();
 
   // Load settings on app startup
   onMount(() => {
-    settingsStore.load();
+    void (async () => {
+      await settingsStore.load();
+      await restoreMediaFlowSession();
+    })();
   });
 </script>
 
@@ -17,4 +21,3 @@
 <Toaster richColors closeButton />
 
 {@render children()}
-

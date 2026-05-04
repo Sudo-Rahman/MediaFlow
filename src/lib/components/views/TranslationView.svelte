@@ -5,7 +5,7 @@
 </script>
 
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { open } from '@tauri-apps/plugin-dialog';
   import { readTextFile } from '@tauri-apps/plugin-fs';
   import { toast } from 'svelte-sonner';
@@ -46,7 +46,10 @@
     createModelJobId,
     createRunId,
     createTokenCountCacheKey,
+    getPendingTranslationVersionName,
     getModelDisplayName,
+    isPendingTranslationVersionId,
+    PENDING_TRANSLATION_VERSION_ID,
     selectTranslateAllTargets,
     SUBTITLE_EXTENSIONS,
   } from '$lib/components/translation/translation-view-utils';
@@ -101,18 +104,40 @@
     return pendingTokenCountKeys.has(selectedTokenCountKey);
   });
 
+  function setTokenCountPending(cacheKey: string, pending: boolean): void {
+    untrack(() => {
+      const isPending = pendingTokenCountKeys.has(cacheKey);
+      if (isPending === pending) {
+        return;
+      }
+
+      const nextPendingKeys = new Set(pendingTokenCountKeys);
+      if (pending) {
+        nextPendingKeys.add(cacheKey);
+      } else {
+        nextPendingKeys.delete(cacheKey);
+      }
+      pendingTokenCountKeys = nextPendingKeys;
+    });
+  }
+
   $effect(() => {
     const job = translationStore.selectedJob;
     const cacheKey = selectedTokenCountKey;
 
-    if (!job || !cacheKey || tokenCountCache.has(cacheKey) || pendingTokenCountKeys.has(cacheKey)) {
+    if (
+      !job
+      || !cacheKey
+      || tokenCountCache.has(cacheKey)
+      || untrack(() => pendingTokenCountKeys.has(cacheKey))
+    ) {
       return;
     }
 
     const { sourceLanguage, targetLanguage } = translationStore.config;
-    const nextPendingKeys = new Set(pendingTokenCountKeys);
-    nextPendingKeys.add(cacheKey);
-    pendingTokenCountKeys = nextPendingKeys;
+    setTokenCountPending(cacheKey, true);
+
+    let cancelled = false;
 
     untrack(() => {
       const fullPrompt = buildFullPromptForTokenCount(
@@ -123,6 +148,10 @@
 
       countTokens(fullPrompt)
         .then((count) => {
+          if (cancelled) {
+            return;
+          }
+
           const nextTokenCountCache = new Map(tokenCountCache);
           nextTokenCountCache.set(cacheKey, count);
           tokenCountCache = nextTokenCountCache;
@@ -131,11 +160,18 @@
           // Ignore tokenizer failures in the UI.
         })
         .finally(() => {
-          const updatedPendingKeys = new Set(pendingTokenCountKeys);
-          updatedPendingKeys.delete(cacheKey);
-          pendingTokenCountKeys = updatedPendingKeys;
+          if (cancelled) {
+            return;
+          }
+
+          setTokenCountPending(cacheKey, false);
         });
     });
+
+    return () => {
+      cancelled = true;
+      setTokenCountPending(cacheKey, false);
+    };
   });
 
   // Expose API for drag & drop from parent
@@ -194,15 +230,7 @@
 
       clearTokenCountCacheForPath(path);
       translationStore.addFile(subtitleFile);
-
-      // Load persisted translation versions if any
-      const existingData = await loadTranslationData(path);
-      if (existingData && existingData.translationVersions.length > 0) {
-        const job = translationStore.jobs.find(j => j.file.path === path);
-        if (job) {
-          translationStore.setTranslationVersions(job.id, existingData.translationVersions);
-        }
-      }
+      deferPersistedTranslationHydration(path);
 
       toast.success(`Loaded: ${name}`);
     } catch (error) {
@@ -213,6 +241,24 @@
         context: { filePath: path }
       });
     }
+  }
+
+  function deferPersistedTranslationHydration(path: string): void {
+    const hydrate = async () => {
+      const existingData = await loadTranslationData(path);
+      if (existingData && existingData.translationVersions.length > 0) {
+        const job = translationStore.jobs.find(j => j.file.path === path);
+        if (job) {
+          translationStore.setTranslationVersions(job.id, existingData.translationVersions);
+        }
+      }
+    };
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        void hydrate();
+      });
+    });
   }
 
   async function handleImportClick() {
@@ -272,15 +318,7 @@
       translationStore.addFile(file);
       existingPaths.add(file.path);
       imported++;
-
-      // Load persisted translation versions if any
-      const existingData = await loadTranslationData(file.path);
-      if (existingData && existingData.translationVersions.length > 0) {
-        const job = translationStore.jobs.find(j => j.file.path === file.path);
-        if (job) {
-          translationStore.setTranslationVersions(job.id, existingData.translationVersions);
-        }
-      }
+      deferPersistedTranslationHydration(file.path);
     }
 
     return { imported, skipped };
@@ -428,6 +466,7 @@
     }
     translationStore.updateJobIfActive(job.id, runId, {
       status: 'translating',
+      activeVersionId: PENDING_TRANSLATION_VERSION_ID,
       progress: 0,
       currentBatch: 0,
       totalBatches: 0,
@@ -666,6 +705,7 @@
     }
     translationStore.updateJobIfActive(job.id, runId, {
       status: 'translating',
+      activeVersionId: PENDING_TRANSLATION_VERSION_ID,
       progress: 0,
       currentBatch: 0,
       totalBatches: 0,
@@ -1161,14 +1201,31 @@
   // Active version for the selected job
   const selectedJobVersions = $derived(selectedJob?.translationVersions ?? []);
   const activeVersionId = $derived(selectedJob?.activeVersionId ?? null);
+  const isPendingVersionSelected = $derived(isPendingTranslationVersionId(activeVersionId));
+  const pendingVersionName = $derived(
+    selectedJob?.status === 'translating'
+      ? getPendingTranslationVersionName(selectedJobVersions.length)
+      : null
+  );
   const activeVersion = $derived(
-    activeVersionId ? selectedJobVersions.find(v => v.id === activeVersionId) ?? null : null
+    activeVersionId && !isPendingVersionSelected
+      ? selectedJobVersions.find(v => v.id === activeVersionId) ?? null
+      : null
   );
   // Content to display in the right panel: prefer active version, fall back to result
-  const displayedContent = $derived(activeVersion?.translatedContent ?? selectedJob?.result?.translatedContent ?? '');
+  const displayedContent = $derived(
+    isPendingVersionSelected ? '' : activeVersion?.translatedContent ?? selectedJob?.result?.translatedContent ?? ''
+  );
 
   // Debounced persistence for version edits
   let persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  onDestroy(() => {
+    for (const timer of persistTimers.values()) {
+      clearTimeout(timer);
+    }
+    persistTimers.clear();
+  });
 
   function debouncedPersistVersionEdit(jobId: string, versionId: string, content: string): void {
     translationStore.updateVersionContent(jobId, versionId, content);
@@ -1323,6 +1380,8 @@
       {tokenCount}
       {isCountingTokens}
       {isTranslating}
+      {isPendingVersionSelected}
+      {pendingVersionName}
       onSelectVersion={handleSelectedVersionChange}
       onCopyContent={handleCopyToClipboard}
       onEditContent={handleSelectedContentEdit}

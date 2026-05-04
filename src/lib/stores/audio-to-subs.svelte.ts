@@ -7,6 +7,7 @@ import type WaveSurfer from 'wavesurfer.js';
 import type { 
   AudioFile, 
   TranscriptionConfig,
+  TranscriptionProvider,
   DeepgramConfig,
   DeepgramModel,
   TranscriptionVersion
@@ -17,12 +18,15 @@ import { DEFAULT_DEEPGRAM_CONFIG } from '$lib/types';
 // STATE
 // ============================================================================
 
+const DEFAULT_TRANSCRIPTION_PROVIDER: TranscriptionProvider = import.meta.env.DEV ? 'deepgram' : 'mediaflow';
+
 // Audio files state
 let audioFiles = $state<AudioFile[]>([]);
 let selectedFileId = $state<string | null>(null);
 
 // Transcription configuration
 let config = $state<TranscriptionConfig>({
+  provider: DEFAULT_TRANSCRIPTION_PROVIDER,
   deepgramConfig: { ...DEFAULT_DEEPGRAM_CONFIG },
   maxConcurrentTranscriptions: 5,
 });
@@ -122,6 +126,10 @@ export const audioToSubsStore = {
 
   get deepgramConfig(): DeepgramConfig {
     return config.deepgramConfig;
+  },
+
+  get provider(): TranscriptionProvider {
+    return config.provider;
   },
 
   // -------------------------------------------------------------------------
@@ -328,6 +336,17 @@ export const audioToSubsStore = {
     config = { 
       ...config, 
       deepgramConfig: { ...config.deepgramConfig, ...updates } 
+    };
+  },
+
+  setTranscriptionProvider(provider: TranscriptionProvider) {
+    config = {
+      ...config,
+      provider,
+      deepgramConfig: {
+        ...config.deepgramConfig,
+        model: provider === 'mediaflow' ? 'nova-3' : config.deepgramConfig.model,
+      },
     };
   },
 
@@ -557,6 +576,7 @@ export const audioToSubsStore = {
   reset() {
     this.clear();
     config = {
+      provider: DEFAULT_TRANSCRIPTION_PROVIDER,
       deepgramConfig: { ...DEFAULT_DEEPGRAM_CONFIG },
       maxConcurrentTranscriptions: 5,
     };

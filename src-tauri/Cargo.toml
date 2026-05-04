@@ -28,7 +28,6 @@ zip = "8.2"
 tauri = { version =  "^2", features = ["protocol-asset", "macos-private-api", "default"] }
 tauri-plugin-opener =  "^2"
 tauri-plugin-store =  "^2"
-tauri-plugin-http = "^2"
 tauri-plugin-shell =  "^2"
 tauri-plugin-dialog =  "^2"
 tauri-plugin-fs =  "^2"
@@ -40,20 +39,22 @@ tiktoken-rs = "0.9"
 image = "0.25"
 rayon = "1.10"
 num_cpus = "1.16"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "multipart"] }
 futures-util = "0.3"
 zip = "8.2"
 tar = "0.4"
 xz2 = "0.1"
 walkdir = "2.5"
+tauri-plugin-deep-link = "^2"
+tauri-plugin-single-instance = { version = "^2", features = ["deep-link"] }
 
 #windows or linux ocr
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
 ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git", branch = "next", features = ["vulkan"] }
 
 
-
 [target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "^3", features = ["apple-native"] }
 cocoa = "0.26.0"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSColor", "NSView", "NSWindow", "objc2-quartz-core"] }
 objc2-core-foundation = { version = "0.3.2", default-features = false }
@@ -61,14 +62,19 @@ objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["
 # OCR
 ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git", branch = "next", features = ["metal"] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "^3", features = ["windows-native"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "^3", features = ["sync-secret-service", "crypto-rust"] }
+zbus = "5.12"
+
 
 [dev-dependencies]
 ctor = "0.2"
 serial_test = "3.2"
 sha2 = "0.10"
 tempfile = "3.20"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-zbus = "5.12"

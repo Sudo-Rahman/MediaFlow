@@ -1,15 +1,19 @@
 <script lang="ts">
-  import { AlertCircle, Check, ChevronDown, Copy, FileText, Info, Languages, Loader2, RotateCw, X } from '@lucide/svelte';
+  import { tick } from 'svelte';
+  import { AlertCircle, Check, ChevronDown, Copy, Ellipsis, FileText, Info, Languages, Loader2, Pencil, RotateCw, Save, X } from '@lucide/svelte';
 
   import { Textarea } from '$lib/components/ui/textarea';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
+  import { VirtualizedTextPreview } from '$lib/components/shared';
   import * as HoverCard from '$lib/components/ui/hover-card';
   import * as Item from '$lib/components/ui/item';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import * as Popover from '$lib/components/ui/popover';
   import { Progress } from '$lib/components/ui/progress';
   import * as Resizable from '$lib/components/ui/resizable';
   import type { TranslationJob, TranslationVersion } from '$lib/types';
+  import { PENDING_TRANSLATION_VERSION_ID } from './translation-view-utils';
 
   interface TranslationWorkspaceProps {
     selectedJob: TranslationJob | null;
@@ -20,6 +24,8 @@
     tokenCount: number | null;
     isCountingTokens: boolean;
     isTranslating: boolean;
+    isPendingVersionSelected: boolean;
+    pendingVersionName: string | null;
     onSelectVersion: (versionId: string) => void;
     onCopyContent: (content: string) => void | Promise<void>;
     onEditContent: (content: string) => void;
@@ -35,6 +41,8 @@
     tokenCount,
     isCountingTokens,
     isTranslating,
+    isPendingVersionSelected,
+    pendingVersionName,
     onSelectVersion,
     onCopyContent,
     onEditContent,
@@ -42,11 +50,26 @@
   }: TranslationWorkspaceProps = $props();
 
   let versionPopoverOpen = $state(false);
+  let isEditingTranslation = $state(false);
+  let draftContent = $state('');
+  let currentEditKey = $state('');
 
-  const originalLineCount = $derived(selectedJob ? selectedJob.file.content.split('\n').length : 0);
-  const translatedLineCount = $derived(displayedContent ? displayedContent.split('\n').length : 0);
-  const activeUsage = $derived(activeVersion?.usage ?? (activeVersion ? undefined : selectedJob?.result?.usage));
-  const hasTranslationMetrics = $derived(Boolean(displayedContent || activeUsage));
+  const activeUsage = $derived(
+    isPendingVersionSelected ? undefined : activeVersion?.usage ?? (activeVersion ? undefined : selectedJob?.result?.usage)
+  );
+  const hasPendingVersion = $derived(Boolean(pendingVersionName));
+  const activeVersionLabel = $derived(isPendingVersionSelected ? pendingVersionName : activeVersion?.name);
+  const selectableVersionCount = $derived(selectedJobVersions.length + (hasPendingVersion ? 1 : 0));
+  const hasOverflowActions = $derived(Boolean(activeVersionLabel || activeUsage || (displayedContent && !isPendingVersionSelected)));
+
+  $effect(() => {
+    const nextEditKey = `${selectedJob?.id ?? 'none'}:${activeVersionId ?? 'result'}`;
+    if (nextEditKey !== currentEditKey) {
+      currentEditKey = nextEditKey;
+      isEditingTranslation = false;
+      draftContent = displayedContent;
+    }
+  });
 
   function getStatusBadgeVariant(status: TranslationJob['status']): 'default' | 'destructive' | 'secondary' {
     if (status === 'completed') {
@@ -59,12 +82,15 @@
   }
 
   function handleContentInput(event: Event): void {
-    onEditContent((event.currentTarget as HTMLTextAreaElement).value);
+    draftContent = (event.currentTarget as HTMLTextAreaElement).value;
   }
 
-  function handleSelectVersion(versionId: string): void {
-    onSelectVersion(versionId);
+  async function handleSelectVersion(versionId: string): Promise<void> {
     versionPopoverOpen = false;
+    await tick();
+    requestAnimationFrame(() => {
+      onSelectVersion(versionId);
+    });
   }
 
   function formatVersionMeta(version: TranslationVersion): string {
@@ -80,6 +106,22 @@
 
     return `${version.provider} · ${version.model} · ${createdAtLabel}`;
   }
+
+  function startEditingTranslation(): void {
+    draftContent = displayedContent;
+    isEditingTranslation = true;
+  }
+
+  function saveTranslationEdit(): void {
+    onEditContent(draftContent);
+    isEditingTranslation = false;
+  }
+
+  function cancelTranslationEdit(): void {
+    draftContent = displayedContent;
+    isEditingTranslation = false;
+  }
+
 </script>
 
 <div class="flex-2 flex flex-col min-h-0 overflow-hidden">
@@ -93,19 +135,6 @@
         </Badge>
       </div>
 
-      {#if displayedContent}
-        <div class="flex gap-2 shrink-0">
-          <Button
-            variant="outline"
-            size="icon-sm"
-            onclick={() => onCopyContent(displayedContent)}
-            title="Copy translation"
-            aria-label="Copy translation"
-          >
-            <Copy class="size-4" />
-          </Button>
-        </div>
-      {/if}
     </div>
 
     <Resizable.PaneGroup direction="horizontal" class="flex-1 min-h-0 min-w-0">
@@ -114,21 +143,13 @@
           <div class="@container h-10 px-2 bg-muted/30 border-b flex items-center justify-between gap-2 overflow-hidden">
             <span class="text-sm font-medium shrink-0">Original</span>
             <HoverCard.Root openDelay={200}>
-              <span class="@max-[14rem]:hidden min-w-0 truncate whitespace-nowrap text-right text-xs text-muted-foreground">
-                {originalLineCount.toLocaleString()} lines
-                {#if tokenCount !== null}
-                  · ~{tokenCount.toLocaleString()} tokens
-                {:else if isCountingTokens}
-                  · <Loader2 class="size-3 animate-spin inline" />
-                {/if}
-              </span>
               <HoverCard.Trigger>
                 {#snippet child({ props })}
                   <Button
                     {...props}
                     variant="ghost"
                     size="icon-xs"
-                    class="hidden text-muted-foreground hover:text-foreground @max-[14rem]:inline-flex"
+                    class="text-muted-foreground hover:text-foreground"
                     aria-label="Show original metrics"
                   >
                     <Info class="size-3.5" />
@@ -139,10 +160,6 @@
                 <div class="space-y-2">
                   <p class="text-xs font-medium text-muted-foreground">Original metrics</p>
                   <div class="space-y-1 text-xs">
-                    <div class="flex items-center justify-between gap-4">
-                      <span class="text-muted-foreground">Lines</span>
-                      <span class="font-medium">{originalLineCount.toLocaleString()}</span>
-                    </div>
                     <div class="flex items-center justify-between gap-4">
                       <span class="text-muted-foreground">Tokens</span>
                       {#if tokenCount !== null}
@@ -161,8 +178,11 @@
               </HoverCard.Content>
             </HoverCard.Root>
           </div>
-          <div class="flex-1 min-h-0 min-w-0 overflow-auto overscroll-contain">
-            <pre class="inline-block min-w-full p-4 text-sm whitespace-pre font-mono [contain:layout_paint_style] [tab-size:2]">{selectedJob.file.content}</pre>
+          <div class="flex-1 min-h-0 min-w-0 overflow-hidden overscroll-contain">
+            <VirtualizedTextPreview
+              content={selectedJob.file.content}
+              loadingMessage="Preparing original preview..."
+            />
           </div>
         </div>
       </Resizable.Pane>
@@ -171,10 +191,10 @@
 
       <Resizable.Pane defaultSize={50} minSize={20}>
         <div class="h-full min-w-0 flex flex-col [contain:layout_paint_style]">
-          <div class="@container h-10 px-2 bg-muted/30 border-b flex items-center justify-between gap-2 overflow-hidden">
-            <div class="text-sm font-medium min-w-0 flex items-center gap-1.5 whitespace-nowrap">
+          <div class="@container h-10 px-2 bg-muted/30 border-b flex items-center gap-2 overflow-hidden">
+            <div class="text-sm font-medium min-w-0 flex flex-1 items-center gap-1.5 whitespace-nowrap">
               <span class="shrink-0">Translation</span>
-              {#if activeVersion && selectedJobVersions.length > 1}
+              {#if activeVersionLabel && selectableVersionCount > 1}
                 <Popover.Root bind:open={versionPopoverOpen}>
                   <Popover.Trigger>
                     {#snippet child({ props })}
@@ -182,11 +202,14 @@
                         {...props}
                         variant="ghost"
                         size="xs"
-                        class="mr-2 h-6 min-w-0 max-w-44 shrink-0 px-2 text-xs text-muted-foreground hover:text-foreground"
+                        class="mr-2 h-6 min-w-0 max-w-44 shrink px-2 text-xs text-muted-foreground hover:text-foreground @max-[14rem]:hidden"
                         aria-label="Select translation version"
                         aria-expanded={versionPopoverOpen}
                       >
-                        <span class="truncate">{activeVersion.name}</span>
+                        {#if isPendingVersionSelected}
+                          <Loader2 class="size-3 animate-spin" />
+                        {/if}
+                        <span class="truncate">{activeVersionLabel}</span>
                         <ChevronDown class="size-3" />
                       </Button>
                     {/snippet}
@@ -196,6 +219,31 @@
                       <p class="text-xs font-medium text-muted-foreground">Translation version</p>
                     </div>
                     <div class="max-h-72 overflow-y-auto">
+                      {#if pendingVersionName}
+                        <Item.Root
+                          size="xs"
+                          class="cursor-pointer flex-nowrap hover:bg-muted"
+                          aria-current={isPendingVersionSelected ? 'true' : undefined}
+                          onclick={() => handleSelectVersion(PENDING_TRANSLATION_VERSION_ID)}
+                        >
+                          {#snippet child({ props })}
+                            <button type="button" {...props}>
+                              <Item.Content class="min-w-0 overflow-hidden">
+                                <Item.Title class="w-full truncate">{pendingVersionName}</Item.Title>
+                                <Item.Description class="inline-flex w-full items-center gap-1 truncate text-xs">
+                                  <Loader2 class="size-3 animate-spin" />
+                                  Translating
+                                </Item.Description>
+                              </Item.Content>
+                              <Item.Actions class="shrink-0">
+                                {#if isPendingVersionSelected}
+                                  <Check class="size-4 shrink-0 text-primary" />
+                                {/if}
+                              </Item.Actions>
+                            </button>
+                          {/snippet}
+                        </Item.Root>
+                      {/if}
                       {#each selectedJobVersions as version (version.id)}
                         <Item.Root
                           size="xs"
@@ -223,44 +271,35 @@
                     </div>
                   </Popover.Content>
                 </Popover.Root>
-              {:else if activeVersion}
-                <span class="truncate text-xs text-muted-foreground">({activeVersion.name})</span>
+              {:else if activeVersionLabel}
+                <span class="inline-flex min-w-0 items-center gap-1 truncate text-xs text-muted-foreground">
+                  {#if isPendingVersionSelected}
+                    <Loader2 class="size-3 animate-spin" />
+                  {/if}
+                  ({activeVersionLabel})
+                </span>
               {/if}
             </div>
-            {#if hasTranslationMetrics}
-              <HoverCard.Root openDelay={200}>
-                <span class="@max-[24rem]:hidden min-w-0 truncate whitespace-nowrap text-right text-xs text-muted-foreground">
-                  {#if displayedContent}
-                    {translatedLineCount} lines
-                  {/if}
-                  {#if activeUsage}
-                    · {activeUsage.totalTokens.toLocaleString()} tokens
-                  {/if}
-                </span>
-                <HoverCard.Trigger>
-                  {#snippet child({ props })}
-                    <Button
-                      {...props}
-                      variant="ghost"
-                      size="icon-xs"
-                      class="hidden text-muted-foreground hover:text-foreground @max-[24rem]:inline-flex"
-                      aria-label="Show translation metrics"
-                    >
-                      <Info class="size-3.5" />
-                    </Button>
-                  {/snippet}
-                </HoverCard.Trigger>
-                <HoverCard.Content align="end" class="w-56 rounded-2xl p-3">
-                  <div class="space-y-2">
-                    <p class="text-xs font-medium text-muted-foreground">Translation metrics</p>
-                    <div class="space-y-1 text-xs">
-                      {#if displayedContent}
-                        <div class="flex items-center justify-between gap-4">
-                          <span class="text-muted-foreground">Lines</span>
-                          <span class="font-medium">{translatedLineCount.toLocaleString()}</span>
-                        </div>
-                      {/if}
-                      {#if activeUsage}
+            <div class="ml-auto flex shrink-0 items-center gap-1">
+              {#if activeUsage}
+                <HoverCard.Root openDelay={200}>
+                  <HoverCard.Trigger>
+                    {#snippet child({ props })}
+                      <Button
+                        {...props}
+                        variant="ghost"
+                        size="icon-xs"
+                        class="text-muted-foreground hover:text-foreground @max-[18rem]:hidden"
+                        aria-label="Show translation metrics"
+                      >
+                        <Info class="size-3.5" />
+                      </Button>
+                    {/snippet}
+                  </HoverCard.Trigger>
+                  <HoverCard.Content align="end" class="w-56 rounded-2xl p-3">
+                    <div class="space-y-2">
+                      <p class="text-xs font-medium text-muted-foreground">Translation metrics</p>
+                      <div class="space-y-1 text-xs">
                         <div class="flex items-center justify-between gap-4">
                           <span class="text-muted-foreground">Tokens</span>
                           <span class="font-medium">{activeUsage.totalTokens.toLocaleString()}</span>
@@ -273,16 +312,153 @@
                           <span class="text-muted-foreground">Output</span>
                           <span>{activeUsage.completionTokens.toLocaleString()}</span>
                         </div>
-                      {/if}
+                      </div>
                     </div>
-                  </div>
-                </HoverCard.Content>
-              </HoverCard.Root>
-            {/if}
+                  </HoverCard.Content>
+                </HoverCard.Root>
+              {/if}
+              {#if displayedContent && !isPendingVersionSelected}
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  class="@max-[18rem]:hidden"
+                  aria-label="Copy translation"
+                  title="Copy translation"
+                  onclick={() => onCopyContent(displayedContent)}
+                >
+                  <Copy class="size-3.5" />
+                </Button>
+                {#if displayedContent && !isEditingTranslation}
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    class="@max-[18rem]:hidden"
+                    aria-label="Edit translation"
+                    title="Edit translation"
+                    onclick={startEditingTranslation}
+                  >
+                    <Pencil class="size-3.5" />
+                  </Button>
+                {:else if displayedContent && isEditingTranslation}
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    class="@max-[18rem]:hidden"
+                    aria-label="Save translation edit"
+                    title="Save translation edit"
+                    onclick={saveTranslationEdit}
+                  >
+                    <Save class="size-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    class="@max-[18rem]:hidden"
+                    aria-label="Cancel translation edit"
+                    title="Cancel translation edit"
+                    onclick={cancelTranslationEdit}
+                  >
+                    <X class="size-3.5" />
+                  </Button>
+                {/if}
+              {/if}
+              {#if hasOverflowActions}
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger>
+                    {#snippet child({ props })}
+                      <Button
+                        {...props}
+                        variant="ghost"
+                        size="icon-xs"
+                        class="hidden @max-[18rem]:inline-flex"
+                        aria-label="More translation actions"
+                        title="More translation actions"
+                      >
+                        <Ellipsis class="size-3.5" />
+                      </Button>
+                    {/snippet}
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Content align="end" class="w-64">
+                    {#if activeVersionLabel}
+                      <DropdownMenu.Sub>
+                        <DropdownMenu.SubTrigger>
+                          {#if isPendingVersionSelected}
+                            <Loader2 class="size-4 animate-spin" />
+                          {/if}
+                          <span class="min-w-0 flex-1 truncate">Version</span>
+                          <span class="max-w-24 truncate text-xs text-muted-foreground">{activeVersionLabel}</span>
+                        </DropdownMenu.SubTrigger>
+                        <DropdownMenu.SubContent class="w-72">
+                          {#if pendingVersionName}
+                            <DropdownMenu.Item onclick={() => handleSelectVersion(PENDING_TRANSLATION_VERSION_ID)}>
+                              <Loader2 class="size-4 animate-spin" />
+                              <span class="truncate">{pendingVersionName}</span>
+                              {#if isPendingVersionSelected}
+                                <Check class="ml-auto size-4" />
+                              {/if}
+                            </DropdownMenu.Item>
+                          {/if}
+                          {#each selectedJobVersions as version (version.id)}
+                            <DropdownMenu.Item onclick={() => handleSelectVersion(version.id)}>
+                              <span class="truncate">{version.name}</span>
+                              {#if version.id === activeVersionId}
+                                <Check class="ml-auto size-4" />
+                              {/if}
+                            </DropdownMenu.Item>
+                          {/each}
+                        </DropdownMenu.SubContent>
+                      </DropdownMenu.Sub>
+                    {/if}
+
+                    {#if activeUsage}
+                      <DropdownMenu.Separator />
+                      <DropdownMenu.Label>Metrics</DropdownMenu.Label>
+                      <div class="px-3 py-2 text-xs">
+                        <div class="flex items-center justify-between gap-4">
+                          <span class="text-muted-foreground">Tokens</span>
+                          <span class="font-medium">{activeUsage.totalTokens.toLocaleString()}</span>
+                        </div>
+                        <div class="mt-1 flex items-center justify-between gap-4">
+                          <span class="text-muted-foreground">Input</span>
+                          <span>{activeUsage.promptTokens.toLocaleString()}</span>
+                        </div>
+                        <div class="mt-1 flex items-center justify-between gap-4">
+                          <span class="text-muted-foreground">Output</span>
+                          <span>{activeUsage.completionTokens.toLocaleString()}</span>
+                        </div>
+                      </div>
+                    {/if}
+
+                    {#if displayedContent && !isPendingVersionSelected}
+                      <DropdownMenu.Separator />
+                      <DropdownMenu.Item onclick={() => onCopyContent(displayedContent)}>
+                        <Copy class="size-4" />
+                        Copy translation
+                      </DropdownMenu.Item>
+                      {#if !isEditingTranslation}
+                        <DropdownMenu.Item onclick={startEditingTranslation}>
+                          <Pencil class="size-4" />
+                          Edit translation
+                        </DropdownMenu.Item>
+                      {:else}
+                        <DropdownMenu.Item onclick={saveTranslationEdit}>
+                          <Save class="size-4" />
+                          Save edit
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Item onclick={cancelTranslationEdit}>
+                          <X class="size-4" />
+                          Cancel edit
+                        </DropdownMenu.Item>
+                      {/if}
+                    {/if}
+                  </DropdownMenu.Content>
+                </DropdownMenu.Root>
+              {/if}
+            </div>
           </div>
 
           <div class="flex-1 min-h-0 min-w-0 overflow-hidden overscroll-contain">
-            {#if selectedJob.status === 'translating'}
+            {#if isPendingVersionSelected}
               <div class="flex flex-col items-center justify-center h-full p-8 gap-4">
                 <Loader2 class="size-8 text-primary animate-spin" />
                 <div class="text-center">
@@ -296,13 +472,18 @@
                 </div>
                 <Progress value={selectedJob.progress} class="w-48" />
               </div>
-            {:else if displayedContent}
+            {:else if displayedContent && isEditingTranslation}
               <Textarea
                 class="w-full h-full p-4 resize-none font-mono text-sm border-0 focus-visible:ring-0 rounded-none bg-transparent overflow-auto whitespace-pre field-sizing-fixed [contain:layout_paint_style] [tab-size:2]"
                 wrap="off"
                 spellcheck="false"
-                value={displayedContent}
+                value={draftContent}
                 oninput={handleContentInput}
+              />
+            {:else if displayedContent}
+              <VirtualizedTextPreview
+                content={displayedContent}
+                loadingMessage="Preparing translation preview..."
               />
             {:else if selectedJob.status === 'error'}
               <div class="flex flex-col items-center justify-center h-full p-8 gap-4">

@@ -1,9 +1,20 @@
 <script lang="ts">
-  import { FileOutput, FileVideo, GitMerge, Info, Settings, Languages, PenLine, AudioLines, ScanText } from '@lucide/svelte';
+  import {
+    FileOutput,
+    FileVideo,
+    GitMerge,
+    Info,
+    Settings,
+    Languages,
+    PenLine,
+    AudioLines,
+    ScanText,
+  } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import type { ComponentProps } from 'svelte';
 
   import { Badge } from '$lib/components/ui/badge';
+  import AccountMenu from '$lib/components/account/AccountMenu.svelte';
   import * as Sidebar from '$lib/components/ui/sidebar';
   import { formatAppVersion, loadAppVersion } from '$lib/services/app-metadata';
   import { OS } from '$lib/utils';
@@ -81,9 +92,10 @@
         appVersionLabel = 'Version unavailable';
       });
   });
+
 </script>
 
-<Sidebar.Root variant="floating" {...restProps}>
+<Sidebar.Root variant="floating"  {...restProps}>
   <Sidebar.Header>
     <Sidebar.Menu>
       <Sidebar.MenuItem>
@@ -120,12 +132,8 @@
                 isActive={isActive}
                 onclick={() => onNavigate?.(item.id)}
               >
-                {#snippet child({ props })}
-                  <button {...props} class="flex items-center gap-2 w-full p-2 rounded-lg" class:bg-accent={isActive}>
-                    <Icon class="size-4" />
-                    <span>{item.title}</span>
-                  </button>
-                {/snippet}
+                <Icon class="size-4" />
+                <span>{item.title}</span>
               </Sidebar.MenuButton>
               {#if item.badge}
                 <Sidebar.MenuBadge>
@@ -142,18 +150,17 @@
   <Sidebar.Footer>
     <Sidebar.Menu>
       <Sidebar.MenuItem>
-        {@const isActive = currentView === 'settings'}
+        {@const isSettingsActive = currentView === 'settings'}
         <Sidebar.MenuButton
-          isActive={isActive}
+          isActive={isSettingsActive}
           onclick={() => onNavigate?.('settings')}
         >
-          {#snippet child({ props })}
-            <button {...props} class="flex items-center gap-2 w-full p-2 rounded-lg" class:bg-accent={isActive}>
-              <Settings class="size-4" />
-              <span>Settings</span>
-            </button>
-          {/snippet}
+          <Settings class="size-4" />
+          <span>Settings</span>
         </Sidebar.MenuButton>
+      </Sidebar.MenuItem>
+      <Sidebar.MenuItem>
+        <AccountMenu />
       </Sidebar.MenuItem>
     </Sidebar.Menu>
   </Sidebar.Footer>

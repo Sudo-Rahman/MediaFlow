@@ -1,6 +1,7 @@
 // Types for AI Translation feature
 
-export type LLMProvider = 'openai' | 'anthropic' | 'google' | 'openrouter';
+export type LLMProvider = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'mediaflow';
+export type LLMApiKeyProvider = Exclude<LLMProvider, 'mediaflow'>;
 
 export interface ProviderModel {
   id: string;
@@ -8,6 +9,14 @@ export interface ProviderModel {
 }
 
 export const LLM_PROVIDERS: Record<LLMProvider, { name: string; models: ProviderModel[] }> = {
+  mediaflow: {
+    name: 'MediaFlow',
+    models: [
+      { id: 'Lite', name: 'Lite' },
+      { id: 'Medium', name: 'Medium' },
+      { id: 'High', name: 'High' },
+    ],
+  },
   google: {
     name: 'Google AI',
     models: [
@@ -35,6 +44,8 @@ export const LLM_PROVIDERS: Record<LLMProvider, { name: string; models: Provider
     models: [], // Manual input
   },
 };
+
+export const LLM_API_KEY_PROVIDERS: LLMApiKeyProvider[] = ['google', 'anthropic', 'openai', 'openrouter'];
 
 export const SUPPORTED_LANGUAGES = [
   { code: 'auto', name: 'Auto-detect' },

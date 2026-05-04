@@ -65,11 +65,15 @@
   const previewContent = $derived(currentVersion?.translatedContent ?? '');
 
   async function handleExport(): Promise<void> {
-    if (!currentVersion) return;
+    const exportVersion = currentVersion;
+    const exportFileName = fileName;
+    const exportFileFormat = fileFormat;
+
+    if (!exportVersion) return;
     try {
-      const baseName = fileName.replace(/\.[^/.]+$/, '');
-      const versionSuffix = sanitizeVersionName(currentVersion.name);
-      const ext = fileFormat;
+      const baseName = exportFileName.replace(/\.[^/.]+$/, '');
+      const versionSuffix = sanitizeVersionName(exportVersion.name);
+      const ext = exportFileFormat;
       const defaultFileName = `${baseName}_${versionSuffix}.${ext}`;
 
       const savePath = await save({
@@ -78,7 +82,7 @@
       });
 
       if (savePath) {
-        await writeTextFile(savePath, currentVersion.translatedContent);
+        await writeTextFile(savePath, exportVersion.translatedContent);
         toast.success('File saved successfully');
       }
     } catch {

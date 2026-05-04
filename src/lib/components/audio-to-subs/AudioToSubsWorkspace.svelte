@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { AudioFile, DeepgramConfig, TranscriptionConfig } from '$lib/types';
+  import type { AudioFile, DeepgramConfig, TranscriptionConfig, TranscriptionProvider } from '$lib/types';
 
   import AudioDetails from './AudioDetails.svelte';
   import TranscriptionPanel from './TranscriptionPanel.svelte';
@@ -16,6 +16,7 @@
     transcodingCount: number;
     invalidAutoLanguageFiles: string[];
     onChangeTrack: (file: AudioFile) => void | Promise<void>;
+    onProviderChange: (provider: TranscriptionProvider) => void;
     onDeepgramConfigChange: (updates: Partial<DeepgramConfig>) => void;
     onMaxConcurrentChange: (value: number) => void;
     onTranscribeAll: () => void | Promise<void>;
@@ -34,6 +35,7 @@
     transcodingCount,
     invalidAutoLanguageFiles,
     onChangeTrack,
+    onProviderChange,
     onDeepgramConfigChange,
     onMaxConcurrentChange,
     onTranscribeAll,
@@ -62,6 +64,7 @@
         {totalFilesCount}
         {transcodingCount}
         {invalidAutoLanguageFiles}
+        onProviderChange={onProviderChange}
         onDeepgramConfigChange={onDeepgramConfigChange}
         onMaxConcurrentChange={onMaxConcurrentChange}
         onTranscribeAll={onTranscribeAll}

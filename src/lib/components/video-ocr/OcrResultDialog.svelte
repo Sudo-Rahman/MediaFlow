@@ -201,17 +201,23 @@
   }
 
   async function handleExport(): Promise<void> {
-    if (!file || !currentVersion) {
+    const exportFile = file;
+    const exportVersion = currentVersion;
+    const exportFormat = selectedFormat;
+    const exportSubtitles = normalizedSubtitles;
+    const exportBaseName = baseName;
+
+    if (!exportFile || !exportVersion) {
       return;
     }
 
-    const versionSuffix = sanitizeVersionName(currentVersion.name);
+    const versionSuffix = sanitizeVersionName(exportVersion.name);
     const outputPath = await save({
       title: 'Export subtitles',
-      defaultPath: `${baseName}_${versionSuffix}.${selectedFormat}`,
+      defaultPath: `${exportBaseName}_${versionSuffix}.${exportFormat}`,
       filters: [{
-        name: OCR_OUTPUT_FORMATS.find((f) => f.value === selectedFormat)?.label ?? 'Subtitle file',
-        extensions: [selectedFormat],
+        name: OCR_OUTPUT_FORMATS.find((f) => f.value === exportFormat)?.label ?? 'Subtitle file',
+        extensions: [exportFormat],
       }],
     });
 
@@ -221,9 +227,9 @@
 
     try {
       await invoke('export_ocr_subtitles', {
-        subtitles: toRustOcrSubtitles(normalizedSubtitles),
+        subtitles: toRustOcrSubtitles(exportSubtitles),
         outputPath,
-        format: selectedFormat,
+        format: exportFormat,
       });
       toast.success(`Exported ${outputPath.split('/').pop()}`);
     } catch (error) {

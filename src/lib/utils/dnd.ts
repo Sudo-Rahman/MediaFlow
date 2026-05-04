@@ -18,17 +18,19 @@ export function dndzone<T extends { id: string | number }>(
   options: DndOptions<T>
 ): ReturnType<Action<HTMLElement, DndOptions<T>>> {
   const { onConsider, onFinalize, ...dndOptions } = options;
+  let currentOnConsider = onConsider;
+  let currentOnFinalize = onFinalize;
 
   // Apply the original dndzone action
   const dndAction = originalDndzone(node, dndOptions);
 
   // Listen for consider and finalize events
   function handleConsider(e: CustomEvent<DndEvent<T>>) {
-    onConsider?.(e.detail.items);
+    currentOnConsider?.(e.detail.items);
   }
 
   function handleFinalize(e: CustomEvent<DndEvent<T>>) {
-    onFinalize?.(e.detail.items);
+    currentOnFinalize?.(e.detail.items);
   }
 
   node.addEventListener('consider', handleConsider as EventListener);
@@ -37,6 +39,8 @@ export function dndzone<T extends { id: string | number }>(
   return {
     update(newOptions: DndOptions<T>) {
       const { onConsider: newOnConsider, onFinalize: newOnFinalize, ...newDndOptions } = newOptions;
+      currentOnConsider = newOnConsider;
+      currentOnFinalize = newOnFinalize;
       dndAction.update?.(newDndOptions);
     },
     destroy() {
@@ -46,4 +50,3 @@ export function dndzone<T extends { id: string | number }>(
     }
   };
 }
-

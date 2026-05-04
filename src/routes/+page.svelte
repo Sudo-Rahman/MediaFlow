@@ -561,9 +561,6 @@
     let destroyed = false;
 
     updaterStore.initialize();
-    if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('previewUpdate')) {
-      updateDialogOpen = true;
-    }
 
     void initApp(() => destroyed);
 

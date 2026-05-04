@@ -136,7 +136,7 @@
       >
         Later
       </Button>
-      <Button onclick={requestInstall} disabled={updaterStore.isInstalling || updaterStore.isPreviewUpdate}>
+      <Button onclick={requestInstall} disabled={updaterStore.isInstalling}>
         {#if updaterStore.status === 'downloading' || updaterStore.status === 'installing'}
           <RefreshCw class="size-4 animate-spin" />
           Updating...

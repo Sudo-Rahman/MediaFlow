@@ -32,7 +32,6 @@ let updateDate = $state<string | null>(null);
 let lastCheckAt = $state<Date | null>(null);
 let lastError = $state<string | null>(null);
 let progress = $state<UpdaterProgress | null>(null);
-let isPreviewUpdate = $state(false);
 let currentUpdate = $state.raw<Update | null>(null);
 let intervalId: ReturnType<typeof setInterval> | null = null;
 let initialized = false;
@@ -50,7 +49,6 @@ function setAvailableUpdate(update: Update | null): void {
   availableVersion = update?.version ?? null;
   currentVersion = update?.currentVersion ?? null;
   updateDate = update?.date ?? null;
-  isPreviewUpdate = false;
 }
 
 function resetProgress(): void {
@@ -151,22 +149,9 @@ export const updaterStore = {
     return status === 'downloading' || status === 'installing' || status === 'relaunching';
   },
 
-  get isPreviewUpdate() {
-    return isPreviewUpdate;
-  },
-
   initialize(): void {
     if (initialized) return;
     initialized = true;
-
-    if (import.meta.env.DEV && typeof window !== 'undefined') {
-      const searchParams = new URLSearchParams(window.location.search);
-      const previewVersion = searchParams.get('previewUpdate');
-      if (previewVersion) {
-        this.previewUpdate(previewVersion);
-        return;
-      }
-    }
 
     void this.checkForUpdates({ manual: false });
     intervalId = setInterval(() => {
@@ -231,10 +216,6 @@ export const updaterStore = {
   },
 
   async installAndRelaunch(): Promise<void> {
-    if (isPreviewUpdate) {
-      throw new Error('Preview updates cannot be installed.');
-    }
-
     if (!currentUpdate) {
       throw new Error('No update is available.');
     }
@@ -253,19 +234,5 @@ export const updaterStore = {
       logUpdateError('Update installation failed', error, true);
       throw error;
     }
-  },
-
-  previewUpdate(version: string): void {
-    if (!import.meta.env.DEV) return;
-
-    setAvailableUpdate(null);
-    availableVersion = version.trim() || '9.9.9';
-    currentVersion = '1.0.0';
-    updateDate = new Date().toISOString();
-    lastCheckAt = new Date();
-    lastError = null;
-    progress = null;
-    status = 'available';
-    isPreviewUpdate = true;
   },
 };

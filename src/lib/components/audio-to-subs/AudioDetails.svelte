@@ -48,15 +48,12 @@
   {#if file}
     <!-- File info header -->
     <div class="p-4 border-b shrink-0">
-      <div class="flex items-start gap-3">
+      <div class="flex items-center gap-3">
         <div class="p-2 bg-primary/10 rounded-lg">
           <AudioLines class="size-6 text-primary" />
         </div>
         <div class="flex-1 min-w-0">
           <h3 class="font-semibold truncate" title={file.name}>{file.name}</h3>
-          <p class="text-sm text-muted-foreground truncate" title={file.path}>
-            {file.path}
-          </p>
         </div>
       </div>
     </div>

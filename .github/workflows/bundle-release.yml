@@ -107,6 +107,8 @@ jobs:
       APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
     steps:
       - name: Checkout release commit
@@ -178,13 +180,20 @@ jobs:
           BUNDLE_DIR="src-tauri/target/${{ matrix.target }}/release/bundle"
           DMG_PATH=$(find "$BUNDLE_DIR/dmg" -name '*.dmg' -print -quit)
           APP_PATH=$(find "$BUNDLE_DIR/macos" -maxdepth 1 -name '*.app' -print -quit)
+          UPDATER_ARCHIVE=$(find "$BUNDLE_DIR/macos" -maxdepth 1 -name '*.app.tar.gz' -print -quit)
+          UPDATER_SIGNATURE="${UPDATER_ARCHIVE}.sig"
 
           test -n "$DMG_PATH"
           test -n "$APP_PATH"
+          test -n "$UPDATER_ARCHIVE"
+          test -f "$UPDATER_SIGNATURE"
 
           mkdir -p release-assets
           RELEASE_DMG="release-assets/MediaFlow_${APP_VERSION}_macos_${{ matrix.artifact_suffix }}.dmg"
+          RELEASE_UPDATER="release-assets/MediaFlow_${APP_VERSION}_macos_${{ matrix.artifact_suffix }}.app.tar.gz"
           cp "$DMG_PATH" "$RELEASE_DMG"
+          cp "$UPDATER_ARCHIVE" "$RELEASE_UPDATER"
+          cp "$UPDATER_SIGNATURE" "${RELEASE_UPDATER}.sig"
 
           echo "APP_PATH=${APP_PATH}" >> "$GITHUB_ENV"
           echo "DMG_PATH=${RELEASE_DMG}" >> "$GITHUB_ENV"
@@ -206,11 +215,11 @@ jobs:
           xcrun stapler validate "$DMG_PATH"
           spctl -a -vv --type exec "$APP_PATH"
 
-      - name: Upload macOS DMG artifact
+      - name: Upload macOS release artifact
         uses: actions/upload-artifact@v4
         with:
           name: mediaflow-macos-${{ matrix.artifact_suffix }}
-          path: release-assets/*.dmg
+          path: release-assets/*
           if-no-files-found: error
 
       - name: Cleanup signing assets
@@ -230,6 +239,7 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG_NAME: ${{ needs.version-gate.outputs.tag_name }}
+      APP_VERSION: ${{ needs.version-gate.outputs.version }}
       RELEASE_SHA: ${{ needs.version-gate.outputs.release_sha }}
 
     steps:
@@ -266,6 +276,13 @@ jobs:
             gh release create "$TAG_NAME" --title "MediaFlow $TAG_NAME" --generate-notes
           fi
 
+      - name: Generate updater manifest
+        env:
+          RELEASE_ASSETS_DIR: release-assets
+          UPDATER_MANIFEST_PATH: release-assets/latest.json
+          PUB_DATE: ${{ github.event.workflow_run.updated_at || github.event.repository.updated_at }}
+        run: node scripts/generate-updater-manifest.mjs
+
       - name: Upload release assets
         run: |
-          gh release upload "$TAG_NAME" release-assets/*.dmg --clobber
+          gh release upload "$TAG_NAME" release-assets/* --clobber

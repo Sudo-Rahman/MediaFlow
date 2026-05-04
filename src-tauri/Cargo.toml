@@ -47,6 +47,8 @@ xz2 = "0.1"
 walkdir = "2.5"
 tauri-plugin-deep-link = "^2"
 tauri-plugin-single-instance = { version = "^2", features = ["deep-link"] }
+tauri-plugin-updater = "^2"
+tauri-plugin-process = "^2"
 
 #windows or linux ocr
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]

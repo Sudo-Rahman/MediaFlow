@@ -7,7 +7,7 @@
   import { mode, setMode } from 'mode-watcher';
   import { toast } from 'svelte-sonner';
 
-  import { settingsStore } from '$lib/stores';
+  import { settingsStore, updaterStore } from '$lib/stores';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
@@ -42,6 +42,12 @@
   };
 
   type BinaryPathSource = 'bundled' | 'custom' | 'system';
+
+  interface SettingsViewProps {
+    onOpenUpdateDialog?: () => void;
+  }
+
+  let { onOpenUpdateDialog }: SettingsViewProps = $props();
 
   type FFmpegInfo = {
     ffmpegPath: string;
@@ -245,6 +251,27 @@
     if (source === 'bundled') return 'Bundled';
     if (source === 'custom') return 'Custom path';
     return 'System PATH';
+  }
+
+  function formatUpdateStatus(): string {
+    if (updaterStore.status === 'unsupported') return 'Unavailable outside the desktop app';
+    if (updaterStore.status === 'checking') return 'Checking...';
+    if (updaterStore.status === 'available') return `Update available: v${updaterStore.availableVersion}`;
+    if (updaterStore.status === 'up-to-date') return 'Up to date';
+    if (updaterStore.status === 'downloading') return 'Downloading update...';
+    if (updaterStore.status === 'installing') return 'Installing update...';
+    if (updaterStore.status === 'relaunching') return 'Relaunching...';
+    if (updaterStore.status === 'error') return 'Update check failed';
+    return 'Not checked yet';
+  }
+
+  function formatLastUpdateCheck(): string {
+    if (!updaterStore.lastCheckAt) return 'Never';
+
+    return new Intl.DateTimeFormat('en', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(updaterStore.lastCheckAt);
   }
 
   async function handleOpenDeepgramConsole() {
@@ -742,6 +769,36 @@
         <div class="flex items-center justify-between">
           <span class="text-muted-foreground">Version</span>
           <span class="font-mono text-sm">{appVersion}</span>
+        </div>
+        <Separator />
+        <div class="space-y-3">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <p class="font-medium">Updates</p>
+              <p class="text-xs text-muted-foreground">{formatUpdateStatus()}</p>
+              <p class="mt-1 text-xs text-muted-foreground">Last check: {formatLastUpdateCheck()}</p>
+              {#if updaterStore.lastError}
+                <p class="mt-1 text-xs text-destructive">{updaterStore.lastError}</p>
+              {/if}
+            </div>
+            <div class="flex shrink-0 flex-wrap justify-end gap-2">
+              {#if updaterStore.hasUpdate}
+                <Button variant="default" size="sm" onclick={() => onOpenUpdateDialog?.()}>
+                  <Download class="size-4 mr-2" />
+                  View update
+                </Button>
+              {/if}
+              <Button
+                variant="outline"
+                size="sm"
+                onclick={() => updaterStore.checkForUpdates({ manual: true })}
+                disabled={updaterStore.isBusy}
+              >
+                <RefreshCw class={['size-4 mr-2', updaterStore.status === 'checking' && 'animate-spin']} />
+                Check now
+              </Button>
+            </div>
+          </div>
         </div>
         <Separator />
         <div class="text-sm text-muted-foreground">

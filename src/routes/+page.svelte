@@ -11,7 +11,7 @@
   import { Progress } from '$lib/components/ui/progress';
   import { Alert, AlertTitle, AlertDescription } from '$lib/components';
   import * as HoverCard from '$lib/components/ui/hover-card';
-  import { VersionedExportDialog } from '$lib/components/shared';
+  import { AppUpdateDialog, VersionedExportDialog } from '$lib/components/shared';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
   import AppHeader from '$lib/components/layout/app-header.svelte';
   import { setToolHeader } from '$lib/components/layout/tool-header-context.svelte';
@@ -35,7 +35,7 @@
   import { OS, formatTransferRate, normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils';
   import { useSidebar } from "$lib/components/ui/sidebar";
   import { logStore } from '$lib/stores/logs.svelte';
-  import { audioToSubsStore, videoOcrStore, translationStore, extractionStore, mergeStore, renameStore, transcodeStore } from '$lib/stores';
+  import { audioToSubsStore, videoOcrStore, translationStore, extractionStore, mergeStore, renameStore, transcodeStore, updaterStore } from '$lib/stores';
   import { logAndToast } from '$lib/utils/log-toast';
 
   type ViewId = ToolId | 'settings';
@@ -48,6 +48,7 @@
   let translationExportDialogOpen = $state(false);
   let audioExportDialogOpen = $state(false);
   let ocrExportDialogOpen = $state(false);
+  let updateDialogOpen = $state(false);
 
   const AUDIO_EXPORT_FORMAT_OPTIONS: VersionedExportFormatOption[] = [
     { value: 'srt', label: 'SRT - SubRip' },
@@ -350,6 +351,7 @@
       tools: activeToolMetrics,
     };
   });
+  const hasActiveJobs = $derived(globalToolProgress.active);
 
   const hasTranslationExportableData = $derived.by(() => {
     return translationStore.jobs.some((job) => {
@@ -558,10 +560,13 @@
   onMount(() => {
     let destroyed = false;
 
+    updaterStore.initialize();
+
     void initApp(() => destroyed);
 
     return () => {
       destroyed = true;
+      updaterStore.dispose();
       unlistenDragDrop?.();
       unlistenDragDrop = null;
     };
@@ -708,6 +713,22 @@
       {/snippet}
 
       {#snippet trailing()}
+        {#if updaterStore.hasUpdate}
+          <Button
+            variant="outline"
+            size="sm"
+            onclick={() => updateDialogOpen = true}
+            title={`Update available: v${updaterStore.availableVersion}`}
+            class="relative"
+          >
+            <Download class="size-4 mr-2" />
+            Update
+            <span class="ml-1 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
+              v{updaterStore.availableVersion}
+            </span>
+          </Button>
+        {/if}
+
         {#if showGlobalExportButton}
           <Button
             variant="outline"
@@ -803,7 +824,7 @@
       
       <!-- Settings View -->
       <div class="absolute inset-0" style="display: {currentView === 'settings' ? 'block' : 'none'}">
-        <SettingsView />
+        <SettingsView onOpenUpdateDialog={() => updateDialogOpen = true} />
       </div>
     </main>
   </Sidebar.Inset>
@@ -841,6 +862,14 @@
   formatOptions={OCR_EXPORT_FORMAT_OPTIONS}
   defaultFormat="srt"
   onExport={handleExportOcr}
+/>
+
+<AppUpdateDialog
+  open={updateDialogOpen}
+  onOpenChange={(open) => {
+    updateDialogOpen = open;
+  }}
+  {hasActiveJobs}
 />
 
 <!-- Logs Sheet (global overlay) -->

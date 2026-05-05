@@ -1,0 +1,18 @@
+name: Cache FFmpeg sidecar binaries
+description: Restore and save MediaFlow FFmpeg sidecar binaries for one Rust target.
+
+inputs:
+  target:
+    description: Rust target triple for the sidecar binaries.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Cache FFmpeg sidecar binaries
+      uses: actions/cache@v4
+      with:
+        path: src-tauri/binaries
+        key: ffmpeg-sidecars-${{ runner.os }}-${{ inputs.target }}-${{ hashFiles('src-tauri/build.rs', 'src-tauri/build_support.rs', 'src-tauri/ffmpeg_bundle.rs') }}
+        restore-keys: |
+          ffmpeg-sidecars-${{ runner.os }}-${{ inputs.target }}-

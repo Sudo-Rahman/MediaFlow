@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { toast } from 'svelte-sonner';
   import {
     ChevronsUpDown,
     LayoutDashboard,
@@ -15,44 +14,27 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { Progress } from '$lib/components/ui/progress';
   import * as Sidebar from '$lib/components/ui/sidebar';
-  import { mediaflowUsageStore, settingsStore } from '$lib/stores';
-  import {
-    cancelPendingMediaFlowSignIn,
-    openMediaFlowDashboard,
-    signInWithMediaFlow,
-    signOutMediaFlow,
-  } from '$lib/services/mediaflow-auth';
+  import { mediaflowAuthUiStore, mediaflowUsageStore, settingsStore } from '$lib/stores';
 
-  type AccountAction = 'idle' | 'opening-browser' | 'waiting-callback' | 'signing-out';
-
-  let accountAction = $state<AccountAction>('idle');
   let isOpen = $state(false);
 
   const mediaflowUser = $derived(settingsStore.settings.mediaflowUser);
   const usage = $derived(mediaflowUsageStore.usage);
   const usageStatus = $derived(mediaflowUsageStore.status);
-  const effectiveAccountAction = $derived(
-    mediaflowUser && (accountAction === 'opening-browser' || accountAction === 'waiting-callback')
-      ? 'idle'
-      : accountAction
-  );
-  const isAccountBusy = $derived(effectiveAccountAction !== 'idle');
-  const isWaitingForCallback = $derived(effectiveAccountAction === 'waiting-callback');
+  const effectiveAccountAction = $derived(mediaflowAuthUiStore.action);
+  const isAccountBusy = $derived(mediaflowAuthUiStore.isBusy);
+  const isWaitingForCallback = $derived(mediaflowAuthUiStore.isWaitingForCallback);
   const accountDisplayName = $derived(
     mediaflowUser?.name ||
       mediaflowUser?.email ||
       (isWaitingForCallback ? 'Waiting for browser' : 'MediaFlow Account')
   );
   const accountEmail = $derived.by(() => {
-    if (effectiveAccountAction === 'opening-browser') return 'Opening sign-in page...';
-    if (effectiveAccountAction === 'waiting-callback') return 'Complete sign-in in your browser';
-    if (effectiveAccountAction === 'signing-out') return 'Signing out...';
+    if (effectiveAccountAction !== 'idle') return mediaflowAuthUiStore.statusMessage;
     return mediaflowUser?.email || 'Sign in to continue';
   });
   const accountButtonLabel = $derived.by(() => {
-    if (effectiveAccountAction === 'opening-browser') return 'Opening...';
-    if (effectiveAccountAction === 'waiting-callback') return 'Waiting...';
-    if (effectiveAccountAction === 'signing-out') return 'Signing out...';
+    if (effectiveAccountAction !== 'idle') return mediaflowAuthUiStore.buttonLabel;
     return 'Account';
   });
   const accountInitials = $derived.by(() => {
@@ -86,50 +68,6 @@
     });
   });
 
-  async function handleOpenDashboard(): Promise<void> {
-    try {
-      await openMediaFlowDashboard();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      toast.error(message);
-    }
-  }
-
-  async function handleSignIn(): Promise<void> {
-    if (isAccountBusy) return;
-
-    accountAction = 'opening-browser';
-    try {
-      await signInWithMediaFlow();
-      accountAction = 'waiting-callback';
-      toast.info('Complete sign-in in your browser');
-    } catch (error) {
-      accountAction = 'idle';
-      const message = error instanceof Error ? error.message : String(error);
-      toast.error(message);
-    }
-  }
-
-  async function handleSignOut(): Promise<void> {
-    if (!mediaflowUser || isAccountBusy) return;
-
-    accountAction = 'signing-out';
-    try {
-      await signOutMediaFlow();
-      toast.success('Signed out from MediaFlow');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      toast.error(message);
-    } finally {
-      accountAction = 'idle';
-    }
-  }
-
-  function handleCancelSignIn(): void {
-    cancelPendingMediaFlowSignIn();
-    accountAction = 'idle';
-    toast.info('MediaFlow sign-in cancelled');
-  }
 </script>
 
 <DropdownMenu.Root bind:open={isOpen}>
@@ -199,17 +137,17 @@
 
     <DropdownMenu.Separator />
     {#if mediaflowUser}
-      <DropdownMenu.Item onclick={handleOpenDashboard} disabled={isAccountBusy}>
+      <DropdownMenu.Item onclick={() => mediaflowAuthUiStore.openDashboard()} disabled={isAccountBusy}>
         <LayoutDashboard class="size-4" />
         <span>Dashboard</span>
       </DropdownMenu.Item>
     {:else if isWaitingForCallback}
-      <DropdownMenu.Item onclick={handleCancelSignIn}>
+      <DropdownMenu.Item onclick={() => mediaflowAuthUiStore.cancelSignIn()}>
         <XCircle class="size-4" />
         <span>Cancel sign-in</span>
       </DropdownMenu.Item>
     {:else}
-      <DropdownMenu.Item onclick={handleSignIn} disabled={isAccountBusy}>
+      <DropdownMenu.Item onclick={() => mediaflowAuthUiStore.startSignIn()} disabled={isAccountBusy}>
         <LogIn class="size-4" />
         {#if effectiveAccountAction === 'opening-browser'}
           <span>Opening browser...</span>
@@ -220,7 +158,7 @@
     {/if}
     <DropdownMenu.Separator />
     <DropdownMenu.Item
-      onclick={handleSignOut}
+      onclick={() => mediaflowAuthUiStore.signOut()}
       disabled={!mediaflowUser || isAccountBusy}
       variant="destructive"
     >

@@ -30,7 +30,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU1ODQxOTc5NzcyMTBGRUUKUldUdUR5RjNlUm1FVmZqdmdGTVJkbHZoU2RXOFA4ZmYwcFFXUDhnS3ZleG5oWStjMFZtajhSUXUK",
       "endpoints": [
-        "https://github.com/Sudo-Rahman/RsExtractor/releases/latest/download/latest.json"
+        "https://github.com/Sudo-Rahman/Mediaflow/releases/latest/download/latest.json"
       ]
     }
   },

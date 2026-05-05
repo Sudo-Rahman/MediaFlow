@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Bot, Check, ChevronsUpDown, Key, Plus, X } from '@lucide/svelte';
 
+  import MediaFlowSignInPrompt from '$lib/components/account/MediaFlowSignInPrompt.svelte';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import * as Command from '$lib/components/ui/command';
@@ -8,7 +9,12 @@
   import * as Popover from '$lib/components/ui/popover';
   import * as Select from '$lib/components/ui/select';
   import { settingsStore } from '$lib/stores';
-  import { LLM_PROVIDERS } from '$lib/types';
+  import {
+    getSelectableLLMProviders,
+    LLM_PROVIDERS,
+    normalizeLLMProvider,
+    normalizeLLMSelection,
+  } from '$lib/types';
   import type { LLMProvider, ProviderModel } from '$lib/types';
   import { cn } from '$lib/utils';
 
@@ -30,11 +36,15 @@
     class: className = '',
   }: LlmProviderModelSelectorProps = $props();
 
-  const providerKeys: LLMProvider[] = ['mediaflow', 'google', 'anthropic', 'openai', 'openrouter'];
+  const providerKeys = getSelectableLLMProviders();
+  const showProviderSelector = providerKeys.length > 1;
+  const normalizedSelection = $derived(normalizeLLMSelection(provider, model));
+  const effectiveProvider = $derived(normalizedSelection.provider);
+  const effectiveModel = $derived(normalizedSelection.model);
 
-  const currentProvider = $derived(LLM_PROVIDERS[provider]);
+  const currentProvider = $derived(LLM_PROVIDERS[effectiveProvider]);
   const hasModels = $derived(currentProvider.models.length > 0);
-  const currentApiKey = $derived(settingsStore.getLLMApiKey(provider));
+  const currentApiKey = $derived(settingsStore.getLLMApiKey(effectiveProvider));
   const hasApiKey = $derived(!!currentApiKey);
 
   let openRouterOpen = $state(false);
@@ -48,17 +58,28 @@
     savedModels.some((savedModel) => savedModel.toLowerCase() === openRouterSearch.toLowerCase())
   );
 
+  // Keep controlled parent state aligned with build-restricted provider rules.
+  $effect(() => {
+    if (provider !== effectiveProvider) {
+      onProviderChange(effectiveProvider);
+    }
+
+    if (model !== effectiveModel) {
+      onModelChange(effectiveModel);
+    }
+  });
+
   function getProviderApiKey(providerKey: LLMProvider): string {
     return settingsStore.getLLMApiKey(providerKey);
   }
 
   function getSelectedModelName(): string {
-    const providerModel = currentProvider.models.find((providerItem: ProviderModel) => providerItem.id === model);
+    const providerModel = currentProvider.models.find((providerItem: ProviderModel) => providerItem.id === effectiveModel);
     return providerModel?.name || 'Select model';
   }
 
   function handleProviderChange(value: string): void {
-    const nextProvider = value as LLMProvider;
+    const nextProvider = normalizeLLMProvider(value as LLMProvider);
     onProviderChange(nextProvider);
 
     const providerConfig = LLM_PROVIDERS[nextProvider];
@@ -71,7 +92,11 @@
   }
 
   function handleModelChange(value: string): void {
-    onModelChange(value);
+    const nextSelection = normalizeLLMSelection(effectiveProvider, value);
+    if (nextSelection.provider !== effectiveProvider) {
+      onProviderChange(nextSelection.provider);
+    }
+    onModelChange(nextSelection.model);
   }
 
   function handleOpenRouterModelSelect(modelId: string): void {
@@ -94,57 +119,59 @@
     event.stopPropagation();
     await settingsStore.removeOpenRouterModel(modelId);
 
-    if (model === modelId) {
+    if (effectiveModel === modelId) {
       onModelChange(settingsStore.settings.openRouterModels[0] || '');
     }
   }
 </script>
 
 <div class={cn('space-y-4', className)}>
-  <div class="space-y-2">
-    <Label class="text-sm font-medium">AI Provider</Label>
-    <Select.Root
-      type="single"
-      value={provider}
-      onValueChange={handleProviderChange}
-    >
-      <Select.Trigger class="w-full">
-        <div class="flex items-center gap-2">
-          <Bot class="size-4" />
-          <span>{currentProvider.name}</span>
-          {#if !hasApiKey}
-            <Badge variant="destructive" class="ml-auto text-xs">
-              {provider === 'mediaflow' ? 'Sign in' : 'No API Key'}
-            </Badge>
-          {/if}
-        </div>
-      </Select.Trigger>
-      <Select.Content>
-          <Select.Group>
-            {#each providerKeys as providerKey (providerKey)}
-            {@const providerItem = LLM_PROVIDERS[providerKey]}
-            <Select.Item value={providerKey}>
-                <div class="flex items-center gap-2">
-                <span>{providerItem.name}</span>
-                {#if !getProviderApiKey(providerKey)}
-                    <Badge variant="outline" class="text-xs">
-                      {providerKey === 'mediaflow' ? 'Sign in' : 'No key'}
-                    </Badge>
-                {/if}
-                </div>
-            </Select.Item>
-            {/each}
-          </Select.Group>
-      </Select.Content>
-    </Select.Root>
-  </div>
+  {#if showProviderSelector}
+    <div class="space-y-2">
+      <Label class="text-sm font-medium">AI Provider</Label>
+      <Select.Root
+        type="single"
+        value={effectiveProvider}
+        onValueChange={handleProviderChange}
+      >
+        <Select.Trigger class="w-full">
+          <div class="flex items-center gap-2">
+            <Bot class="size-4" />
+            <span>{currentProvider.name}</span>
+            {#if !hasApiKey}
+              <Badge variant="destructive" class="ml-auto text-xs">
+                {effectiveProvider === 'mediaflow' ? 'Sign in' : 'No API Key'}
+              </Badge>
+            {/if}
+          </div>
+        </Select.Trigger>
+        <Select.Content>
+            <Select.Group>
+              {#each providerKeys as providerKey (providerKey)}
+              {@const providerItem = LLM_PROVIDERS[providerKey]}
+              <Select.Item value={providerKey}>
+                  <div class="flex items-center gap-2">
+                  <span>{providerItem.name}</span>
+                  {#if !getProviderApiKey(providerKey)}
+                      <Badge variant="outline" class="text-xs">
+                        {providerKey === 'mediaflow' ? 'Sign in' : 'No key'}
+                      </Badge>
+                  {/if}
+                  </div>
+              </Select.Item>
+              {/each}
+            </Select.Group>
+        </Select.Content>
+      </Select.Root>
+    </div>
+  {/if}
 
   <div class="space-y-2">
     <Label class="text-sm font-medium">Model</Label>
     {#if hasModels}
       <Select.Root
         type="single"
-        value={model}
+        value={effectiveModel}
         onValueChange={handleModelChange}
       >
         <Select.Trigger class="w-full">
@@ -170,7 +197,7 @@
               class="w-full justify-between font-normal"
             >
               <span class="truncate">
-                {model || 'Select or enter model...'}
+                {effectiveModel || 'Select or enter model...'}
               </span>
               <ChevronsUpDown class="ml-2 size-4 shrink-0 opacity-50" />
             </Button>
@@ -205,7 +232,7 @@
                     class="w-full items-center justify-between rounded-full"
                   >
                     <div class="flex items-center gap-2 min-w-0 flex-1">
-                      {#if model === savedModel}
+                      {#if effectiveModel === savedModel}
                         <Check class="size-4 shrink-0" />
                       {:else}
                         <div class="size-4 shrink-0"></div>
@@ -246,23 +273,26 @@
   </div>
 
   {#if !hasApiKey}
-    <div class="flex items-center gap-3 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
-      <Key class="size-4 text-destructive shrink-0" />
-      <div class="flex-1 text-sm">
-        <p class="font-medium text-destructive">
-          {provider === 'mediaflow' ? 'MediaFlow sign-in required' : 'API key required'}
-        </p>
-        <p class="text-muted-foreground">
-          {provider === 'mediaflow'
-            ? 'Sign in to your MediaFlow account in Settings'
-            : `Configure your ${currentProvider.name} API key in Settings`}
-        </p>
+    {#if effectiveProvider === 'mediaflow'}
+      <MediaFlowSignInPrompt
+        title="Sign in to use MediaFlow AI"
+        description="MediaFlow uses your account credits for managed AI features."
+      />
+    {:else}
+      <div class="flex items-center gap-3 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+        <Key class="size-4 text-destructive shrink-0" />
+        <div class="flex-1 text-sm">
+          <p class="font-medium text-destructive">API key required</p>
+          <p class="text-muted-foreground">
+            Configure your {currentProvider.name} API key in Settings
+          </p>
+        </div>
+        {#if onNavigateToSettings}
+          <Button variant="outline" size="sm" onclick={() => onNavigateToSettings?.()}>
+            Settings
+          </Button>
+        {/if}
       </div>
-      {#if onNavigateToSettings}
-        <Button variant="outline" size="sm" onclick={() => onNavigateToSettings?.()}>
-          Settings
-        </Button>
-      {/if}
-    </div>
+    {/if}
   {/if}
 </div>

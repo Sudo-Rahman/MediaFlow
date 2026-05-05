@@ -3,7 +3,7 @@
  * Uses rust-paddle-ocr for text detection and recognition
  */
 
-import { LLM_PROVIDERS } from './translation';
+import { getDefaultLLMModel, getDefaultLLMProvider } from './translation';
 import type { LLMProvider } from './translation';
 
 // ============================================================================
@@ -177,6 +177,9 @@ export const OCR_OUTPUT_FORMATS: { value: OcrOutputFormat; label: string }[] = [
   { value: 'txt', label: 'Plain Text (.txt)' },
 ];
 
+const DEFAULT_AI_CLEANUP_PROVIDER = getDefaultLLMProvider();
+const DEFAULT_AI_CLEANUP_MODEL = getDefaultLLMModel(DEFAULT_AI_CLEANUP_PROVIDER);
+
 // Default OCR parallelism request: 2/3 of available cores (calculated at runtime)
 export const DEFAULT_OCR_CONFIG: OcrConfig = {
   frameRate: 10,
@@ -192,8 +195,8 @@ export const DEFAULT_OCR_CONFIG: OcrConfig = {
   filterUrlLike: true,
 
   aiCleanupEnabled: false,
-  aiCleanupProvider: 'google',
-  aiCleanupModel: LLM_PROVIDERS.google.models[0]?.id ?? '',
+  aiCleanupProvider: DEFAULT_AI_CLEANUP_PROVIDER,
+  aiCleanupModel: DEFAULT_AI_CLEANUP_MODEL,
 };
 
 // ============================================================================

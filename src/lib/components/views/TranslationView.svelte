@@ -70,6 +70,12 @@
     settingsStore.isLoaded && !!settingsStore.getLLMApiKey(translationStore.config.provider)
   );
 
+  function getMissingCredentialMessage(provider: LLMProvider): string {
+    return provider === 'mediaflow'
+      ? 'Sign in to MediaFlow before running AI translation'
+      : `No API key configured for ${provider}`;
+  }
+
   // Token count cache by file path + language pair.
   let tokenCountCache = $state<Map<string, number>>(new Map());
   let tokenCountGenerations = $state<Map<string, number>>(new Map());
@@ -439,7 +445,7 @@
     if (!apiKey) {
       translationStore.updateJob(job.id, {
         status: 'error',
-        error: `No API key configured for ${provider}`
+        error: getMissingCredentialMessage(provider)
       });
       return;
     }
@@ -668,7 +674,7 @@
       if (!apiKey) {
         translationStore.updateJob(job.id, {
           status: 'error',
-          error: `No API key configured for ${entry.provider}`
+          error: getMissingCredentialMessage(entry.provider)
         });
         return;
       }

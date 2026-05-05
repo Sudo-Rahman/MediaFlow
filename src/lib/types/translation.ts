@@ -45,6 +45,57 @@ export const LLM_PROVIDERS: Record<LLMProvider, { name: string; models: Provider
   },
 };
 
+export interface LLMSelection {
+  provider: LLMProvider;
+  model: string;
+}
+
+export const MEDIAFLOW_LLM_PROVIDER: LLMProvider = 'mediaflow';
+export const DEV_DEFAULT_LLM_PROVIDER: LLMProvider = 'google';
+export const LLM_PROVIDER_ORDER: readonly LLMProvider[] = [
+  'mediaflow',
+  'google',
+  'anthropic',
+  'openai',
+  'openrouter',
+];
+
+export function getSelectableLLMProviders(isDev: boolean = import.meta.env.DEV): readonly LLMProvider[] {
+  return isDev ? LLM_PROVIDER_ORDER : [MEDIAFLOW_LLM_PROVIDER];
+}
+
+export function normalizeLLMProvider(provider: LLMProvider, isDev: boolean = import.meta.env.DEV): LLMProvider {
+  return isDev ? provider : MEDIAFLOW_LLM_PROVIDER;
+}
+
+export function getDefaultLLMProvider(isDev: boolean = import.meta.env.DEV): LLMProvider {
+  return isDev ? DEV_DEFAULT_LLM_PROVIDER : MEDIAFLOW_LLM_PROVIDER;
+}
+
+export function getDefaultLLMModel(provider: LLMProvider = getDefaultLLMProvider()): string {
+  return LLM_PROVIDERS[provider].models[0]?.id ?? '';
+}
+
+export function normalizeLLMSelection(
+  provider: LLMProvider,
+  model: string,
+  isDev: boolean = import.meta.env.DEV
+): LLMSelection {
+  const normalizedProvider = normalizeLLMProvider(provider, isDev);
+  const providerModels = LLM_PROVIDERS[normalizedProvider].models;
+
+  if (normalizedProvider === 'openrouter') {
+    return { provider: normalizedProvider, model };
+  }
+
+  const hasSelectedModel = providerModels.some((providerModel) => providerModel.id === model);
+
+  return {
+    provider: normalizedProvider,
+    model: hasSelectedModel ? model : providerModels[0]?.id ?? '',
+  };
+}
+
 export const LLM_API_KEY_PROVIDERS: LLMApiKeyProvider[] = ['google', 'anthropic', 'openai', 'openrouter'];
 
 export const SUPPORTED_LANGUAGES = [

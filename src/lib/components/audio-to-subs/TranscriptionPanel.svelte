@@ -11,6 +11,7 @@
   import { Separator } from '$lib/components/ui/separator';
   import * as Alert from '$lib/components/ui/alert';
   import { Input } from '$lib/components/ui/input';
+  import MediaFlowSignInPrompt from '$lib/components/account/MediaFlowSignInPrompt.svelte';
   import ModelSelector from './ModelSelector.svelte';
   import LanguageSelector from './LanguageSelector.svelte';
 
@@ -84,18 +85,23 @@
   <!-- API Key Status -->
   {#if !apiKeyConfigured}
     <div class="p-4">
-      <Alert.Root variant="destructive" class="shrink-0">
-        <Key class="size-4" />
-        <Alert.Title>{isMediaFlow ? 'MediaFlow Sign-in Required' : 'Deepgram API Key Required'}</Alert.Title>
-        <Alert.Description>
-          {isMediaFlow
-            ? 'Sign in to MediaFlow to use managed transcription.'
-            : 'Please configure your Deepgram API key to use this feature.'}
-          <Button variant="link" class="p-0 h-auto" onclick={onNavigateToSettings}>
-            Go to Settings
-          </Button>
-        </Alert.Description>
-      </Alert.Root>
+      {#if isMediaFlow}
+        <MediaFlowSignInPrompt
+          title="Sign in to use managed transcription"
+          description="MediaFlow uses your account credits for managed transcription."
+        />
+      {:else}
+        <Alert.Root variant="destructive" class="shrink-0">
+          <Key class="size-4" />
+          <Alert.Title>Deepgram API Key Required</Alert.Title>
+          <Alert.Description>
+            Please configure your Deepgram API key to use this feature.
+            <Button variant="link" class="p-0 h-auto" onclick={onNavigateToSettings}>
+              Go to Settings
+            </Button>
+          </Alert.Description>
+        </Alert.Root>
+      {/if}
     </div>
   {/if}
 
@@ -333,7 +339,7 @@
     {#if !canTranscribe && !isTranscribing && !isTranscoding}
       <p class="text-xs text-muted-foreground text-center">
         {#if !apiKeyConfigured}
-          {isMediaFlow ? 'Sign in to MediaFlow' : 'Configure your Deepgram API key'}
+          {isMediaFlow ? 'Sign in to use managed transcription' : 'Configure your Deepgram API key'}
         {:else if hasInvalidAutoLanguageFiles}
           Choose a source language manually above before transcribing
         {:else if transcribableFilesCount === 0}

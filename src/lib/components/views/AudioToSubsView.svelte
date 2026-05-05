@@ -15,6 +15,7 @@
 
   import type { AudioFile, AudioTrackInfo, BatchTrackStrategy, DeepgramConfig, TranscriptionVersion } from '$lib/types';
   import type { ImportSourceId } from '$lib/types/tool-import';
+  import type { LogSource } from '$lib/stores/logs.svelte';
   import { AUDIO_EXTENSIONS } from '$lib/types';
   import { transcribeWithDeepgram } from '$lib/services/deepgram';
   import { transcribeWithMediaFlow } from '$lib/services/mediaflow-transcription';
@@ -47,6 +48,7 @@
   const MAX_CONCURRENT_TRANSCODES = 3;
   const OPUS_COMPATIBLE_EXTENSIONS = ['opus'];
   const AUDIO_FORMATS = 'MP3, WAV, FLAC, AAC, OGG, M4A, OPUS';
+  type TranscriptionLogSource = Extract<LogSource, 'deepgram' | 'mediaflow'>;
 
   let persistedTranscriptionVersionKeys = $state<Set<string>>(new Set());
 
@@ -135,6 +137,10 @@
 
   function getAudioFile(fileId: string): AudioFile | undefined {
     return audioToSubsStore.audioFiles.find((file) => file.id === fileId);
+  }
+
+  function getTranscriptionLogSource(): TranscriptionLogSource {
+    return audioToSubsStore.provider;
   }
 
   // Helper: Check if file needs transcoding to OPUS
@@ -652,8 +658,9 @@
     try {
       // Use OPUS path if available, otherwise original path
       const audioPath = file.opusPath || file.path;
+      const logSource = getTranscriptionLogSource();
       
-      const transcribe = audioToSubsStore.provider === 'mediaflow'
+      const transcribe = logSource === 'mediaflow'
         ? transcribeWithMediaFlow
         : transcribeWithDeepgram;
 
@@ -693,7 +700,7 @@
             markPersistedTranscriptionVersions(file.path, [version]);
           } else {
             logAndToast.warning({
-              source: 'deepgram',
+              source: logSource,
               title: 'Transcription not persisted',
               details: 'Version is available in memory only for this session',
             });
@@ -701,7 +708,7 @@
         }
 
         logAndToast.success({
-          source: 'deepgram',
+          source: logSource,
           title: 'Transcription complete',
           details: `${file.name} - ${versionName}`
         });
@@ -722,7 +729,7 @@
         
         audioToSubsStore.failFile(file.id, result.error || 'Unknown error');
         logAndToast.error({
-          source: 'deepgram',
+          source: logSource,
           title: `Failed: ${file.name}`,
           details: result.error || 'Unknown error'
         });
@@ -732,7 +739,7 @@
       const errorMsg = error instanceof Error ? error.message : 'Transcription failed';
       audioToSubsStore.failFile(file.id, errorMsg);
       logAndToast.error({
-        source: 'deepgram',
+        source: getTranscriptionLogSource(),
         title: `Failed: ${file.name}`,
         details: errorMsg
       });
@@ -1111,7 +1118,7 @@
 
       if (!saved) {
         logAndToast.warning({
-          source: 'deepgram',
+          source: getTranscriptionLogSource(),
           title: 'Version removal not persisted',
           details: 'Disk sync failed, but version was removed from current session',
         });

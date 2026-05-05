@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
 use futures_util::future::{AbortHandle, Abortable};
+use reqwest::header::ORIGIN;
 use serde::{Deserialize, Serialize};
 
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
@@ -123,6 +124,21 @@ async fn response_to_transfer(
     Ok(TranscriptionHttpResponse { status, body })
 }
 
+fn mediaflow_transcription_request(
+    client: &reqwest::Client,
+    access_token: &str,
+    form: reqwest::multipart::Form,
+) -> Result<reqwest::RequestBuilder, String> {
+    let url = reqwest::Url::parse(&mediaflow_api::audio_transcriptions_url())
+        .map_err(|e| format!("Invalid MediaFlow transcription URL: {}", e))?;
+
+    Ok(client
+        .post(url)
+        .header(ORIGIN, mediaflow_api::public_base_url())
+        .bearer_auth(access_token)
+        .multipart(form))
+}
+
 async fn run_abortable_upload<F>(
     request_id: String,
     upload: F,
@@ -187,8 +203,6 @@ pub(crate) async fn transcribe_mediaflow_audio_file(
     run_abortable_upload(request_id, async move {
         let _sleep_guard = SleepInhibitGuard::try_acquire("MediaFlow: Transcription").ok();
         let client = http_client()?;
-        let url = reqwest::Url::parse(&mediaflow_api::audio_transcriptions_url())
-            .map_err(|e| format!("Invalid MediaFlow transcription URL: {}", e))?;
         let (file, length) = open_audio_file(&audio_path).await?;
 
         let file_part = reqwest::multipart::Part::stream_with_length(file, length)
@@ -200,10 +214,7 @@ pub(crate) async fn transcribe_mediaflow_audio_file(
             form = form.text(key, value);
         }
 
-        let response = client
-            .post(url)
-            .bearer_auth(access_token)
-            .multipart(form)
+        let response = mediaflow_transcription_request(&client, &access_token, form)?
             .send()
             .await
             .map_err(|e| format!("MediaFlow transcription request failed: {}", e))?;
@@ -231,9 +242,14 @@ pub(crate) fn cancel_audio_transcription_upload(request_id: String) -> Result<()
 
 #[cfg(test)]
 mod tests {
+    use reqwest::header::{AUTHORIZATION, ORIGIN};
+
+    use crate::tools::mediaflow_api;
+
     use super::{
         DEEPGRAM_LISTEN_URL, TranscriptionUploadConfig, deepgram_model_for_language,
         deepgram_query_params, deepgram_request_url, mediaflow_form_params,
+        mediaflow_transcription_request,
     };
 
     fn config() -> TranscriptionUploadConfig {
@@ -309,6 +325,31 @@ mod tests {
             params
                 .iter()
                 .any(|(key, value)| *key == "language" && value == "multi")
+        );
+    }
+
+    #[test]
+    fn mediaflow_transcription_request_sets_same_origin_header() {
+        let client = reqwest::Client::new();
+        let request = mediaflow_transcription_request(
+            &client,
+            "access-token",
+            reqwest::multipart::Form::new(),
+        )
+        .expect("request builder should be created")
+        .build()
+        .expect("request should build");
+
+        assert_eq!(
+            request.headers().get(ORIGIN).expect("origin header"),
+            mediaflow_api::public_base_url()
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get(AUTHORIZATION)
+                .expect("authorization header"),
+            "Bearer access-token"
         );
     }
 }

@@ -3,12 +3,13 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
 
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 use crate::build_support::{
-    BundleSource, DOWNLOAD_ATTEMPTS, bundle_cache_marker_name, bundle_cache_version,
+    BundleSource, DOWNLOAD_ATTEMPTS, bundle_cache_marker_name, bundle_cache_version, retry_delay,
     retry_operation,
 };
 
@@ -334,7 +335,7 @@ fn fetch_btbn_build_list(client: &reqwest::blocking::Client) -> BuildResult<Stri
         if attempt == 1 {
             println!("cargo:warning=Fetching {BTBN_LATEST_URL}");
         } else {
-            println!("cargo:warning=Retrying {BTBN_LATEST_URL} ({attempt}/{DOWNLOAD_ATTEMPTS})");
+            wait_before_retry(BTBN_LATEST_URL, attempt);
         }
 
         client
@@ -356,7 +357,7 @@ fn download_file(client: &reqwest::blocking::Client, url: &str, dest: &Path) -> 
         if attempt == 1 {
             println!("cargo:warning=Downloading {url}");
         } else {
-            println!("cargo:warning=Retrying {url} ({attempt}/{DOWNLOAD_ATTEMPTS})");
+            wait_before_retry(url, attempt);
         }
 
         let result = download_file_once(client, url, dest);
@@ -373,22 +374,59 @@ fn download_file(client: &reqwest::blocking::Client, url: &str, dest: &Path) -> 
     .map_err(|e| format!("failed to download {url} after {DOWNLOAD_ATTEMPTS} attempts: {e}"))
 }
 
+fn wait_before_retry(resource: &str, attempt: usize) {
+    let delay = retry_delay(attempt);
+    println!(
+        "cargo:warning=Retrying {resource} ({attempt}/{DOWNLOAD_ATTEMPTS}) after {}s",
+        delay.as_secs()
+    );
+    thread::sleep(delay);
+}
+
 fn download_file_once(
     client: &reqwest::blocking::Client,
     url: &str,
     dest: &Path,
 ) -> BuildResult<()> {
+    let partial_dest = partial_download_path(dest);
+    if partial_dest.exists() {
+        fs::remove_file(&partial_dest).map_err(|e| {
+            format!(
+                "failed to remove partial download {}: {e}",
+                partial_dest.display()
+            )
+        })?;
+    }
+
     let mut response = client
         .get(url)
         .send()
         .map_err(|e| format!("failed to download {url}: {e}"))?
         .error_for_status()
         .map_err(|e| format!("failed to download {url}: {e}"))?;
-    let mut file =
-        fs::File::create(dest).map_err(|e| format!("failed to create {}: {e}", dest.display()))?;
+    let mut file = fs::File::create(&partial_dest)
+        .map_err(|e| format!("failed to create {}: {e}", partial_dest.display()))?;
     io::copy(&mut response, &mut file)
-        .map_err(|e| format!("failed to write {}: {e}", dest.display()))?;
+        .map_err(|e| format!("failed to write {}: {e}", partial_dest.display()))?;
+    drop(file);
+
+    fs::rename(&partial_dest, dest).map_err(|e| {
+        format!(
+            "failed to move {} to {}: {e}",
+            partial_dest.display(),
+            dest.display()
+        )
+    })?;
     Ok(())
+}
+
+fn partial_download_path(dest: &Path) -> PathBuf {
+    let file_name = dest
+        .file_name()
+        .expect("download destination must include a file name")
+        .to_string_lossy();
+
+    dest.with_file_name(format!("{file_name}.part"))
 }
 
 fn extract_archive(

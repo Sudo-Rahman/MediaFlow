@@ -2,9 +2,15 @@
 mod build_support;
 
 use build_support::{
-    BundleSource, DOWNLOAD_ATTEMPTS, bundle_cache_marker_name, bundle_cache_version,
-    retry_operation,
+    BundleSource, DOWNLOAD_ATTEMPTS, DOWNLOAD_RETRIES, bundle_cache_marker_name,
+    bundle_cache_version, retry_delay, retry_operation,
 };
+
+#[test]
+fn download_attempts_allow_three_retries_after_initial_attempt() {
+    assert_eq!(DOWNLOAD_RETRIES, 3);
+    assert_eq!(DOWNLOAD_ATTEMPTS, 4);
+}
 
 #[test]
 fn retry_operation_succeeds_on_third_attempt() {
@@ -24,7 +30,7 @@ fn retry_operation_succeeds_on_third_attempt() {
 }
 
 #[test]
-fn retry_operation_stops_after_three_failed_attempts() {
+fn retry_operation_stops_after_initial_attempt_and_three_retries() {
     let mut attempts = 0;
 
     let result: Result<(), usize> = retry_operation(DOWNLOAD_ATTEMPTS, |attempt| {
@@ -32,8 +38,15 @@ fn retry_operation_stops_after_three_failed_attempts() {
         Err(attempt)
     });
 
-    assert_eq!(result, Err(3));
-    assert_eq!(attempts, 3);
+    assert_eq!(result, Err(4));
+    assert_eq!(attempts, 4);
+}
+
+#[test]
+fn retry_delay_increases_for_later_attempts() {
+    assert_eq!(retry_delay(1).as_secs(), 0);
+    assert_eq!(retry_delay(2).as_secs(), 2);
+    assert_eq!(retry_delay(4).as_secs(), 6);
 }
 
 #[test]

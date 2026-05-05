@@ -1,6 +1,6 @@
 [package]
 name = "Mediaflow"
-version = "1.0.0"
+version = "1.0.1"
 description = "A Tauri App"
 authors = ["Rahman YILMAZ"]
 edition = "2024"

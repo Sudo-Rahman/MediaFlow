@@ -1,3 +1,4 @@
+use reqwest::header::ORIGIN;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri_plugin_opener::open_url;
@@ -70,6 +71,12 @@ fn http_client() -> Result<reqwest::Client, String> {
         .map_err(|e| format!("Failed to create MediaFlow HTTP client: {e}"))
 }
 
+fn auth_form_post(path: &str) -> Result<reqwest::RequestBuilder, String> {
+    Ok(http_client()?
+        .post(auth_url(path))
+        .header(ORIGIN, MEDIAFLOW_BASE_URL))
+}
+
 fn parse_url(url: &str) -> Result<reqwest::Url, String> {
     reqwest::Url::parse(url).map_err(|e| format!("Invalid MediaFlow URL: {e}"))
 }
@@ -114,8 +121,7 @@ async fn response_text(response: reqwest::Response) -> Result<MediaFlowHttpRespo
 async fn token_request(
     form: Vec<(&'static str, String)>,
 ) -> Result<MediaFlowTokenResponse, String> {
-    let response = http_client()?
-        .post(auth_url("/oauth2/token"))
+    let response = auth_form_post("/oauth2/token")?
         .form(&form)
         .send()
         .await
@@ -205,8 +211,7 @@ pub(crate) async fn fetch_mediaflow_user_info(
 
 #[tauri::command]
 pub(crate) async fn revoke_mediaflow_refresh_token(refresh_token: String) -> Result<(), String> {
-    http_client()?
-        .post(auth_url("/oauth2/revoke"))
+    auth_form_post("/oauth2/revoke")?
         .form(&[
             ("client_id", CLIENT_ID),
             ("token", refresh_token.as_str()),
@@ -236,8 +241,8 @@ pub(crate) async fn fetch_mediaflow_account_usage(
 #[cfg(test)]
 mod tests {
     use super::{
-        MEDIAFLOW_BASE_URL, audio_transcriptions_url, authorize_redirect_to, chat_completions_url,
-        login_url, public_base_url,
+        MEDIAFLOW_BASE_URL, audio_transcriptions_url, auth_form_post, authorize_redirect_to,
+        chat_completions_url, login_url, public_base_url,
     };
 
     #[test]
@@ -284,5 +289,19 @@ mod tests {
 
         assert_eq!(parsed.path(), "/auth/login");
         assert!(parsed.query().unwrap_or_default().contains("redirectTo="));
+    }
+
+    #[test]
+    fn auth_form_post_sets_same_origin_header() {
+        let request = auth_form_post("/oauth2/token")
+            .expect("request builder should be created")
+            .form(&[("grant_type", "authorization_code")])
+            .build()
+            .expect("request should build");
+
+        assert_eq!(
+            request.headers().get(reqwest::header::ORIGIN).unwrap(),
+            MEDIAFLOW_BASE_URL
+        );
     }
 }

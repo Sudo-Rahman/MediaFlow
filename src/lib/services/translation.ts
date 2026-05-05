@@ -28,6 +28,12 @@ import {
   upsertThemeMemoryEntries
 } from './translation-memory';
 
+function getMissingCredentialMessage(provider: LLMProvider): string {
+  return provider === 'mediaflow'
+    ? 'Sign in to MediaFlow before running AI translation.'
+    : `No API key configured for ${provider}. Please add it in Settings.`;
+}
+
 // ============================================================================
 // SYSTEM PROMPT (for JSON-based translation)
 // ============================================================================
@@ -1168,7 +1174,7 @@ export async function translateSubtitle(
       originalFile: file,
       translatedContent: '',
       success: false,
-      error: `No API key configured for ${provider}. Please add it in Settings.`
+      error: getMissingCredentialMessage(provider)
     };
   }
 

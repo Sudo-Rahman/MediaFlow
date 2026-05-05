@@ -33,7 +33,7 @@ import type {
   TranscodeSubtitleSettings,
   TranscodeVideoSettings,
 } from '$lib/types';
-import { LLM_PROVIDERS } from '$lib/types';
+import { getDefaultLLMModel, getDefaultLLMProvider, normalizeLLMSelection } from '$lib/types';
 
 interface TranscodePresetState {
   video: TranscodePreset<TranscodeVideoSettings>[];
@@ -44,8 +44,8 @@ interface TranscodePresetState {
 type TranscodeStoreStatus = 'idle' | 'processing' | 'completed' | 'error';
 type CapabilitiesStatus = 'idle' | 'loading' | 'ready' | 'error';
 
-const DEFAULT_PROVIDER: LLMProvider = 'google';
-const DEFAULT_MODEL = LLM_PROVIDERS[DEFAULT_PROVIDER].models[0]?.id ?? '';
+const DEFAULT_PROVIDER = getDefaultLLMProvider();
+const DEFAULT_MODEL = getDefaultLLMModel(DEFAULT_PROVIDER);
 
 let files = $state<TranscodeFile[]>([]);
 let selectedFileId = $state<string | null>(null);
@@ -316,17 +316,15 @@ export const transcodeStore = {
   },
 
   setAiProvider(provider: LLMProvider) {
-    aiProvider = provider;
-    const providerModels = LLM_PROVIDERS[provider].models;
-    if (provider !== 'openrouter') {
-      aiModel = providerModels[0]?.id ?? '';
-    } else if (!aiModel) {
-      aiModel = '';
-    }
+    const selection = normalizeLLMSelection(provider, '');
+    aiProvider = selection.provider;
+    aiModel = selection.model;
   },
 
   setAiModel(model: string) {
-    aiModel = model;
+    const selection = normalizeLLMSelection(aiProvider, model);
+    aiProvider = selection.provider;
+    aiModel = selection.model;
   },
 
   setAiIntent(intent: TranscodeAiIntent) {

@@ -8,10 +8,17 @@ import type {
   ModelJob,
   TranslationModelSelection,
   LLMProvider,
-  LanguageCode
+  LanguageCode,
+} from '$lib/types';
+import {
+  getDefaultLLMModel,
+  getDefaultLLMProvider,
+  normalizeLLMSelection,
 } from '$lib/types';
 
 const PENDING_TRANSLATION_VERSION_ID = '__pending_translation__';
+const DEFAULT_TRANSLATION_PROVIDER = getDefaultLLMProvider();
+const DEFAULT_TRANSLATION_MODEL = getDefaultLLMModel(DEFAULT_TRANSLATION_PROVIDER);
 
 // Generate unique ID
 function generateId(): string {
@@ -20,6 +27,15 @@ function generateId(): string {
 
 function generateModelSelectionId(): string {
   return `model_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeModelSelection(entry: TranslationModelSelection): TranslationModelSelection {
+  const selection = normalizeLLMSelection(entry.provider, entry.model);
+  return {
+    ...entry,
+    provider: selection.provider,
+    model: selection.model,
+  };
 }
 
 function getVersionDrivenJobState(versions: TranslationVersion[]): Pick<
@@ -50,8 +66,8 @@ let jobs = $state.raw<TranslationJob[]>([]);
 let config = $state<TranslationConfig>({
   sourceLanguage: 'auto',
   targetLanguage: 'fr',
-  provider: 'google',
-  model: 'gemini-3.1-pro-preview',
+  provider: DEFAULT_TRANSLATION_PROVIDER,
+  model: DEFAULT_TRANSLATION_MODEL,
   batchCount: 1, // Default: no splitting
   models: [],
 });
@@ -365,11 +381,13 @@ export const translationStore = {
   },
 
   setProvider(provider: LLMProvider) {
-    config = { ...config, provider, model: '' };
+    const selection = normalizeLLMSelection(provider, '');
+    config = { ...config, provider: selection.provider, model: selection.model };
   },
 
   setModel(model: string) {
-    config = { ...config, model };
+    const selection = normalizeLLMSelection(config.provider, model);
+    config = { ...config, provider: selection.provider, model: selection.model };
   },
 
   setBatchCount(count: number) {
@@ -377,14 +395,15 @@ export const translationStore = {
   },
 
   setModels(models: TranslationModelSelection[]) {
-    config = { ...config, models };
+    config = { ...config, models: models.map(normalizeModelSelection) };
   },
 
   addModel(provider: LLMProvider, model: string) {
+    const normalizedSelection = normalizeLLMSelection(provider, model);
     const selection: TranslationModelSelection = {
       id: generateModelSelectionId(),
-      provider,
-      model,
+      provider: normalizedSelection.provider,
+      model: normalizedSelection.model,
     };
     config = { ...config, models: [...config.models, selection] };
   },
@@ -524,8 +543,8 @@ export const translationStore = {
     config = {
       sourceLanguage: 'auto',
       targetLanguage: 'fr',
-      provider: 'google',
-      model: 'gemini-3.1-flash-lite-preview',
+      provider: DEFAULT_TRANSLATION_PROVIDER,
+      model: DEFAULT_TRANSLATION_MODEL,
       batchCount: 1,
       models: [],
     };

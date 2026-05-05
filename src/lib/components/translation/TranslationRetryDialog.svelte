@@ -6,7 +6,13 @@
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import * as Select from '$lib/components/ui/select';
-  import { LLM_PROVIDERS, SUPPORTED_LANGUAGES } from '$lib/types';
+  import {
+    getDefaultLLMModel,
+    getDefaultLLMProvider,
+    LLM_PROVIDERS,
+    normalizeLLMSelection,
+    SUPPORTED_LANGUAGES,
+  } from '$lib/types';
   import type {
     LLMProvider,
     LanguageCode,
@@ -54,9 +60,10 @@
     onNavigateToSettings,
   }: TranslationRetryDialogProps = $props();
 
+  const defaultRetryProvider = getDefaultLLMProvider();
   let versionName = $state('');
-  let provider = $state<LLMProvider>('google');
-  let model = $state('');
+  let provider = $state<LLMProvider>(defaultRetryProvider);
+  let model = $state(getDefaultLLMModel(defaultRetryProvider));
   let sourceLanguage = $state<LanguageCode>('auto');
   let targetLanguage = $state<LanguageCode>('fr');
   let batchCount = $state(1);
@@ -67,32 +74,43 @@
     models.map((entry) => {
       const provider = LLM_PROVIDERS[entry.provider];
       const modelName = provider.models.find((modelEntry) => modelEntry.id === entry.model)?.name ?? entry.model;
-      return `${provider.name} - ${modelName}`;
+      return {
+        id: entry.id,
+        label: `${provider.name} - ${modelName}`,
+      };
     })
   );
   const canConfirm = $derived(isCompareMode || !!model);
 
   $effect(() => {
     if (open) {
+      const defaultSelection = normalizeLLMSelection(defaultProvider, defaultModel);
       versionName = `Version ${existingVersions.length + 1}`;
-      provider = defaultProvider;
-      model = defaultModel;
+      provider = defaultSelection.provider;
+      model = defaultSelection.model;
       sourceLanguage = defaultSourceLanguage;
       targetLanguage = defaultTargetLanguage;
       batchCount = defaultBatchCount;
-      models = defaultModels.map((entry) => ({ ...entry }));
+      models = defaultModels.map((entry) => {
+        const selection = normalizeLLMSelection(entry.provider, entry.model);
+        return { ...entry, provider: selection.provider, model: selection.model };
+      });
     }
   });
 
   function handleConfirm(): void {
+    const selection = normalizeLLMSelection(provider, model);
     onConfirm({
       versionName: versionName.trim() || `Version ${existingVersions.length + 1}`,
-      provider,
-      model,
+      provider: selection.provider,
+      model: selection.model,
       sourceLanguage,
       targetLanguage,
       batchCount: Math.max(1, batchCount),
-      models: models.map((entry) => ({ ...entry })),
+      models: models.map((entry) => {
+        const selection = normalizeLLMSelection(entry.provider, entry.model);
+        return { ...entry, provider: selection.provider, model: selection.model };
+      }),
     });
     onOpenChange(false);
   }
@@ -163,8 +181,8 @@
           Using active Compare Models selection from the tool.
         </p>
         <div class="rounded-md border p-2 space-y-1">
-          {#each compareModelDisplay as modelEntry}
-            <p class="text-xs">{modelEntry}</p>
+          {#each compareModelDisplay as modelEntry (modelEntry.id)}
+            <p class="text-xs">{modelEntry.label}</p>
           {/each}
         </div>
       </div>

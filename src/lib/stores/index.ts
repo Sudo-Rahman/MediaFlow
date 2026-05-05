@@ -12,6 +12,7 @@ export { renameStore } from './rename.svelte';
 export { createRenameWorkspaceStore } from './rename.svelte';
 export { toolImportStore } from './tool-import.svelte';
 export { transcodeStore } from './transcode.svelte';
+export { mediaflowAuthUiStore } from './mediaflow-auth-ui.svelte';
 export { mediaflowUsageStore } from './mediaflow-usage.svelte';
 export type { MediaFlowUsage, MediaFlowUsageStatus } from './mediaflow-usage.svelte';
 export { updaterStore } from './updater.svelte';

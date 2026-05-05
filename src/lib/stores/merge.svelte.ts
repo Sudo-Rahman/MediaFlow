@@ -1,3 +1,5 @@
+import { LazyStore } from '@tauri-apps/plugin-store';
+
 import type {
   MergeVideoFile,
   ImportedTrack,
@@ -15,11 +17,15 @@ import type {
   TrackType,
   LLMProvider,
 } from '$lib/types';
-import { LLM_PROVIDERS, extractSeriesInfo } from '$lib/types';
-import { LazyStore } from '@tauri-apps/plugin-store';
+import {
+  extractSeriesInfo,
+  getDefaultLLMModel,
+  getDefaultLLMProvider,
+  normalizeLLMSelection,
+} from '$lib/types';
 
-const DEFAULT_AI_PROVIDER: LLMProvider = 'google';
-const DEFAULT_AI_MODEL = LLM_PROVIDERS[DEFAULT_AI_PROVIDER].models[0]?.id ?? '';
+const DEFAULT_AI_PROVIDER = getDefaultLLMProvider();
+const DEFAULT_AI_MODEL = getDefaultLLMModel(DEFAULT_AI_PROVIDER);
 const DEFAULT_AUTO_MATCH_MODE: MergeAutoMatchMode = 'classic';
 
 // State
@@ -470,17 +476,15 @@ export const mergeStore = {
   },
 
   setAiProvider(provider: LLMProvider) {
-    aiProvider = provider;
-    const providerModels = LLM_PROVIDERS[provider].models;
-    if (provider !== 'openrouter') {
-      aiModel = providerModels[0]?.id ?? '';
-    } else if (!aiModel) {
-      aiModel = '';
-    }
+    const selection = normalizeLLMSelection(provider, '');
+    aiProvider = selection.provider;
+    aiModel = selection.model;
   },
 
   setAiModel(model: string) {
-    aiModel = model;
+    const selection = normalizeLLMSelection(aiProvider, model);
+    aiProvider = selection.provider;
+    aiModel = selection.model;
   },
 
   startAiAnalysis() {

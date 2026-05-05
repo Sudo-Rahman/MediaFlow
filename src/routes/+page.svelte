@@ -11,7 +11,7 @@
   import { Progress } from '$lib/components/ui/progress';
   import { Alert, AlertTitle, AlertDescription } from '$lib/components';
   import * as HoverCard from '$lib/components/ui/hover-card';
-  import { AppUpdateDialog, VersionedExportDialog } from '$lib/components/shared';
+  import { AppUpdateDialog, HeaderUpdateButton, VersionedExportDialog } from '$lib/components/shared';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
   import AppHeader from '$lib/components/layout/app-header.svelte';
   import { setToolHeader } from '$lib/components/layout/tool-header-context.svelte';
@@ -33,7 +33,6 @@
   import type { ToolId } from '$lib/types/tool-import';
   import { formatFileSize } from '$lib/utils/format';
   import { OS, formatTransferRate, normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils';
-  import { useSidebar } from "$lib/components/ui/sidebar";
   import { logStore } from '$lib/stores/logs.svelte';
   import { audioToSubsStore, videoOcrStore, translationStore, extractionStore, mergeStore, renameStore, transcodeStore, updaterStore } from '$lib/stores';
   import { logAndToast } from '$lib/utils/log-toast';
@@ -42,6 +41,7 @@
 
   // Current view state
   let currentView = $state<ViewId>('extract');
+  let sidebarOpen = $state(true);
   let ffmpegAvailable = $state<boolean | null>(null);
   let unlistenDragDrop: (() => void) | null = null;
 
@@ -649,7 +649,7 @@
   }
 </script>
 
-<Sidebar.Provider>
+<Sidebar.Provider bind:open={sidebarOpen}>
   <AppSidebar
     currentView={currentView}
     onNavigate={handleNavigate}
@@ -659,11 +659,22 @@
     <AppHeader
       title={activeHeaderTitle}
       description={activeHeaderDescription}
+      showTitle={!sidebarOpen}
       {isMacOS}
     >
       {#snippet leading()}
-        <Sidebar.Trigger class="{!useSidebar().open && isMacOS ? 'ml-20' : '-ml-1'} transition-all duration-300" />
+        <Sidebar.Trigger class="{!sidebarOpen && isMacOS ? 'ml-20' : '-ml-1'} transition-all duration-300" />
         <Separator orientation="vertical" class="data-[orientation=vertical]:h-4" />
+      {/snippet}
+
+      {#snippet titleSuffix()}
+        {#if updaterStore.hasUpdate && updaterStore.availableVersion}
+          <HeaderUpdateButton
+            version={updaterStore.availableVersion}
+            compact={!sidebarOpen}
+            onOpen={() => updateDialogOpen = true}
+          />
+        {/if}
       {/snippet}
 
       {#snippet status()}
@@ -713,22 +724,6 @@
       {/snippet}
 
       {#snippet trailing()}
-        {#if updaterStore.hasUpdate}
-          <Button
-            variant="outline"
-            size="sm"
-            onclick={() => updateDialogOpen = true}
-            title={`Update available: v${updaterStore.availableVersion}`}
-            class="relative"
-          >
-            <Download class="size-4 mr-2" />
-            Update
-            <span class="ml-1 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
-              v{updaterStore.availableVersion}
-            </span>
-          </Button>
-        {/if}
-
         {#if showGlobalExportButton}
           <Button
             variant="outline"

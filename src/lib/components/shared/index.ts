@@ -9,3 +9,4 @@ export { default as ProcessingRemoveDialog } from './processing-remove-dialog.sv
 export { default as RetryVersionDialogShell } from './retry-version-dialog-shell.svelte';
 export { default as VirtualizedTextPreview } from './virtualized-text-preview.svelte';
 export { default as AppUpdateDialog } from './app-update-dialog.svelte';
+export { default as HeaderUpdateButton } from './header-update-button.svelte';

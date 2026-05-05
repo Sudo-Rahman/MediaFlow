@@ -29,6 +29,11 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache FFmpeg sidecar binaries
+        uses: ./.github/actions/cache-ffmpeg-sidecars
+        with:
+          target: x86_64-unknown-linux-gnu
+
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2.9.1
         with:

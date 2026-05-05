@@ -40,6 +40,11 @@ jobs:
       - name: Install macOS Rust target
         run: rustup target add ${{ matrix.target }}
 
+      - name: Cache FFmpeg sidecar binaries
+        uses: ./.github/actions/cache-ffmpeg-sidecars
+        with:
+          target: ${{ matrix.target }}
+
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2.9.1
         with:

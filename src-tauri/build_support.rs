@@ -1,4 +1,8 @@
-pub const DOWNLOAD_ATTEMPTS: usize = 3;
+use std::time::Duration;
+
+pub const DOWNLOAD_RETRIES: usize = 3;
+pub const DOWNLOAD_ATTEMPTS: usize = DOWNLOAD_RETRIES + 1;
+pub const RETRY_DELAY_STEP_SECONDS: u64 = 2;
 
 #[derive(Clone, Copy)]
 pub struct BundleSource<'a> {
@@ -25,6 +29,10 @@ where
     }
 
     Err(last_error.expect("retry_operation requires at least one attempt"))
+}
+
+pub fn retry_delay(attempt: usize) -> Duration {
+    Duration::from_secs(attempt.saturating_sub(1) as u64 * RETRY_DELAY_STEP_SECONDS)
 }
 
 pub fn bundle_cache_version(target: &str, sources: &[BundleSource<'_>]) -> String {

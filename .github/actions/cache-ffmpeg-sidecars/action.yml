@@ -10,7 +10,7 @@ runs:
   using: composite
   steps:
     - name: Cache FFmpeg sidecar binaries
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: src-tauri/binaries
         key: ffmpeg-sidecars-${{ runner.os }}-${{ inputs.target }}-${{ hashFiles('src-tauri/build.rs', 'src-tauri/build_support.rs', 'src-tauri/ffmpeg_bundle.rs') }}

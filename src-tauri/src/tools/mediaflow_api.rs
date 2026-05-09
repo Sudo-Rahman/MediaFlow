@@ -48,6 +48,11 @@ pub(crate) fn chat_completions_url() -> String {
     mediaflow_url("/api/v1/chat/completions")
 }
 
+pub(crate) fn chat_completion_cancel_url(request_id: &str) -> String {
+    let path = format!("/api/v1/chat/completions/cancel?request_id={request_id}");
+    mediaflow_url(&path)
+}
+
 pub(crate) fn audio_transcriptions_url() -> String {
     mediaflow_url("/api/v1/audio/transcriptions")
 }

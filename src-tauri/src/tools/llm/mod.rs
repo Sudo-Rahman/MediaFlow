@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::future::{AbortHandle, Abortable};
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use crate::tools::mediaflow_api;
 
 const API_REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+const PRE_REGISTERED_CANCEL_TTL: Duration = Duration::from_secs(30);
 const USER_AGENT: &str = "MediaFlow/1.0";
 const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/completions";
 const ANTHROPIC_MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -17,8 +18,26 @@ const GOOGLE_GENERATE_CONTENT_BASE_URL: &str = "https://generativelanguage.googl
 const OPENROUTER_CHAT_COMPLETIONS_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 const OPENROUTER_TITLE: &str = "MediaFlow";
 
-static LLM_ABORTS: LazyLock<Mutex<HashMap<String, AbortHandle>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+struct ActiveLlmRequest {
+    abort_handle: AbortHandle,
+    mediaflow_access_token: Option<String>,
+}
+
+#[derive(Default)]
+struct LlmAbortRegistry {
+    active: HashMap<String, ActiveLlmRequest>,
+    pre_registered_cancels: HashMap<String, Instant>,
+}
+
+static LLM_ABORTS: LazyLock<Mutex<LlmAbortRegistry>> =
+    LazyLock::new(|| Mutex::new(LlmAbortRegistry::default()));
+
+fn prune_pre_registered_cancels(registry: &mut LlmAbortRegistry) {
+    let now = Instant::now();
+    registry.pre_registered_cancels.retain(|_, cancelled_at| {
+        now.saturating_duration_since(*cancelled_at) <= PRE_REGISTERED_CANCEL_TTL
+    });
+}
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -508,6 +527,28 @@ fn request_body(value: Value) -> Result<String, LlmResponse> {
     })
 }
 
+fn mediaflow_chat_request(
+    client: &reqwest::Client,
+    request_id: &str,
+    access_token: &str,
+) -> reqwest::RequestBuilder {
+    client
+        .post(mediaflow_api::chat_completions_url())
+        .bearer_auth(access_token)
+        .header("X-Request-Id", request_id)
+}
+
+fn mediaflow_chat_cancel_request(
+    client: &reqwest::Client,
+    request_id: &str,
+    access_token: &str,
+) -> reqwest::RequestBuilder {
+    client
+        .post(mediaflow_api::chat_completion_cancel_url(request_id))
+        .bearer_auth(access_token)
+        .header("X-Request-Id", request_id)
+}
+
 async fn send_json_request(
     request: reqwest::RequestBuilder,
     body: Value,
@@ -711,7 +752,37 @@ async fn call_openrouter(client: &reqwest::Client, request: &LlmRequest) -> LlmR
     .await
 }
 
-async fn call_mediaflow(client: &reqwest::Client, request: &LlmRequest) -> LlmResponse {
+fn mediaflow_cancel_token(request: &LlmRequest) -> Option<String> {
+    if request.provider == LlmProvider::Mediaflow
+        && !request.mediaflow_access_token.trim().is_empty()
+    {
+        Some(request.mediaflow_access_token.clone())
+    } else {
+        None
+    }
+}
+
+async fn send_mediaflow_chat_cancel(request_id: String, access_token: String) {
+    let Ok(client) = http_client() else {
+        return;
+    };
+
+    let _ = mediaflow_chat_cancel_request(&client, &request_id, &access_token)
+        .send()
+        .await;
+}
+
+fn spawn_mediaflow_chat_cancel(request_id: String, access_token: String) {
+    tauri::async_runtime::spawn(async move {
+        send_mediaflow_chat_cancel(request_id, access_token).await;
+    });
+}
+
+async fn call_mediaflow(
+    client: &reqwest::Client,
+    request_id: &str,
+    request: &LlmRequest,
+) -> LlmResponse {
     if request.mediaflow_access_token.trim().is_empty() {
         return error_response(
             "MediaFlow: Invalid API key or authentication failed",
@@ -722,16 +793,14 @@ async fn call_mediaflow(client: &reqwest::Client, request: &LlmRequest) -> LlmRe
     }
 
     call_openai_compatible(
-        client
-            .post(mediaflow_api::chat_completions_url())
-            .bearer_auth(&request.mediaflow_access_token),
+        mediaflow_chat_request(client, request_id, &request.mediaflow_access_token),
         request,
         false,
     )
     .await
 }
 
-async fn call_provider(request: LlmRequest) -> LlmResponse {
+async fn call_provider(request_id: &str, request: LlmRequest) -> LlmResponse {
     if request.provider != LlmProvider::Mediaflow && request.api_key.trim().is_empty() {
         return error_response(
             format!("No API key configured for {}", request.provider.key()),
@@ -755,7 +824,7 @@ async fn call_provider(request: LlmRequest) -> LlmResponse {
         LlmProvider::Anthropic => call_anthropic(&client, &request).await,
         LlmProvider::Google => call_google(&client, &request).await,
         LlmProvider::Openrouter => call_openrouter(&client, &request).await,
-        LlmProvider::Mediaflow => call_mediaflow(&client, &request).await,
+        LlmProvider::Mediaflow => call_mediaflow(&client, request_id, &request).await,
     }
 }
 
@@ -763,17 +832,29 @@ async fn run_abortable_llm_request(
     request_id: String,
     request: LlmRequest,
 ) -> Result<LlmResponse, String> {
+    let mediaflow_access_token = mediaflow_cancel_token(&request);
     let (abort_handle, abort_registration) = AbortHandle::new_pair();
     {
         let mut guard = LLM_ABORTS
             .lock()
             .map_err(|_| "Failed to acquire LLM request lock".to_string())?;
-        guard.insert(request_id.clone(), abort_handle);
+        prune_pre_registered_cancels(&mut guard);
+        if guard.pre_registered_cancels.remove(&request_id).is_some() {
+            return Ok(cancelled_response());
+        }
+        guard.active.insert(
+            request_id.clone(),
+            ActiveLlmRequest {
+                abort_handle,
+                mediaflow_access_token,
+            },
+        );
     }
 
-    let result = Abortable::new(call_provider(request), abort_registration).await;
+    let result = Abortable::new(call_provider(&request_id, request), abort_registration).await;
     if let Ok(mut guard) = LLM_ABORTS.lock() {
-        guard.remove(&request_id);
+        guard.active.remove(&request_id);
+        guard.pre_registered_cancels.remove(&request_id);
     }
 
     match result {
@@ -792,15 +873,25 @@ pub(crate) async fn llm_complete(
 
 #[tauri::command]
 pub(crate) fn cancel_llm_request(request_id: String) -> Result<(), String> {
-    let abort_handle = {
+    let active_request = {
         let mut guard = LLM_ABORTS
             .lock()
             .map_err(|_| "Failed to acquire LLM request lock".to_string())?;
-        guard.remove(&request_id)
+        prune_pre_registered_cancels(&mut guard);
+        let active_request = guard.active.remove(&request_id);
+        if active_request.is_none() {
+            guard
+                .pre_registered_cancels
+                .insert(request_id.clone(), Instant::now());
+        }
+        active_request
     };
 
-    if let Some(handle) = abort_handle {
-        handle.abort();
+    if let Some(active_request) = active_request {
+        if let Some(access_token) = active_request.mediaflow_access_token {
+            spawn_mediaflow_chat_cancel(request_id, access_token);
+        }
+        active_request.abort_handle.abort();
     }
 
     Ok(())
@@ -916,8 +1007,55 @@ mod tests {
         let mut request = request(LlmProvider::Openai);
         request.model.clear();
 
-        let response = super::call_provider(request).await;
+        let response = super::call_provider("req_missing_model", request).await;
 
         assert_eq!(response.error.as_deref(), Some("No model selected"));
+    }
+
+    #[test]
+    fn mediaflow_chat_requests_include_request_id_and_auth() {
+        let client = reqwest::Client::new();
+        let chat = super::mediaflow_chat_request(&client, "req_123", "token")
+            .body("{}")
+            .build()
+            .expect("request should build");
+        let cancel = super::mediaflow_chat_cancel_request(&client, "req_123", "token")
+            .build()
+            .expect("request should build");
+
+        assert_eq!(
+            chat.url().as_str(),
+            super::mediaflow_api::chat_completions_url()
+        );
+        assert_eq!(cancel.method(), reqwest::Method::POST);
+        assert_eq!(
+            cancel.url().as_str(),
+            super::mediaflow_api::chat_completion_cancel_url("req_123")
+        );
+
+        for request in [&chat, &cancel] {
+            assert_eq!(request.headers().get("X-Request-Id").unwrap(), "req_123");
+            assert_eq!(
+                request
+                    .headers()
+                    .get(reqwest::header::AUTHORIZATION)
+                    .unwrap(),
+                "Bearer token"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn run_abortable_llm_request_honors_cancel_before_request_registration() {
+        let request_id = "pre_cancelled_llm_request".to_string();
+
+        super::cancel_llm_request(request_id.clone()).expect("pre-cancel should be accepted");
+        let response =
+            super::run_abortable_llm_request(request_id, request(LlmProvider::Mediaflow))
+                .await
+                .expect("request should resolve");
+
+        assert_eq!(response.cancelled, Some(true));
+        assert_eq!(response.error.as_deref(), Some("Request cancelled"));
     }
 }

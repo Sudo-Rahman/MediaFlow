@@ -19,6 +19,7 @@
     isProcessing: boolean;
     startCount: number;
     retryCount: number;
+    actionHint: string;
     primaryAction: 'start' | 'retry';
     availableLanguages?: string[];  // Languages with installed models
     maxThreads?: number;            // Max available threads
@@ -36,6 +37,7 @@
     isProcessing,
     startCount,
     retryCount,
+    actionHint,
     primaryAction = 'start',
     availableLanguages = [],
     maxThreads = navigator.hardwareConcurrency || 4,
@@ -140,7 +142,7 @@
       </Select.Trigger>
       <Select.Content>
         <Select.Group>
-          {#each filteredLanguages as lang}
+          {#each filteredLanguages as lang (lang.value)}
             <Select.Item value={lang.value}>
               <span>{lang.label}</span>
               <span class="text-xs text-muted-foreground ml-2">{lang.description}</span>
@@ -385,7 +387,7 @@
 
     {#if !hasAnyAction && !isProcessing}
       <p class="text-xs text-muted-foreground text-center">
-        Add videos and wait for transcoding to complete
+        {actionHint}
       </p>
     {/if}
   </div>

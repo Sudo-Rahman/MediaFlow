@@ -306,6 +306,9 @@
           {#if file.status === 'transcoding'}
             <p class="text-sm">Transcoding video for preview...</p>
             <p class="text-xs mt-1">This may take a moment</p>
+          {:else if file.status === 'scanning'}
+            <p class="text-sm">Scanning video...</p>
+            <p class="text-xs mt-1">Reading media details</p>
           {:else if file.status === 'pending'}
             <p class="text-sm">Loading video...</p>
           {:else}

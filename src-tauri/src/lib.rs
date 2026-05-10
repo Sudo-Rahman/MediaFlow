@@ -70,6 +70,8 @@ pub fn run() {
             commands::transcription_waveform::convert_audio_for_waveform,
             // Video OCR commands
             commands::ocr_preview::transcode_for_preview,
+            commands::ocr_preview::invalidate_ocr_preview,
+            commands::ocr_preview::get_ocr_preview_cache_entry,
             commands::ocr_pipeline::run_ocr_pipeline,
             commands::ocr_subtitles::generate_subtitles_from_ocr,
             commands::ocr_export::export_ocr_subtitles,

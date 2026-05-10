@@ -42,10 +42,14 @@
   }: VideoFileListProps = $props();
 
   function isProcessing(status: OcrVideoFile['status']): boolean {
-    return ['transcoding', 'extracting_frames', 'ocr_processing', 'generating_subs'].includes(status);
+    return ['scanning', 'transcoding', 'extracting_frames', 'ocr_processing', 'generating_subs'].includes(status);
   }
 
   function getPhaseLabel(file: OcrVideoFile): string {
+    if (file.status === 'scanning') {
+      return 'Scanning media...';
+    }
+
     if (file.status === 'transcoding') {
       return file.transcodingCodec
         ? `Transcoding... · ${file.transcodingCodec}`
@@ -64,6 +68,10 @@
       return file.transcodingProgress;
     }
     return file.progress?.overallPercentage ?? file.progress?.percentage ?? 0;
+  }
+
+  function hasDeterminateProgress(file: OcrVideoFile): boolean {
+    return file.status !== 'scanning';
   }
 </script>
 
@@ -111,7 +119,10 @@
           <div class="mt-2">
             <Progress value={getProgressValue(file)} class="h-1.5" />
             <p class="text-xs text-muted-foreground mt-1">
-              {getPhaseLabel(file)} {getProgressValue(file)}%
+              {getPhaseLabel(file)}
+              {#if hasDeterminateProgress(file)}
+                {getProgressValue(file)}%
+              {/if}
             </p>
           </div>
         {/if}

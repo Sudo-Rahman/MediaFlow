@@ -9,7 +9,6 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
-  import { exists } from '@tauri-apps/plugin-fs';
   import { toast } from 'svelte-sonner';
 
   import type {
@@ -23,9 +22,15 @@
     VideoOcrPersistenceData,
   } from '$lib/types';
   import { VIDEO_EXTENSIONS } from '$lib/types';
-  import { checkOcrSourcePreviewCompatibility } from '$lib/services/ocr-preview-compatibility';
+  import { createAsyncTaskQueue } from '$lib/services/async-task-queue';
   import { scanFile } from '$lib/services/ffprobe';
   import { generateOcrVersionName, loadOcrData, saveOcrData } from '$lib/services/ocr-storage';
+  import {
+    cancelOcrPreview,
+    getReusableOcrPreview,
+    invalidateOcrPreview,
+    prepareOcrPreview,
+  } from '$lib/services/ocr-preview';
   import { ocrVersionToSubtitleFile } from '$lib/services/subtitle-interop';
   import { settingsStore, toolImportStore, videoOcrStore } from '$lib/stores';
   import {
@@ -35,7 +40,6 @@
     VideoOcrWorkspace,
   } from '$lib/components/video-ocr';
   import {
-    buildSourcePreviewFallbackKey,
     getLatestRawVersion,
     isOcrActiveStatus,
     processVideoOcrFile,
@@ -45,6 +49,7 @@
   import { logAndToast } from '$lib/utils/log-toast';
 
   const VIDEO_FORMATS = VIDEO_EXTENSIONS.map((ext) => ext.toUpperCase()).join(', ');
+  const FILE_PREPARATION_CONCURRENCY = 1;
 
   interface VideoOcrViewProps {
     onNavigateToSettings?: () => void;
@@ -66,7 +71,9 @@
   let isDestroyed = false;
 
   const aiCleanupControllers = new Map<string, AbortController>();
-  const sourcePreviewFallbackAttempts = new Set<string>();
+  const activePreviewFileIds = new Set<string>();
+  const cancelledPreviewFileIds = new Set<string>();
+  const filePreparationQueue = createAsyncTaskQueue(FILE_PREPARATION_CONCURRENCY);
 
   const selectedFile = $derived(videoOcrStore.selectedFile ?? null);
   const resultDialogFile = $derived(
@@ -96,6 +103,21 @@
   });
   const canStart = $derived(startCount > 0 && !videoOcrStore.isProcessing);
   const canRetryAll = $derived(retryCount > 0 && !videoOcrStore.isProcessing);
+  const actionHint = $derived.by(() => {
+    if (fileSummary.scanningCount > 0) {
+      return 'Wait for scanning to complete';
+    }
+
+    if (fileSummary.transcodingCount > 0) {
+      return 'Wait for preview transcoding to complete';
+    }
+
+    if (videoOcrStore.videoFiles.length === 0) {
+      return 'Add videos to begin';
+    }
+
+    return 'No files ready for OCR';
+  });
 
   function buildOcrVersionKey(videoPath: string, versionId: string): string {
     return `${videoPath}::${versionId}`;
@@ -251,11 +273,18 @@
   onDestroy(() => {
     isDestroyed = true;
 
+    filePreparationQueue.clear();
+    for (const fileId of activePreviewFileIds) {
+      void cancelOcrPreview(fileId).catch((error: unknown) => {
+        console.error('Failed to cancel preview during view teardown:', error);
+      });
+    }
+    activePreviewFileIds.clear();
+
     for (const controller of aiCleanupControllers.values()) {
       controller.abort();
     }
     aiCleanupControllers.clear();
-    sourcePreviewFallbackAttempts.clear();
     unlistenOcrProgress?.();
   });
 
@@ -272,6 +301,8 @@
       version: 1,
       videoPath: file.path,
       previewPath: file.previewPath,
+      previewSourceIdentity: file.previewSourceIdentity,
+      previewVersion: file.previewVersion,
       ocrRegion: file.ocrRegion,
       ocrRegionMode: file.ocrRegionMode,
       ocrVersions: file.ocrVersions,
@@ -316,59 +347,69 @@
     file: OcrVideoFile,
     persisted: VideoOcrPersistenceData | null,
   ): Promise<boolean> {
-    if (!persisted?.previewPath) {
+    let cachedPreview: Awaited<ReturnType<typeof getReusableOcrPreview>>;
+    try {
+      cachedPreview = await getReusableOcrPreview(file.path, persisted);
+    } catch (error) {
+      if (isDestroyed || !getFreshFile(file.id)) {
+        return false;
+      }
+
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      videoOcrStore.addLog('warning', `Failed to check cached preview: ${errorMsg}`, file.id);
       return false;
     }
 
-    const previewExists = await exists(persisted.previewPath);
-    if (!previewExists) {
+    if (isDestroyed || !getFreshFile(file.id)) {
+      return false;
+    }
+
+    if (!cachedPreview) {
       return false;
     }
 
     videoOcrStore.updateFile(file.id, {
-      previewPath: persisted.previewPath,
-      status: persisted.ocrVersions.length > 0 ? 'completed' : 'ready',
+      previewPath: cachedPreview.path,
+      previewSourceIdentity: cachedPreview.sourceIdentity,
+      previewVersion: cachedPreview.previewVersion,
+      previewError: undefined,
+      status: (persisted?.ocrVersions.length ?? 0) > 0 ? 'completed' : 'ready',
     });
     videoOcrStore.addLog('info', 'Loaded cached preview video', file.id);
     return true;
   }
 
-  async function ensurePreviewReady(
-    file: OcrVideoFile,
-    tracks: Awaited<ReturnType<typeof scanFile>>['tracks'],
-  ): Promise<void> {
-    const current = getFreshFile(file.id) ?? file;
-    const compatibility = await checkOcrSourcePreviewCompatibility({
-      sourcePath: current.path,
-      tracks,
-    });
-
-    if (compatibility.isCompatible) {
-      videoOcrStore.updateFile(file.id, {
-        previewPath: current.path,
-        status: current.ocrVersions.length > 0 ? 'completed' : 'ready',
-        error: undefined,
-      });
-      videoOcrStore.addLog('info', 'Source preview compatible, using original file', file.id);
-
-      const saved = await persistFileData(file.id);
-      if (!saved) {
-        videoOcrStore.addLog('warning', 'Failed to persist preview source path to .mediaflow.json file', file.id);
-      }
+  async function ensurePreviewReady(file: OcrVideoFile): Promise<void> {
+    const current = getFreshFile(file.id);
+    if (!current || current.previewPath || current.status === 'error') {
       return;
     }
 
     videoOcrStore.addLog(
-      'warning',
-      `Source preview compatibility check failed (${compatibility.reason}). Falling back to transcoding.`,
+      'info',
+      'Preparing local preview video',
       file.id,
     );
-    await transcodeFileForPreview(current);
+    await preparePreviewForFile(current);
   }
 
   async function initializeAddedFile(file: OcrVideoFile): Promise<void> {
     try {
+      videoOcrStore.updateFile(file.id, {
+        status: 'scanning',
+        error: undefined,
+      });
+
       const probeResult = await scanFile(file.path);
+      if (isDestroyed || !getFreshFile(file.id)) {
+        return;
+      }
+
+      if (probeResult.status === 'error') {
+        videoOcrStore.setFileStatus(file.id, 'error', probeResult.error ?? 'Scan failed');
+        return;
+      }
+
       const videoTrack = probeResult.tracks.find((track) => track.type === 'video');
 
       videoOcrStore.updateFile(file.id, {
@@ -379,13 +420,25 @@
       });
 
       const persisted = await loadOcrData(file.path);
+      if (isDestroyed || !getFreshFile(file.id)) {
+        return;
+      }
+
       applyPersistedFileState(file, persisted);
 
       const hasCachedPreview = await restoreCachedPreview(file, persisted);
+      if (isDestroyed || !getFreshFile(file.id)) {
+        return;
+      }
+
       if (!hasCachedPreview) {
-        await ensurePreviewReady(file, probeResult.tracks);
+        await ensurePreviewReady(file);
       }
     } catch (error) {
+      if (isDestroyed || !getFreshFile(file.id)) {
+        return;
+      }
+
       videoOcrStore.setFileStatus(
         file.id,
         'error',
@@ -428,20 +481,51 @@
   async function addFiles(paths: string[]): Promise<void> {
     const newFiles = videoOcrStore.addFilesFromPaths(paths);
     for (const file of newFiles) {
-      await initializeAddedFile(file);
+      queueFileInitialization(file);
     }
   }
 
-  async function transcodeFileForPreview(file: OcrVideoFile): Promise<boolean> {
+  function queueFileInitialization(file: OcrVideoFile): void {
+    filePreparationQueue.enqueue(async () => {
+      if (isDestroyed || !getFreshFile(file.id)) {
+        return;
+      }
+
+      await initializeAddedFile(file);
+    });
+  }
+
+  async function preparePreviewForFile(file: OcrVideoFile): Promise<boolean> {
     try {
+      if (isDestroyed || !getFreshFile(file.id)) {
+        return false;
+      }
+
       videoOcrStore.startTranscoding(file.id);
+      activePreviewFileIds.add(file.id);
 
-      const outputPath = await invoke<string>('transcode_for_preview', {
-        inputPath: file.path,
-        fileId: file.id,
-      });
+      const preview = await prepareOcrPreview(file.path, file.id);
+      if (cancelledPreviewFileIds.delete(file.id)) {
+        await invalidateOcrPreview(file.path).catch((error: unknown) => {
+          console.error('Failed to invalidate cancelled preview:', error);
+        });
+        return false;
+      }
 
-      videoOcrStore.finishTranscoding(file.id, outputPath);
+      if (preview.path === file.path) {
+        throw new Error('Preview generation returned the source file path');
+      }
+
+      if (isDestroyed || !getFreshFile(file.id)) {
+        return false;
+      }
+
+      videoOcrStore.finishTranscoding(
+        file.id,
+        preview.path,
+        preview.sourceIdentity,
+        preview.previewVersion,
+      );
       videoOcrStore.addLog('info', 'Preview transcoding complete', file.id);
 
       const saved = await persistFileData(file.id);
@@ -451,32 +535,59 @@
 
       return true;
     } catch (error) {
+      const current = getFreshFile(file.id);
+      if (isDestroyed || !current) {
+        return false;
+      }
+
+      if (cancelledPreviewFileIds.delete(file.id)) {
+        return false;
+      }
+
       const errorMsg = error instanceof Error ? error.message : String(error);
-      videoOcrStore.failTranscoding(file.id, errorMsg);
-      logAndToast.error({
+      videoOcrStore.failPreviewTranscoding(file.id, errorMsg);
+      await persistFileData(file.id);
+      logAndToast.warning({
         source: 'ffmpeg',
-        title: `Transcode failed: ${file.name}`,
+        title: `Preview transcode failed: ${file.name}`,
         details: errorMsg,
       });
       return false;
+    } finally {
+      activePreviewFileIds.delete(file.id);
     }
   }
 
   async function handlePreviewPlaybackError(fileId: string, reason: string): Promise<void> {
     const file = getFreshFile(fileId);
-    if (!file || file.previewPath !== file.path) {
+    if (!file?.previewPath) {
       return;
     }
 
-    const fallbackKey = buildSourcePreviewFallbackKey(file);
-    if (sourcePreviewFallbackAttempts.has(fallbackKey)) {
+    try {
+      await invalidateOcrPreview(file.path);
+    } catch (error) {
+      if (isDestroyed || !getFreshFile(file.id)) {
+        return;
+      }
+
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      videoOcrStore.addLog('warning', `Failed to invalidate preview cache: ${errorMsg}`, file.id);
+    }
+
+    if (isDestroyed || !getFreshFile(file.id)) {
       return;
     }
-    sourcePreviewFallbackAttempts.add(fallbackKey);
 
-    videoOcrStore.addLog('warning', `Source preview playback error: ${reason}`, file.id);
-    videoOcrStore.addLog('info', 'Source preview failed at runtime, falling back to transcode', file.id);
-    await transcodeFileForPreview(file);
+    videoOcrStore.updateFile(file.id, {
+      previewPath: undefined,
+      previewSourceIdentity: undefined,
+      previewVersion: undefined,
+      previewError: reason,
+      status: file.ocrVersions.length > 0 ? 'completed' : 'ready',
+    });
+    videoOcrStore.addLog('warning', `Generated preview playback error: ${reason}`, file.id);
+    await persistFileData(file.id);
   }
 
   async function handleStartOcr(): Promise<void> {
@@ -510,7 +621,6 @@
           aiCleanupControllers,
           getFreshFile,
           persistFileData,
-          transcodeFileForPreview,
           markPersistedVersions: markPersistedOcrVersions,
         });
 
@@ -574,7 +684,6 @@
         aiCleanupControllers,
         getFreshFile,
         persistFileData,
-        transcodeFileForPreview,
         markPersistedVersions: markPersistedOcrVersions,
       });
     } finally {
@@ -625,7 +734,6 @@
           aiCleanupControllers,
           getFreshFile,
           persistFileData,
-          transcodeFileForPreview,
           markPersistedVersions: markPersistedOcrVersions,
           suppressFallbackToast: true,
         });
@@ -656,6 +764,16 @@
     }
   }
 
+  async function cancelBackendOperation(file: OcrVideoFile): Promise<void> {
+    if (file.status === 'transcoding') {
+      cancelledPreviewFileIds.add(file.id);
+      await cancelOcrPreview(file.id);
+      return;
+    }
+
+    await invoke('cancel_ocr_operation', { fileId: file.id });
+  }
+
   async function handleCancelFile(fileId: string): Promise<void> {
     const file = getFreshFile(fileId);
     if (!file) {
@@ -666,13 +784,13 @@
     aiCleanupControllers.delete(fileId);
 
     try {
-      await invoke('cancel_ocr_operation', { fileId });
+      await cancelBackendOperation(file);
     } catch (error) {
       console.error('Failed to cancel operation:', error);
     }
 
     if (file.status === 'transcoding') {
-      videoOcrStore.failTranscoding(fileId, 'Cancelled');
+      videoOcrStore.cancelPreviewTranscoding(fileId);
     } else if (['extracting_frames', 'ocr_processing', 'generating_subs'].includes(file.status)) {
       videoOcrStore.cancelProcessing(fileId);
     }
@@ -689,7 +807,7 @@
     for (const file of videoOcrStore.videoFiles) {
       if (isOcrActiveStatus(file.status)) {
         try {
-          await invoke('cancel_ocr_operation', { fileId: file.id });
+          await cancelBackendOperation(file);
         } catch {
           // Ignore individual cancel errors.
         }
@@ -749,7 +867,7 @@
       aiCleanupControllers.delete(file.id);
 
       try {
-        await invoke('cancel_ocr_operation', { fileId: file.id });
+        await cancelBackendOperation(file);
       } catch (error) {
         console.error('Failed to cancel OCR operation before removal:', error);
       }
@@ -770,7 +888,7 @@
     for (const file of files) {
       if (isOcrActiveStatus(file.status)) {
         try {
-          await invoke('cancel_ocr_operation', { fileId: file.id });
+          await cancelBackendOperation(file);
         } catch (error) {
           console.error('Failed to cancel OCR operation before clearing list:', error);
         }
@@ -884,6 +1002,7 @@
       isProcessing={videoOcrStore.isProcessing}
       {startCount}
       {retryCount}
+      {actionHint}
       {primaryAction}
       availableLanguages={videoOcrStore.availableLanguages}
       onConfigChange={(updates) => videoOcrStore.updateConfig(updates)}

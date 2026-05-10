@@ -6,6 +6,7 @@ import type {
   OcrSubtitle,
   OcrRawFrame,
   OcrVersion,
+  OcrPreviewSourceIdentity,
   VideoOcrPersistenceData,
 } from '$lib/types';
 import { loadMediaflowData, saveMediaflowData } from './mediaflow-storage';
@@ -143,6 +144,8 @@ export function generateOcrVersionName(existingVersions: OcrVersion[]): string {
 function createEmptyOcrData(
   videoPath: string,
   previewPath?: string,
+  previewSourceIdentity?: OcrPreviewSourceIdentity,
+  previewVersion?: string,
   ocrRegion?: OcrRegion,
   ocrRegionMode?: OcrRegionMode,
 ): VideoOcrPersistenceData {
@@ -151,6 +154,8 @@ function createEmptyOcrData(
     version: 1,
     videoPath,
     previewPath,
+    previewSourceIdentity,
+    previewVersion,
     ocrRegion,
     ocrRegionMode,
     ocrVersions: [],
@@ -198,17 +203,32 @@ export async function addOcrVersion(
   version: OcrVersion,
   options?: {
     previewPath?: string;
+    previewSourceIdentity?: OcrPreviewSourceIdentity;
+    previewVersion?: string;
     ocrRegion?: OcrRegion;
     ocrRegionMode?: OcrRegionMode;
   },
 ): Promise<VideoOcrPersistenceData | null> {
   const data = (await loadOcrData(videoPath))
-    ?? createEmptyOcrData(videoPath, options?.previewPath, options?.ocrRegion, options?.ocrRegionMode);
+    ?? createEmptyOcrData(
+      videoPath,
+      options?.previewPath,
+      options?.previewSourceIdentity,
+      options?.previewVersion,
+      options?.ocrRegion,
+      options?.ocrRegionMode,
+    );
 
   data.ocrVersions = [...data.ocrVersions, version];
 
   if (options?.previewPath !== undefined) {
     data.previewPath = options.previewPath;
+  }
+  if (options?.previewSourceIdentity !== undefined) {
+    data.previewSourceIdentity = options.previewSourceIdentity;
+  }
+  if (options?.previewVersion !== undefined) {
+    data.previewVersion = options.previewVersion;
   }
   if (options?.ocrRegion !== undefined) {
     data.ocrRegion = options.ocrRegion;

@@ -1,186 +1,287 @@
-use std::collections::HashSet;
+use std::fs::Metadata;
 use std::path::Path;
 use std::process::Stdio;
+use std::time::UNIX_EPOCH;
 
+use serde::Serialize;
 use tauri::Emitter;
 use tokio::process::Command;
 use tokio::time::{Duration, timeout};
 
 use crate::shared::hash::stable_hash64;
+use crate::shared::process::force_terminate_process;
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
-use crate::shared::store::resolve_ffmpeg_path;
+use crate::shared::store::{resolve_ffmpeg_path, resolve_ffprobe_path};
 use crate::shared::validation::validate_media_path;
-use crate::tools::ffprobe::{get_media_duration_us, get_media_duration_us_with_ffprobe};
+use crate::tools::ffprobe::get_media_duration_us;
+use crate::tools::ffprobe::probe::probe_file_with_ffprobe;
 
 /// Timeout for video transcoding for preview (10 minutes)
 const VIDEO_PREVIEW_TRANSCODE_TIMEOUT: Duration = Duration::from_secs(600);
+const PREVIEW_CACHE_VERSION: &str = "ocr-preview-v2-local-best-effort";
+const LIBX264_ENCODER: &str = "libx264";
+const LIBX264_LABEL: &str = "H.264 (libx264)";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EncoderProfile {
-    Standard,
-    Vaapi,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PreviewSourceIdentity {
+    path: String,
+    size: u64,
+    modified_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PreviewTranscodeResult {
+    path: String,
+    source_identity: PreviewSourceIdentity,
+    preview_version: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PreviewVideoEncoder {
-    ffmpeg_name: &'static str,
-    display_name: &'static str,
-    is_hardware: bool,
-    profile: EncoderProfile,
+enum PreviewStrategy {
+    CopyAll,
+    CopyVideoEncodeAudio,
+    FullTranscode,
+    FullTranscodeVideoOnly,
 }
 
-const HEVC_VIDEOTOOLBOX: PreviewVideoEncoder = PreviewVideoEncoder {
-    ffmpeg_name: "hevc_videotoolbox",
-    display_name: "HEVC (VideoToolbox)",
-    is_hardware: true,
-    profile: EncoderProfile::Standard,
-};
-
-const HEVC_VAAPI: PreviewVideoEncoder = PreviewVideoEncoder {
-    ffmpeg_name: "hevc_vaapi",
-    display_name: "HEVC (VAAPI)",
-    is_hardware: true,
-    profile: EncoderProfile::Vaapi,
-};
-
-const HEVC_NVENC: PreviewVideoEncoder = PreviewVideoEncoder {
-    ffmpeg_name: "hevc_nvenc",
-    display_name: "HEVC (NVENC)",
-    is_hardware: true,
-    profile: EncoderProfile::Standard,
-};
-
-const HEVC_QSV: PreviewVideoEncoder = PreviewVideoEncoder {
-    ffmpeg_name: "hevc_qsv",
-    display_name: "HEVC (QSV)",
-    is_hardware: true,
-    profile: EncoderProfile::Standard,
-};
-
-const HEVC_AMF: PreviewVideoEncoder = PreviewVideoEncoder {
-    ffmpeg_name: "hevc_amf",
-    display_name: "HEVC (AMF)",
-    is_hardware: true,
-    profile: EncoderProfile::Standard,
-};
-
-const LIBX264: PreviewVideoEncoder = PreviewVideoEncoder {
-    ffmpeg_name: "libx264",
-    display_name: "H.264 (libx264)",
-    is_hardware: false,
-    profile: EncoderProfile::Standard,
-};
-
-fn encoder_from_name(name: &str) -> Option<PreviewVideoEncoder> {
-    match name {
-        "hevc_videotoolbox" => Some(HEVC_VIDEOTOOLBOX),
-        "hevc_vaapi" => Some(HEVC_VAAPI),
-        "hevc_nvenc" => Some(HEVC_NVENC),
-        "hevc_qsv" => Some(HEVC_QSV),
-        "hevc_amf" => Some(HEVC_AMF),
-        "libx264" => Some(LIBX264),
-        _ => None,
+impl PreviewStrategy {
+    fn display_label(self) -> &'static str {
+        match self {
+            Self::CopyAll => "H.264/AAC remux",
+            Self::CopyVideoEncodeAudio => "H.264 video copy + AAC audio",
+            Self::FullTranscode => LIBX264_LABEL,
+            Self::FullTranscodeVideoOnly => "H.264 (libx264, video only)",
+        }
     }
 }
 
-fn hardware_encoder_candidates_for_os(os: &str) -> &'static [&'static str] {
-    match os {
-        "macos" => &["hevc_videotoolbox"],
-        "linux" => &["hevc_vaapi", "hevc_nvenc", "hevc_qsv", "hevc_amf"],
-        "windows" => &["hevc_nvenc", "hevc_qsv", "hevc_amf"],
-        _ => &[],
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PreviewStreamKind {
+    Video,
+    Audio,
+    Other,
 }
 
-fn parse_ffmpeg_encoder_names(output: &str) -> HashSet<String> {
-    let mut encoders = HashSet::new();
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PreviewMediaStream {
+    kind: PreviewStreamKind,
+    codec_name: String,
+    pix_fmt: Option<String>,
+    profile: Option<String>,
+    bits_per_raw_sample: Option<String>,
+}
 
-    for line in output.lines() {
-        let mut parts = line.split_whitespace();
-        let Some(flags) = parts.next() else {
-            continue;
-        };
-        let Some(name) = parts.next() else {
-            continue;
-        };
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PreviewMediaInfo {
+    streams: Vec<PreviewMediaStream>,
+}
 
-        if flags.len() == 6 && name != "=" {
-            encoders.insert(name.to_string());
+fn normalize_codec(codec: &str) -> String {
+    codec.trim().to_ascii_lowercase()
+}
+
+fn is_browser_safe_h264(stream: &PreviewMediaStream) -> bool {
+    if normalize_codec(&stream.codec_name) != "h264" {
+        return false;
+    }
+
+    if stream.pix_fmt.as_deref().map(normalize_codec).as_deref() != Some("yuv420p") {
+        return false;
+    }
+
+    if let Some(bits) = stream.bits_per_raw_sample.as_deref() {
+        if bits.trim().parse::<u32>().is_ok_and(|value| value > 8) {
+            return false;
         }
     }
 
-    encoders
+    let profile = stream
+        .profile
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    !profile.contains("10") && !profile.contains("4:2:2") && !profile.contains("4:4:4")
 }
 
-fn select_preview_video_encoder(
-    available_encoders: &HashSet<String>,
-    os: &str,
-) -> PreviewVideoEncoder {
-    for candidate in hardware_encoder_candidates_for_os(os) {
-        if available_encoders.contains(*candidate) {
-            return encoder_from_name(candidate).unwrap_or(LIBX264);
-        }
+fn preview_strategy_for_media(info: &PreviewMediaInfo) -> PreviewStrategy {
+    let Some(video) = info
+        .streams
+        .iter()
+        .find(|stream| stream.kind == PreviewStreamKind::Video)
+    else {
+        return PreviewStrategy::FullTranscode;
+    };
+
+    if !is_browser_safe_h264(video) {
+        return PreviewStrategy::FullTranscode;
     }
 
-    LIBX264
+    let audio = info
+        .streams
+        .iter()
+        .find(|stream| stream.kind == PreviewStreamKind::Audio);
+
+    match audio {
+        Some(stream) if normalize_codec(&stream.codec_name) != "aac" => {
+            PreviewStrategy::CopyVideoEncodeAudio
+        }
+        _ => PreviewStrategy::CopyAll,
+    }
 }
 
-fn should_fallback_to_libx264(encoder: PreviewVideoEncoder, attempt_succeeded: bool) -> bool {
-    encoder.is_hardware && !attempt_succeeded && encoder.ffmpeg_name != LIBX264.ffmpeg_name
+fn preview_has_audio(info: &PreviewMediaInfo) -> bool {
+    info.streams
+        .iter()
+        .any(|stream| stream.kind == PreviewStreamKind::Audio)
+}
+
+fn build_preview_attempts(strategy: PreviewStrategy, has_audio: bool) -> Vec<PreviewStrategy> {
+    let mut attempts = vec![strategy];
+
+    if strategy != PreviewStrategy::FullTranscode {
+        attempts.push(PreviewStrategy::FullTranscode);
+    }
+
+    if has_audio {
+        attempts.push(PreviewStrategy::FullTranscodeVideoOnly);
+    }
+
+    attempts.dedup();
+    attempts
+}
+
+fn parse_preview_media_info(probe_json: &str) -> Result<PreviewMediaInfo, String> {
+    let value: serde_json::Value = serde_json::from_str(probe_json)
+        .map_err(|e| format!("Failed to parse ffprobe preview metadata: {}", e))?;
+    let streams = value
+        .get("streams")
+        .and_then(|streams| streams.as_array())
+        .ok_or_else(|| "FFprobe output did not contain streams".to_string())?;
+
+    let parsed_streams = streams
+        .iter()
+        .map(|stream| {
+            let kind = match stream.get("codec_type").and_then(|value| value.as_str()) {
+                Some("video") => PreviewStreamKind::Video,
+                Some("audio") => PreviewStreamKind::Audio,
+                _ => PreviewStreamKind::Other,
+            };
+
+            PreviewMediaStream {
+                kind,
+                codec_name: stream
+                    .get("codec_name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                pix_fmt: stream
+                    .get("pix_fmt")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+                profile: stream
+                    .get("profile")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+                bits_per_raw_sample: stream
+                    .get("bits_per_raw_sample")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+            }
+        })
+        .collect();
+
+    Ok(PreviewMediaInfo {
+        streams: parsed_streams,
+    })
+}
+
+async fn probe_preview_media_with_ffprobe(
+    ffprobe_path: &str,
+    input_path: &str,
+) -> Result<PreviewMediaInfo, String> {
+    let json = probe_file_with_ffprobe(ffprobe_path, input_path).await?;
+    parse_preview_media_info(&json)
 }
 
 fn build_preview_transcode_args(
     input_path: &str,
     output_path: &str,
-    encoder: PreviewVideoEncoder,
+    strategy: PreviewStrategy,
 ) -> Vec<String> {
-    let mut args = vec!["-y".to_string(), "-i".to_string(), input_path.to_string()];
+    let mut args = vec![
+        "-y".to_string(),
+        "-i".to_string(),
+        input_path.to_string(),
+        "-map".to_string(),
+        "0:v:0".to_string(),
+    ];
 
-    match encoder.profile {
-        EncoderProfile::Standard => {
-            args.push("-vf".to_string());
-            args.push("scale=-2:480".to_string());
+    if strategy != PreviewStrategy::FullTranscodeVideoOnly {
+        args.extend(["-map".to_string(), "0:a:0?".to_string()]);
+    }
+
+    args.extend(["-sn".to_string(), "-dn".to_string()]);
+
+    match strategy {
+        PreviewStrategy::CopyAll => {
+            args.extend([
+                "-c:v".to_string(),
+                "copy".to_string(),
+                "-c:a".to_string(),
+                "copy".to_string(),
+            ]);
         }
-        EncoderProfile::Vaapi => {
-            args.push("-vaapi_device".to_string());
-            args.push("/dev/dri/renderD128".to_string());
-            args.push("-vf".to_string());
-            args.push("format=nv12,hwupload,scale_vaapi=w=-2:h=480".to_string());
+        PreviewStrategy::CopyVideoEncodeAudio => {
+            args.extend([
+                "-c:v".to_string(),
+                "copy".to_string(),
+                "-c:a".to_string(),
+                "aac".to_string(),
+                "-b:a".to_string(),
+                "128k".to_string(),
+                "-ac".to_string(),
+                "2".to_string(),
+            ]);
         }
-    }
-
-    args.push("-c:v".to_string());
-    args.push(encoder.ffmpeg_name.to_string());
-
-    if encoder.ffmpeg_name.starts_with("hevc_") {
-        args.extend([
-            "-tag:v".to_string(),
-            "hvc1".to_string(),
-            "-profile:v".to_string(),
-            "main".to_string(),
-        ]);
-    }
-
-    if encoder.ffmpeg_name == HEVC_VIDEOTOOLBOX.ffmpeg_name {
-        args.extend(["-pix_fmt".to_string(), "yuv420p".to_string()]);
-    }
-
-    if encoder.ffmpeg_name == LIBX264.ffmpeg_name {
-        args.extend([
-            "-preset".to_string(),
-            "fast".to_string(),
-            "-crf".to_string(),
-            "28".to_string(),
-        ]);
+        PreviewStrategy::FullTranscode => {
+            args.extend([
+                "-c:v".to_string(),
+                LIBX264_ENCODER.to_string(),
+                "-preset".to_string(),
+                "fast".to_string(),
+                "-crf".to_string(),
+                "23".to_string(),
+                "-pix_fmt".to_string(),
+                "yuv420p".to_string(),
+                "-c:a".to_string(),
+                "aac".to_string(),
+                "-b:a".to_string(),
+                "128k".to_string(),
+                "-ac".to_string(),
+                "2".to_string(),
+            ]);
+        }
+        PreviewStrategy::FullTranscodeVideoOnly => {
+            args.extend([
+                "-c:v".to_string(),
+                LIBX264_ENCODER.to_string(),
+                "-preset".to_string(),
+                "fast".to_string(),
+                "-crf".to_string(),
+                "23".to_string(),
+                "-pix_fmt".to_string(),
+                "yuv420p".to_string(),
+                "-an".to_string(),
+            ]);
+        }
     }
 
     args.extend([
-        "-c:a".to_string(),
-        "aac".to_string(),
-        "-b:a".to_string(),
-        "96k".to_string(),
-        "-ac".to_string(),
-        "1".to_string(),
+        "-movflags".to_string(),
+        "+faststart".to_string(),
         "-progress".to_string(),
         "pipe:1".to_string(),
         output_path.to_string(),
@@ -189,25 +290,102 @@ fn build_preview_transcode_args(
     args
 }
 
-async fn probe_available_ffmpeg_encoders(ffmpeg_path: &str) -> HashSet<String> {
-    let output = Command::new(ffmpeg_path)
-        .args(["-hide_banner", "-encoders"])
-        .output()
-        .await;
+fn metadata_modified_ms(metadata: &Metadata) -> u64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
+}
 
-    let Ok(output) = output else {
-        return HashSet::new();
-    };
+fn source_identity_from_parts(path: &str, size: u64, modified_ms: u64) -> PreviewSourceIdentity {
+    PreviewSourceIdentity {
+        path: path.to_string(),
+        size,
+        modified_ms,
+    }
+}
 
-    let mut combined = String::from_utf8_lossy(&output.stdout).to_string();
-    if !output.stderr.is_empty() {
-        if !combined.is_empty() {
-            combined.push('\n');
-        }
-        combined.push_str(&String::from_utf8_lossy(&output.stderr));
+fn get_preview_source_identity(input_path: &str) -> Result<PreviewSourceIdentity, String> {
+    let metadata = std::fs::metadata(input_path)
+        .map_err(|e| format!("Failed to read source metadata: {}", e))?;
+
+    Ok(source_identity_from_parts(
+        input_path,
+        metadata.len(),
+        metadata_modified_ms(&metadata),
+    ))
+}
+
+fn build_preview_source_identity_key(identity: &PreviewSourceIdentity) -> String {
+    format!(
+        "{}:{}:{}:{}",
+        PREVIEW_CACHE_VERSION, identity.path, identity.size, identity.modified_ms
+    )
+}
+
+fn build_preview_output_path(
+    temp_dir: &Path,
+    input_path: &str,
+    identity: &PreviewSourceIdentity,
+) -> std::path::PathBuf {
+    let input = Path::new(input_path);
+    let stem = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("video");
+    let identity_hash = format!(
+        "{:x}",
+        stable_hash64(&build_preview_source_identity_key(identity))
+    );
+
+    temp_dir.join(format!("{}_{}.mp4", stem, &identity_hash[..8]))
+}
+
+fn get_preview_output_path(input_path: &str) -> Result<std::path::PathBuf, String> {
+    let source_identity = get_preview_source_identity(input_path)?;
+    let temp_dir = std::env::temp_dir().join("mediaflow_preview");
+
+    Ok(build_preview_output_path(
+        &temp_dir,
+        input_path,
+        &source_identity,
+    ))
+}
+
+fn get_preview_cache_entry(input_path: &str) -> Result<PreviewTranscodeResult, String> {
+    validate_media_path(input_path)?;
+    let source_identity = get_preview_source_identity(input_path)?;
+    let output_path = build_preview_output_path(
+        &std::env::temp_dir().join("mediaflow_preview"),
+        input_path,
+        &source_identity,
+    );
+
+    Ok(PreviewTranscodeResult {
+        path: output_path.to_string_lossy().to_string(),
+        source_identity,
+        preview_version: PREVIEW_CACHE_VERSION.to_string(),
+    })
+}
+
+fn remove_cached_preview_for_source(input_path: &str) -> Result<(), String> {
+    validate_media_path(input_path)?;
+    let output_path = get_preview_output_path(input_path)?;
+
+    if output_path.exists() {
+        std::fs::remove_file(&output_path)
+            .map_err(|e| format!("Failed to remove cached preview: {}", e))?;
     }
 
-    parse_ffmpeg_encoder_names(&combined)
+    Ok(())
+}
+
+fn sanitize_ffmpeg_stderr(stderr: &[u8], input_path: &str, output_path: &str) -> String {
+    String::from_utf8_lossy(stderr)
+        .replace(input_path, "<source>")
+        .replace(output_path, "<preview>")
 }
 
 fn emit_transcoding_progress(
@@ -246,7 +424,7 @@ fn is_ocr_transcode_cancelled(file_id: &str) -> bool {
     if let Ok(guard) = super::state::OCR_TRANSCODE_PATHS.lock() {
         return !guard.contains_key(file_id);
     }
-    false
+    true
 }
 
 async fn run_preview_transcode_attempt(
@@ -256,9 +434,9 @@ async fn run_preview_transcode_attempt(
     output_path: &str,
     file_id: &str,
     duration_us: u64,
-    encoder: PreviewVideoEncoder,
+    strategy: PreviewStrategy,
 ) -> Result<(), String> {
-    let args = build_preview_transcode_args(input_path, output_path, encoder);
+    let args = build_preview_transcode_args(input_path, output_path, strategy);
     let mut child = Command::new(ffmpeg_path)
         .args(args)
         .stdout(Stdio::piped())
@@ -266,8 +444,8 @@ async fn run_preview_transcode_attempt(
         .spawn()
         .map_err(|e| format!("Failed to start ffmpeg: {}", e))?;
 
-    // Store PID for cancellation
-    if let Some(pid) = child.id() {
+    let child_pid = child.id();
+    if let Some(pid) = child_pid {
         if let Ok(mut guard) = super::state::OCR_PROCESS_IDS.lock() {
             guard.insert(file_id.to_string(), pid);
         }
@@ -279,7 +457,7 @@ async fn run_preview_transcode_attempt(
 
         let app_clone = app.clone();
         let file_id_clone = file_id.to_string();
-        let codec_label = encoder.display_name.to_string();
+        let codec_label = strategy.display_label().to_string();
 
         tokio::spawn(async move {
             let reader = BufReader::new(&mut stdout);
@@ -310,6 +488,9 @@ async fn run_preview_transcode_attempt(
     let output = timeout(VIDEO_PREVIEW_TRANSCODE_TIMEOUT, child.wait_with_output())
         .await
         .map_err(|_| {
+            if let Some(pid) = child_pid {
+                force_terminate_process(pid);
+            }
             clear_ocr_process_tracking(&file_id_for_cleanup);
             let _ = std::fs::remove_file(&output_path_for_cleanup);
             format!(
@@ -326,11 +507,12 @@ async fn run_preview_transcode_attempt(
     clear_ocr_process_tracking(file_id);
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stderr = sanitize_ffmpeg_stderr(&output.stderr, input_path, output_path);
         let _ = std::fs::remove_file(output_path);
         return Err(format!(
             "Video transcoding failed with {}: {}",
-            encoder.ffmpeg_name, stderr
+            strategy.display_label(),
+            stderr
         ));
     }
 
@@ -345,9 +527,9 @@ async fn run_preview_transcode_attempt_without_progress(
     ffmpeg_path: &str,
     input_path: &str,
     output_path: &str,
-    encoder: PreviewVideoEncoder,
+    strategy: PreviewStrategy,
 ) -> Result<(), String> {
-    let args = build_preview_transcode_args(input_path, output_path, encoder);
+    let args = build_preview_transcode_args(input_path, output_path, strategy);
     let ffmpeg_path_owned = ffmpeg_path.to_string();
     let output_path_owned = output_path.to_string();
     let wait_future = async move {
@@ -374,11 +556,12 @@ async fn run_preview_transcode_attempt_without_progress(
         })?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stderr = sanitize_ffmpeg_stderr(&output.stderr, input_path, output_path);
         let _ = std::fs::remove_file(output_path);
         return Err(format!(
             "Video transcoding failed with {}: {}",
-            encoder.ffmpeg_name, stderr
+            strategy.display_label(),
+            stderr
         ));
     }
 
@@ -389,75 +572,133 @@ async fn run_preview_transcode_attempt_without_progress(
     Ok(())
 }
 
-/// Transcode video to 480p MP4 for HTML5 preview
-/// Uses H.264 video, AAC audio (mono 96kbps)
+async fn run_preview_attempts(
+    app: &tauri::AppHandle,
+    ffmpeg_path: &str,
+    input_path: &str,
+    output_path: &str,
+    file_id: &str,
+    duration_us: u64,
+    attempts: &[PreviewStrategy],
+) -> Result<PreviewStrategy, String> {
+    let mut errors = Vec::new();
+
+    for (index, strategy) in attempts.iter().copied().enumerate() {
+        if is_ocr_transcode_cancelled(file_id) {
+            return Err("Preview generation cancelled".to_string());
+        }
+
+        let _ = std::fs::remove_file(output_path);
+
+        if index > 0 {
+            emit_transcoding_progress(
+                app,
+                file_id,
+                0,
+                format!("Retrying preview with {}...", strategy.display_label()),
+                strategy.display_label(),
+            );
+        }
+
+        match run_preview_transcode_attempt(
+            app,
+            ffmpeg_path,
+            input_path,
+            output_path,
+            file_id,
+            duration_us,
+            strategy,
+        )
+        .await
+        {
+            Ok(()) => {
+                if is_ocr_transcode_cancelled(file_id) {
+                    let _ = std::fs::remove_file(output_path);
+                    return Err("Preview generation cancelled".to_string());
+                }
+                return Ok(strategy);
+            }
+            Err(error) => {
+                if is_ocr_transcode_cancelled(file_id) {
+                    return Err("Preview generation cancelled".to_string());
+                }
+                errors.push(format!("{}: {}", strategy.display_label(), error));
+            }
+        }
+    }
+
+    Err(format!(
+        "Preview generation failed after {} attempt(s): {}",
+        errors.len(),
+        errors.join(" | ")
+    ))
+}
+
+async fn run_preview_attempts_without_progress(
+    ffmpeg_path: &str,
+    input_path: &str,
+    output_path: &str,
+    attempts: &[PreviewStrategy],
+) -> Result<PreviewStrategy, String> {
+    let mut errors = Vec::new();
+
+    for strategy in attempts.iter().copied() {
+        let _ = std::fs::remove_file(output_path);
+
+        match run_preview_transcode_attempt_without_progress(
+            ffmpeg_path,
+            input_path,
+            output_path,
+            strategy,
+        )
+        .await
+        {
+            Ok(()) => return Ok(strategy),
+            Err(error) => errors.push(format!("{}: {}", strategy.display_label(), error)),
+        }
+    }
+
+    Err(format!(
+        "Preview generation failed after {} attempt(s): {}",
+        errors.len(),
+        errors.join(" | ")
+    ))
+}
+
+/// Prepare an MP4 preview for HTML5 playback.
 #[cfg_attr(not(test), allow(dead_code))]
-async fn transcode_for_preview_with_bins_and_encoder(
+async fn transcode_for_preview_with_bins_result(
     ffmpeg_path: &str,
     ffprobe_path: &str,
     input_path: &str,
-) -> Result<(String, PreviewVideoEncoder), String> {
+) -> Result<PreviewTranscodeResult, String> {
     validate_media_path(input_path)?;
 
-    let input = Path::new(input_path);
-    let stem = input
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("video");
-    let path_hash = format!("{:x}", stable_hash64(input_path));
+    let source_identity = get_preview_source_identity(input_path)?;
 
     let temp_dir = std::env::temp_dir().join("mediaflow_preview");
     std::fs::create_dir_all(&temp_dir)
         .map_err(|e| format!("Failed to create temp directory: {}", e))?;
 
-    let output_path = temp_dir.join(format!("{}_{}.mp4", stem, &path_hash[..8]));
+    let output_path = build_preview_output_path(&temp_dir, input_path, &source_identity);
     let output_str = output_path.to_string_lossy().to_string();
     let _ = std::fs::remove_file(&output_path);
 
-    let _duration_us = get_media_duration_us_with_ffprobe(ffprobe_path, input_path)
-        .await
-        .unwrap_or(0);
+    let media_info = probe_preview_media_with_ffprobe(ffprobe_path, input_path).await?;
+    let strategy = preview_strategy_for_media(&media_info);
+    let attempts = build_preview_attempts(strategy, preview_has_audio(&media_info));
 
-    let available_encoders = probe_available_ffmpeg_encoders(ffmpeg_path).await;
-    let selected_encoder = select_preview_video_encoder(&available_encoders, std::env::consts::OS);
-    let mut active_encoder = selected_encoder;
-
-    if let Err(primary_error) = run_preview_transcode_attempt_without_progress(
-        ffmpeg_path,
-        input_path,
-        &output_str,
-        selected_encoder,
-    )
-    .await
-    {
-        if should_fallback_to_libx264(selected_encoder, false) {
-            active_encoder = LIBX264;
-            let _ = std::fs::remove_file(&output_path);
-            if let Err(fallback_error) = run_preview_transcode_attempt_without_progress(
-                ffmpeg_path,
-                input_path,
-                &output_str,
-                active_encoder,
-            )
-            .await
-            {
-                let _ = std::fs::remove_file(&output_path);
-                return Err(format!(
-                    "Hardware HEVC transcoding failed ({}): {}. Software fallback failed: {}",
-                    selected_encoder.ffmpeg_name, primary_error, fallback_error
-                ));
-            }
-        } else {
-            let _ = std::fs::remove_file(&output_path);
-            return Err(primary_error);
-        }
-    }
+    run_preview_attempts_without_progress(ffmpeg_path, input_path, &output_str, &attempts).await?;
 
     if !output_path.exists() {
         return Err("Transcoding failed: output file not created".to_string());
     }
 
-    Ok((output_str, active_encoder))
+    Ok(PreviewTranscodeResult {
+        path: output_str,
+        source_identity,
+        preview_version: PREVIEW_CACHE_VERSION.to_string(),
+    })
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -466,50 +707,70 @@ pub(super) async fn transcode_for_preview_with_bins(
     ffprobe_path: &str,
     input_path: &str,
 ) -> Result<String, String> {
-    let (output_str, _) =
-        transcode_for_preview_with_bins_and_encoder(ffmpeg_path, ffprobe_path, input_path).await?;
-    Ok(output_str)
+    let result =
+        transcode_for_preview_with_bins_result(ffmpeg_path, ffprobe_path, input_path).await?;
+    Ok(result.path)
 }
 
-/// Transcode video to 480p MP4 for HTML5 preview.
-/// Prefers hardware HEVC encoders and falls back to libx264 when needed.
+/// Prepare an MP4 preview for HTML5 playback.
 #[tauri::command]
 pub(crate) async fn transcode_for_preview(
     app: tauri::AppHandle,
     input_path: String,
     file_id: String,
-) -> Result<String, String> {
+) -> Result<PreviewTranscodeResult, String> {
     validate_media_path(&input_path)?;
 
     let _sleep_guard = SleepInhibitGuard::try_acquire("Video preview transcoding").ok();
 
-    // Create output path in temp directory
-    let input = Path::new(&input_path);
-    let stem = input
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("video");
-    let path_hash = format!("{:x}", stable_hash64(&input_path));
+    let source_identity = get_preview_source_identity(&input_path)?;
 
     let temp_dir = std::env::temp_dir().join("mediaflow_preview");
     std::fs::create_dir_all(&temp_dir)
         .map_err(|e| format!("Failed to create temp directory: {}", e))?;
 
-    let output_path = temp_dir.join(format!("{}_{}.mp4", stem, &path_hash[..8]));
+    let output_path = build_preview_output_path(&temp_dir, &input_path, &source_identity);
     let output_str = output_path.to_string_lossy().to_string();
 
     // Check if already transcoded
     if output_path.exists() {
-        return Ok(output_str);
+        return Ok(PreviewTranscodeResult {
+            path: output_str,
+            source_identity,
+            preview_version: PREVIEW_CACHE_VERSION.to_string(),
+        });
     }
 
-    let ffmpeg_path = resolve_ffmpeg_path(&app)?;
-    let available_encoders = probe_available_ffmpeg_encoders(&ffmpeg_path).await;
-    let selected_encoder = select_preview_video_encoder(&available_encoders, std::env::consts::OS);
-    let mut active_encoder = selected_encoder;
+    if let Ok(mut guard) = super::state::OCR_TRANSCODE_PATHS.lock() {
+        guard.insert(file_id.clone(), output_str.clone());
+    }
 
-    // Get duration for progress
-    let duration_us = get_media_duration_us(&app, &input_path).await.unwrap_or(0);
+    let setup_result = async {
+        let ffmpeg_path = resolve_ffmpeg_path(&app)?;
+        let ffprobe_path = resolve_ffprobe_path(&app)?;
+        let media_info = probe_preview_media_with_ffprobe(&ffprobe_path, &input_path).await?;
+        let strategy = preview_strategy_for_media(&media_info);
+        let attempts = build_preview_attempts(strategy, preview_has_audio(&media_info));
+        let duration_us = get_media_duration_us(&app, &input_path).await.unwrap_or(0);
+
+        Ok::<_, String>((ffmpeg_path, strategy, attempts, duration_us))
+    }
+    .await;
+
+    let (ffmpeg_path, strategy, attempts, duration_us) = match setup_result {
+        Ok(result) => result,
+        Err(error) => {
+            clear_ocr_transcode_tracking(&file_id);
+            let _ = std::fs::remove_file(&output_path);
+            return Err(error);
+        }
+    };
+
+    if is_ocr_transcode_cancelled(&file_id) {
+        clear_ocr_process_tracking(&file_id);
+        let _ = std::fs::remove_file(&output_path);
+        return Err("Preview generation cancelled".to_string());
+    }
 
     // Emit initial progress
     emit_transcoding_progress(
@@ -517,71 +778,36 @@ pub(crate) async fn transcode_for_preview(
         &file_id,
         0,
         format!(
-            "Starting video transcoding with {}...",
-            active_encoder.display_name
+            "Starting preview preparation with {}...",
+            strategy.display_label()
         ),
-        active_encoder.display_name,
+        strategy.display_label(),
     );
 
-    // Store output path for cleanup on cancel/error
-    if let Ok(mut guard) = super::state::OCR_TRANSCODE_PATHS.lock() {
-        guard.insert(file_id.clone(), output_str.clone());
-    }
-
-    let transcode_result = run_preview_transcode_attempt(
+    let active_strategy = match run_preview_attempts(
         &app,
         &ffmpeg_path,
         &input_path,
         &output_str,
         &file_id,
         duration_us,
-        selected_encoder,
+        &attempts,
     )
-    .await;
-
-    if let Err(primary_error) = transcode_result {
-        if should_fallback_to_libx264(selected_encoder, false)
-            && !is_ocr_transcode_cancelled(&file_id)
-        {
-            active_encoder = LIBX264;
-            let _ = std::fs::remove_file(&output_path);
-
-            emit_transcoding_progress(
-                &app,
-                &file_id,
-                0,
-                format!(
-                    "{} failed, retrying with {}...",
-                    selected_encoder.display_name, active_encoder.display_name
-                ),
-                active_encoder.display_name,
-            );
-
-            if let Err(fallback_error) = run_preview_transcode_attempt(
-                &app,
-                &ffmpeg_path,
-                &input_path,
-                &output_str,
-                &file_id,
-                duration_us,
-                active_encoder,
-            )
-            .await
-            {
-                clear_ocr_process_tracking(&file_id);
-                clear_ocr_transcode_tracking(&file_id);
-                let _ = std::fs::remove_file(&output_path);
-                return Err(format!(
-                    "Hardware HEVC transcoding failed ({}): {}. Software fallback failed: {}",
-                    selected_encoder.ffmpeg_name, primary_error, fallback_error
-                ));
-            }
-        } else {
+    .await
+    {
+        Ok(strategy) => strategy,
+        Err(error) => {
             clear_ocr_process_tracking(&file_id);
             clear_ocr_transcode_tracking(&file_id);
             let _ = std::fs::remove_file(&output_path);
-            return Err(primary_error);
+            return Err(error);
         }
+    };
+
+    if is_ocr_transcode_cancelled(&file_id) {
+        clear_ocr_process_tracking(&file_id);
+        let _ = std::fs::remove_file(&output_path);
+        return Err("Preview generation cancelled".to_string());
     }
 
     clear_ocr_process_tracking(&file_id);
@@ -592,26 +818,41 @@ pub(crate) async fn transcode_for_preview(
         &app,
         &file_id,
         100,
-        "Transcoding complete".to_string(),
-        active_encoder.display_name,
+        "Preview preparation complete".to_string(),
+        active_strategy.display_label(),
     );
 
-    Ok(output_str)
+    Ok(PreviewTranscodeResult {
+        path: output_str,
+        source_identity,
+        preview_version: PREVIEW_CACHE_VERSION.to_string(),
+    })
+}
+
+#[tauri::command]
+pub(crate) fn invalidate_ocr_preview(input_path: String) -> Result<(), String> {
+    remove_cached_preview_for_source(&input_path)
+}
+
+#[tauri::command]
+pub(crate) fn get_ocr_preview_cache_entry(
+    input_path: String,
+) -> Result<PreviewTranscodeResult, String> {
+    get_preview_cache_entry(&input_path)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use serial_test::serial;
 
     use super::{
-        HEVC_NVENC, HEVC_QSV, HEVC_VAAPI, HEVC_VIDEOTOOLBOX, LIBX264, build_preview_transcode_args,
-        parse_ffmpeg_encoder_names, select_preview_video_encoder, should_fallback_to_libx264,
-        transcode_for_preview_with_bins, transcode_for_preview_with_bins_and_encoder,
+        PREVIEW_CACHE_VERSION, PreviewMediaInfo, PreviewMediaStream, PreviewStrategy,
+        PreviewStreamKind, build_preview_attempts, build_preview_output_path,
+        build_preview_source_identity_key, build_preview_transcode_args, get_preview_cache_entry,
+        is_ocr_transcode_cancelled, preview_strategy_for_media, remove_cached_preview_for_source,
+        sanitize_ffmpeg_stderr, source_identity_from_parts, transcode_for_preview_with_bins,
+        transcode_for_preview_with_bins_result,
     };
-
-    fn encoder_set(names: &[&str]) -> HashSet<String> {
-        names.iter().map(|name| (*name).to_string()).collect()
-    }
 
     fn args_contain_pair(args: &[String], flag: &str, value: &str) -> bool {
         args.windows(2)
@@ -627,6 +868,41 @@ mod tests {
             }
         }
         None
+    }
+
+    fn parse_ffprobe_u32(text: &str, key: &str) -> Option<u32> {
+        parse_ffprobe_key_value(text, key).and_then(|value| value.parse::<u32>().ok())
+    }
+
+    fn media_info(
+        video: PreviewMediaStream,
+        audio: Option<PreviewMediaStream>,
+    ) -> PreviewMediaInfo {
+        let mut streams = vec![video];
+        if let Some(audio_stream) = audio {
+            streams.push(audio_stream);
+        }
+        PreviewMediaInfo { streams }
+    }
+
+    fn video_stream(codec: &str, pix_fmt: Option<&str>) -> PreviewMediaStream {
+        PreviewMediaStream {
+            kind: PreviewStreamKind::Video,
+            codec_name: codec.to_string(),
+            pix_fmt: pix_fmt.map(str::to_string),
+            profile: None,
+            bits_per_raw_sample: Some("8".to_string()),
+        }
+    }
+
+    fn audio_stream(codec: &str) -> PreviewMediaStream {
+        PreviewMediaStream {
+            kind: PreviewStreamKind::Audio,
+            codec_name: codec.to_string(),
+            pix_fmt: None,
+            profile: None,
+            bits_per_raw_sample: None,
+        }
     }
 
     #[tokio::test]
@@ -648,7 +924,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transcode_for_preview_outputs_expected_codec_for_selected_encoder() {
+    async fn transcode_for_preview_outputs_expected_media_properties() {
         let input = crate::test_support::assets::ensure_sample_video()
             .await
             .expect("failed to load local sample video");
@@ -656,7 +932,7 @@ mod tests {
         let unique_input = temp_dir.path().join("codec-check-input.mp4");
         std::fs::copy(&input, &unique_input).expect("failed to copy sample video");
 
-        let (output, active_encoder) = transcode_for_preview_with_bins_and_encoder(
+        let result = transcode_for_preview_with_bins_result(
             crate::test_support::ffmpeg::ffmpeg_path(),
             crate::test_support::ffmpeg::ffprobe_path(),
             unique_input.to_string_lossy().as_ref(),
@@ -664,6 +940,7 @@ mod tests {
         .await
         .expect("preview transcode should succeed");
 
+        let output = result.path;
         let ffprobe_output =
             std::process::Command::new(crate::test_support::ffmpeg::ffprobe_path())
                 .args([
@@ -672,7 +949,7 @@ mod tests {
                     "-select_streams",
                     "v:0",
                     "-show_entries",
-                    "stream=codec_name,codec_tag_string",
+                    "stream=codec_name,codec_tag_string,width,height",
                     "-of",
                     "default=noprint_wrappers=1",
                     &output,
@@ -680,127 +957,290 @@ mod tests {
                 .output()
                 .expect("failed to run ffprobe");
 
+        let source_video_probe =
+            std::process::Command::new(crate::test_support::ffmpeg::ffprobe_path())
+                .args([
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=width,height",
+                    "-of",
+                    "default=noprint_wrappers=1",
+                    unique_input.to_string_lossy().as_ref(),
+                ])
+                .output()
+                .expect("failed to probe source video");
+
+        let audio_probe = std::process::Command::new(crate::test_support::ffmpeg::ffprobe_path())
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=codec_name,channels,bit_rate",
+                "-of",
+                "default=noprint_wrappers=1",
+                &output,
+            ])
+            .output()
+            .expect("failed to probe preview audio");
+
         assert!(
             ffprobe_output.status.success(),
             "ffprobe failed: {}",
             String::from_utf8_lossy(&ffprobe_output.stderr)
         );
+        assert!(
+            source_video_probe.status.success(),
+            "source ffprobe failed: {}",
+            String::from_utf8_lossy(&source_video_probe.stderr)
+        );
+        assert!(
+            audio_probe.status.success(),
+            "audio ffprobe failed: {}",
+            String::from_utf8_lossy(&audio_probe.stderr)
+        );
 
         let ffprobe_text = String::from_utf8_lossy(&ffprobe_output.stdout);
+        let source_video_text = String::from_utf8_lossy(&source_video_probe.stdout);
+        let audio_text = String::from_utf8_lossy(&audio_probe.stdout);
         let codec_name = parse_ffprobe_key_value(&ffprobe_text, "codec_name");
         let codec_tag = parse_ffprobe_key_value(&ffprobe_text, "codec_tag_string");
+        let audio_codec = parse_ffprobe_key_value(&audio_text, "codec_name");
 
-        if active_encoder.ffmpeg_name.starts_with("hevc_") {
-            assert_eq!(codec_name.as_deref(), Some("hevc"));
-            assert_eq!(codec_tag.as_deref(), Some("hvc1"));
-        } else {
-            assert_eq!(active_encoder.ffmpeg_name, LIBX264.ffmpeg_name);
-            assert_eq!(codec_name.as_deref(), Some("h264"));
+        assert_eq!(codec_name.as_deref(), Some("h264"));
+        assert_eq!(codec_tag.as_deref(), Some("avc1"));
+        assert_eq!(
+            parse_ffprobe_u32(&ffprobe_text, "width"),
+            parse_ffprobe_u32(&source_video_text, "width")
+        );
+        assert_eq!(
+            parse_ffprobe_u32(&ffprobe_text, "height"),
+            parse_ffprobe_u32(&source_video_text, "height")
+        );
+        assert_eq!(audio_codec.as_deref(), Some("aac"));
+        assert!(
+            parse_ffprobe_u32(&audio_text, "channels").unwrap_or(0) >= 1,
+            "expected preview audio to keep at least one channel"
+        );
+        assert_eq!(result.preview_version, PREVIEW_CACHE_VERSION);
+    }
+
+    #[test]
+    fn h264_yuv420p_aac_uses_remux_copy_without_video_encode() {
+        let info = media_info(
+            video_stream("h264", Some("yuv420p")),
+            Some(audio_stream("aac")),
+        );
+        let strategy = preview_strategy_for_media(&info);
+        let args = build_preview_transcode_args("input.mkv", "output.mp4", strategy);
+
+        assert_eq!(strategy, PreviewStrategy::CopyAll);
+        assert!(args_contain_pair(&args, "-c:v", "copy"));
+        assert!(args_contain_pair(&args, "-c:a", "copy"));
+        assert!(!args.iter().any(|arg| arg == "libx264"));
+        assert!(args_contain_pair(&args, "-map", "0:v:0"));
+        assert!(args_contain_pair(&args, "-map", "0:a:0?"));
+        assert!(args.iter().any(|arg| arg == "-sn"));
+        assert!(args.iter().any(|arg| arg == "-dn"));
+    }
+
+    #[test]
+    fn h264_yuv420p_flac_copies_video_and_encodes_audio_to_aac() {
+        let info = media_info(
+            video_stream("h264", Some("yuv420p")),
+            Some(audio_stream("flac")),
+        );
+        let strategy = preview_strategy_for_media(&info);
+        let args = build_preview_transcode_args("input.mkv", "output.mp4", strategy);
+
+        assert_eq!(strategy, PreviewStrategy::CopyVideoEncodeAudio);
+        assert!(args_contain_pair(&args, "-c:v", "copy"));
+        assert!(args_contain_pair(&args, "-c:a", "aac"));
+        assert!(args_contain_pair(&args, "-b:a", "128k"));
+        assert!(args_contain_pair(&args, "-ac", "2"));
+        assert!(!args.iter().any(|arg| arg == "libx264"));
+    }
+
+    #[test]
+    fn non_safe_video_uses_cpu_h264_aac_transcode() {
+        for info in [
+            media_info(
+                video_stream("hevc", Some("yuv420p")),
+                Some(audio_stream("aac")),
+            ),
+            media_info(
+                video_stream("h264", Some("yuv420p10le")),
+                Some(audio_stream("aac")),
+            ),
+            media_info(
+                video_stream("h264", Some("yuv422p")),
+                Some(audio_stream("aac")),
+            ),
+        ] {
+            let strategy = preview_strategy_for_media(&info);
+            let args = build_preview_transcode_args("input.mkv", "output.mp4", strategy);
+
+            assert_eq!(strategy, PreviewStrategy::FullTranscode);
+            assert!(args_contain_pair(&args, "-c:v", "libx264"));
+            assert!(args_contain_pair(&args, "-preset", "fast"));
+            assert!(args_contain_pair(&args, "-crf", "23"));
+            assert!(args_contain_pair(&args, "-pix_fmt", "yuv420p"));
+            assert!(args_contain_pair(&args, "-c:a", "aac"));
+            assert!(args_contain_pair(&args, "-b:a", "128k"));
+            assert!(args_contain_pair(&args, "-ac", "2"));
         }
     }
 
     #[test]
-    fn parse_ffmpeg_encoder_names_extracts_encoder_ids() {
-        let sample = r#"
-        Encoders:
-        V..... = Video
-        A..... = Audio
-        ------
-        V....D libx264              libx264 H.264 / AVC
-        V....D hevc_videotoolbox    VideoToolbox H.265 Encoder
-        V....D hevc_nvenc           NVIDIA NVENC hevc encoder
-        "#;
-
-        let parsed = parse_ffmpeg_encoder_names(sample);
-        assert!(parsed.contains("libx264"));
-        assert!(parsed.contains("hevc_videotoolbox"));
-        assert!(parsed.contains("hevc_nvenc"));
-        assert!(!parsed.contains("="));
+    fn preview_cache_version_is_stable_for_best_effort_pipeline() {
+        assert_eq!(PREVIEW_CACHE_VERSION, "ocr-preview-v2-local-best-effort");
     }
 
     #[test]
-    fn select_preview_video_encoder_falls_back_to_libx264_when_no_hw_encoder_available() {
-        let available = encoder_set(&["libx264", "h264_videotoolbox"]);
-        let selected = select_preview_video_encoder(&available, "macos");
-        assert_eq!(selected.ffmpeg_name, LIBX264.ffmpeg_name);
+    fn preview_attempts_retry_copy_with_transcode_and_video_only_fallback() {
+        assert_eq!(
+            build_preview_attempts(PreviewStrategy::CopyAll, true),
+            vec![
+                PreviewStrategy::CopyAll,
+                PreviewStrategy::FullTranscode,
+                PreviewStrategy::FullTranscodeVideoOnly,
+            ]
+        );
+        assert_eq!(
+            build_preview_attempts(PreviewStrategy::CopyVideoEncodeAudio, true),
+            vec![
+                PreviewStrategy::CopyVideoEncodeAudio,
+                PreviewStrategy::FullTranscode,
+                PreviewStrategy::FullTranscodeVideoOnly,
+            ]
+        );
+        assert_eq!(
+            build_preview_attempts(PreviewStrategy::FullTranscode, false),
+            vec![PreviewStrategy::FullTranscode]
+        );
     }
 
     #[test]
-    fn select_preview_video_encoder_prefers_macos_videotoolbox() {
-        let available = encoder_set(&["libx264", "hevc_videotoolbox"]);
-        let selected = select_preview_video_encoder(&available, "macos");
-        assert_eq!(selected.ffmpeg_name, HEVC_VIDEOTOOLBOX.ffmpeg_name);
+    #[serial]
+    fn cancelled_preview_state_is_detected_before_retrying_fallbacks() {
+        let file_id = "preview-cancelled-before-retry";
+
+        {
+            let mut guard = super::super::state::OCR_TRANSCODE_PATHS
+                .lock()
+                .expect("failed to lock preview path state");
+            guard.insert(file_id.to_string(), "/tmp/partial.mp4".to_string());
+        }
+
+        assert!(!is_ocr_transcode_cancelled(file_id));
+
+        {
+            let mut guard = super::super::state::OCR_TRANSCODE_PATHS
+                .lock()
+                .expect("failed to lock preview path state");
+            guard.remove(file_id);
+        }
+
+        assert!(is_ocr_transcode_cancelled(file_id));
     }
 
     #[test]
-    fn select_preview_video_encoder_prefers_linux_vaapi_first() {
-        let available = encoder_set(&["hevc_nvenc", "hevc_vaapi", "libx264"]);
-        let selected = select_preview_video_encoder(&available, "linux");
-        assert_eq!(selected.ffmpeg_name, HEVC_VAAPI.ffmpeg_name);
+    fn sanitize_ffmpeg_stderr_redacts_source_and_preview_paths() {
+        let source = "/Volumes/NAS/source.mkv";
+        let preview = "/tmp/mediaflow_preview/source.mp4";
+        let stderr = format!("Cannot read {} and cannot write {}", source, preview);
+
+        let sanitized = sanitize_ffmpeg_stderr(stderr.as_bytes(), source, preview);
+
+        assert!(!sanitized.contains(source));
+        assert!(!sanitized.contains(preview));
+        assert!(sanitized.contains("<source>"));
+        assert!(sanitized.contains("<preview>"));
     }
 
     #[test]
-    fn select_preview_video_encoder_uses_windows_priority_order() {
-        let available = encoder_set(&["hevc_qsv", "hevc_amf", "hevc_nvenc", "libx264"]);
-        let selected = select_preview_video_encoder(&available, "windows");
-        assert_eq!(selected.ffmpeg_name, HEVC_NVENC.ffmpeg_name);
-
-        let available_without_nvenc = encoder_set(&["hevc_qsv", "hevc_amf", "libx264"]);
-        let selected_without_nvenc =
-            select_preview_video_encoder(&available_without_nvenc, "windows");
-        assert_eq!(selected_without_nvenc.ffmpeg_name, HEVC_QSV.ffmpeg_name);
-    }
-
-    #[test]
-    fn should_fallback_to_libx264_only_for_failed_hardware_encoders() {
-        assert!(should_fallback_to_libx264(HEVC_VIDEOTOOLBOX, false));
-        assert!(!should_fallback_to_libx264(HEVC_VIDEOTOOLBOX, true));
-        assert!(!should_fallback_to_libx264(LIBX264, false));
-    }
-
-    #[test]
-    fn build_preview_transcode_args_adds_safari_compatible_flags_for_videotoolbox() {
-        let args = build_preview_transcode_args("input.mp4", "output.mp4", HEVC_VIDEOTOOLBOX);
-
-        assert!(args_contain_pair(&args, "-c:v", "hevc_videotoolbox"));
-        assert!(args_contain_pair(&args, "-tag:v", "hvc1"));
-        assert!(args_contain_pair(&args, "-profile:v", "main"));
-        assert!(args_contain_pair(&args, "-pix_fmt", "yuv420p"));
-    }
-
-    #[test]
-    fn build_preview_transcode_args_keeps_libx264_specific_flags() {
-        let args = build_preview_transcode_args("input.mp4", "output.mp4", LIBX264);
+    fn build_preview_transcode_args_has_video_only_fallback() {
+        let args = build_preview_transcode_args(
+            "input.mkv",
+            "output.mp4",
+            PreviewStrategy::FullTranscodeVideoOnly,
+        );
 
         assert!(args_contain_pair(&args, "-c:v", "libx264"));
         assert!(args_contain_pair(&args, "-preset", "fast"));
-        assert!(args_contain_pair(&args, "-crf", "28"));
-        assert!(!args_contain_pair(&args, "-tag:v", "hvc1"));
+        assert!(args_contain_pair(&args, "-crf", "23"));
+        assert!(args.iter().any(|arg| arg == "-an"));
+        assert!(!args.iter().any(|arg| arg == "-c:a"));
+        assert!(!args.iter().any(|arg| arg.contains("scale")));
+        assert!(!args.iter().any(|arg| {
+            matches!(
+                arg.as_str(),
+                "h264_videotoolbox" | "h264_vaapi" | "h264_nvenc" | "h264_qsv" | "h264_amf"
+            )
+        }));
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn macos_environment_prefers_videotoolbox_when_encoder_is_available() {
-        let output = std::process::Command::new(crate::test_support::ffmpeg::ffmpeg_path())
-            .args(["-hide_banner", "-encoders"])
-            .output();
+    fn preview_cache_key_changes_when_source_size_or_mtime_changes() {
+        let original = source_identity_from_parts("/Volumes/NAS/source.mkv", 1024, 1_778_000);
+        let changed_size = source_identity_from_parts("/Volumes/NAS/source.mkv", 2048, 1_778_000);
+        let changed_mtime = source_identity_from_parts("/Volumes/NAS/source.mkv", 1024, 1_778_001);
 
-        let Ok(output) = output else {
-            return;
-        };
+        let original_key = build_preview_source_identity_key(&original);
 
-        let mut combined = String::from_utf8_lossy(&output.stdout).to_string();
-        if !output.stderr.is_empty() {
-            if !combined.is_empty() {
-                combined.push('\n');
-            }
-            combined.push_str(&String::from_utf8_lossy(&output.stderr));
-        }
+        assert_ne!(
+            original_key,
+            build_preview_source_identity_key(&changed_size)
+        );
+        assert_ne!(
+            original_key,
+            build_preview_source_identity_key(&changed_mtime)
+        );
+    }
 
-        let parsed = parse_ffmpeg_encoder_names(&combined);
-        if parsed.contains("hevc_videotoolbox") {
-            let selected = select_preview_video_encoder(&parsed, "macos");
-            assert_eq!(selected.ffmpeg_name, HEVC_VIDEOTOOLBOX.ffmpeg_name);
-        }
+    #[test]
+    fn remove_cached_preview_for_source_deletes_matching_output_path() {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let input_path = temp_dir.path().join("source.mp4");
+        std::fs::write(&input_path, b"not a real mp4").expect("failed to create source file");
+
+        let identity = super::get_preview_source_identity(input_path.to_string_lossy().as_ref())
+            .expect("failed to get source identity");
+        let output_path = build_preview_output_path(
+            &std::env::temp_dir().join("mediaflow_preview"),
+            input_path.to_string_lossy().as_ref(),
+            &identity,
+        );
+        std::fs::create_dir_all(
+            output_path
+                .parent()
+                .expect("preview output should have parent"),
+        )
+        .expect("failed to create preview dir");
+        std::fs::write(&output_path, b"cached preview").expect("failed to write cached preview");
+
+        remove_cached_preview_for_source(input_path.to_string_lossy().as_ref())
+            .expect("preview invalidation should succeed");
+
+        assert!(!output_path.exists());
+    }
+
+    #[test]
+    fn get_preview_cache_entry_returns_backend_managed_path_and_version() {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let input_path = temp_dir.path().join("source.mp4");
+        std::fs::write(&input_path, b"not a real mp4").expect("failed to create source file");
+
+        let entry = get_preview_cache_entry(input_path.to_string_lossy().as_ref())
+            .expect("failed to get preview cache entry");
+
+        assert!(entry.path.contains("mediaflow_preview"));
+        assert!(entry.path.ends_with(".mp4"));
+        assert_eq!(entry.preview_version, PREVIEW_CACHE_VERSION);
+        assert_eq!(entry.source_identity.size, 14);
     }
 }

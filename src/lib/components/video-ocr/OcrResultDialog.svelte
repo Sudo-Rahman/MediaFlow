@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Calendar, Clock, Info } from '@lucide/svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { save } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
   import { toast } from 'svelte-sonner';
@@ -9,6 +10,10 @@
   import { normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils/ocr-subtitle-adapter';
   import { Badge } from '$lib/components/ui/badge';
   import { VersionBrowserDialog } from '$lib/components/shared';
+  import {
+    buildOcrResultVersionLoadKey,
+    createOcrResultVersionSnapshot,
+  } from './ocr-result-dialog-state';
 
   interface OcrResultDialogProps {
     open: boolean;
@@ -28,54 +33,77 @@
   let versionsLoading = $state(false);
   let loadedVersions = $state.raw<OcrVersion[]>([]);
   let previewText = $state('');
+  let lastVersionLoadKey: string | null = null;
+  let loadVersionsTimeoutId: ReturnType<typeof window.setTimeout> | null = null;
+  let loadVersionsFrameId: number | null = null;
+  let loadVersionsRunId = 0;
   const previewCache = new Map<string, string>();
   const DIALOG_OPEN_SETTLE_MS = 320;
+  const versionLoadKey = $derived(buildOcrResultVersionLoadKey(file));
+
+  function clearDeferredVersionLoad(): void {
+    loadVersionsRunId += 1;
+
+    if (loadVersionsTimeoutId !== null) {
+      clearTimeout(loadVersionsTimeoutId);
+      loadVersionsTimeoutId = null;
+    }
+
+    if (loadVersionsFrameId !== null) {
+      cancelAnimationFrame(loadVersionsFrameId);
+      loadVersionsFrameId = null;
+    }
+  }
 
   // Deferred version loading — same pattern as before to avoid jank on dialog open
   $effect(() => {
     if (!open) {
+      clearDeferredVersionLoad();
       versionsLoading = false;
       loadedVersions = [];
       currentVersionIndex = 0;
+      lastVersionLoadKey = null;
       return;
     }
 
-    if (!file) {
+    const loadKey = versionLoadKey;
+    if (!loadKey) {
+      clearDeferredVersionLoad();
       versionsLoading = true;
       loadedVersions = [];
       currentVersionIndex = 0;
+      lastVersionLoadKey = null;
       return;
     }
 
+    if (loadKey === lastVersionLoadKey) {
+      return;
+    }
+
+    lastVersionLoadKey = loadKey;
+    clearDeferredVersionLoad();
     versionsLoading = true;
     loadedVersions = [];
     currentVersionIndex = 0;
-    let cancelled = false;
-    let frameId: number | null = null;
+    const versionSnapshot = untrack(() => createOcrResultVersionSnapshot(file?.ocrVersions ?? []));
+    const runId = loadVersionsRunId;
 
-    const timeoutId = window.setTimeout(() => {
-      frameId = requestAnimationFrame(() => {
-        if (cancelled) {
+    loadVersionsTimeoutId = window.setTimeout(() => {
+      loadVersionsTimeoutId = null;
+      loadVersionsFrameId = requestAnimationFrame(() => {
+        loadVersionsFrameId = null;
+        if (runId !== loadVersionsRunId) {
           return;
         }
 
-        loadedVersions = file.ocrVersions.map((version) => ({
-          ...version,
-          rawOcr: [],
-        }));
+        loadedVersions = versionSnapshot;
         currentVersionIndex = loadedVersions.length > 0 ? loadedVersions.length - 1 : 0;
         versionsLoading = false;
       });
     }, DIALOG_OPEN_SETTLE_MS);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timeoutId);
-      if (frameId !== null) {
-        cancelAnimationFrame(frameId);
-      }
-    };
   });
+
+  onDestroy(clearDeferredVersionLoad);
 
   const currentVersion = $derived(loadedVersions[currentVersionIndex] ?? null);
   const normalizedSubtitles = $derived.by(() => {

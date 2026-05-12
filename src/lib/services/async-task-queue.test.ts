@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import { createAsyncTaskQueue } from './async-task-queue';
 
+declare const process: {
+  on(event: 'unhandledRejection', listener: (reason: unknown) => void): void;
+  off(event: 'unhandledRejection', listener: (reason: unknown) => void): void;
+};
+
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
   const promise = new Promise<void>((innerResolve) => {
@@ -75,5 +80,34 @@ describe('async task queue', () => {
     expect(queue.activeCount).toBe(0);
     expect(queue.pendingCount).toBe(0);
     expect(secondRan).toBe(false);
+  });
+
+  it('recovers from a rejected task without an unhandled rejection', async () => {
+    const queue = createAsyncTaskQueue(1);
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown): void => {
+      unhandledRejections.push(reason);
+    };
+    let secondRan = false;
+
+    process.on('unhandledRejection', onUnhandledRejection);
+    try {
+      queue.enqueue(async () => {
+        throw new Error('task failed');
+      });
+      queue.enqueue(async () => {
+        secondRan = true;
+      });
+
+      await tick();
+      await tick();
+
+      expect(secondRan).toBe(true);
+      expect(queue.activeCount).toBe(0);
+      expect(queue.pendingCount).toBe(0);
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
   });
 });

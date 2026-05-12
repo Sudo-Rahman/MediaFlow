@@ -18,10 +18,21 @@ export function createAsyncTaskQueue(concurrency: number): AsyncTaskQueue {
       }
 
       activeCount += 1;
-      void task().finally(() => {
-        activeCount -= 1;
-        runNext();
-      });
+      let taskPromise: Promise<void>;
+      try {
+        taskPromise = task();
+      } catch {
+        taskPromise = Promise.resolve();
+      }
+
+      void taskPromise
+        .catch(() => {
+          // Tasks are fire-and-forget; callers cannot observe failures from enqueue().
+        })
+        .finally(() => {
+          activeCount -= 1;
+          runNext();
+        });
     }
   }
 

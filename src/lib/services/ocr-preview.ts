@@ -7,7 +7,7 @@ import type {
   VideoOcrPersistenceData,
 } from '$lib/types';
 
-export const OCR_PREVIEW_CACHE_VERSION = 'ocr-preview-v2-local-best-effort';
+export const OCR_PREVIEW_CACHE_VERSION = 'ocr-preview-v3-480p-progress-timeout';
 
 function previewSourceIdentityMatches(
   current: OcrPreviewSourceIdentity,
@@ -52,10 +52,12 @@ export async function getReusableOcrPreview(
 export async function prepareOcrPreview(
   sourcePath: string,
   fileId: string,
+  options: { forceFullTranscode?: boolean } = {},
 ): Promise<OcrPreviewTranscodeResult> {
   return invoke<OcrPreviewTranscodeResult>('transcode_for_preview', {
     inputPath: sourcePath,
     fileId,
+    forceFullTranscode: options.forceFullTranscode ?? false,
   });
 }
 

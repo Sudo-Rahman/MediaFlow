@@ -73,6 +73,7 @@
   const aiCleanupControllers = new Map<string, AbortController>();
   const activePreviewFileIds = new Set<string>();
   const cancelledPreviewFileIds = new Set<string>();
+  const previewPlaybackFallbackFileIds = new Set<string>();
   const filePreparationQueue = createAsyncTaskQueue(FILE_PREPARATION_CONCURRENCY);
 
   const selectedFile = $derived(videoOcrStore.selectedFile ?? null);
@@ -280,6 +281,7 @@
       });
     }
     activePreviewFileIds.clear();
+    previewPlaybackFallbackFileIds.clear();
 
     for (const controller of aiCleanupControllers.values()) {
       controller.abort();
@@ -495,7 +497,10 @@
     });
   }
 
-  async function preparePreviewForFile(file: OcrVideoFile): Promise<boolean> {
+  async function preparePreviewForFile(
+    file: OcrVideoFile,
+    options: { forceFullTranscode?: boolean } = {},
+  ): Promise<boolean> {
     try {
       if (isDestroyed || !getFreshFile(file.id)) {
         return false;
@@ -504,7 +509,9 @@
       videoOcrStore.startTranscoding(file.id);
       activePreviewFileIds.add(file.id);
 
-      const preview = await prepareOcrPreview(file.path, file.id);
+      const preview = await prepareOcrPreview(file.path, file.id, {
+        forceFullTranscode: options.forceFullTranscode,
+      });
       if (cancelledPreviewFileIds.delete(file.id)) {
         await invalidateOcrPreview(file.path).catch((error: unknown) => {
           console.error('Failed to invalidate cancelled preview:', error);
@@ -526,7 +533,13 @@
         preview.sourceIdentity,
         preview.previewVersion,
       );
-      videoOcrStore.addLog('info', 'Preview transcoding complete', file.id);
+      videoOcrStore.addLog(
+        'info',
+        options.forceFullTranscode
+          ? 'Fallback preview transcoding complete'
+          : 'Preview transcoding complete',
+        file.id,
+      );
 
       const saved = await persistFileData(file.id);
       if (!saved) {
@@ -579,6 +592,7 @@
       return;
     }
 
+    const alreadyRetried = previewPlaybackFallbackFileIds.has(file.id);
     videoOcrStore.updateFile(file.id, {
       previewPath: undefined,
       previewSourceIdentity: undefined,
@@ -588,6 +602,19 @@
     });
     videoOcrStore.addLog('warning', `Generated preview playback error: ${reason}`, file.id);
     await persistFileData(file.id);
+
+    if (alreadyRetried) {
+      return;
+    }
+
+    const current = getFreshFile(file.id);
+    if (!current) {
+      return;
+    }
+
+    previewPlaybackFallbackFileIds.add(file.id);
+    videoOcrStore.addLog('info', 'Retrying preview with full transcode fallback', file.id);
+    await preparePreviewForFile(current, { forceFullTranscode: true });
   }
 
   async function handleStartOcr(): Promise<void> {

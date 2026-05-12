@@ -41,12 +41,12 @@ describe('video OCR store', () => {
         size: 123,
         modifiedMs: 456,
       },
-      'ocr-preview-v2-local-best-effort',
+      'ocr-preview-v3-480p-progress-timeout',
     );
 
     expect(videoOcrStore.videoFiles[0].previewPath).toBe('/tmp/mediaflow_preview/sample.mp4');
     expect(videoOcrStore.videoFiles[0].previewPath).not.toBe(file.path);
-    expect(videoOcrStore.videoFiles[0].previewVersion).toBe('ocr-preview-v2-local-best-effort');
+    expect(videoOcrStore.videoFiles[0].previewVersion).toBe('ocr-preview-v3-480p-progress-timeout');
     expect(videoOcrStore.readyFiles).toHaveLength(1);
     expect(videoOcrStore.canStartOcr).toBe(true);
   });

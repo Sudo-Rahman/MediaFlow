@@ -5,6 +5,7 @@ import {
   OCR_PREVIEW_CACHE_VERSION,
   getReusableOcrPreview,
   invalidateOcrPreview,
+  prepareOcrPreview,
 } from './ocr-preview';
 
 const existsMock = vi.hoisted(() => vi.fn());
@@ -129,6 +130,20 @@ describe('OCR preview cache reuse', () => {
 
     expect(invokeMock).toHaveBeenCalledWith('invalidate_ocr_preview', {
       inputPath: '/Volumes/NAS/source.mkv',
+    });
+  });
+
+  it('passes forced full transcode preference to the backend preview command', async () => {
+    invokeMock.mockResolvedValue(backendPreview());
+
+    await prepareOcrPreview('/Volumes/NAS/source.mkv', 'file-1', {
+      forceFullTranscode: true,
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith('transcode_for_preview', {
+      inputPath: '/Volumes/NAS/source.mkv',
+      fileId: 'file-1',
+      forceFullTranscode: true,
     });
   });
 });

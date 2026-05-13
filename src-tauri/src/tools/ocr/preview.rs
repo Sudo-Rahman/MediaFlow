@@ -20,7 +20,7 @@ const VIDEO_PREVIEW_PROGRESS_STARTUP_TIMEOUT: Duration = Duration::from_secs(90)
 const VIDEO_PREVIEW_PROGRESS_STALL_TIMEOUT: Duration = Duration::from_secs(120);
 const VIDEO_PREVIEW_PROGRESS_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const VIDEO_PREVIEW_NO_PROGRESS_TIMEOUT: Duration = Duration::from_secs(7_200);
-const PREVIEW_CACHE_VERSION: &str = "ocr-preview-v3";
+const PREVIEW_CACHE_VERSION: &str = "ocr-preview-v3-480p-progress-timeout";
 const PREVIEW_MAX_HEIGHT: u32 = 480;
 const LIBX264_ENCODER: &str = "libx264";
 const LIBX264_LABEL: &str = "H.264 (libx264)";
@@ -440,11 +440,11 @@ fn build_preview_output_path(
         .and_then(|s| s.to_str())
         .unwrap_or("video");
     let identity_hash = format!(
-        "{:x}",
+        "{:016x}",
         stable_hash64(&build_preview_source_identity_key(identity))
     );
 
-    temp_dir.join(format!("{}_{}.mp4", stem, &identity_hash[..8]))
+    temp_dir.join(format!("{}_{}.mp4", stem, identity_hash))
 }
 
 fn build_preview_temp_output_path(output_path: &Path) -> PathBuf {
@@ -758,22 +758,24 @@ async fn run_preview_transcode_attempt_without_progress(
         .map_err(|e| format!("Failed to start ffmpeg: {}", e))?;
     let child_pid = child.id();
 
-    let output = timeout(VIDEO_PREVIEW_NO_PROGRESS_TIMEOUT, child.wait_with_output())
-        .await
-        .map_err(|_| {
+    let mut wait_future = Box::pin(child.wait_with_output());
+    let output = match timeout(VIDEO_PREVIEW_NO_PROGRESS_TIMEOUT, &mut wait_future).await {
+        Ok(result) => result.map_err(|e| {
+            let _ = std::fs::remove_file(&output_path_owned);
+            format!("FFmpeg error: {}", e)
+        })?,
+        Err(_) => {
             if let Some(pid) = child_pid {
                 force_terminate_process(pid);
             }
+            let _ = timeout(Duration::from_secs(5), &mut wait_future).await;
             let _ = std::fs::remove_file(&output_path_owned);
-            format!(
+            return Err(format!(
                 "Video preview transcoding safety timeout after {} seconds",
                 VIDEO_PREVIEW_NO_PROGRESS_TIMEOUT.as_secs()
-            )
-        })?
-        .map_err(|e| {
-            let _ = std::fs::remove_file(&output_path_owned);
-            format!("FFmpeg error: {}", e)
-        })?;
+            ));
+        }
+    };
 
     if !output.status.success() {
         let stderr = sanitize_ffmpeg_stderr(&output.stderr, input_path, output_path);
@@ -1493,6 +1495,13 @@ mod tests {
     }
 
     #[test]
+    fn preview_cache_key_includes_pipeline_version() {
+        let identity = source_identity_from_parts("/Volumes/NAS/source.mkv", 1024, 1_778_000);
+
+        assert!(build_preview_source_identity_key(&identity).starts_with(PREVIEW_CACHE_VERSION));
+    }
+
+    #[test]
     fn preview_attempts_retry_copy_with_transcode_and_video_only_fallback() {
         assert_eq!(
             build_preview_attempts(PreviewStrategy::CopyAll, true, false),
@@ -1632,6 +1641,29 @@ mod tests {
         assert_ne!(
             original_key,
             build_preview_source_identity_key(&changed_mtime)
+        );
+    }
+
+    #[test]
+    fn preview_output_path_uses_full_identity_hash() {
+        let temp_dir = std::path::Path::new("mediaflow_preview");
+        let first = source_identity_from_parts("/Volumes/One/source.mkv", 1024, 1_778_000);
+        let second = source_identity_from_parts("/Volumes/Two/source.mkv", 2048, 1_778_000);
+
+        let first_path = build_preview_output_path(temp_dir, &first.path, &first);
+        let second_path = build_preview_output_path(temp_dir, &second.path, &second);
+        let first_hash = format!(
+            "{:016x}",
+            crate::shared::hash::stable_hash64(&build_preview_source_identity_key(&first))
+        );
+
+        assert_ne!(first_path, second_path);
+        assert_eq!(first_hash.len(), 16);
+        assert!(
+            first_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(&format!("_{}.mp4", first_hash)))
         );
     }
 

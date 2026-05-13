@@ -83,7 +83,8 @@ export function summarizeOcrFiles(files: OcrVideoFile[]): VideoOcrFileSummary {
       transcodingCount += 1;
     }
 
-    if (file.ocrVersions.length > 0 && !isOcrActiveStatus(file.status)) {
+    const isRetryableStatus = file.status !== 'scanning' && !isOcrActiveStatus(file.status);
+    if (file.ocrVersions.length > 0 && isRetryableStatus) {
       retryTargets.push(file);
       if (!getLatestRawVersion(file)) {
         retryAllMissingRawCount += 1;

@@ -59,6 +59,7 @@
   $effect(() => {
     if (!open) {
       clearDeferredVersionLoad();
+      previewCache.clear();
       versionsLoading = false;
       loadedVersions = [];
       currentVersionIndex = 0;
@@ -82,6 +83,7 @@
 
     lastVersionLoadKey = loadKey;
     clearDeferredVersionLoad();
+    previewCache.clear();
     versionsLoading = true;
     loadedVersions = [];
     currentVersionIndex = 0;

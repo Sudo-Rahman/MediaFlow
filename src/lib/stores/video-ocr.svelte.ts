@@ -335,19 +335,6 @@ export const videoOcrStore = {
     this.addLog('info', 'Preview preparation cancelled', fileId);
   },
 
-  failTranscoding(fileId: string, error: string) {
-    videoFiles = videoFiles.map(f =>
-      f.id === fileId ? {
-        ...f,
-        status: 'error' as const,
-        isTranscoding: false,
-        error,
-        transcodingCodec: undefined,
-      } : f
-    );
-    this.addLog('error', `Transcoding failed: ${error}`, fileId);
-  },
-
   // -------------------------------------------------------------------------
   // Actions - OCR Region
   // -------------------------------------------------------------------------

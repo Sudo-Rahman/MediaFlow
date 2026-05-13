@@ -90,6 +90,15 @@ describe('OCR result dialog state', () => {
         createVersion('ocr-v-2', '2026-05-12T17:05:00.000Z'),
       ],
     }))).not.toBe(initialKey);
+    expect(buildOcrResultVersionLoadKey(createFile({
+      ocrVersions: [{
+        ...file.ocrVersions[0],
+        finalSubtitles: [{
+          ...file.ocrVersions[0].finalSubtitles[0],
+          text: 'Updated subtitle text',
+        }],
+      }],
+    }))).not.toBe(initialKey);
   });
 
   it('creates a lightweight version snapshot without mutating the source versions', () => {

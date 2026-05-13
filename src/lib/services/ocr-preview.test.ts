@@ -113,6 +113,7 @@ describe('OCR preview cache reuse', () => {
     oldVersion.previewVersion = 'ocr-preview-v1-always-transcode';
 
     await expect(getReusableOcrPreview('/Volumes/NAS/source.mkv', oldVersion)).resolves.toBeNull();
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 
   it('rejects cached preview paths that differ from the backend cache path', async () => {

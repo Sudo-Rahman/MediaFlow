@@ -40,7 +40,6 @@
     VideoOcrWorkspace,
   } from '$lib/components/video-ocr';
   import {
-    getLatestRawVersion,
     isOcrActiveStatus,
     processVideoOcrFile,
     summarizeOcrFiles,
@@ -75,6 +74,7 @@
   const cancelledPreviewFileIds = new Set<string>();
   const previewPlaybackFallbackFileIds = new Set<string>();
   const filePreparationQueue = createAsyncTaskQueue(FILE_PREPARATION_CONCURRENCY);
+  const persistenceQueues = new Map<string, Promise<void>>();
 
   const selectedFile = $derived(videoOcrStore.selectedFile ?? null);
   const resultDialogFile = $derived(
@@ -291,28 +291,48 @@
   });
 
   async function persistFileData(fileId: string): Promise<boolean> {
-    const file = getFreshFile(fileId);
-    if (!file) {
+    const initialFile = getFreshFile(fileId);
+    if (!initialFile) {
       return false;
     }
 
-    const existingData = await loadOcrData(file.path);
-    const now = new Date().toISOString();
+    const videoPath = initialFile.path;
+    let saved = false;
+    const previous = persistenceQueues.get(videoPath) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(async () => {
+      const existingData = await loadOcrData(videoPath);
+      const latestFile = getFreshFile(fileId);
+      if (!latestFile || latestFile.path !== videoPath) {
+        saved = false;
+        return;
+      }
 
-    const payload: VideoOcrPersistenceData = {
-      version: 1,
-      videoPath: file.path,
-      previewPath: file.previewPath,
-      previewSourceIdentity: file.previewSourceIdentity,
-      previewVersion: file.previewVersion,
-      ocrRegion: file.ocrRegion,
-      ocrRegionMode: file.ocrRegionMode,
-      ocrVersions: file.ocrVersions,
-      createdAt: existingData?.createdAt ?? now,
-      updatedAt: now,
-    };
+      const now = new Date().toISOString();
+      const payload: VideoOcrPersistenceData = {
+        version: 1,
+        videoPath,
+        previewPath: latestFile.previewPath,
+        previewSourceIdentity: latestFile.previewSourceIdentity,
+        previewVersion: latestFile.previewVersion,
+        ocrRegion: latestFile.ocrRegion,
+        ocrRegionMode: latestFile.ocrRegionMode,
+        ocrVersions: latestFile.ocrVersions,
+        createdAt: existingData?.createdAt ?? now,
+        updatedAt: now,
+      };
 
-    return saveOcrData(file.path, payload);
+      saved = await saveOcrData(videoPath, payload);
+    });
+
+    persistenceQueues.set(videoPath, next);
+    try {
+      await next;
+      return saved;
+    } finally {
+      if (persistenceQueues.get(videoPath) === next) {
+        persistenceQueues.delete(videoPath);
+      }
+    }
   }
 
   async function persistGlobalRegionForLinkedFiles(): Promise<void> {
@@ -501,6 +521,10 @@
     file: OcrVideoFile,
     options: { forceFullTranscode?: boolean } = {},
   ): Promise<boolean> {
+    if (activePreviewFileIds.has(file.id)) {
+      return false;
+    }
+
     try {
       if (isDestroyed || !getFreshFile(file.id)) {
         return false;
@@ -577,6 +601,11 @@
       return;
     }
 
+    if (previewPlaybackFallbackFileIds.has(file.id)) {
+      return;
+    }
+    previewPlaybackFallbackFileIds.add(file.id);
+
     try {
       await invalidateOcrPreview(file.path);
     } catch (error) {
@@ -592,7 +621,6 @@
       return;
     }
 
-    const alreadyRetried = previewPlaybackFallbackFileIds.has(file.id);
     videoOcrStore.updateFile(file.id, {
       previewPath: undefined,
       previewSourceIdentity: undefined,
@@ -603,16 +631,11 @@
     videoOcrStore.addLog('warning', `Generated preview playback error: ${reason}`, file.id);
     await persistFileData(file.id);
 
-    if (alreadyRetried) {
-      return;
-    }
-
     const current = getFreshFile(file.id);
     if (!current) {
       return;
     }
 
-    previewPlaybackFallbackFileIds.add(file.id);
     videoOcrStore.addLog('info', 'Retrying preview with full transcode fallback', file.id);
     await preparePreviewForFile(current, { forceFullTranscode: true });
   }

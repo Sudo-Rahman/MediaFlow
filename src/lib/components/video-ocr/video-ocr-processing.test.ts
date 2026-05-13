@@ -85,6 +85,19 @@ describe('video OCR file summary', () => {
     expect(summary.transcodingCount).toBe(1);
   });
 
+  it('does not retry restored versions while a file is still scanning', () => {
+    const summary = summarizeOcrFiles([
+      videoFile({
+        id: 'scanning-with-version',
+        status: 'scanning',
+        ocrVersions: [ocrVersion()],
+      }),
+    ]);
+
+    expect(summary.retryTargets).toEqual([]);
+    expect(summary.retryAllMissingRawCount).toBe(0);
+  });
+
   it('runs OCR pipeline on the original source path instead of the generated preview path', async () => {
     invokeMock.mockResolvedValueOnce({
       rawOcr: [],

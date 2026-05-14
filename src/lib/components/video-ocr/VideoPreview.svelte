@@ -37,8 +37,8 @@
     class: className = '',
   }: VideoPreviewProps = $props();
 
-  let videoEl: HTMLVideoElement | undefined = $state();
-  let containerEl: HTMLElement | undefined = $state();
+  let videoEl = $state<HTMLVideoElement | null>(null);
+  let containerEl = $state<HTMLElement | null>(null);
   let currentTimesByFileId = $state.raw<Record<string, number>>({});
   let isDrawingZone = $state(false);
   let drawingStartTimeMs = $state(0);

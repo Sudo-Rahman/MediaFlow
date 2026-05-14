@@ -415,6 +415,9 @@
       previewSourceIdentity: cachedPreview.sourceIdentity,
       previewVersion: cachedPreview.previewVersion,
       previewError: undefined,
+      isTranscoding: false,
+      transcodingProgress: 100,
+      transcodingCodec: undefined,
       status: (persisted?.ocrVersions.length ?? 0) > 0 ? 'completed' : 'ready',
     });
     videoOcrStore.addLog('info', 'Loaded cached preview video', file.id);

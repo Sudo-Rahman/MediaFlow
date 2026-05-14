@@ -5,23 +5,37 @@
   import { cn } from '$lib/utils';
   import { Button } from '$lib/components/ui/button';
   import * as ContextMenu from '$lib/components/ui/context-menu';
-  import { Tooltip, TooltipContent, TooltipTrigger } from '$lib/components/ui/tooltip';
   import SubtitleOverlay from './SubtitleOverlay.svelte';
   import RegionSelector from './RegionSelector.svelte';
-  import OcrZoneContextMenu from './OcrZoneContextMenu.svelte';
   import LiveOcrHoverCard from './LiveOcrHoverCard.svelte';
+
+  interface VideoSeekRequest {
+    fileId: string;
+    timeMs: number;
+    requestId: number;
+  }
 
   interface VideoPreviewProps {
     file?: OcrVideoFile;
     liveDetections?: OcrZoneFrame[];
     showSubtitles?: boolean;
     suspendPlayback?: boolean;
+    seekRequest?: VideoSeekRequest | null;
     onTimeChange?: (timeMs: number) => void;
     onAddSegmentFromRegion?: (region: OcrRegion, startTimeMs: number, endTimeMs: number) => void | Promise<void>;
+    onUpdateZoneRegion?: (segmentId: string, zoneId: string, region: OcrRegion) => void | Promise<void>;
     onSetZoneRole?: (segmentId: string, zoneId: string, role: OcrZoneRole) => void | Promise<void>;
     onDeleteZone?: (segmentId: string, zoneId: string) => void | Promise<void>;
     onPlaybackError?: (fileId: string, reason: string) => void | Promise<void>;
     class?: string;
+  }
+
+  interface VisibleZoneEntry {
+    segmentId: string;
+    zoneId: string;
+    role: OcrZoneRole;
+    region: OcrRegion;
+    label: string;
   }
 
   let {
@@ -29,8 +43,10 @@
     liveDetections = [],
     showSubtitles = true,
     suspendPlayback = false,
+    seekRequest = null,
     onTimeChange,
     onAddSegmentFromRegion,
+    onUpdateZoneRegion,
     onSetZoneRole,
     onDeleteZone,
     onPlaybackError,
@@ -43,7 +59,11 @@
   let isDrawingZone = $state(false);
   let drawingStartTimeMs = $state(0);
   let drawingRegion = $state<OcrRegion | undefined>();
+  let editingZone = $state<{ segmentId: string; zoneId: string } | null>(null);
+  let editingRegion = $state<OcrRegion | undefined>();
+  let contextZone = $state<VisibleZoneEntry | undefined>();
   let resumePlayback = $state(false);
+  let lastAppliedSeekRequestId = $state<number | null>(null);
   
   // Video bounds within container (for letterboxed videos)
   // These are relative values (0-1) within the container
@@ -94,6 +114,8 @@
   });
 
   const currentTime = $derived(file ? currentTimesByFileId[file.id] ?? 0 : 0);
+  const isEditingZone = $derived(editingZone !== null);
+  const activeRegion = $derived(isEditingZone ? editingRegion : drawingRegion);
 
   // Get video source URL
   const videoSrc = $derived(
@@ -120,7 +142,23 @@
       }));
     });
   });
-  const shouldShowZoneHint = $derived(!!file && !isDrawingZone);
+  const shouldShowZoneHint = $derived(!!file && !isDrawingZone && !isEditingZone && visibleZoneEntries.length === 0);
+
+  $effect(() => {
+    if (!videoEl || !file || !seekRequest || seekRequest.fileId !== file.id) {
+      return;
+    }
+
+    if (seekRequest.requestId === lastAppliedSeekRequestId) {
+      return;
+    }
+
+    lastAppliedSeekRequestId = seekRequest.requestId;
+    const nextTimeSeconds = Math.max(0, seekRequest.timeMs / 1000);
+    videoEl.currentTime = nextTimeSeconds;
+    currentTimesByFileId = { ...currentTimesByFileId, [file.id]: nextTimeSeconds };
+    onTimeChange?.(Math.round(seekRequest.timeMs));
+  });
 
   function findSubtitleAtTime(subtitles: OcrSubtitle[], timeMs: number): OcrSubtitle | undefined {
     let left = 0;
@@ -202,6 +240,8 @@
 
     drawingStartTimeMs = Math.round(videoEl.currentTime * 1000);
     drawingRegion = undefined;
+    editingZone = null;
+    editingRegion = undefined;
     isDrawingZone = true;
 
     if (!videoEl.paused) {
@@ -209,7 +249,29 @@
     }
   }
 
-  function handleDrawingCommit(region: OcrRegion): void {
+  function beginZoneEditing(entry: VisibleZoneEntry): void {
+    if (!file || !videoEl) {
+      return;
+    }
+
+    isDrawingZone = false;
+    drawingRegion = undefined;
+    editingZone = { segmentId: entry.segmentId, zoneId: entry.zoneId };
+    editingRegion = { ...entry.region };
+
+    if (!videoEl.paused) {
+      videoEl.pause();
+    }
+  }
+
+  function handleRegionCommit(region: OcrRegion): void {
+    if (editingZone) {
+      void onUpdateZoneRegion?.(editingZone.segmentId, editingZone.zoneId, region);
+      editingZone = null;
+      editingRegion = undefined;
+      return;
+    }
+
     if (!file || !onAddSegmentFromRegion) {
       isDrawingZone = false;
       drawingRegion = undefined;
@@ -222,9 +284,11 @@
     drawingRegion = undefined;
   }
 
-  function cancelZoneDrawing(): void {
+  function cancelRegionSelection(): void {
     isDrawingZone = false;
     drawingRegion = undefined;
+    editingZone = null;
+    editingRegion = undefined;
   }
   
   function updateVideoBounds() {
@@ -273,6 +337,55 @@
 
   function handleDeleteZone(segmentId: string, zoneId: string): void {
     void onDeleteZone?.(segmentId, zoneId);
+    if (editingZone?.segmentId === segmentId && editingZone.zoneId === zoneId) {
+      editingZone = null;
+      editingRegion = undefined;
+    }
+  }
+
+  function videoPointFromEvent(event: MouseEvent): { x: number; y: number } | null {
+    if (!containerEl) {
+      return null;
+    }
+
+    const rect = containerEl.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0 || videoBounds.width <= 0 || videoBounds.height <= 0) {
+      return null;
+    }
+
+    const containerX = (event.clientX - rect.left) / rect.width;
+    const containerY = (event.clientY - rect.top) / rect.height;
+    if (
+      containerX < videoBounds.x
+      || containerX > videoBounds.x + videoBounds.width
+      || containerY < videoBounds.y
+      || containerY > videoBounds.y + videoBounds.height
+    ) {
+      return null;
+    }
+
+    return {
+      x: (containerX - videoBounds.x) / videoBounds.width,
+      y: (containerY - videoBounds.y) / videoBounds.height,
+    };
+  }
+
+  function findZoneAtEvent(event: MouseEvent): VisibleZoneEntry | undefined {
+    const point = videoPointFromEvent(event);
+    if (!point) {
+      return undefined;
+    }
+
+    return [...visibleZoneEntries].reverse().find((entry) => (
+      point.x >= entry.region.x
+      && point.x <= entry.region.x + entry.region.width
+      && point.y >= entry.region.y
+      && point.y <= entry.region.y + entry.region.height
+    ));
+  }
+
+  function handlePreviewContextMenu(event: MouseEvent): void {
+    contextZone = findZoneAtEvent(event);
   }
 
   function regionToContainerStyle(region: OcrRegion): string {
@@ -286,7 +399,7 @@
 
   function zoneClass(role: OcrZoneRole): string {
     return cn(
-      'absolute rounded-sm border-2 text-left shadow-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background',
+      'pointer-events-none absolute rounded-sm border-2 text-left shadow-sm outline-none transition-colors',
       role === 'main_subtitle'
         ? 'border-sky-400/80 bg-sky-500/15 hover:bg-sky-500/20'
         : 'border-amber-400/80 bg-amber-500/15 hover:bg-amber-500/20',
@@ -305,13 +418,14 @@
       <ContextMenu.Trigger
         bind:ref={containerEl}
         class="relative bg-black rounded-lg overflow-hidden flex-1 min-h-0"
+        oncontextmenu={handlePreviewContextMenu}
       >
       <!-- svelte-ignore a11y_media_has_caption -->
       <video
         bind:this={videoEl}
         src={videoSrc}
         class="w-full h-full object-contain"
-        controls={!isDrawingZone}
+        controls={!isDrawingZone && !isEditingZone}
         ontimeupdate={handleTimeUpdate}
         onloadedmetadata={updateVideoBounds}
         onresize={updateVideoBounds}
@@ -324,27 +438,17 @@
         <SubtitleOverlay subtitle={currentSubtitle} />
       {/if}
 
-      {#if !isDrawingZone}
+      {#if !isDrawingZone && !isEditingZone}
         {#each visibleZoneEntries as entry (`${entry.segmentId}:${entry.zoneId}`)}
-          <OcrZoneContextMenu
-            segmentId={entry.segmentId}
-            zoneId={entry.zoneId}
-            role={entry.role}
-            onSetRole={handleZoneRole}
-            onDeleteZone={handleDeleteZone}
+          <div
+            class={zoneClass(entry.role)}
+            style={regionToContainerStyle(entry.region)}
+            aria-hidden="true"
           >
-            <button
-              type="button"
-              class={zoneClass(entry.role)}
-              style={regionToContainerStyle(entry.region)}
-              aria-label={`${roleLabel(entry.role)} OCR zone`}
-              title={`${roleLabel(entry.role)}: ${entry.label}`}
-            >
-              <span class="absolute left-1 top-1 rounded-sm bg-background/85 px-1.5 py-0.5 text-[10px] font-medium text-foreground shadow-sm">
-                {roleLabel(entry.role)}
-              </span>
-            </button>
-          </OcrZoneContextMenu>
+            <span class="absolute left-1 top-1 rounded-sm bg-background/85 px-1.5 py-0.5 text-[10px] font-medium text-foreground shadow-sm">
+              {roleLabel(entry.role)}
+            </span>
+          </div>
         {/each}
       {/if}
 
@@ -355,35 +459,33 @@
       {/if}
 
       {#if shouldShowZoneHint}
-        <Tooltip>
-          <TooltipTrigger>
-            <span class="absolute bottom-3 left-3 rounded bg-black/70 px-2 py-1 text-xs text-white shadow-sm">
-              Right-click to add OCR zones
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>Use the current playback time as the segment start.</p>
-          </TooltipContent>
-        </Tooltip>
+        <span class="pointer-events-none absolute left-3 top-3 rounded bg-black/70 px-2 py-1 text-xs text-white shadow-sm">
+          Right-click to add OCR zones
+        </span>
       {/if}
 
       <!-- Region selector overlay -->
-      {#if isDrawingZone}
+      {#if isDrawingZone || isEditingZone}
         <RegionSelector
-          region={drawingRegion}
+          region={activeRegion}
           {videoBounds}
+          allowCreate={isDrawingZone}
           onchange={(region) => {
-            drawingRegion = region;
+            if (isEditingZone) {
+              editingRegion = region;
+            } else {
+              drawingRegion = region;
+            }
           }}
-          oncommit={handleDrawingCommit}
-          oncancel={cancelZoneDrawing}
+          oncommit={handleRegionCommit}
+          oncancel={cancelRegionSelection}
         />
         <div class="absolute right-3 top-3">
           <Button
             type="button"
             variant="secondary"
             size="sm"
-            onclick={cancelZoneDrawing}
+            onclick={cancelRegionSelection}
           >
             Cancel
           </Button>
@@ -391,9 +493,33 @@
       {/if}
       </ContextMenu.Trigger>
       <ContextMenu.Content class="w-64">
-        <ContextMenu.Item onclick={beginZoneDrawing}>
-          Add OCR zone from current time
-        </ContextMenu.Item>
+        {#if contextZone}
+          {@const menuZone = contextZone}
+          <ContextMenu.Item onclick={() => beginZoneEditing(menuZone)}>
+            Modify zone
+          </ContextMenu.Item>
+          {#if menuZone.role !== 'main_subtitle'}
+            <ContextMenu.Item onclick={() => handleZoneRole(menuZone.segmentId, menuZone.zoneId, 'main_subtitle')}>
+              Set as Main subtitle
+            </ContextMenu.Item>
+          {/if}
+          {#if menuZone.role !== 'on_screen_text'}
+            <ContextMenu.Item onclick={() => handleZoneRole(menuZone.segmentId, menuZone.zoneId, 'on_screen_text')}>
+              Set as On-screen text
+            </ContextMenu.Item>
+          {/if}
+          <ContextMenu.Separator />
+          <ContextMenu.Item
+            variant="destructive"
+            onclick={() => handleDeleteZone(menuZone.segmentId, menuZone.zoneId)}
+          >
+            Delete zone
+          </ContextMenu.Item>
+        {:else}
+          <ContextMenu.Item onclick={beginZoneDrawing}>
+            Add OCR zone from current time
+          </ContextMenu.Item>
+        {/if}
       </ContextMenu.Content>
     </ContextMenu.Root>
   {:else if file}

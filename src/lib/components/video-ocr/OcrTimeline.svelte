@@ -13,6 +13,7 @@
     selectedSegmentId?: string | null;
     selectedZoneId?: string | null;
     onSelect?: (segmentId: string, zoneId: string) => void;
+    onSeek?: (timeMs: number) => void;
     onSetRole?: (segmentId: string, zoneId: string, role: OcrZoneRole) => void;
     onDeleteZone?: (segmentId: string, zoneId: string) => void;
     onTrimSegment?: (segmentId: string, startTimeMs: number, endTimeMs: number) => void;
@@ -34,6 +35,16 @@
     endTimeMs: number;
   }
 
+  type TimelineDrag =
+    | { type: 'seek'; trackEl: HTMLElement }
+    | {
+        type: 'trim-start' | 'trim-end';
+        trackEl: HTMLElement;
+        segmentId: string;
+        startTimeMs: number;
+        endTimeMs: number;
+      };
+
   let {
     selection,
     durationMs,
@@ -41,9 +52,13 @@
     selectedSegmentId = null,
     selectedZoneId = null,
     onSelect,
+    onSeek,
     onSetRole,
     onDeleteZone,
+    onTrimSegment,
   }: OcrTimelineProps = $props();
+
+  let activeDrag: TimelineDrag | null = null;
 
   const roles: RoleConfig[] = [
     {
@@ -89,6 +104,117 @@
     const seconds = totalSeconds % 60;
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   }
+
+  function timeFromPointer(event: PointerEvent, trackEl: HTMLElement): number {
+    const rect = trackEl.getBoundingClientRect();
+    const ratio = rect.width > 0 ? (event.clientX - rect.left) / rect.width : 0;
+    return Math.round(Math.max(0, Math.min(1, ratio)) * safeDurationMs);
+  }
+
+  function startSeek(event: PointerEvent): void {
+    if (event.button !== 0 || !(event.currentTarget instanceof HTMLElement)) {
+      return;
+    }
+
+    const currentEl = event.currentTarget;
+    const trackEl = currentEl.matches('[data-timeline-track="true"]')
+      ? currentEl
+      : currentEl.closest('[data-timeline-track="true"]');
+    if (!(trackEl instanceof HTMLElement)) {
+      return;
+    }
+
+    const target = event.target instanceof Element ? event.target : null;
+    if (currentEl === trackEl && target?.closest('[data-timeline-control="true"]')) {
+      return;
+    }
+
+    event.preventDefault();
+    activeDrag = { type: 'seek', trackEl };
+    onSeek?.(timeFromPointer(event, trackEl));
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', stopDrag, { once: true });
+  }
+
+  function startTrim(event: PointerEvent, block: RoleBlock, edge: 'start' | 'end'): void {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const trackEl = event.currentTarget instanceof HTMLElement
+      ? event.currentTarget.closest('[data-timeline-track="true"]')
+      : null;
+    if (!(trackEl instanceof HTMLElement)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    activeDrag = {
+      type: edge === 'start' ? 'trim-start' : 'trim-end',
+      trackEl,
+      segmentId: block.segmentId,
+      startTimeMs: block.startTimeMs,
+      endTimeMs: block.endTimeMs,
+    };
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', stopDrag, { once: true });
+  }
+
+  function handlePointerMove(event: PointerEvent): void {
+    if (!activeDrag) {
+      return;
+    }
+
+    const timeMs = timeFromPointer(event, activeDrag.trackEl);
+    if (activeDrag.type === 'seek') {
+      onSeek?.(timeMs);
+      return;
+    }
+
+    if (activeDrag.type === 'trim-start') {
+      const nextStartTimeMs = Math.max(0, Math.min(timeMs, activeDrag.endTimeMs - 1));
+      onTrimSegment?.(activeDrag.segmentId, nextStartTimeMs, activeDrag.endTimeMs);
+      onSeek?.(nextStartTimeMs);
+      return;
+    }
+
+    const nextEndTimeMs = Math.max(activeDrag.startTimeMs + 1, Math.min(timeMs, safeDurationMs));
+    onTrimSegment?.(activeDrag.segmentId, activeDrag.startTimeMs, nextEndTimeMs);
+    onSeek?.(nextEndTimeMs);
+  }
+
+  function stopDrag(): void {
+    activeDrag = null;
+    window.removeEventListener('pointermove', handlePointerMove);
+  }
+
+  function handleTrackKeydown(event: KeyboardEvent): void {
+    if (!onSeek) {
+      return;
+    }
+
+    if (event.key === 'Home') {
+      event.preventDefault();
+      onSeek(0);
+      return;
+    }
+
+    if (event.key === 'End') {
+      event.preventDefault();
+      onSeek(safeDurationMs);
+      return;
+    }
+
+    const stepMs = event.shiftKey ? 5_000 : 1_000;
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      onSeek(Math.max(0, currentTimeMs - stepMs));
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      onSeek(Math.min(safeDurationMs, currentTimeMs + stepMs));
+    }
+  }
 </script>
 
 <Card class="min-h-0 overflow-hidden">
@@ -110,7 +236,16 @@
         <ScrollArea class="h-24 rounded-md border bg-muted/20" scrollbarYClasses="w-2">
           <div
             class="relative min-w-full"
+            data-timeline-track="true"
+            role="slider"
+            tabindex="0"
+            aria-label={`${roleConfig.label} playback position`}
+            aria-valuemin="0"
+            aria-valuemax={safeDurationMs}
+            aria-valuenow={Math.round(Math.max(0, Math.min(safeDurationMs, currentTimeMs)))}
             style={`height: ${Math.max(72, laneCount * 30 + 16)}px`}
+            onpointerdown={startSeek}
+            onkeydown={handleTrackKeydown}
           >
             <div class="absolute left-0 right-0 top-1/2 h-px bg-border"></div>
             {#if blocks.length === 0}
@@ -125,6 +260,7 @@
                 <ContextMenu.Trigger>
                   <button
                     type="button"
+                    data-timeline-control="true"
                     class={cn(
                       'absolute h-6 overflow-hidden rounded-md border px-2 text-left text-xs font-medium shadow-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                       roleConfig.blockClass,
@@ -135,16 +271,32 @@
                     title={`${block.label} ${formatTime(block.startTimeMs)}-${formatTime(block.endTimeMs)}`}
                     onclick={() => onSelect?.(block.segmentId, block.zoneId)}
                   >
+                    <span
+                      data-timeline-control="true"
+                      class="absolute inset-y-0 left-0 w-2 cursor-ew-resize bg-foreground/15 opacity-0 transition-opacity hover:opacity-100"
+                      role="presentation"
+                      onpointerdown={(event) => startTrim(event, block, 'start')}
+                    ></span>
                     <span class="block truncate">{block.label}</span>
+                    <span
+                      data-timeline-control="true"
+                      class="absolute inset-y-0 right-0 w-2 cursor-ew-resize bg-foreground/15 opacity-0 transition-opacity hover:opacity-100"
+                      role="presentation"
+                      onpointerdown={(event) => startTrim(event, block, 'end')}
+                    ></span>
                   </button>
                 </ContextMenu.Trigger>
                 <ContextMenu.Content>
-                  <ContextMenu.Item onclick={() => onSetRole?.(block.segmentId, block.zoneId, 'main_subtitle')}>
-                    Set as Main subtitle
-                  </ContextMenu.Item>
-                  <ContextMenu.Item onclick={() => onSetRole?.(block.segmentId, block.zoneId, 'on_screen_text')}>
-                    Set as On-screen text
-                  </ContextMenu.Item>
+                  {#if roleConfig.role !== 'main_subtitle'}
+                    <ContextMenu.Item onclick={() => onSetRole?.(block.segmentId, block.zoneId, 'main_subtitle')}>
+                      Set as Main subtitle
+                    </ContextMenu.Item>
+                  {/if}
+                  {#if roleConfig.role !== 'on_screen_text'}
+                    <ContextMenu.Item onclick={() => onSetRole?.(block.segmentId, block.zoneId, 'on_screen_text')}>
+                      Set as On-screen text
+                    </ContextMenu.Item>
+                  {/if}
                   <ContextMenu.Separator />
                   <ContextMenu.Item
                     variant="destructive"
@@ -156,10 +308,19 @@
               </ContextMenu.Root>
             {/each}
             <div
-              class="absolute bottom-1 top-1 w-px bg-foreground shadow-sm"
+              class="pointer-events-none absolute bottom-1 top-1 w-px bg-foreground shadow-sm"
               style={`left: ${percentage(currentTimeMs)}%`}
               aria-label="Current playback position"
             ></div>
+            <button
+              type="button"
+              data-timeline-control="true"
+              class="absolute bottom-1 top-1 w-3 -translate-x-1/2 cursor-grab rounded-sm border border-foreground/20 bg-foreground/10 shadow-sm active:cursor-grabbing"
+              style={`left: ${percentage(currentTimeMs)}%`}
+              aria-label="Drag playback position"
+              title="Drag playback position"
+              onpointerdown={startSeek}
+            ></button>
           </div>
         </ScrollArea>
       </section>

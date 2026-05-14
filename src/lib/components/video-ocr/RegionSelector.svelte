@@ -13,6 +13,7 @@
   interface RegionSelectorProps {
     region?: OcrRegion;
     videoBounds?: VideoBounds;
+    allowCreate?: boolean;
     onchange?: (region: OcrRegion | undefined) => void;
     oncommit?: (region: OcrRegion) => void;
     oncancel?: () => void;
@@ -21,12 +22,13 @@
   let {
     region,
     videoBounds = { x: 0, y: 0, width: 1, height: 1 },
+    allowCreate = true,
     onchange,
     oncommit,
     oncancel,
   }: RegionSelectorProps = $props();
 
-  let containerEl: HTMLButtonElement | undefined = $state();
+  let containerEl = $state<HTMLButtonElement | null>(null);
   let dragMode = $state<DragMode>('none');
   let startPos = $state({ x: 0, y: 0 });
   let startRegion = $state<OcrRegion>({ x: 0, y: 0, width: 0, height: 0 });
@@ -93,6 +95,10 @@
         e.preventDefault();
         return;
       }
+    }
+
+    if (!allowCreate) {
+      return;
     }
 
     // Start creating new region
@@ -315,6 +321,8 @@
   <div class="absolute top-4 left-1/2 -translate-x-1/2 bg-black/70 text-white px-3 py-1.5 rounded text-sm pointer-events-none">
     {#if region && region.width > 0}
       Drag region to move, use handles to resize
+    {:else if !allowCreate}
+      Select an existing zone to edit
     {:else}
       Click and drag to select OCR region
     {/if}

@@ -7,6 +7,7 @@ import type {
   OcrVideoFile,
   OcrFileStatus,
   OcrConfig,
+  OcrRegion,
   OcrSegment,
   OcrZoneRole,
   OcrVersion,
@@ -19,7 +20,7 @@ import type {
   VideoOcrSelection,
 } from '$lib/types';
 import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
-import { createDefaultVideoOcrSelection } from '$lib/utils';
+import { clampRegion, createDefaultVideoOcrSelection } from '$lib/utils';
 
 // ============================================================================
 // STATE
@@ -458,6 +459,66 @@ export const videoOcrStore = {
               })),
             };
           }),
+        },
+      };
+    });
+  },
+
+  setOcrZoneRegion(fileId: string, segmentId: string, zoneId: string, region: OcrRegion) {
+    const nextRegion = clampRegion(region);
+    videoFiles = videoFiles.map(f => {
+      if (f.id !== fileId) {
+        return f;
+      }
+
+      return {
+        ...f,
+        ocrSelection: {
+          segments: f.ocrSelection.segments.map((segment) => {
+            if (segment.id !== segmentId) {
+              return cloneSegment(segment);
+            }
+
+            return {
+              ...segment,
+              zones: segment.zones.map((zone) => ({
+                ...zone,
+                region: zone.id === zoneId ? { ...nextRegion } : { ...zone.region },
+              })),
+            };
+          }),
+        },
+      };
+    });
+  },
+
+  trimOcrSegment(fileId: string, segmentId: string, startTimeMs: number, endTimeMs: number, durationMs: number) {
+    const safeDurationMs = Number.isFinite(durationMs) && durationMs > 0 ? Math.round(durationMs) : 1;
+    const safeStartTimeMs = Number.isFinite(startTimeMs)
+      ? Math.max(0, Math.min(Math.round(startTimeMs), safeDurationMs - 1))
+      : 0;
+    const safeEndTimeMs = Number.isFinite(endTimeMs)
+      ? Math.max(safeStartTimeMs + 1, Math.min(Math.round(endTimeMs), safeDurationMs))
+      : safeStartTimeMs + 1;
+
+    videoFiles = videoFiles.map(f => {
+      if (f.id !== fileId) {
+        return f;
+      }
+
+      return {
+        ...f,
+        ocrSelection: {
+          segments: f.ocrSelection.segments.map((segment) => (
+            segment.id === segmentId
+              ? {
+                  ...segment,
+                  startTimeMs: safeStartTimeMs,
+                  endTimeMs: safeEndTimeMs,
+                  zones: segment.zones.map((zone) => ({ ...zone, region: { ...zone.region } })),
+                }
+              : cloneSegment(segment)
+          )),
         },
       };
     });

@@ -1023,6 +1023,21 @@
     void persistFileData(fileId);
   }
 
+  function handleUpdateZoneRegion(fileId: string, segmentId: string, zoneId: string, region: OcrRegion): void {
+    videoOcrStore.setOcrZoneRegion(fileId, segmentId, zoneId, region);
+    void persistFileData(fileId);
+  }
+
+  function handleTrimSegment(fileId: string, segmentId: string, startTimeMs: number, endTimeMs: number): void {
+    const file = getFreshFile(fileId);
+    if (!file) {
+      return;
+    }
+
+    videoOcrStore.trimOcrSegment(fileId, segmentId, startTimeMs, endTimeMs, Math.round((file.duration ?? 0) * 1000));
+    void persistFileData(fileId);
+  }
+
   function handleDeleteZone(fileId: string, segmentId: string, zoneId: string): void {
     const file = getFreshFile(fileId);
     if (!file) {
@@ -1098,8 +1113,10 @@
     logs={videoOcrStore.logs}
     {dialogsOpen}
     onAddSegmentFromRegion={handleAddSegmentFromRegion}
+    onUpdateZoneRegion={handleUpdateZoneRegion}
     onSetZoneRole={handleSetZoneRole}
     onDeleteZone={handleDeleteZone}
+    onTrimSegment={handleTrimSegment}
     onPlaybackError={handlePreviewPlaybackError}
     onClearLogs={() => videoOcrStore.clearLogs()}
   />

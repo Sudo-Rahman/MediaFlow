@@ -170,6 +170,42 @@ describe('video OCR store', () => {
     expect(updatedZone.region).toEqual(zone.region);
   });
 
+  it('updates a zone region without changing its role', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    const segment = file.ocrSelection.segments[0];
+    const zone = segment.zones[0];
+
+    videoOcrStore.setOcrZoneRole(file.id, segment.id, zone.id, 'on_screen_text');
+    videoOcrStore.setOcrZoneRegion(file.id, segment.id, zone.id, {
+      x: 0.2,
+      y: 0.3,
+      width: 0.4,
+      height: 0.2,
+    });
+
+    const updatedZone = videoOcrStore.videoFiles[0].ocrSelection.segments[0].zones[0];
+    expect(updatedZone.role).toBe('on_screen_text');
+    expect(updatedZone.region).toEqual({
+      x: 0.2,
+      y: 0.3,
+      width: 0.4,
+      height: 0.2,
+    });
+  });
+
+  it('trims an OCR segment within the video duration', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    videoOcrStore.updateFile(file.id, { duration: 120 });
+    const segment = videoOcrStore.videoFiles[0].ocrSelection.segments[0];
+
+    videoOcrStore.trimOcrSegment(file.id, segment.id, 10_500, 20_500, 120_000);
+
+    const updatedSegment = videoOcrStore.videoFiles[0].ocrSelection.segments[0];
+    expect(updatedSegment.startTimeMs).toBe(10_500);
+    expect(updatedSegment.endTimeMs).toBe(20_500);
+    expect(updatedSegment.zones[0].region).toEqual(segment.zones[0].region);
+  });
+
   it('allows OCR-ready files even when preview generation failed', () => {
     const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
 

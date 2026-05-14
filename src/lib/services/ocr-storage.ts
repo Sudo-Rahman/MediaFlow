@@ -12,6 +12,7 @@ import type {
   VideoOcrSelection,
   VideoOcrPersistenceData,
 } from '$lib/types';
+import { validateVideoOcrSelection } from '$lib/utils/ocr-selection';
 import { loadMediaflowData, saveMediaflowData } from './mediaflow-storage';
 
 const LEGACY_OCR_DATA_ERROR = 'This Video OCR data was created with an older MediaFlow version and is not supported.';
@@ -65,18 +66,34 @@ function isOcrSegment(value: unknown): value is OcrSegment {
     && value.zones.every(isOcrZone);
 }
 
+function isSemanticallyValidOcrSelection(selection: VideoOcrSelection): boolean {
+  if (selection.segments.length === 0) {
+    return false;
+  }
+
+  const maxEndTimeMs = Math.max(...selection.segments.map((segment) => segment.endTimeMs));
+  if (!Number.isFinite(maxEndTimeMs) || maxEndTimeMs <= 0) {
+    return false;
+  }
+
+  return validateVideoOcrSelection(selection, maxEndTimeMs).length === 0;
+}
+
 function isVideoOcrPersistenceData(value: unknown): value is VideoOcrPersistenceData {
   if (!isRecord(value) || 'ocrRegion' in value || 'ocrRegionMode' in value || value.version !== 2) {
     return false;
   }
 
   const selection = value.ocrSelection;
+  if (!isRecord(selection) || !Array.isArray(selection.segments) || !selection.segments.every(isOcrSegment)) {
+    return false;
+  }
+
+  const ocrSelection: VideoOcrSelection = { segments: selection.segments };
   return typeof value.videoPath === 'string'
     && typeof value.createdAt === 'string'
     && typeof value.updatedAt === 'string'
-    && isRecord(selection)
-    && Array.isArray(selection.segments)
-    && selection.segments.every(isOcrSegment)
+    && isSemanticallyValidOcrSelection(ocrSelection)
     && Array.isArray(value.ocrVersions)
     && value.ocrVersions.every(isOcrVersion);
 }

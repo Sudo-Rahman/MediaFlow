@@ -166,6 +166,99 @@ describe('OCR storage', () => {
     );
   });
 
+  it.each([
+    {
+      name: 'empty segments',
+      ocrSelection: { segments: [] },
+    },
+    {
+      name: 'segment with empty zones',
+      ocrSelection: {
+        segments: [
+          {
+            id: 'ocr-segment-1',
+            startTimeMs: 0,
+            endTimeMs: 60_000,
+            zones: [],
+          },
+        ],
+      },
+    },
+    {
+      name: 'reversed segment timing',
+      ocrSelection: {
+        segments: [
+          {
+            id: 'ocr-segment-1',
+            startTimeMs: 60_000,
+            endTimeMs: 60_000,
+            zones: [
+              {
+                id: 'ocr-zone-1',
+                role: 'main_subtitle',
+                region: { x: 0, y: 0.75, width: 1, height: 0.25 },
+              },
+            ],
+          },
+        ],
+      },
+    },
+    {
+      name: 'out-of-frame region',
+      ocrSelection: {
+        segments: [
+          {
+            id: 'ocr-segment-1',
+            startTimeMs: 0,
+            endTimeMs: 60_000,
+            zones: [
+              {
+                id: 'ocr-zone-1',
+                role: 'main_subtitle',
+                region: { x: 0.9, y: 0.75, width: 0.2, height: 0.25 },
+              },
+            ],
+          },
+        ],
+      },
+    },
+    {
+      name: 'zero-size region',
+      ocrSelection: {
+        segments: [
+          {
+            id: 'ocr-segment-1',
+            startTimeMs: 0,
+            endTimeMs: 60_000,
+            zones: [
+              {
+                id: 'ocr-zone-1',
+                role: 'main_subtitle',
+                region: { x: 0, y: 0.75, width: 0, height: 0.25 },
+              },
+            ],
+          },
+        ],
+      },
+    },
+  ])('rejects semantically invalid v2 OCR selection data: $name', async ({ ocrSelection }) => {
+    loadMediaflowDataMock.mockResolvedValueOnce({
+      version: 1,
+      videoOcr: {
+        version: 2,
+        videoPath: '/movie.mp4',
+        ocrSelection,
+        ocrVersions: [],
+        createdAt: '2026-05-14T00:00:00.000Z',
+        updatedAt: '2026-05-14T00:00:00.000Z',
+      },
+    });
+
+    await expect(loadOcrData('/movie.mp4')).rejects.toThrow(
+      'This Video OCR data was created with an older MediaFlow version and is not supported.',
+    );
+  });
+
   it('rejects legacy OCR region persistence', async () => {
     loadMediaflowDataMock.mockResolvedValueOnce({
       version: 1,

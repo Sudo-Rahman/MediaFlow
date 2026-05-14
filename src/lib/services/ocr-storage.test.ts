@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { VideoOcrPersistenceData } from '$lib/types';
+import { DEFAULT_OCR_CONFIG } from '$lib/types';
 import { createDefaultVideoOcrSelection } from '$lib/utils';
 import { loadOcrData, saveOcrData } from './ocr-storage';
 
@@ -62,6 +63,54 @@ describe('OCR storage', () => {
     const saved = saveMediaflowDataMock.mock.calls[0]?.[1] as { videoOcr?: Record<string, unknown> };
     expect(saved.videoOcr).not.toHaveProperty('ocrRegion');
     expect(saved.videoOcr).not.toHaveProperty('ocrRegionMode');
+  });
+
+  it('loads valid video OCR selection data and normalizes versions', async () => {
+    const ocrSelection = createDefaultVideoOcrSelection(60_000);
+    loadMediaflowDataMock.mockResolvedValueOnce({
+      version: 1,
+      videoOcr: {
+        version: 2,
+        videoPath: '/movie.mp4',
+        ocrSelection,
+        ocrVersions: [
+          {
+            id: 'ocr-v-1',
+            name: 'Version 1',
+            createdAt: '2026-05-14T00:00:00.000Z',
+            mode: 'full_pipeline',
+            configSnapshot: { ...DEFAULT_OCR_CONFIG, frameRate: 12 },
+            rawOcr: [],
+            finalSubtitles: [],
+          },
+        ],
+        createdAt: '2026-05-14T00:00:00.000Z',
+        updatedAt: '2026-05-14T00:00:00.000Z',
+      },
+    });
+
+    const data = await loadOcrData('/movie.mp4');
+
+    expect(data?.ocrSelection).toEqual(ocrSelection);
+    expect(data?.ocrVersions[0].rawFrameRate).toBe(12);
+  });
+
+  it('rejects malformed v2 OCR selection persistence', async () => {
+    loadMediaflowDataMock.mockResolvedValueOnce({
+      version: 1,
+      videoOcr: {
+        version: 2,
+        videoPath: '/movie.mp4',
+        ocrSelection: {},
+        ocrVersions: [],
+        createdAt: '2026-05-14T00:00:00.000Z',
+        updatedAt: '2026-05-14T00:00:00.000Z',
+      },
+    });
+
+    await expect(loadOcrData('/movie.mp4')).rejects.toThrow(
+      'This Video OCR data was created with an older MediaFlow version and is not supported.',
+    );
   });
 
   it('rejects legacy OCR region persistence', async () => {

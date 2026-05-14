@@ -16,6 +16,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function isOcrVersion(value: unknown): value is OcrVersion {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && typeof value.name === 'string'
+    && typeof value.createdAt === 'string'
+    && typeof value.mode === 'string'
+    && isRecord(value.configSnapshot)
+    && toFinitePositiveNumber(value.configSnapshot.frameRate) !== null
+    && Array.isArray(value.rawOcr)
+    && Array.isArray(value.finalSubtitles);
+}
+
+function isVideoOcrPersistenceData(value: unknown): value is VideoOcrPersistenceData {
+  if (!isRecord(value) || 'ocrRegion' in value || 'ocrRegionMode' in value || value.version !== 2) {
+    return false;
+  }
+
+  const selection = value.ocrSelection;
+  return typeof value.videoPath === 'string'
+    && typeof value.createdAt === 'string'
+    && typeof value.updatedAt === 'string'
+    && isRecord(selection)
+    && Array.isArray(selection.segments)
+    && Array.isArray(value.ocrVersions)
+    && value.ocrVersions.every(isOcrVersion);
+}
+
 function toFiniteNonNegativeNumber(value: unknown): number | null {
   const numericValue =
     typeof value === 'number'
@@ -173,17 +200,15 @@ export async function loadOcrData(videoPath: string): Promise<VideoOcrPersistenc
     return null;
   }
 
-  const videoOcr = mediaflowData.videoOcr as unknown;
-  if (!isRecord(videoOcr) || 'ocrRegion' in videoOcr || videoOcr.version !== 2 || !('ocrSelection' in videoOcr)) {
+  const videoOcr: unknown = mediaflowData.videoOcr;
+  if (!isVideoOcrPersistenceData(videoOcr)) {
     throw new Error(LEGACY_OCR_DATA_ERROR);
   }
 
-  const data = videoOcr as VideoOcrPersistenceData;
-
   return {
-    ...data,
+    ...videoOcr,
     version: 2,
-    ocrVersions: data.ocrVersions.map(normalizeOcrVersion),
+    ocrVersions: videoOcr.ocrVersions.map(normalizeOcrVersion),
   };
 }
 

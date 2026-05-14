@@ -7,8 +7,6 @@ import type {
   OcrVideoFile,
   OcrFileStatus,
   OcrConfig,
-  OcrRegion,
-  OcrRegionMode,
   OcrSegment,
   OcrZoneRole,
   OcrVersion,
@@ -19,7 +17,7 @@ import type {
   OcrPreviewSourceIdentity,
   VideoOcrSelection,
 } from '$lib/types';
-import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_REGION, DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
+import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
 import { createDefaultVideoOcrSelection } from '$lib/utils';
 
 // ============================================================================
@@ -32,7 +30,6 @@ let selectedFileId = $state<string | null>(null);
 
 // OCR configuration
 let config = $state<OcrConfig>({ ...DEFAULT_OCR_CONFIG });
-let globalRegion = $state<OcrRegion>({ ...DEFAULT_OCR_REGION });
 
 // Processing state
 let isProcessing = $state(false);
@@ -80,8 +77,6 @@ function createEmptyVideoFile(path: string, id?: string): OcrVideoFile {
     size: 0,
     status: 'pending',
     ocrSelection: createDefaultVideoOcrSelection(defaultDurationMs),
-    ocrRegion: { ...globalRegion },
-    ocrRegionMode: 'global',
     ocrVersions: [],
   };
 }
@@ -138,10 +133,6 @@ export const videoOcrStore = {
   // -------------------------------------------------------------------------
   get config() {
     return config;
-  },
-
-  get globalRegion() {
-    return { ...globalRegion };
   },
 
   // -------------------------------------------------------------------------
@@ -228,8 +219,6 @@ export const videoOcrStore = {
         ocrSelection: file.ocrSelection
           ? cloneSelection(file.ocrSelection)
           : createDefaultVideoOcrSelection(file.duration ? Math.round(file.duration * 1000) : 1),
-        ocrRegionMode: file.ocrRegionMode ?? 'global',
-        ocrRegion: file.ocrRegion ?? { ...globalRegion },
       }));
     videoFiles = [...videoFiles, ...newFiles];
 
@@ -274,7 +263,12 @@ export const videoOcrStore = {
         ? { ...updates, ocrSelection: cloneSelection(updates.ocrSelection) }
         : updates;
       const nextFile = { ...f, ...nextUpdates };
-      if (durationMs && f.ocrSelection.segments.length === 1 && f.ocrSelection.segments[0].endTimeMs === 1) {
+      if (
+        !updates.ocrSelection
+        && durationMs
+        && f.ocrSelection.segments.length === 1
+        && f.ocrSelection.segments[0].endTimeMs === 1
+      ) {
         return { ...nextFile, ocrSelection: createDefaultVideoOcrSelection(durationMs) };
       }
 
@@ -449,60 +443,6 @@ export const videoOcrStore = {
         },
       };
     });
-  },
-
-  // -------------------------------------------------------------------------
-  // Actions - OCR Region
-  // -------------------------------------------------------------------------
-  setGlobalRegion(region: OcrRegion) {
-    globalRegion = { ...region };
-    this.applyGlobalRegionToGlobalFiles();
-  },
-
-  setFileRegionMode(fileId: string, mode: OcrRegionMode) {
-    videoFiles = videoFiles.map(f => {
-      if (f.id !== fileId) {
-        return f;
-      }
-
-      if (mode === 'global') {
-        return {
-          ...f,
-          ocrRegionMode: 'global',
-          ocrRegion: { ...globalRegion },
-        };
-      }
-
-      return {
-        ...f,
-        ocrRegionMode: 'custom',
-        ocrRegion: f.ocrRegion ? { ...f.ocrRegion } : { ...globalRegion },
-      };
-    });
-  },
-
-  setFileRegionCustom(fileId: string, region: OcrRegion | undefined) {
-    videoFiles = videoFiles.map(f =>
-      f.id === fileId
-        ? { ...f, ocrRegionMode: 'custom', ocrRegion: region }
-        : f
-    );
-  },
-
-  applyGlobalRegionToGlobalFiles() {
-    videoFiles = videoFiles.map(f =>
-      f.ocrRegionMode === 'global'
-        ? { ...f, ocrRegion: { ...globalRegion } }
-        : f
-    );
-  },
-
-  setOcrRegion(fileId: string, region: OcrRegion | undefined) {
-    this.setFileRegionCustom(fileId, region);
-  },
-
-  clearOcrRegion(fileId: string) {
-    this.setFileRegionCustom(fileId, undefined);
   },
 
   // -------------------------------------------------------------------------

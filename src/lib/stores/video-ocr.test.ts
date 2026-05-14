@@ -80,6 +80,44 @@ describe('video OCR store', () => {
     expect(storedZone.role).toBe('main_subtitle');
   });
 
+  it('preserves explicit OCR selection when duration is updated at the same time', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    const segment = createOcrSegmentFromZone(10_000, 60_000, DEFAULT_MAIN_SUBTITLE_REGION);
+    const ocrSelection = { segments: [segment] };
+
+    videoOcrStore.updateFile(file.id, { duration: 120, ocrSelection });
+
+    expect(videoOcrStore.videoFiles[0].ocrSelection).toEqual(ocrSelection);
+  });
+
+  it('clones OCR selections passed through setOcrSelection', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    const ocrSelection = {
+      segments: [createOcrSegmentFromZone(0, 60_000, DEFAULT_MAIN_SUBTITLE_REGION)],
+    };
+
+    videoOcrStore.setOcrSelection(file.id, ocrSelection);
+    ocrSelection.segments[0].zones[0].region.y = 0.5;
+    ocrSelection.segments[0].zones[0].role = 'on_screen_text';
+
+    const storedZone = videoOcrStore.videoFiles[0].ocrSelection.segments[0].zones[0];
+    expect(storedZone.region.y).toBe(DEFAULT_MAIN_SUBTITLE_REGION.y);
+    expect(storedZone.role).toBe('main_subtitle');
+  });
+
+  it('clones segments passed through addOcrSegment', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    const segment = createOcrSegmentFromZone(10_000, 60_000, DEFAULT_MAIN_SUBTITLE_REGION);
+
+    videoOcrStore.addOcrSegment(file.id, segment);
+    segment.zones[0].region.y = 0.5;
+    segment.zones[0].role = 'on_screen_text';
+
+    const storedZone = videoOcrStore.videoFiles[0].ocrSelection.segments[1].zones[0];
+    expect(storedZone.region.y).toBe(DEFAULT_MAIN_SUBTITLE_REGION.y);
+    expect(storedZone.role).toBe('main_subtitle');
+  });
+
   it('changes a zone role without changing its geometry', () => {
     const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
     const segment = file.ocrSelection.segments[0];

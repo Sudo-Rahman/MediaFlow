@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { OcrLogEntry, OcrVideoFile, OcrZoneRole } from '$lib/types';
+  import type { OcrLogEntry, OcrRegion, OcrVideoFile, OcrZoneRole } from '$lib/types';
 
   import OcrLogPanel from './OcrLogPanel.svelte';
   import OcrTimeline from './OcrTimeline.svelte';
@@ -9,6 +9,12 @@
     file: OcrVideoFile | null;
     logs: OcrLogEntry[];
     dialogsOpen: boolean;
+    onAddSegmentFromRegion: (
+      fileId: string,
+      region: OcrRegion,
+      startTimeMs: number,
+      endTimeMs: number,
+    ) => void | Promise<void>;
     onSetZoneRole: (fileId: string, segmentId: string, zoneId: string, role: OcrZoneRole) => void | Promise<void>;
     onDeleteZone: (fileId: string, segmentId: string, zoneId: string) => void | Promise<void>;
     onPlaybackError: (fileId: string, reason: string) => void | Promise<void>;
@@ -19,6 +25,7 @@
     file,
     logs,
     dialogsOpen,
+    onAddSegmentFromRegion,
     onSetZoneRole,
     onDeleteZone,
     onPlaybackError,
@@ -49,6 +56,14 @@
     selectedZone = { fileId: file.id, segmentId, zoneId };
   }
 
+  function handleAddSegmentFromRegion(region: OcrRegion, startTimeMs: number, endTimeMs: number): void {
+    if (!file) {
+      return;
+    }
+
+    void onAddSegmentFromRegion(file.id, region, startTimeMs, endTimeMs);
+  }
+
   function handleSetZoneRole(segmentId: string, zoneId: string, role: OcrZoneRole): void {
     if (!file) {
       return;
@@ -75,6 +90,9 @@
     showSubtitles={!dialogsOpen}
     suspendPlayback={dialogsOpen}
     onTimeChange={handleTimeChange}
+    onAddSegmentFromRegion={handleAddSegmentFromRegion}
+    onSetZoneRole={handleSetZoneRole}
+    onDeleteZone={handleDeleteZone}
     onPlaybackError={onPlaybackError}
     class="min-h-0"
   />

@@ -15,6 +15,7 @@
     OcrConfig,
     OcrModelsStatus,
     OcrProgressEvent,
+    OcrRegion,
     OcrRetryMode,
     OcrVideoFile,
     OcrVersion,
@@ -46,6 +47,7 @@
     summarizeOcrFiles,
   } from '$lib/components/video-ocr/video-ocr-processing';
   import type { ProcessVideoOcrFileResult } from '$lib/components/video-ocr/video-ocr-processing';
+  import { createOcrSegmentFromZone } from '$lib/utils';
   import { logAndToast } from '$lib/utils/log-toast';
 
   const VIDEO_FORMATS = VIDEO_EXTENSIONS.map((ext) => ext.toUpperCase()).join(', ');
@@ -962,6 +964,35 @@
     retryDialogOpen = true;
   }
 
+  function handleAddSegmentFromRegion(
+    fileId: string,
+    region: OcrRegion,
+    startTimeMs: number,
+    endTimeMs: number,
+  ): void {
+    const file = getFreshFile(fileId) ?? selectedFile;
+    if (!file) {
+      return;
+    }
+
+    const durationMs = Math.max(1, Math.round((file.duration ?? 0) * 1000));
+    const requestedEndTimeMs = endTimeMs > startTimeMs ? endTimeMs : durationMs;
+    const segmentEndTimeMs = Math.max(1, Math.min(durationMs, requestedEndTimeMs));
+    const segmentStartTimeMs = Math.min(
+      Math.max(0, startTimeMs),
+      Math.max(0, segmentEndTimeMs - 1),
+    );
+    const segment = createOcrSegmentFromZone(
+      segmentStartTimeMs,
+      segmentEndTimeMs,
+      region,
+      'main_subtitle',
+    );
+
+    videoOcrStore.addOcrSegment(file.id, segment);
+    void persistFileData(file.id);
+  }
+
   function handleSetZoneRole(fileId: string, segmentId: string, zoneId: string, role: OcrZoneRole): void {
     videoOcrStore.setOcrZoneRole(fileId, segmentId, zoneId, role);
     void persistFileData(fileId);
@@ -1040,6 +1071,7 @@
     file={selectedFile}
     logs={videoOcrStore.logs}
     {dialogsOpen}
+    onAddSegmentFromRegion={handleAddSegmentFromRegion}
     onSetZoneRole={handleSetZoneRole}
     onDeleteZone={handleDeleteZone}
     onPlaybackError={handlePreviewPlaybackError}

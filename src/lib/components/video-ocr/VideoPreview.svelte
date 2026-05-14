@@ -1,18 +1,22 @@
 <script lang="ts">
-  import type { OcrVideoFile, OcrRegion, OcrSubtitle } from '$lib/types';
-  import { DEFAULT_OCR_REGION } from '$lib/types';
-  import { cn } from '$lib/utils';
   import { convertFileSrc } from '@tauri-apps/api/core';
-  import { Button } from '$lib/components/ui/button';
-  import { Maximize2, Minimize2, RotateCcw } from '@lucide/svelte';
+
+  import type { OcrRegion, OcrSubtitle, OcrVideoFile, OcrZoneRole } from '$lib/types';
+  import { cn } from '$lib/utils';
+  import * as ContextMenu from '$lib/components/ui/context-menu';
+  import { Tooltip, TooltipContent, TooltipTrigger } from '$lib/components/ui/tooltip';
   import SubtitleOverlay from './SubtitleOverlay.svelte';
   import RegionSelector from './RegionSelector.svelte';
+  import OcrZoneContextMenu from './OcrZoneContextMenu.svelte';
 
   interface VideoPreviewProps {
     file?: OcrVideoFile;
     showSubtitles?: boolean;
     suspendPlayback?: boolean;
     onTimeChange?: (timeMs: number) => void;
+    onAddSegmentFromRegion?: (region: OcrRegion, startTimeMs: number, endTimeMs: number) => void | Promise<void>;
+    onSetZoneRole?: (segmentId: string, zoneId: string, role: OcrZoneRole) => void | Promise<void>;
+    onDeleteZone?: (segmentId: string, zoneId: string) => void | Promise<void>;
     onPlaybackError?: (fileId: string, reason: string) => void | Promise<void>;
     class?: string;
   }
@@ -22,15 +26,19 @@
     showSubtitles = true,
     suspendPlayback = false,
     onTimeChange,
+    onAddSegmentFromRegion,
+    onSetZoneRole,
+    onDeleteZone,
     onPlaybackError,
     class: className = '',
   }: VideoPreviewProps = $props();
 
   let videoEl: HTMLVideoElement | undefined = $state();
-  let containerEl: HTMLDivElement | undefined = $state();
+  let containerEl: HTMLElement | undefined = $state();
   let currentTimesByFileId = $state.raw<Record<string, number>>({});
-  let isRegionMode = $state(false);
-  let regionsByFileId = $state.raw<Record<string, OcrRegion>>({});
+  let isDrawingZone = $state(false);
+  let drawingStartTimeMs = $state(0);
+  let drawingRegion = $state<OcrRegion | undefined>();
   let resumePlayback = $state(false);
   
   // Video bounds within container (for letterboxed videos)
@@ -82,14 +90,33 @@
   });
 
   const currentTime = $derived(file ? currentTimesByFileId[file.id] ?? 0 : 0);
-  const region = $derived(file ? regionsByFileId[file.id] ?? DEFAULT_OCR_REGION : DEFAULT_OCR_REGION);
-  const displayedRegion = $derived(region);
 
   // Get video source URL
   const videoSrc = $derived(
     file?.previewPath ? convertFileSrc(file.previewPath) : undefined
   );
   const latestSubtitles = $derived(file?.ocrVersions.at(-1)?.finalSubtitles ?? []);
+  const visibleZoneEntries = $derived.by(() => {
+    if (!file) {
+      return [];
+    }
+
+    const timeMs = Math.round(currentTime * 1000);
+    return file.ocrSelection.segments.flatMap((segment) => {
+      if (timeMs < segment.startTimeMs || timeMs > segment.endTimeMs) {
+        return [];
+      }
+
+      return segment.zones.map((zone, zoneIndex) => ({
+        segmentId: segment.id,
+        zoneId: zone.id,
+        role: zone.role,
+        region: zone.region,
+        label: zone.label ?? `Zone ${zoneIndex + 1}`,
+      }));
+    });
+  });
+  const shouldShowZoneHint = $derived(!!file && !isDrawingZone);
 
   function findSubtitleAtTime(subtitles: OcrSubtitle[], timeMs: number): OcrSubtitle | undefined {
     let left = 0;
@@ -155,6 +182,41 @@
     const reason = describeVideoPlaybackError(videoEl?.error ?? null);
     void onPlaybackError(file.id, reason);
   }
+
+  function getVideoDurationMs(): number {
+    const durationSeconds = Number.isFinite(videoEl?.duration) && videoEl?.duration
+      ? videoEl.duration
+      : file?.duration;
+
+    return Math.max(1, Math.round((durationSeconds ?? 0) * 1000));
+  }
+
+  function beginZoneDrawing(): void {
+    if (!file || !videoEl) {
+      return;
+    }
+
+    drawingStartTimeMs = Math.round(videoEl.currentTime * 1000);
+    drawingRegion = undefined;
+    isDrawingZone = true;
+
+    if (!videoEl.paused) {
+      videoEl.pause();
+    }
+  }
+
+  function handleDrawingCommit(region: OcrRegion): void {
+    if (!file || !onAddSegmentFromRegion) {
+      isDrawingZone = false;
+      drawingRegion = undefined;
+      return;
+    }
+
+    const endTimeMs = getVideoDurationMs();
+    void onAddSegmentFromRegion(region, drawingStartTimeMs, endTimeMs);
+    isDrawingZone = false;
+    drawingRegion = undefined;
+  }
   
   function updateVideoBounds() {
     if (!videoEl || !containerEl) return;
@@ -196,40 +258,51 @@
     };
   }
 
-  function toggleRegionMode() {
-    isRegionMode = !isRegionMode;
+  function handleZoneRole(segmentId: string, zoneId: string, role: OcrZoneRole): void {
+    void onSetZoneRole?.(segmentId, zoneId, role);
   }
 
-  function handleRegionChange(newRegion: OcrRegion | undefined) {
-    if (!file) {
-      return;
-    }
-
-    const nextRegion = newRegion ?? { ...DEFAULT_OCR_REGION };
-    regionsByFileId = { ...regionsByFileId, [file.id]: nextRegion };
+  function handleDeleteZone(segmentId: string, zoneId: string): void {
+    void onDeleteZone?.(segmentId, zoneId);
   }
 
-  function resetRegion() {
-    if (!file) {
-      return;
-    }
+  function regionToContainerStyle(region: OcrRegion): string {
+    const left = videoBounds.x * 100 + region.x * videoBounds.width * 100;
+    const top = videoBounds.y * 100 + region.y * videoBounds.height * 100;
+    const width = region.width * videoBounds.width * 100;
+    const height = region.height * videoBounds.height * 100;
 
-    const nextRegionsByFileId = { ...regionsByFileId };
-    delete nextRegionsByFileId[file.id];
-    regionsByFileId = nextRegionsByFileId;
+    return `left: ${left}%; top: ${top}%; width: ${width}%; height: ${height}%;`;
+  }
+
+  function zoneClass(role: OcrZoneRole): string {
+    return cn(
+      'absolute rounded-sm border-2 text-left shadow-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background',
+      role === 'main_subtitle'
+        ? 'border-sky-400/80 bg-sky-500/15 hover:bg-sky-500/20'
+        : 'border-amber-400/80 bg-amber-500/15 hover:bg-amber-500/20',
+    );
+  }
+
+  function roleLabel(role: OcrZoneRole): string {
+    return role === 'main_subtitle' ? 'Main subtitle' : 'On-screen text';
   }
 </script>
 
 <div class={cn("relative flex flex-col min-h-0 h-full", className)}>
   <!-- Video container - scales to available space -->
-  <div bind:this={containerEl} class="relative bg-black rounded-lg overflow-hidden flex-1 min-h-0">
-    {#if videoSrc}
+  {#if videoSrc}
+    <ContextMenu.Root>
+      <ContextMenu.Trigger
+        bind:ref={containerEl}
+        class="relative bg-black rounded-lg overflow-hidden flex-1 min-h-0"
+      >
       <!-- svelte-ignore a11y_media_has_caption -->
       <video
         bind:this={videoEl}
         src={videoSrc}
         class="w-full h-full object-contain"
-        controls={!isRegionMode}
+        controls={!isDrawingZone}
         ontimeupdate={handleTimeUpdate}
         onloadedmetadata={updateVideoBounds}
         onresize={updateVideoBounds}
@@ -237,33 +310,68 @@
       >
       </video>
 
-      <!-- Subtitle overlay - hidden in region mode -->
-      {#if showSubtitles && currentSubtitle && !isRegionMode}
+      <!-- Subtitle overlay - hidden while drawing a zone -->
+      {#if showSubtitles && currentSubtitle && !isDrawingZone}
         <SubtitleOverlay subtitle={currentSubtitle} />
       {/if}
 
-      <!-- Region selector overlay -->
-      {#if isRegionMode}
-        <RegionSelector
-          {region}
-          {videoBounds}
-          onchange={handleRegionChange}
-        />
+      {#if !isDrawingZone}
+        {#each visibleZoneEntries as entry (`${entry.segmentId}:${entry.zoneId}`)}
+          <OcrZoneContextMenu
+            segmentId={entry.segmentId}
+            zoneId={entry.zoneId}
+            role={entry.role}
+            onSetRole={handleZoneRole}
+            onDeleteZone={handleDeleteZone}
+          >
+            <button
+              type="button"
+              class={zoneClass(entry.role)}
+              style={regionToContainerStyle(entry.region)}
+              aria-label={`${roleLabel(entry.role)} OCR zone`}
+              title={`${roleLabel(entry.role)}: ${entry.label}`}
+            >
+              <span class="absolute left-1 top-1 rounded-sm bg-background/85 px-1.5 py-0.5 text-[10px] font-medium text-foreground shadow-sm">
+                {roleLabel(entry.role)}
+              </span>
+            </button>
+          </OcrZoneContextMenu>
+        {/each}
       {/if}
 
-      <!-- Region indicator when not in edit mode -->
-      {#if !isRegionMode && displayedRegion}
-        <div
-          class="absolute border-2 border-primary/50 bg-primary/10 pointer-events-none"
-          style="
-            left: {videoBounds.x * 100 + displayedRegion.x * videoBounds.width * 100}%;
-            top: {videoBounds.y * 100 + displayedRegion.y * videoBounds.height * 100}%;
-            width: {displayedRegion.width * videoBounds.width * 100}%;
-            height: {displayedRegion.height * videoBounds.height * 100}%;
-          "
-        ></div>
+      {#if shouldShowZoneHint}
+        <Tooltip>
+          <TooltipTrigger>
+            <span class="absolute bottom-3 left-3 rounded bg-black/70 px-2 py-1 text-xs text-white shadow-sm">
+              Right-click to add OCR zones
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>Use the current playback time as the segment start.</p>
+          </TooltipContent>
+        </Tooltip>
       {/if}
-    {:else if file}
+
+      <!-- Region selector overlay -->
+      {#if isDrawingZone}
+        <RegionSelector
+          region={drawingRegion}
+          {videoBounds}
+          onchange={(region) => {
+            drawingRegion = region;
+          }}
+          oncommit={handleDrawingCommit}
+        />
+      {/if}
+      </ContextMenu.Trigger>
+      <ContextMenu.Content class="w-64">
+        <ContextMenu.Item onclick={beginZoneDrawing}>
+          Add OCR zone from current time
+        </ContextMenu.Item>
+      </ContextMenu.Content>
+    </ContextMenu.Root>
+  {:else if file}
+    <div class="relative bg-black rounded-lg overflow-hidden flex-1 min-h-0">
       <div class="w-full h-full flex items-center justify-center">
         <div class="text-center text-muted-foreground">
           {#if file.status === 'transcoding'}
@@ -279,40 +387,12 @@
           {/if}
         </div>
       </div>
-    {:else}
+    </div>
+  {:else}
+    <div class="relative bg-black rounded-lg overflow-hidden flex-1 min-h-0">
       <div class="w-full h-full flex items-center justify-center">
         <p class="text-muted-foreground text-sm">Select a video to preview</p>
       </div>
-    {/if}
-  </div>
-
-  <!-- Region controls -->
-  {#if file?.previewPath}
-    <div class="flex flex-wrap items-center gap-2 mt-2 px-2">
-      <Button
-        variant={isRegionMode ? "default" : "outline"}
-        size="sm"
-        onclick={toggleRegionMode}
-      >
-        {#if isRegionMode}
-          <Minimize2 class="size-4 mr-2" />
-          Done
-        {:else}
-          <Maximize2 class="size-4 mr-2" />
-          Set OCR Region
-        {/if}
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        onclick={resetRegion}
-      >
-        <RotateCcw class="size-4 mr-2" />
-        Reset Region
-      </Button>
     </div>
-    <p class="text-xs text-muted-foreground mt-2 px-2">
-      Tip: This default region remains available until timeline zones can be edited from the preview.
-    </p>
   {/if}
 </div>

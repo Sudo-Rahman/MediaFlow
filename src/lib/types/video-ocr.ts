@@ -99,8 +99,6 @@ export interface OcrLiveDetectionEvent {
   detection: OcrZoneFrame;
 }
 
-export type OcrRegionMode = 'global' | 'custom';
-
 // Default region: bottom 25% of the video (typical subtitle area)
 export const DEFAULT_OCR_REGION: OcrRegion = {
   x: 0,

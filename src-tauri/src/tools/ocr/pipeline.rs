@@ -609,32 +609,15 @@ fn clear_operation_pid(file_id: &str) -> Option<u32> {
         .and_then(|mut guard| guard.remove(file_id))
 }
 
-fn output_spec_for_region(region: Option<&OcrRegion>) -> OcrFrameOutputSpec {
-    if region.is_some() {
-        OcrFrameOutputSpec {
-            width: REGION_OCR_FRAME_WIDTH,
-            height: REGION_OCR_FRAME_HEIGHT,
-        }
-    } else {
-        OcrFrameOutputSpec {
-            width: FULL_OCR_FRAME_WIDTH,
-            height: FULL_OCR_FRAME_HEIGHT,
-        }
+fn full_frame_output_spec() -> OcrFrameOutputSpec {
+    OcrFrameOutputSpec {
+        width: FULL_OCR_FRAME_WIDTH,
+        height: FULL_OCR_FRAME_HEIGHT,
     }
 }
 
-fn build_ocr_filter_string(
-    fps: f64,
-    region: Option<&OcrRegion>,
-    spec: OcrFrameOutputSpec,
-) -> String {
+fn build_ocr_filter_string(fps: f64, spec: OcrFrameOutputSpec) -> String {
     let mut filters = vec![format!("fps={}", fps)];
-    if let Some(region) = region {
-        filters.push(format!(
-            "crop=iw*{}:ih*{}:iw*{}:ih*{}",
-            region.width, region.height, region.x, region.y
-        ));
-    }
     filters.push(format!(
         "scale={}:{}:force_original_aspect_ratio=decrease",
         spec.width, spec.height
@@ -1027,8 +1010,8 @@ async fn run_ocr_pipeline_with_bins(
 
     let result = async {
         let total_timer = Instant::now();
-        let output_spec = output_spec_for_region(None);
-        let filter_str = build_ocr_filter_string(fps, None, output_spec);
+        let output_spec = full_frame_output_spec();
+        let filter_str = build_ocr_filter_string(fps, output_spec);
 
         let mut child = tokio::process::Command::new(ffmpeg_path)
             .args([
@@ -1301,8 +1284,9 @@ mod tests {
 
     use super::{
         build_ocr_filter_string, can_clone_previous_frame_result, clone_frame_result_for_frame,
-        create_frame_fingerprint, empty_frame_result, is_low_detail_no_text, is_visually_unchanged,
-        output_spec_for_region, run_ocr_pipeline_with_bins, take_next_raw_frame,
+        create_frame_fingerprint, empty_frame_result, full_frame_output_spec,
+        is_low_detail_no_text, is_visually_unchanged, run_ocr_pipeline_with_bins,
+        take_next_raw_frame,
     };
 
     async fn ensure_models_dir() -> Result<std::path::PathBuf, String> {
@@ -1705,19 +1689,12 @@ mod tests {
     }
 
     #[test]
-    fn region_filter_scales_to_fixed_rgb_frame() {
-        let region = super::OcrRegion {
-            x: 0.0,
-            y: 0.7,
-            width: 1.0,
-            height: 0.3,
-        };
-        let spec = output_spec_for_region(Some(&region));
-        let filter = build_ocr_filter_string(5.0, Some(&region), spec);
+    fn full_frame_filter_scales_to_fixed_rgb_frame() {
+        let spec = full_frame_output_spec();
+        let filter = build_ocr_filter_string(5.0, spec);
 
-        assert!(filter.contains("crop=iw*1:ih*0.3:iw*0:ih*0.7"));
-        assert!(filter.contains("scale=960:180:force_original_aspect_ratio=decrease"));
-        assert!(filter.contains("pad=960:180:(ow-iw)/2:(oh-ih)/2"));
+        assert!(filter.contains("scale=960:540:force_original_aspect_ratio=decrease"));
+        assert!(filter.contains("pad=960:540:(ow-iw)/2:(oh-ih)/2"));
         assert!(filter.ends_with("format=rgb24"));
     }
 

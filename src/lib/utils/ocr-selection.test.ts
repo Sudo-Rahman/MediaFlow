@@ -4,6 +4,8 @@ import type { OcrSegment, VideoOcrSelection } from '$lib/types';
 import {
   DEFAULT_MAIN_SUBTITLE_REGION,
   assignOcrTimelineLanes,
+  clampRegion,
+  createOcrSegmentFromZone,
   createDefaultVideoOcrSelection,
   getActiveOcrZonesAtTime,
   getAllowedOcrExportFormats,
@@ -83,6 +85,75 @@ describe('OCR selection helpers', () => {
     expect(errors).toContain('Segment bad must start before it ends.');
     expect(errors).toContain('Zone zone-bad must stay within the video frame.');
     expect(errors).toContain('Zone zone-bad is too small.');
+  });
+
+  it('requires at least one segment', () => {
+    expect(validateVideoOcrSelection({ segments: [] }, 10_000)).toContain(
+      'OCR selection must contain at least one segment.',
+    );
+  });
+
+  it('reports non-finite durations and segment times', () => {
+    const errors = validateVideoOcrSelection(
+      {
+        segments: [
+          {
+            id: 'non-finite',
+            startTimeMs: Number.NaN,
+            endTimeMs: Number.POSITIVE_INFINITY,
+            zones: [
+              {
+                id: 'zone',
+                role: 'main_subtitle',
+                region: DEFAULT_MAIN_SUBTITLE_REGION,
+              },
+            ],
+          },
+        ],
+      },
+      Number.NaN,
+    );
+
+    expect(errors).toContain('Video duration must be finite.');
+    expect(errors).toContain('Segment non-finite must use finite start and end times.');
+  });
+
+  it('creates a valid minimal segment from negative and non-finite times', () => {
+    expect(createOcrSegmentFromZone(-1_000, -500, DEFAULT_MAIN_SUBTITLE_REGION)).toMatchObject({
+      startTimeMs: 0,
+      endTimeMs: 1,
+    });
+
+    const nonFiniteSegment = createOcrSegmentFromZone(
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      DEFAULT_MAIN_SUBTITLE_REGION,
+    );
+
+    expect(nonFiniteSegment.startTimeMs).toBe(0);
+    expect(nonFiniteSegment.endTimeMs).toBe(1);
+  });
+
+  it('clamps OCR regions to finite frame-relative coordinates', () => {
+    const overflowingRegion = clampRegion({
+      x: 0.9,
+      y: -1,
+      width: 0.5,
+      height: Number.POSITIVE_INFINITY,
+    });
+
+    expect(overflowingRegion).toMatchObject({
+      x: 0.9,
+      y: 0,
+      height: 0,
+    });
+    expect(overflowingRegion.width).toBeCloseTo(0.1);
+    expect(clampRegion({ x: Number.NaN, y: 0.5, width: -0.25, height: 0.75 })).toEqual({
+      x: 0,
+      y: 0.5,
+      width: 0,
+      height: 0.5,
+    });
   });
 });
 

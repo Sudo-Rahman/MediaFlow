@@ -53,10 +53,13 @@ export function createOcrSegmentFromZone(
   region: OcrRegion,
   role: OcrZoneRole = 'main_subtitle',
 ): OcrSegment {
+  const safeStartTimeMs = normalizeTimeMs(startTimeMs, 0);
+  const safeEndTimeMs = Math.max(safeStartTimeMs + 1, normalizeTimeMs(endTimeMs, safeStartTimeMs + 1));
+
   return {
     id: generateSelectionId('ocr-segment'),
-    startTimeMs: Math.max(0, Math.round(startTimeMs)),
-    endTimeMs: Math.max(Math.round(startTimeMs) + 1, Math.round(endTimeMs)),
+    startTimeMs: safeStartTimeMs,
+    endTimeMs: safeEndTimeMs,
     zones: [
       {
         id: generateSelectionId('ocr-zone'),
@@ -95,13 +98,26 @@ export function assignOcrTimelineLanes<T extends TimelineBlock>(blocks: T[]): Ar
 
 export function validateVideoOcrSelection(selection: VideoOcrSelection, durationMs: number): string[] {
   const errors: string[] = [];
-  const safeDurationMs = Math.max(1, Math.round(durationMs));
+  const durationIsFinite = Number.isFinite(durationMs);
+  const safeDurationMs = durationIsFinite ? Math.max(1, Math.round(durationMs)) : Number.POSITIVE_INFINITY;
+
+  if (!durationIsFinite) {
+    errors.push('Video duration must be finite.');
+  }
+  if (selection.segments.length === 0) {
+    errors.push('OCR selection must contain at least one segment.');
+  }
 
   for (const segment of selection.segments) {
-    if (segment.startTimeMs < 0 || segment.endTimeMs > safeDurationMs) {
+    const segmentTimesAreFinite = Number.isFinite(segment.startTimeMs) && Number.isFinite(segment.endTimeMs);
+
+    if (!segmentTimesAreFinite) {
+      errors.push(`Segment ${segment.id} must use finite start and end times.`);
+    }
+    if (segmentTimesAreFinite && (segment.startTimeMs < 0 || segment.endTimeMs > safeDurationMs)) {
       errors.push(`Segment ${segment.id} must stay within the video duration.`);
     }
-    if (segment.startTimeMs >= segment.endTimeMs) {
+    if (segmentTimesAreFinite && segment.startTimeMs >= segment.endTimeMs) {
       errors.push(`Segment ${segment.id} must start before it ends.`);
     }
     if (segment.zones.length === 0) {
@@ -140,6 +156,10 @@ function regionIsInsideFrame(region: OcrRegion): boolean {
 
 function clamp01(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+}
+
+function normalizeTimeMs(value: number, fallback: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.round(value)) : fallback;
 }
 
 function generateSelectionId(prefix: string): string {

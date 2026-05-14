@@ -171,9 +171,30 @@ describe('OCR storage', () => {
           name: 'Version 1',
           createdAt: '2026-05-14T00:00:00.000Z',
           mode: 'full_pipeline',
-          configSnapshot: { ...DEFAULT_OCR_CONFIG, frameRate: 12 },
-          rawOcr: [],
-          finalSubtitles: [],
+          configSnapshot: {
+            ...DEFAULT_OCR_CONFIG,
+            frameRate: 12,
+            unexpectedConfig: 'drop me',
+          },
+          rawOcr: [
+            {
+              frameIndex: 0,
+              timeMs: 1_000,
+              text: 'Detected',
+              confidence: 0.91,
+              unexpectedRawFrame: 'drop me',
+            },
+          ],
+          finalSubtitles: [
+            {
+              id: 'sub-1',
+              text: 'Detected',
+              startTime: 1_000,
+              endTime: 2_000,
+              confidence: 0.91,
+              unexpectedSubtitle: 'drop me',
+            },
+          ],
           unexpectedVersion: 'drop me',
         } as unknown as VideoOcrPersistenceData['ocrVersions'][number],
       ],
@@ -191,8 +212,23 @@ describe('OCR storage', () => {
       mode: 'full_pipeline',
       configSnapshot: { ...DEFAULT_OCR_CONFIG, frameRate: 12 },
       rawFrameRate: 12,
-      rawOcr: [],
-      finalSubtitles: [],
+      rawOcr: [
+        {
+          frameIndex: 0,
+          timeMs: 1_000,
+          text: 'Detected',
+          confidence: 0.91,
+        },
+      ],
+      finalSubtitles: [
+        {
+          id: 'sub-1',
+          text: 'Detected',
+          startTime: 1_000,
+          endTime: 2_000,
+          confidence: 0.91,
+        },
+      ],
     });
   });
 
@@ -324,6 +360,36 @@ describe('OCR storage', () => {
             rawOcr: [],
             finalSubtitles: [
               { id: 'sub-1', text: 'Hello', startTime: 0, endTime: Number.NaN, confidence: 0.9 },
+            ],
+          },
+        ],
+        createdAt: '2026-05-14T00:00:00.000Z',
+        updatedAt: '2026-05-14T00:00:00.000Z',
+      },
+    });
+
+    await expect(loadOcrData('/movie.mp4')).rejects.toThrow(
+      'This Video OCR data was created with an older MediaFlow version and is not supported.',
+    );
+  });
+
+  it('rejects invalid OCR subtitle timing and confidence on load', async () => {
+    loadMediaflowDataMock.mockResolvedValueOnce({
+      version: 1,
+      videoOcr: {
+        version: 2,
+        videoPath: '/movie.mp4',
+        ocrSelection: createDefaultVideoOcrSelection(60_000),
+        ocrVersions: [
+          {
+            id: 'ocr-v-1',
+            name: 'Version 1',
+            createdAt: '2026-05-14T00:00:00.000Z',
+            mode: 'full_pipeline',
+            configSnapshot: { ...DEFAULT_OCR_CONFIG, frameRate: 12 },
+            rawOcr: [],
+            finalSubtitles: [
+              { id: 'sub-1', text: 'Hello', startTime: 2_000, endTime: 1_000, confidence: 1.1 },
             ],
           },
         ],

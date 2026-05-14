@@ -12,6 +12,7 @@ import type {
   VideoOcrSelection,
   VideoOcrPersistenceData,
 } from '$lib/types';
+import { DEFAULT_OCR_CONFIG, OCR_LANGUAGES } from '$lib/types';
 import { validateVideoOcrSelection } from '$lib/utils/ocr-selection';
 import { loadMediaflowData, saveMediaflowData } from './mediaflow-storage';
 
@@ -30,19 +31,20 @@ function isOcrRetryMode(value: unknown): value is OcrRetryMode {
 
 function isOcrRawFrame(value: unknown): value is OcrRawFrame {
   return isRecord(value)
-    && isFiniteNumber(value.frameIndex)
-    && isFiniteNumber(value.timeMs)
+    && isFiniteNonNegativeNumber(value.frameIndex)
+    && isFiniteNonNegativeNumber(value.timeMs)
     && typeof value.text === 'string'
-    && isFiniteNumber(value.confidence);
+    && isUnitInterval(value.confidence);
 }
 
 function isOcrSubtitle(value: unknown): value is OcrSubtitle {
   return isRecord(value)
     && typeof value.id === 'string'
     && typeof value.text === 'string'
-    && isFiniteNumber(value.startTime)
-    && isFiniteNumber(value.endTime)
-    && isFiniteNumber(value.confidence);
+    && isFiniteNonNegativeNumber(value.startTime)
+    && isFiniteNonNegativeNumber(value.endTime)
+    && value.endTime > value.startTime
+    && isUnitInterval(value.confidence);
 }
 
 function isOcrVersion(value: unknown): value is OcrVersion {
@@ -65,6 +67,10 @@ function isFiniteNumber(value: unknown): value is number {
 
 function isFiniteNonNegativeNumber(value: unknown): value is number {
   return isFiniteNumber(value) && value >= 0;
+}
+
+function isUnitInterval(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= 0 && value <= 1;
 }
 
 function isOcrZoneRole(value: unknown): value is OcrZoneRole {
@@ -174,6 +180,45 @@ function sanitizePreviewSourceIdentity(
     : undefined;
 }
 
+function sanitizeOcrConfig(config: OcrConfig): OcrConfig {
+  return {
+    frameRate: config.frameRate,
+    language: OCR_LANGUAGES.some((language) => language.value === config.language)
+      ? config.language
+      : DEFAULT_OCR_CONFIG.language,
+    useGpu: config.useGpu,
+    confidenceThreshold: config.confidenceThreshold,
+    threadCount: config.threadCount,
+    mergeSimilar: config.mergeSimilar,
+    similarityThreshold: config.similarityThreshold,
+    maxGapMs: config.maxGapMs,
+    minCueDurationMs: config.minCueDurationMs,
+    filterUrlLike: config.filterUrlLike,
+    aiCleanupEnabled: config.aiCleanupEnabled,
+    aiCleanupProvider: config.aiCleanupProvider,
+    aiCleanupModel: config.aiCleanupModel,
+  };
+}
+
+function sanitizeOcrRawFrame(frame: OcrRawFrame): OcrRawFrame {
+  return {
+    frameIndex: frame.frameIndex,
+    timeMs: frame.timeMs,
+    text: frame.text,
+    confidence: frame.confidence,
+  };
+}
+
+function sanitizeOcrSubtitle(subtitle: OcrSubtitle): OcrSubtitle {
+  return {
+    id: subtitle.id,
+    text: subtitle.text,
+    startTime: subtitle.startTime,
+    endTime: subtitle.endTime,
+    confidence: subtitle.confidence,
+  };
+}
+
 function normalizeAndSanitizeOcrVersion(version: OcrVersion): OcrVersion {
   const normalized = normalizeOcrVersion(version);
   return {
@@ -181,10 +226,10 @@ function normalizeAndSanitizeOcrVersion(version: OcrVersion): OcrVersion {
     name: normalized.name,
     createdAt: normalized.createdAt,
     mode: normalized.mode,
-    configSnapshot: { ...normalized.configSnapshot },
+    configSnapshot: sanitizeOcrConfig(normalized.configSnapshot),
     rawFrameRate: normalized.rawFrameRate,
-    rawOcr: [...normalized.rawOcr],
-    finalSubtitles: [...normalized.finalSubtitles],
+    rawOcr: normalized.rawOcr.map(sanitizeOcrRawFrame),
+    finalSubtitles: normalized.finalSubtitles.map(sanitizeOcrSubtitle),
   };
 }
 

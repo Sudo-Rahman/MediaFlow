@@ -1,15 +1,20 @@
 import type {
   OcrConfig,
-  OcrRegion,
-  OcrRegionMode,
   OcrRetryMode,
   OcrSubtitle,
   OcrRawFrame,
   OcrVersion,
   OcrPreviewSourceIdentity,
+  VideoOcrSelection,
   VideoOcrPersistenceData,
 } from '$lib/types';
 import { loadMediaflowData, saveMediaflowData } from './mediaflow-storage';
+
+const LEGACY_OCR_DATA_ERROR = 'This Video OCR data was created with an older MediaFlow version and is not supported.';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
 
 function toFiniteNonNegativeNumber(value: unknown): number | null {
   const numericValue =
@@ -143,21 +148,19 @@ export function generateOcrVersionName(existingVersions: OcrVersion[]): string {
 
 function createEmptyOcrData(
   videoPath: string,
+  ocrSelection: VideoOcrSelection,
   previewPath?: string,
   previewSourceIdentity?: OcrPreviewSourceIdentity,
   previewVersion?: string,
-  ocrRegion?: OcrRegion,
-  ocrRegionMode?: OcrRegionMode,
 ): VideoOcrPersistenceData {
   const now = new Date().toISOString();
   return {
-    version: 1,
+    version: 2,
     videoPath,
     previewPath,
     previewSourceIdentity,
     previewVersion,
-    ocrRegion,
-    ocrRegionMode,
+    ocrSelection,
     ocrVersions: [],
     createdAt: now,
     updatedAt: now,
@@ -170,9 +173,17 @@ export async function loadOcrData(videoPath: string): Promise<VideoOcrPersistenc
     return null;
   }
 
+  const videoOcr = mediaflowData.videoOcr as unknown;
+  if (!isRecord(videoOcr) || 'ocrRegion' in videoOcr || videoOcr.version !== 2 || !('ocrSelection' in videoOcr)) {
+    throw new Error(LEGACY_OCR_DATA_ERROR);
+  }
+
+  const data = videoOcr as VideoOcrPersistenceData;
+
   return {
-    ...mediaflowData.videoOcr,
-    ocrVersions: mediaflowData.videoOcr.ocrVersions.map(normalizeOcrVersion),
+    ...data,
+    version: 2,
+    ocrVersions: data.ocrVersions.map(normalizeOcrVersion),
   };
 }
 
@@ -189,8 +200,9 @@ export async function saveOcrData(
     translation: existing?.translation,
     videoOcr: {
       ...data,
-      version: 1,
+      version: 2,
       videoPath,
+      ocrSelection: data.ocrSelection,
       ocrVersions: data.ocrVersions.map(normalizeOcrVersion),
       createdAt: data.createdAt || now,
       updatedAt: now,
@@ -201,40 +213,33 @@ export async function saveOcrData(
 export async function addOcrVersion(
   videoPath: string,
   version: OcrVersion,
-  options?: {
+  options: {
+    ocrSelection: VideoOcrSelection;
     previewPath?: string;
     previewSourceIdentity?: OcrPreviewSourceIdentity;
     previewVersion?: string;
-    ocrRegion?: OcrRegion;
-    ocrRegionMode?: OcrRegionMode;
   },
 ): Promise<VideoOcrPersistenceData | null> {
   const data = (await loadOcrData(videoPath))
     ?? createEmptyOcrData(
       videoPath,
-      options?.previewPath,
-      options?.previewSourceIdentity,
-      options?.previewVersion,
-      options?.ocrRegion,
-      options?.ocrRegionMode,
+      options.ocrSelection,
+      options.previewPath,
+      options.previewSourceIdentity,
+      options.previewVersion,
     );
 
   data.ocrVersions = [...data.ocrVersions, version];
+  data.ocrSelection = options.ocrSelection;
 
-  if (options?.previewPath !== undefined) {
+  if (options.previewPath !== undefined) {
     data.previewPath = options.previewPath;
   }
-  if (options?.previewSourceIdentity !== undefined) {
+  if (options.previewSourceIdentity !== undefined) {
     data.previewSourceIdentity = options.previewSourceIdentity;
   }
-  if (options?.previewVersion !== undefined) {
+  if (options.previewVersion !== undefined) {
     data.previewVersion = options.previewVersion;
-  }
-  if (options?.ocrRegion !== undefined) {
-    data.ocrRegion = options.ocrRegion;
-  }
-  if (options?.ocrRegionMode !== undefined) {
-    data.ocrRegionMode = options.ocrRegionMode;
   }
 
   const success = await saveOcrData(videoPath, data);

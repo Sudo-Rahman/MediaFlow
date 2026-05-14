@@ -28,6 +28,18 @@ export { analyzeOcrSubtitles, formatOcrSubtitleAnalysis } from "./utils/ocr-subt
 export type { OcrSubtitleAnalysis } from "./utils/ocr-subtitle-analysis";
 export { formatTransferRate } from "./utils/format";
 export {
+  createDefaultVideoOcrSelection,
+  createOcrSegmentFromZone,
+  DEFAULT_MAIN_SUBTITLE_REGION,
+  getActiveOcrZonesAtTime,
+  selectionHasRole,
+  getAllowedOcrExportFormats,
+  assignOcrTimelineLanes,
+  validateVideoOcrSelection,
+  clampRegion,
+} from "./utils/ocr-selection";
+export type { TimelineBlock, TimelineBlockWithLane } from "./utils/ocr-selection";
+export {
   normalizeOcrRawFrame,
   normalizeOcrRawFrames,
   normalizeOcrSubtitle,

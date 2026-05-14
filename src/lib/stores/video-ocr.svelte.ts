@@ -9,14 +9,18 @@ import type {
   OcrConfig,
   OcrRegion,
   OcrRegionMode,
+  OcrSegment,
+  OcrZoneRole,
   OcrVersion,
   OcrProgress,
   OcrPhase,
   OcrLogEntry,
   OcrModelsStatus,
   OcrPreviewSourceIdentity,
+  VideoOcrSelection,
 } from '$lib/types';
 import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_REGION, DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
+import { createDefaultVideoOcrSelection } from '$lib/utils';
 
 // ============================================================================
 // STATE
@@ -67,12 +71,15 @@ function getFileName(path: string): string {
 }
 
 function createEmptyVideoFile(path: string, id?: string): OcrVideoFile {
+  const defaultDurationMs = 1;
+
   return {
     id: id ?? generateId(),
     path,
     name: getFileName(path),
     size: 0,
     status: 'pending',
+    ocrSelection: createDefaultVideoOcrSelection(defaultDurationMs),
     ocrRegion: { ...globalRegion },
     ocrRegionMode: 'global',
     ocrVersions: [],
@@ -81,6 +88,17 @@ function createEmptyVideoFile(path: string, id?: string): OcrVideoFile {
 
 function isOcrReadyFile(file: OcrVideoFile): boolean {
   return file.status === 'ready' || file.status === 'completed';
+}
+
+function cloneSegment(segment: OcrSegment): OcrSegment {
+  return {
+    ...segment,
+    zones: segment.zones.map((zone) => ({ ...zone, region: { ...zone.region } })),
+  };
+}
+
+function cloneSelection(selection: VideoOcrSelection): VideoOcrSelection {
+  return { segments: selection.segments.map(cloneSegment) };
 }
 
 // ============================================================================
@@ -207,6 +225,9 @@ export const videoOcrStore = {
       })
       .map((file) => ({
         ...file,
+        ocrSelection: file.ocrSelection ?? createDefaultVideoOcrSelection(
+          file.duration ? Math.round(file.duration * 1000) : 1,
+        ),
         ocrRegionMode: file.ocrRegionMode ?? 'global',
         ocrRegion: file.ocrRegion ?? { ...globalRegion },
       }));
@@ -243,9 +264,19 @@ export const videoOcrStore = {
   },
 
   updateFile(id: string, updates: Partial<OcrVideoFile>) {
-    videoFiles = videoFiles.map(f =>
-      f.id === id ? { ...f, ...updates } : f
-    );
+    videoFiles = videoFiles.map(f => {
+      if (f.id !== id) {
+        return f;
+      }
+
+      const durationMs = updates.duration ? Math.round(updates.duration * 1000) : undefined;
+      const nextFile = { ...f, ...updates };
+      if (durationMs && f.ocrSelection.segments.length === 1 && f.ocrSelection.segments[0].endTimeMs === 1) {
+        return { ...nextFile, ocrSelection: createDefaultVideoOcrSelection(durationMs) };
+      }
+
+      return nextFile;
+    });
   },
 
   setFileStatus(id: string, status: OcrFileStatus, error?: string) {
@@ -358,6 +389,63 @@ export const videoOcrStore = {
     if (didCancel) {
       this.addLog('info', 'File preparation cancelled', fileId);
     }
+  },
+
+  // -------------------------------------------------------------------------
+  // Actions - OCR Selection
+  // -------------------------------------------------------------------------
+  setOcrSelection(fileId: string, selection: VideoOcrSelection) {
+    videoFiles = videoFiles.map(f =>
+      f.id === fileId
+        ? { ...f, ocrSelection: cloneSelection(selection) }
+        : f
+    );
+  },
+
+  addOcrSegment(fileId: string, segment: OcrSegment) {
+    videoFiles = videoFiles.map(f => {
+      if (f.id !== fileId) {
+        return f;
+      }
+
+      return {
+        ...f,
+        ocrSelection: {
+          segments: [
+            ...f.ocrSelection.segments.map(cloneSegment),
+            cloneSegment(segment),
+          ],
+        },
+      };
+    });
+  },
+
+  setOcrZoneRole(fileId: string, segmentId: string, zoneId: string, role: OcrZoneRole) {
+    videoFiles = videoFiles.map(f => {
+      if (f.id !== fileId) {
+        return f;
+      }
+
+      return {
+        ...f,
+        ocrSelection: {
+          segments: f.ocrSelection.segments.map((segment) => {
+            if (segment.id !== segmentId) {
+              return cloneSegment(segment);
+            }
+
+            return {
+              ...segment,
+              zones: segment.zones.map((zone) => ({
+                ...zone,
+                role: zone.id === zoneId ? role : zone.role,
+                region: { ...zone.region },
+              })),
+            };
+          }),
+        },
+      };
+    });
   },
 
   // -------------------------------------------------------------------------

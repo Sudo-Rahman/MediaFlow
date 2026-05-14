@@ -331,13 +331,12 @@ export function isVideoExtension(ext: string): ext is VideoExtension {
 // ============================================================================
 
 export interface VideoOcrPersistenceData {
-  version: 1;
+  version: 2;
   videoPath: string;
   previewPath?: string;
   previewSourceIdentity?: OcrPreviewSourceIdentity;
   previewVersion?: string;
-  ocrRegion?: OcrRegion;
-  ocrRegionMode?: OcrRegionMode;
+  ocrSelection: VideoOcrSelection;
   ocrVersions: OcrVersion[];
   createdAt: string;
   updatedAt: string;

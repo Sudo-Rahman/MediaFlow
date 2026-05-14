@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
+import { createOcrSegmentFromZone, DEFAULT_MAIN_SUBTITLE_REGION } from '$lib/utils';
 
 import { videoOcrStore } from './video-ocr.svelte';
 
@@ -17,6 +18,39 @@ describe('video OCR store', () => {
 
     expect(added).toHaveLength(1);
     expect(videoOcrStore.videoFiles).toHaveLength(1);
+  });
+
+  it('creates imported files with a full-duration main subtitle selection', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+
+    videoOcrStore.updateFile(file.id, { duration: 120 });
+
+    const selected = videoOcrStore.videoFiles[0].ocrSelection;
+    expect(selected.segments[0].startTimeMs).toBe(0);
+    expect(selected.segments[0].endTimeMs).toBe(120_000);
+    expect(selected.segments[0].zones[0].role).toBe('main_subtitle');
+  });
+
+  it('adds a segment zone from the current timestamp and defaults to main subtitles', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    videoOcrStore.updateFile(file.id, { duration: 120 });
+
+    const segment = createOcrSegmentFromZone(10_000, 120_000, DEFAULT_MAIN_SUBTITLE_REGION);
+    videoOcrStore.addOcrSegment(file.id, segment);
+
+    expect(videoOcrStore.videoFiles[0].ocrSelection.segments).toContainEqual(segment);
+  });
+
+  it('changes a zone role without changing its geometry', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    const segment = file.ocrSelection.segments[0];
+    const zone = segment.zones[0];
+
+    videoOcrStore.setOcrZoneRole(file.id, segment.id, zone.id, 'on_screen_text');
+
+    const updatedZone = videoOcrStore.videoFiles[0].ocrSelection.segments[0].zones[0];
+    expect(updatedZone.role).toBe('on_screen_text');
+    expect(updatedZone.region).toEqual(zone.region);
   });
 
   it('allows OCR-ready files even when preview generation failed', () => {

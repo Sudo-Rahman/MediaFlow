@@ -65,6 +65,71 @@ describe('OCR storage', () => {
     expect(saved.videoOcr).not.toHaveProperty('ocrRegionMode');
   });
 
+  it('sanitizes nested OCR selection fields before saving', async () => {
+    saveMediaflowDataMock.mockResolvedValueOnce(true);
+    loadMediaflowDataMock.mockResolvedValueOnce(null);
+    const ocrSelection = {
+      unexpectedSelection: 'drop me',
+      segments: [
+        {
+          id: 'ocr-segment-1',
+          startTimeMs: 0,
+          endTimeMs: 60_000,
+          unexpectedSegment: 'drop me',
+          zones: [
+            {
+              id: 'ocr-zone-1',
+              role: 'main_subtitle',
+              label: 'Main',
+              unexpectedZone: 'drop me',
+              region: {
+                x: 0,
+                y: 0.75,
+                width: 1,
+                height: 0.25,
+                unexpectedRegion: 'drop me',
+              },
+            },
+          ],
+        },
+      ],
+    } as unknown as VideoOcrPersistenceData['ocrSelection'];
+    const data: VideoOcrPersistenceData = {
+      version: 2,
+      videoPath: '/movie.mp4',
+      ocrSelection,
+      ocrVersions: [],
+      createdAt: '2026-05-14T00:00:00.000Z',
+      updatedAt: '2026-05-14T00:00:00.000Z',
+    };
+
+    await saveOcrData('/movie.mp4', data);
+
+    const saved = saveMediaflowDataMock.mock.calls[0]?.[1] as { videoOcr?: VideoOcrPersistenceData };
+    expect(saved.videoOcr?.ocrSelection).toEqual({
+      segments: [
+        {
+          id: 'ocr-segment-1',
+          startTimeMs: 0,
+          endTimeMs: 60_000,
+          zones: [
+            {
+              id: 'ocr-zone-1',
+              role: 'main_subtitle',
+              label: 'Main',
+              region: {
+                x: 0,
+                y: 0.75,
+                width: 1,
+                height: 0.25,
+              },
+            },
+          ],
+        },
+      ],
+    });
+  });
+
   it('loads valid video OCR selection data and normalizes versions', async () => {
     const ocrSelection = createDefaultVideoOcrSelection(60_000);
     loadMediaflowDataMock.mockResolvedValueOnce({

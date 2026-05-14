@@ -361,7 +361,7 @@ export async function saveOcrData(
       previewPath: data.previewPath,
       previewSourceIdentity: data.previewSourceIdentity,
       previewVersion: data.previewVersion,
-      ocrSelection: data.ocrSelection,
+      ocrSelection: sanitizeOcrSelection(data.ocrSelection),
       ocrVersions: data.ocrVersions.map(normalizeOcrVersion),
       createdAt: data.createdAt || now,
       updatedAt: now,

@@ -335,6 +335,30 @@ export const videoOcrStore = {
     this.addLog('info', 'Preview preparation cancelled', fileId);
   },
 
+  cancelFilePreparation(fileId: string) {
+    let didCancel = false;
+    videoFiles = videoFiles.map(f => {
+      if (f.id !== fileId || (f.status !== 'scanning' && f.status !== 'transcoding')) {
+        return f;
+      }
+
+      didCancel = true;
+      return {
+        ...f,
+        status: getPreparedFileStatus(f),
+        isTranscoding: false,
+        transcodingProgress: f.status === 'transcoding' ? 0 : f.transcodingProgress,
+        transcodingCodec: undefined,
+        progress: undefined,
+        error: undefined,
+      };
+    });
+
+    if (didCancel) {
+      this.addLog('info', 'File preparation cancelled', fileId);
+    }
+  },
+
   // -------------------------------------------------------------------------
   // Actions - OCR Region
   // -------------------------------------------------------------------------
@@ -611,6 +635,10 @@ export const videoOcrStore = {
 
 function isProcessingStatus(status: OcrFileStatus): boolean {
   return ['transcoding', 'extracting_frames', 'ocr_processing', 'generating_subs'].includes(status);
+}
+
+function getPreparedFileStatus(file: OcrVideoFile): OcrFileStatus {
+  return file.ocrVersions.length > 0 ? 'completed' : 'ready';
 }
 
 function getStatusForProgressPhase(phase: OcrPhase): OcrFileStatus {

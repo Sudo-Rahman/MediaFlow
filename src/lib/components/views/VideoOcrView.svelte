@@ -275,7 +275,14 @@
     isDestroyed = true;
 
     filePreparationQueue.clear();
+    for (const file of videoOcrStore.videoFiles) {
+      if (file.status === 'scanning') {
+        videoOcrStore.cancelFilePreparation(file.id);
+      }
+    }
+
     for (const fileId of activePreviewFileIds) {
+      videoOcrStore.cancelFilePreparation(fileId);
       void cancelOcrPreview(fileId).catch((error: unknown) => {
         console.error('Failed to cancel preview during view teardown:', error);
       });

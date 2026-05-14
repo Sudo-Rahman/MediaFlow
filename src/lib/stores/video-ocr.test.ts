@@ -61,4 +61,23 @@ describe('video OCR store', () => {
     expect(videoOcrStore.videoFiles[0].previewError).toBeUndefined();
     expect(videoOcrStore.videoFiles[0].isTranscoding).toBe(false);
   });
+
+  it('cancels aborted file preparation states back to OCR-ready statuses', () => {
+    const [scanningFile, transcodingFile] = videoOcrStore.addFilesFromPaths([
+      '/Users/sr-71/Movies/scanning.mp4',
+      '/Users/sr-71/Movies/transcoding.mp4',
+    ]);
+
+    videoOcrStore.setFileStatus(scanningFile.id, 'scanning');
+    videoOcrStore.startTranscoding(transcodingFile.id);
+
+    videoOcrStore.cancelFilePreparation(scanningFile.id);
+    videoOcrStore.cancelFilePreparation(transcodingFile.id);
+
+    expect(videoOcrStore.videoFiles[0].status).toBe('ready');
+    expect(videoOcrStore.videoFiles[1].status).toBe('ready');
+    expect(videoOcrStore.videoFiles[1].isTranscoding).toBe(false);
+    expect(videoOcrStore.videoFiles[1].transcodingProgress).toBe(0);
+    expect(videoOcrStore.videoFiles[1].transcodingCodec).toBeUndefined();
+  });
 });

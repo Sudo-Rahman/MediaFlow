@@ -96,6 +96,13 @@ function cloneSelection(selection: VideoOcrSelection): VideoOcrSelection {
   return { segments: selection.segments.map(cloneSegment) };
 }
 
+function cloneVideoFile(file: OcrVideoFile): OcrVideoFile {
+  return {
+    ...file,
+    ocrSelection: cloneSelection(file.ocrSelection),
+  };
+}
+
 // ============================================================================
 // STORE EXPORT
 // ============================================================================
@@ -226,7 +233,7 @@ export const videoOcrStore = {
       selectedFileId = newFiles[0].id;
     }
 
-    return newFiles;
+    return newFiles.map(cloneVideoFile);
   },
 
   addFilesFromPaths(paths: string[]): OcrVideoFile[] {
@@ -261,7 +268,7 @@ export const videoOcrStore = {
       const { ocrSelection, ...updatesWithoutSelection } = updates;
       const durationMs = updates.duration ? Math.round(updates.duration * 1000) : undefined;
       const nextUpdates = ocrSelection === undefined
-        ? updatesWithoutSelection
+        ? { ...updatesWithoutSelection, ocrSelection: cloneSelection(f.ocrSelection) }
         : { ...updatesWithoutSelection, ocrSelection: cloneSelection(ocrSelection) };
       const nextFile = { ...f, ...nextUpdates };
       if (

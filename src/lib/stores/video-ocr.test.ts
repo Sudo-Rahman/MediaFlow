@@ -65,6 +65,29 @@ describe('video OCR store', () => {
     expect(storedZone.role).toBe('main_subtitle');
   });
 
+  it('returns cloned OCR selections when adding files', () => {
+    const ocrSelection = {
+      segments: [createOcrSegmentFromZone(0, 60_000, DEFAULT_MAIN_SUBTITLE_REGION)],
+    };
+    const file: OcrVideoFile = {
+      id: 'file-1',
+      path: '/Users/sr-71/Movies/sample.mp4',
+      name: 'sample.mp4',
+      size: 0,
+      status: 'pending',
+      ocrSelection,
+      ocrVersions: [],
+    };
+
+    const [added] = videoOcrStore.addFiles([file]);
+    added.ocrSelection.segments[0].zones[0].region.y = 0.5;
+    added.ocrSelection.segments[0].zones[0].role = 'on_screen_text';
+
+    const storedZone = videoOcrStore.videoFiles[0].ocrSelection.segments[0].zones[0];
+    expect(storedZone.region.y).toBe(DEFAULT_MAIN_SUBTITLE_REGION.y);
+    expect(storedZone.role).toBe('main_subtitle');
+  });
+
   it('clones OCR selections passed through updateFile', () => {
     const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
     const ocrSelection = {
@@ -87,6 +110,14 @@ describe('video OCR store', () => {
     videoOcrStore.updateFile(file.id, { ocrSelection: undefined });
 
     expect(videoOcrStore.videoFiles[0].ocrSelection).toEqual(existingSelection);
+    expect(videoOcrStore.videoFiles[0].ocrSelection).not.toBe(existingSelection);
+
+    existingSelection.segments[0].zones[0].region.y = 0.5;
+    existingSelection.segments[0].zones[0].role = 'on_screen_text';
+
+    const storedZone = videoOcrStore.videoFiles[0].ocrSelection.segments[0].zones[0];
+    expect(storedZone.region.y).toBe(DEFAULT_MAIN_SUBTITLE_REGION.y);
+    expect(storedZone.role).toBe('main_subtitle');
   });
 
   it('preserves explicit OCR selection when duration is updated at the same time', () => {

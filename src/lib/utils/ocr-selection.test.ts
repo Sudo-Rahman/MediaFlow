@@ -27,6 +27,10 @@ describe('OCR selection helpers', () => {
     });
   });
 
+  it('rounds tiny positive default durations up to one millisecond', () => {
+    expect(createDefaultVideoOcrSelection(0.4).segments[0].endTimeMs).toBe(1);
+  });
+
   it('returns the union of zones from overlapping segments', () => {
     const selection: VideoOcrSelection = {
       segments: [
@@ -93,7 +97,14 @@ describe('OCR selection helpers', () => {
     );
   });
 
-  it('reports non-finite durations and segment times', () => {
+  it('reports non-positive and non-finite durations', () => {
+    expect(validateVideoOcrSelection({ segments: [segment('zero', 0, 1, 'main_subtitle')] }, 0)).toContain(
+      'Video duration must be a positive finite number.',
+    );
+    expect(validateVideoOcrSelection({ segments: [segment('negative', 0, 1, 'main_subtitle')] }, -10)).toContain(
+      'Video duration must be a positive finite number.',
+    );
+
     const errors = validateVideoOcrSelection(
       {
         segments: [
@@ -114,7 +125,7 @@ describe('OCR selection helpers', () => {
       Number.NaN,
     );
 
-    expect(errors).toContain('Video duration must be finite.');
+    expect(errors).toContain('Video duration must be a positive finite number.');
     expect(errors).toContain('Segment non-finite must use finite start and end times.');
   });
 

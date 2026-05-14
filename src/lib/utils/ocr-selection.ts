@@ -1,3 +1,4 @@
+import { DEFAULT_OCR_REGION } from '$lib/types';
 import type {
   OcrOutputFormat,
   OcrRegion,
@@ -7,12 +8,7 @@ import type {
   VideoOcrSelection,
 } from '$lib/types';
 
-export const DEFAULT_MAIN_SUBTITLE_REGION: OcrRegion = {
-  x: 0,
-  y: 0.75,
-  width: 1,
-  height: 0.25,
-};
+export const DEFAULT_MAIN_SUBTITLE_REGION: OcrRegion = { ...DEFAULT_OCR_REGION };
 
 const MIN_REGION_SIZE = 0.02;
 
@@ -27,7 +23,7 @@ export interface TimelineBlockWithLane extends TimelineBlock {
 }
 
 export function createDefaultVideoOcrSelection(durationMs: number): VideoOcrSelection {
-  const safeDurationMs = Number.isFinite(durationMs) && durationMs > 0 ? Math.round(durationMs) : 1;
+  const safeDurationMs = normalizePositiveDurationMs(durationMs);
 
   return {
     segments: [
@@ -98,11 +94,13 @@ export function assignOcrTimelineLanes<T extends TimelineBlock>(blocks: T[]): Ar
 
 export function validateVideoOcrSelection(selection: VideoOcrSelection, durationMs: number): string[] {
   const errors: string[] = [];
-  const durationIsFinite = Number.isFinite(durationMs);
-  const safeDurationMs = durationIsFinite ? Math.max(1, Math.round(durationMs)) : Number.POSITIVE_INFINITY;
+  const durationIsPositiveFinite = Number.isFinite(durationMs) && durationMs > 0;
+  const safeDurationMs = durationIsPositiveFinite
+    ? normalizePositiveDurationMs(durationMs)
+    : Number.POSITIVE_INFINITY;
 
-  if (!durationIsFinite) {
-    errors.push('Video duration must be finite.');
+  if (!durationIsPositiveFinite) {
+    errors.push('Video duration must be a positive finite number.');
   }
   if (selection.segments.length === 0) {
     errors.push('OCR selection must contain at least one segment.');
@@ -160,6 +158,10 @@ function clamp01(value: number): number {
 
 function normalizeTimeMs(value: number, fallback: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.round(value)) : fallback;
+}
+
+function normalizePositiveDurationMs(value: number): number {
+  return Number.isFinite(value) && value > 0 ? Math.max(1, Math.round(value)) : 1;
 }
 
 function generateSelectionId(prefix: string): string {

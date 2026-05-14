@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tauri::Emitter;
 
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
-use crate::tools::ocr::{OcrFrameResult, OcrSubtitleCleanupOptions, OcrSubtitleEntry};
+use crate::tools::ocr::{OcrFrameResult, OcrSubtitleCleanupOptions, OcrSubtitleEntry, OcrZoneRole};
 
 impl Default for OcrSubtitleCleanupOptions {
     fn default() -> Self {
@@ -218,7 +218,25 @@ fn texts_are_similar(a_key: &str, b_key: &str, threshold: f64) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::tools::ocr::{OcrFrameResult, OcrSubtitleCleanupOptions};
+    use crate::tools::ocr::{OcrFrameResult, OcrRegion, OcrSubtitleCleanupOptions, OcrZoneRole};
+
+    fn frame(zone_id: &str, role: OcrZoneRole, time_ms: u64, text: &str) -> OcrFrameResult {
+        OcrFrameResult {
+            frame_index: (time_ms / 500) as u32,
+            time_ms,
+            text: text.to_string(),
+            confidence: 0.95,
+            segment_id: Some(format!("segment-{}", zone_id)),
+            zone_id: Some(zone_id.to_string()),
+            role: Some(role),
+            region: Some(OcrRegion {
+                x: 0.1,
+                y: 0.2,
+                width: 0.3,
+                height: 0.1,
+            }),
+        }
+    }
 
     #[test]
     fn texts_are_similar_merges_short_substrings() {
@@ -304,6 +322,48 @@ mod tests {
         assert!(super::text_looks_url_like("visit https://example.com now"));
         assert!(super::text_looks_url_like("example.org"));
         assert!(!super::text_looks_url_like("plain subtitle text"));
+    }
+
+    #[test]
+    fn generate_subtitles_keeps_roles_and_zones_separate() {
+        let frames = vec![
+            frame("main-zone", OcrZoneRole::MainSubtitle, 0, "Hello"),
+            frame("sign-zone", OcrZoneRole::OnScreenText, 0, "Exit"),
+            frame("main-zone", OcrZoneRole::MainSubtitle, 500, "Hello"),
+            frame("sign-zone", OcrZoneRole::OnScreenText, 500, "Exit"),
+        ];
+
+        let subtitles = super::generate_subtitles_core(
+            &frames,
+            2.0,
+            0.5,
+            OcrSubtitleCleanupOptions::default(),
+            |_current, _total| {},
+        )
+        .expect("subtitles should generate");
+
+        assert_eq!(subtitles.len(), 2);
+        assert!(
+            subtitles
+                .iter()
+                .any(|subtitle| subtitle.role == Some(OcrZoneRole::MainSubtitle))
+        );
+        assert!(
+            subtitles
+                .iter()
+                .any(|subtitle| subtitle.role == Some(OcrZoneRole::OnScreenText))
+        );
+        assert!(
+            subtitles
+                .iter()
+                .any(|subtitle| subtitle.zone_id.as_deref() == Some("main-zone"))
+        );
+        assert!(
+            subtitles
+                .iter()
+                .any(|subtitle| subtitle.zone_id.as_deref() == Some("sign-zone"))
+        );
+        assert!(subtitles.iter().all(|subtitle| subtitle.region.is_some()));
     }
 
     #[test]
@@ -910,6 +970,23 @@ struct SubtitleSegment {
     candidates: Vec<SegmentCandidate>,
 }
 
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
+struct SubtitleGroupKey {
+    segment_id: Option<String>,
+    zone_id: Option<String>,
+    role: Option<OcrZoneRole>,
+}
+
+impl SubtitleGroupKey {
+    fn from_frame(frame: &OcrFrameResult) -> Self {
+        Self {
+            segment_id: frame.segment_id.clone(),
+            zone_id: frame.zone_id.clone(),
+            role: frame.role.clone(),
+        }
+    }
+}
+
 fn select_segment_text(candidates: &[SegmentCandidate]) -> Option<(String, f64)> {
     if candidates.is_empty() {
         return None;
@@ -962,6 +1039,77 @@ fn select_segment_text(candidates: &[SegmentCandidate]) -> Option<(String, f64)>
 }
 
 pub(crate) fn generate_subtitles_core<F>(
+    frame_results: &[OcrFrameResult],
+    fps: f64,
+    min_confidence: f64,
+    cleanup: OcrSubtitleCleanupOptions,
+    mut on_progress: F,
+) -> Result<Vec<OcrSubtitleEntry>, String>
+where
+    F: FnMut(usize, usize),
+{
+    if fps <= 0.0 {
+        return Err("FPS must be greater than 0".to_string());
+    }
+
+    let mut groups: HashMap<SubtitleGroupKey, Vec<OcrFrameResult>> = HashMap::new();
+    for frame in frame_results {
+        groups
+            .entry(SubtitleGroupKey::from_frame(frame))
+            .or_default()
+            .push(frame.clone());
+    }
+
+    let total = frame_results.len();
+    let mut processed = 0_usize;
+    let mut subtitles = Vec::new();
+
+    for (key, group_frames) in groups {
+        let region = group_frames.iter().find_map(|frame| frame.region.clone());
+        let mut group_subtitles = generate_subtitles_for_group(
+            &group_frames,
+            fps,
+            min_confidence,
+            cleanup.clone(),
+            |_current, _total| {},
+        )?;
+
+        for subtitle in &mut group_subtitles {
+            subtitle.segment_id = key.segment_id.clone();
+            subtitle.zone_id = key.zone_id.clone();
+            subtitle.role = key.role.clone();
+            subtitle.region = region.clone();
+        }
+
+        processed += group_frames.len();
+        on_progress(processed.min(total), total);
+        subtitles.extend(group_subtitles);
+    }
+
+    subtitles.sort_by(|a, b| {
+        a.start_time
+            .cmp(&b.start_time)
+            .then_with(|| role_priority(a.role.as_ref()).cmp(&role_priority(b.role.as_ref())))
+            .then_with(|| a.zone_id.cmp(&b.zone_id))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+
+    for (index, subtitle) in subtitles.iter_mut().enumerate() {
+        subtitle.id = format!("sub-{}", index + 1);
+    }
+
+    Ok(subtitles)
+}
+
+fn role_priority(role: Option<&OcrZoneRole>) -> u8 {
+    match role {
+        Some(OcrZoneRole::MainSubtitle) => 0,
+        Some(OcrZoneRole::OnScreenText) => 1,
+        None => 2,
+    }
+}
+
+fn generate_subtitles_for_group<F>(
     frame_results: &[OcrFrameResult],
     fps: f64,
     min_confidence: f64,

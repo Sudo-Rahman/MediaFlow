@@ -119,6 +119,10 @@ export interface OcrSubtitle {
   startTime: number;   // Start time in milliseconds
   endTime: number;     // End time in milliseconds
   confidence: number;  // OCR confidence (0-1)
+  segmentId?: string;
+  zoneId?: string;
+  role?: OcrZoneRole;
+  region?: OcrRegion;
 }
 
 export interface OcrRawFrame {
@@ -126,6 +130,10 @@ export interface OcrRawFrame {
   timeMs: number;
   text: string;
   confidence: number;
+  segmentId?: string;
+  zoneId?: string;
+  role?: OcrZoneRole;
+  region?: OcrRegion;
 }
 
 export interface OcrPipelineTimings {

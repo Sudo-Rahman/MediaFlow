@@ -1,7 +1,7 @@
 <script lang="ts">
   import { convertFileSrc } from '@tauri-apps/api/core';
 
-  import type { OcrRegion, OcrSubtitle, OcrVideoFile, OcrZoneRole } from '$lib/types';
+  import type { OcrRegion, OcrSubtitle, OcrVideoFile, OcrZoneFrame, OcrZoneRole } from '$lib/types';
   import { cn } from '$lib/utils';
   import { Button } from '$lib/components/ui/button';
   import * as ContextMenu from '$lib/components/ui/context-menu';
@@ -9,9 +9,11 @@
   import SubtitleOverlay from './SubtitleOverlay.svelte';
   import RegionSelector from './RegionSelector.svelte';
   import OcrZoneContextMenu from './OcrZoneContextMenu.svelte';
+  import LiveOcrHoverCard from './LiveOcrHoverCard.svelte';
 
   interface VideoPreviewProps {
     file?: OcrVideoFile;
+    liveDetections?: OcrZoneFrame[];
     showSubtitles?: boolean;
     suspendPlayback?: boolean;
     onTimeChange?: (timeMs: number) => void;
@@ -24,6 +26,7 @@
 
   let {
     file,
+    liveDetections = [],
     showSubtitles = true,
     suspendPlayback = false,
     onTimeChange,
@@ -343,6 +346,12 @@
             </button>
           </OcrZoneContextMenu>
         {/each}
+      {/if}
+
+      {#if liveDetections.length > 0 && !isDrawingZone}
+        <div class="absolute left-3 top-3">
+          <LiveOcrHoverCard detections={liveDetections} />
+        </div>
       {/if}
 
       {#if shouldShowZoneHint}

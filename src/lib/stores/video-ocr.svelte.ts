@@ -15,6 +15,7 @@ import type {
   OcrLogEntry,
   OcrModelsStatus,
   OcrPreviewSourceIdentity,
+  OcrZoneFrame,
   VideoOcrSelection,
 } from '$lib/types';
 import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
@@ -40,6 +41,7 @@ let cancelledFileIds = $state<Set<string>>(new Set());
 // Operation tracking for cancellation
 let currentOperationId = $state<string | null>(null);
 let activeOperationIdsByFileId = $state.raw<Map<string, string>>(new Map());
+let liveDetectionsByFileId = $state.raw<Map<string, OcrZoneFrame[]>>(new Map());
 
 // Scoped run targets (for precise global progress aggregation)
 let processingScopeFileIds = $state<Set<string>>(new Set());
@@ -100,6 +102,13 @@ function cloneVideoFile(file: OcrVideoFile): OcrVideoFile {
   return {
     ...file,
     ocrSelection: cloneSelection(file.ocrSelection),
+  };
+}
+
+function cloneLiveDetection(detection: OcrZoneFrame): OcrZoneFrame {
+  return {
+    ...detection,
+    region: { ...detection.region },
   };
 }
 
@@ -243,6 +252,7 @@ export const videoOcrStore = {
 
   removeFile(id: string) {
     videoFiles = videoFiles.filter(f => f.id !== id);
+    this.clearLiveDetections(id);
     if (processingScopeFileIds.has(id)) {
       processingScopeFileIds = new Set(
         [...processingScopeFileIds].filter((fileId) => fileId !== id)
@@ -494,9 +504,39 @@ export const videoOcrStore = {
   },
 
   // -------------------------------------------------------------------------
+  // Actions - Live OCR Detections
+  // -------------------------------------------------------------------------
+  addLiveDetection(fileId: string, operationId: string | null | undefined, detection: OcrZoneFrame) {
+    const activeOperationId = activeOperationIdsByFileId.get(fileId);
+
+    if (activeOperationId && operationId !== activeOperationId) {
+      return;
+    }
+
+    const existing = liveDetectionsByFileId.get(fileId) ?? [];
+    const next = [...existing, cloneLiveDetection(detection)].slice(-100);
+    liveDetectionsByFileId = new Map(liveDetectionsByFileId).set(fileId, next);
+  },
+
+  getLiveDetections(fileId: string): OcrZoneFrame[] {
+    return (liveDetectionsByFileId.get(fileId) ?? []).map(cloneLiveDetection);
+  },
+
+  clearLiveDetections(fileId: string) {
+    if (!liveDetectionsByFileId.has(fileId)) {
+      return;
+    }
+
+    const next = new Map(liveDetectionsByFileId);
+    next.delete(fileId);
+    liveDetectionsByFileId = next;
+  },
+
+  // -------------------------------------------------------------------------
   // Actions - Subtitles
   // -------------------------------------------------------------------------
   setOcrVersions(fileId: string, versions: OcrVersion[]) {
+    this.clearLiveDetections(fileId);
     videoFiles = videoFiles.map(f =>
       f.id === fileId ? {
         ...f,
@@ -509,6 +549,7 @@ export const videoOcrStore = {
   },
 
   addOcrVersion(fileId: string, version: OcrVersion) {
+    this.clearLiveDetections(fileId);
     videoFiles = videoFiles.map(f => {
       if (f.id !== fileId) {
         return f;
@@ -564,6 +605,7 @@ export const videoOcrStore = {
     currentProcessingId = fileId;
     currentOperationId = nextOperationId;
     activeOperationIdsByFileId = new Map(activeOperationIdsByFileId).set(fileId, nextOperationId);
+    this.clearLiveDetections(fileId);
     this.addLog('info', 'Starting OCR processing...', fileId);
   },
 
@@ -572,6 +614,7 @@ export const videoOcrStore = {
     currentProcessingId = null;
     currentOperationId = null;
     activeOperationIdsByFileId = new Map();
+    liveDetectionsByFileId = new Map();
     cancelledFileIds = new Set();
     isCancelling = false;
     processingScopeFileIds = new Set();
@@ -580,6 +623,7 @@ export const videoOcrStore = {
   cancelProcessing(fileId: string) {
     cancelledFileIds = new Set([...cancelledFileIds, fileId]);
     isCancelling = true;
+    this.clearLiveDetections(fileId);
 
     // Reset file status
     videoFiles = videoFiles.map(f => {
@@ -599,6 +643,7 @@ export const videoOcrStore = {
 
   cancelAll() {
     isCancelling = true;
+    liveDetectionsByFileId = new Map();
 
     // Cancel all processing files
     videoFiles = videoFiles.map(f => {
@@ -679,6 +724,7 @@ export const videoOcrStore = {
     currentProcessingId = null;
     currentOperationId = null;
     activeOperationIdsByFileId = new Map();
+    liveDetectionsByFileId = new Map();
     cancelledFileIds = new Set();
     isCancelling = false;
     processingScopeFileIds = new Set();

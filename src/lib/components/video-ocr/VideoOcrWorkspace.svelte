@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { OcrLogEntry, OcrRegion, OcrVideoFile, OcrZoneRole } from '$lib/types';
+  import type { OcrLogEntry, OcrRegion, OcrVideoFile, OcrZoneFrame, OcrZoneRole } from '$lib/types';
 
   import OcrLogPanel from './OcrLogPanel.svelte';
   import OcrTimeline from './OcrTimeline.svelte';
@@ -7,6 +7,7 @@
 
   interface VideoOcrWorkspaceProps {
     file: OcrVideoFile | null;
+    liveDetections: OcrZoneFrame[];
     logs: OcrLogEntry[];
     dialogsOpen: boolean;
     onAddSegmentFromRegion: (
@@ -23,6 +24,7 @@
 
   let {
     file,
+    liveDetections,
     logs,
     dialogsOpen,
     onAddSegmentFromRegion,
@@ -87,6 +89,7 @@
 <div class="flex-1 min-h-0 overflow-hidden p-4 grid grid-rows-[minmax(0,2fr)_auto_minmax(0,1fr)] gap-4">
   <VideoPreview
     file={file ?? undefined}
+    {liveDetections}
     showSubtitles={!dialogsOpen}
     suspendPlayback={dialogsOpen}
     onTimeChange={handleTimeChange}

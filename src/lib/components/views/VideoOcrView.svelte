@@ -13,6 +13,7 @@
 
   import type {
     OcrConfig,
+    OcrLiveDetectionEvent,
     OcrModelsStatus,
     OcrProgressEvent,
     OcrRegion,
@@ -70,6 +71,7 @@
   let removeTarget = $state.raw<RemoveTarget>(null);
   let persistedOcrVersionKeys = $state<Set<string>>(new Set());
   let unlistenOcrProgress: UnlistenFn | null = null;
+  let unlistenOcrLiveDetection: UnlistenFn | null = null;
   let isDestroyed = false;
 
   const aiCleanupControllers = new Map<string, AbortController>();
@@ -80,6 +82,9 @@
   const persistenceQueues = new Map<string, Promise<void>>();
 
   const selectedFile = $derived(videoOcrStore.selectedFile ?? null);
+  const selectedLiveDetections = $derived(
+    selectedFile ? videoOcrStore.getLiveDetections(selectedFile.id) : [],
+  );
   const resultDialogFile = $derived(
     resultDialogFileId
       ? videoOcrStore.videoFiles.find((file) => file.id === resultDialogFileId) ?? null
@@ -235,7 +240,7 @@
       return;
     }
 
-    const unlisten = await listen<OcrProgressEvent>('ocr-progress', (event) => {
+    const unlistenProgress = await listen<OcrProgressEvent>('ocr-progress', (event) => {
       const {
         fileId,
         operationId,
@@ -266,11 +271,23 @@
     });
 
     if (isDestroyed) {
-      unlisten();
+      unlistenProgress();
       return;
     }
 
-    unlistenOcrProgress = unlisten;
+    const unlistenLiveDetection = await listen<OcrLiveDetectionEvent>('ocr-live-detection', (event) => {
+      const { fileId, operationId, detection } = event.payload;
+      videoOcrStore.addLiveDetection(fileId, operationId, detection);
+    });
+
+    if (isDestroyed) {
+      unlistenProgress();
+      unlistenLiveDetection();
+      return;
+    }
+
+    unlistenOcrProgress = unlistenProgress;
+    unlistenOcrLiveDetection = unlistenLiveDetection;
   }
 
   onMount(() => {
@@ -301,6 +318,7 @@
     }
     aiCleanupControllers.clear();
     unlistenOcrProgress?.();
+    unlistenOcrLiveDetection?.();
   });
 
   async function persistFileData(fileId: string): Promise<boolean> {
@@ -1069,6 +1087,7 @@
 
   <VideoOcrWorkspace
     file={selectedFile}
+    liveDetections={selectedLiveDetections}
     logs={videoOcrStore.logs}
     {dialogsOpen}
     onAddSegmentFromRegion={handleAddSegmentFromRegion}

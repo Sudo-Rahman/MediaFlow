@@ -3,6 +3,7 @@
 
   import type { OcrRegion, OcrSubtitle, OcrVideoFile, OcrZoneRole } from '$lib/types';
   import { cn } from '$lib/utils';
+  import { Button } from '$lib/components/ui/button';
   import * as ContextMenu from '$lib/components/ui/context-menu';
   import { Tooltip, TooltipContent, TooltipTrigger } from '$lib/components/ui/tooltip';
   import SubtitleOverlay from './SubtitleOverlay.svelte';
@@ -103,7 +104,7 @@
 
     const timeMs = Math.round(currentTime * 1000);
     return file.ocrSelection.segments.flatMap((segment) => {
-      if (timeMs < segment.startTimeMs || timeMs > segment.endTimeMs) {
+      if (timeMs < segment.startTimeMs || timeMs >= segment.endTimeMs) {
         return [];
       }
 
@@ -214,6 +215,11 @@
 
     const endTimeMs = getVideoDurationMs();
     void onAddSegmentFromRegion(region, drawingStartTimeMs, endTimeMs);
+    isDrawingZone = false;
+    drawingRegion = undefined;
+  }
+
+  function cancelZoneDrawing(): void {
     isDrawingZone = false;
     drawingRegion = undefined;
   }
@@ -361,7 +367,18 @@
             drawingRegion = region;
           }}
           oncommit={handleDrawingCommit}
+          oncancel={cancelZoneDrawing}
         />
+        <div class="absolute right-3 top-3">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onclick={cancelZoneDrawing}
+          >
+            Cancel
+          </Button>
+        </div>
       {/if}
       </ContextMenu.Trigger>
       <ContextMenu.Content class="w-64">

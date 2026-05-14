@@ -15,6 +15,7 @@
     videoBounds?: VideoBounds;
     onchange?: (region: OcrRegion | undefined) => void;
     oncommit?: (region: OcrRegion) => void;
+    oncancel?: () => void;
   }
 
   let {
@@ -22,6 +23,7 @@
     videoBounds = { x: 0, y: 0, width: 1, height: 1 },
     onchange,
     oncommit,
+    oncancel,
   }: RegionSelectorProps = $props();
 
   let containerEl: HTMLButtonElement | undefined = $state();
@@ -68,6 +70,7 @@
     
     // Check if click is within video bounds
     if (!isInsideVideoBounds(containerX, containerY)) {
+      oncancel?.();
       return;
     }
 
@@ -229,6 +232,8 @@
       && committedRegion.height >= MIN_SIZE
     ) {
       oncommit?.(committedRegion);
+    } else if (dragMode !== 'none') {
+      oncancel?.();
     }
     latestRegion = undefined;
     dragMode = 'none';

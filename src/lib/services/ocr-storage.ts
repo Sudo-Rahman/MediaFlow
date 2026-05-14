@@ -199,9 +199,11 @@ export async function saveOcrData(
     audioToSubs: existing?.audioToSubs,
     translation: existing?.translation,
     videoOcr: {
-      ...data,
       version: 2,
       videoPath,
+      previewPath: data.previewPath,
+      previewSourceIdentity: data.previewSourceIdentity,
+      previewVersion: data.previewVersion,
       ocrSelection: data.ocrSelection,
       ocrVersions: data.ocrVersions.map(normalizeOcrVersion),
       createdAt: data.createdAt || now,

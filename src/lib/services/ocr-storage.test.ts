@@ -40,6 +40,30 @@ describe('OCR storage', () => {
     }));
   });
 
+  it('does not persist runtime legacy OCR region keys', async () => {
+    saveMediaflowDataMock.mockResolvedValueOnce(true);
+    loadMediaflowDataMock.mockResolvedValueOnce(null);
+    const data: VideoOcrPersistenceData & {
+      ocrRegion: { x: number; y: number; width: number; height: number };
+      ocrRegionMode: 'custom';
+    } = {
+      version: 2,
+      videoPath: '/movie.mp4',
+      ocrSelection: createDefaultVideoOcrSelection(60_000),
+      ocrVersions: [],
+      createdAt: '2026-05-14T00:00:00.000Z',
+      updatedAt: '2026-05-14T00:00:00.000Z',
+      ocrRegion: { x: 0, y: 0.75, width: 1, height: 0.25 },
+      ocrRegionMode: 'custom',
+    };
+
+    await saveOcrData('/movie.mp4', data);
+
+    const saved = saveMediaflowDataMock.mock.calls[0]?.[1] as { videoOcr?: Record<string, unknown> };
+    expect(saved.videoOcr).not.toHaveProperty('ocrRegion');
+    expect(saved.videoOcr).not.toHaveProperty('ocrRegionMode');
+  });
+
   it('rejects legacy OCR region persistence', async () => {
     loadMediaflowDataMock.mockResolvedValueOnce({
       version: 1,

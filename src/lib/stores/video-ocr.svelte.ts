@@ -225,9 +225,9 @@ export const videoOcrStore = {
       })
       .map((file) => ({
         ...file,
-        ocrSelection: file.ocrSelection ?? createDefaultVideoOcrSelection(
-          file.duration ? Math.round(file.duration * 1000) : 1,
-        ),
+        ocrSelection: file.ocrSelection
+          ? cloneSelection(file.ocrSelection)
+          : createDefaultVideoOcrSelection(file.duration ? Math.round(file.duration * 1000) : 1),
         ocrRegionMode: file.ocrRegionMode ?? 'global',
         ocrRegion: file.ocrRegion ?? { ...globalRegion },
       }));
@@ -270,7 +270,10 @@ export const videoOcrStore = {
       }
 
       const durationMs = updates.duration ? Math.round(updates.duration * 1000) : undefined;
-      const nextFile = { ...f, ...updates };
+      const nextUpdates = updates.ocrSelection
+        ? { ...updates, ocrSelection: cloneSelection(updates.ocrSelection) }
+        : updates;
+      const nextFile = { ...f, ...nextUpdates };
       if (durationMs && f.ocrSelection.segments.length === 1 && f.ocrSelection.segments[0].endTimeMs === 1) {
         return { ...nextFile, ocrSelection: createDefaultVideoOcrSelection(durationMs) };
       }

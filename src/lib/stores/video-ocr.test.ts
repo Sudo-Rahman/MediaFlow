@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import type { OcrVideoFile } from '$lib/types';
 import { DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
 import { createOcrSegmentFromZone, DEFAULT_MAIN_SUBTITLE_REGION } from '$lib/utils';
 
@@ -39,6 +40,44 @@ describe('video OCR store', () => {
     videoOcrStore.addOcrSegment(file.id, segment);
 
     expect(videoOcrStore.videoFiles[0].ocrSelection.segments).toContainEqual(segment);
+  });
+
+  it('clones imported OCR selections when adding files', () => {
+    const ocrSelection = {
+      segments: [createOcrSegmentFromZone(0, 60_000, DEFAULT_MAIN_SUBTITLE_REGION)],
+    };
+    const file: OcrVideoFile = {
+      id: 'file-1',
+      path: '/Users/sr-71/Movies/sample.mp4',
+      name: 'sample.mp4',
+      size: 0,
+      status: 'pending',
+      ocrSelection,
+      ocrVersions: [],
+    };
+
+    videoOcrStore.addFiles([file]);
+    ocrSelection.segments[0].zones[0].region.y = 0.5;
+    ocrSelection.segments[0].zones[0].role = 'on_screen_text';
+
+    const storedZone = videoOcrStore.videoFiles[0].ocrSelection.segments[0].zones[0];
+    expect(storedZone.region.y).toBe(DEFAULT_MAIN_SUBTITLE_REGION.y);
+    expect(storedZone.role).toBe('main_subtitle');
+  });
+
+  it('clones OCR selections passed through updateFile', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    const ocrSelection = {
+      segments: [createOcrSegmentFromZone(0, 60_000, DEFAULT_MAIN_SUBTITLE_REGION)],
+    };
+
+    videoOcrStore.updateFile(file.id, { ocrSelection });
+    ocrSelection.segments[0].zones[0].region.y = 0.5;
+    ocrSelection.segments[0].zones[0].role = 'on_screen_text';
+
+    const storedZone = videoOcrStore.videoFiles[0].ocrSelection.segments[0].zones[0];
+    expect(storedZone.region.y).toBe(DEFAULT_MAIN_SUBTITLE_REGION.y);
+    expect(storedZone.role).toBe('main_subtitle');
   });
 
   it('changes a zone role without changing its geometry', () => {

@@ -354,6 +354,14 @@ describe('video OCR store', () => {
     expect(videoOcrStore.getLiveDetections(file.id)).toEqual([]);
   });
 
+  it('ignores live OCR detections without an active operation', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+
+    videoOcrStore.addLiveDetection(file.id, 'ocr-run-1', createLiveDetection('Late'));
+
+    expect(videoOcrStore.getLiveDetections(file.id)).toEqual([]);
+  });
+
   it('returns cloned live OCR detection arrays', () => {
     const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
 
@@ -395,6 +403,18 @@ describe('video OCR store', () => {
     videoOcrStore.startProcessing(file.id, 'ocr-run-1');
     videoOcrStore.addLiveDetection(file.id, 'ocr-run-1', createLiveDetection('Before cancel'));
     videoOcrStore.cancelProcessing(file.id);
+    videoOcrStore.addLiveDetection(file.id, 'ocr-run-1', createLiveDetection('Late after cancel'));
+
+    expect(videoOcrStore.getLiveDetections(file.id)).toEqual([]);
+  });
+
+  it('ignores late live OCR detections after processing stops', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+
+    videoOcrStore.startProcessing(file.id, 'ocr-run-1');
+    videoOcrStore.addLiveDetection(file.id, 'ocr-run-1', createLiveDetection('Before stop'));
+    videoOcrStore.stopProcessing();
+    videoOcrStore.addLiveDetection(file.id, 'ocr-run-1', createLiveDetection('Late after stop'));
 
     expect(videoOcrStore.getLiveDetections(file.id)).toEqual([]);
   });

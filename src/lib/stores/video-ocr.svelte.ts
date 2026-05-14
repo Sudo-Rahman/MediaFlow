@@ -507,9 +507,13 @@ export const videoOcrStore = {
   // Actions - Live OCR Detections
   // -------------------------------------------------------------------------
   addLiveDetection(fileId: string, operationId: string | null | undefined, detection: OcrZoneFrame) {
+    if (cancelledFileIds.has(fileId)) {
+      return;
+    }
+
     const activeOperationId = activeOperationIdsByFileId.get(fileId);
 
-    if (activeOperationId && operationId !== activeOperationId) {
+    if (!activeOperationId || operationId !== activeOperationId) {
       return;
     }
 
@@ -623,6 +627,9 @@ export const videoOcrStore = {
   cancelProcessing(fileId: string) {
     cancelledFileIds = new Set([...cancelledFileIds, fileId]);
     isCancelling = true;
+    const nextActiveOperationIds = new Map(activeOperationIdsByFileId);
+    nextActiveOperationIds.delete(fileId);
+    activeOperationIdsByFileId = nextActiveOperationIds;
     this.clearLiveDetections(fileId);
 
     // Reset file status

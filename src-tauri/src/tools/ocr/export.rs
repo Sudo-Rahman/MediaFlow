@@ -13,6 +13,7 @@ pub(crate) async fn export_ocr_subtitles(
     let content = match format.as_str() {
         "srt" => format_srt(&subtitles),
         "vtt" => format_vtt(&subtitles),
+        "ass" => format_ass(&subtitles),
         "txt" => format_txt(&subtitles),
         _ => return Err(format!("Unsupported format: {}", format)),
     };
@@ -64,6 +65,43 @@ fn format_txt(subtitles: &[OcrSubtitleEntry]) -> String {
         .join("\n")
 }
 
+/// Format subtitles as ASS with a single default bottom subtitle style.
+fn format_ass(subtitles: &[OcrSubtitleEntry]) -> String {
+    let events = subtitles
+        .iter()
+        .map(|sub| {
+            format!(
+                "Dialogue: 0,{},{},Default,,0,0,0,,{}",
+                format_ass_time(sub.start_time),
+                format_ass_time(sub.end_time),
+                format_ass_text(&sub.text)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    [
+        "[Script Info]".to_string(),
+        "ScriptType: v4.00+".to_string(),
+        String::new(),
+        "[V4+ Styles]".to_string(),
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding".to_string(),
+        "Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,0,2,20,20,40,1".to_string(),
+        String::new(),
+        "[Events]".to_string(),
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text".to_string(),
+        events,
+    ]
+    .join("\n")
+}
+
+fn format_ass_text(text: &str) -> String {
+    text.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace('\n', "\\N")
+        .replace(['{', '}'], "")
+}
+
 /// Format time for SRT (00:00:00,000)
 fn format_srt_time(ms: u64) -> String {
     let hours = ms / 3_600_000;
@@ -82,10 +120,23 @@ fn format_vtt_time(ms: u64) -> String {
     format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
 }
 
+/// Format time for ASS (0:00:00.00)
+fn format_ass_time(ms: u64) -> String {
+    let hours = ms / 3_600_000;
+    let minutes = (ms % 3_600_000) / 60_000;
+    let seconds = (ms % 60_000) / 1000;
+    let centiseconds = (ms % 1000) / 10;
+    format!(
+        "{}:{:02}:{:02}.{:02}",
+        hours, minutes, seconds, centiseconds
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        export_ocr_subtitles, format_srt, format_srt_time, format_txt, format_vtt, format_vtt_time,
+        export_ocr_subtitles, format_ass, format_ass_time, format_srt, format_srt_time, format_txt,
+        format_vtt, format_vtt_time,
     };
     use crate::tools::ocr::OcrSubtitleEntry;
 
@@ -112,6 +163,7 @@ mod tests {
     fn format_srt_and_vtt_time_render_expected_formats() {
         assert_eq!(format_srt_time(3723004), "01:02:03,004");
         assert_eq!(format_vtt_time(3723004), "01:02:03.004");
+        assert_eq!(format_ass_time(3723004), "1:02:03.00");
     }
 
     #[test]
@@ -126,6 +178,19 @@ mod tests {
 
         let txt = format_txt(&subtitles);
         assert_eq!(txt, "Hello\nWorld");
+    }
+
+    #[test]
+    fn format_ass_renders_position_capable_subtitles() {
+        let mut subtitles = sample_subtitles();
+        subtitles[0].text = "Hello\n{ignored}".to_string();
+
+        let ass = format_ass(&subtitles);
+
+        assert!(ass.starts_with("[Script Info]\nScriptType: v4.00+"));
+        assert!(ass.contains("[V4+ Styles]"));
+        assert!(ass.contains("[Events]"));
+        assert!(ass.contains("Dialogue: 0,0:00:00.00,0:00:01.20,Default,,0,0,0,,Hello\\Nignored"));
     }
 
     #[tokio::test]

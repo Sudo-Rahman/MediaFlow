@@ -15,10 +15,10 @@
     OcrConfig,
     OcrModelsStatus,
     OcrProgressEvent,
-    OcrRegion,
     OcrRetryMode,
     OcrVideoFile,
     OcrVersion,
+    OcrZoneRole,
     VideoOcrPersistenceData,
   } from '$lib/types';
   import { VIDEO_EXTENSIONS } from '$lib/types';
@@ -208,8 +208,6 @@
       return;
     }
 
-    videoOcrStore.setGlobalRegion(settingsStore.getVideoOcrGlobalRegion());
-
     if (!videoOcrStore.modelsChecked) {
       try {
         const status = await invoke<OcrModelsStatus>('check_ocr_models');
@@ -321,13 +319,12 @@
 
       const now = new Date().toISOString();
       const payload: VideoOcrPersistenceData = {
-        version: 1,
+        version: 2,
         videoPath,
         previewPath: latestFile.previewPath,
         previewSourceIdentity: latestFile.previewSourceIdentity,
         previewVersion: latestFile.previewVersion,
-        ocrRegion: latestFile.ocrRegion,
-        ocrRegionMode: latestFile.ocrRegionMode,
+        ocrSelection: latestFile.ocrSelection,
         ocrVersions: latestFile.ocrVersions,
         createdAt: existingData?.createdAt ?? now,
         updatedAt: now,
@@ -347,14 +344,6 @@
     }
   }
 
-  async function persistGlobalRegionForLinkedFiles(): Promise<void> {
-    await Promise.all(
-      videoOcrStore.videoFiles
-        .filter((file) => file.ocrRegionMode === 'global')
-        .map((file) => persistFileData(file.id)),
-    );
-  }
-
   function applyPersistedFileState(
     file: OcrVideoFile,
     persisted: VideoOcrPersistenceData | null,
@@ -363,13 +352,7 @@
       return;
     }
 
-    const persistedRegionMode = persisted.ocrRegionMode ?? 'custom';
-    videoOcrStore.updateFile(file.id, {
-      ocrRegionMode: persistedRegionMode,
-      ocrRegion: persistedRegionMode === 'global'
-        ? videoOcrStore.globalRegion
-        : persisted.ocrRegion ?? file.ocrRegion,
-    });
+    videoOcrStore.setOcrSelection(file.id, persisted.ocrSelection);
 
     if (persisted.ocrVersions.length > 0) {
       videoOcrStore.setOcrVersions(file.id, persisted.ocrVersions);
@@ -978,37 +961,9 @@
     retryDialogOpen = true;
   }
 
-  function handleFileRegionChange(region: OcrRegion | undefined): void {
-    if (!videoOcrStore.selectedFileId) {
-      return;
-    }
-
-    videoOcrStore.setFileRegionCustom(videoOcrStore.selectedFileId, region);
-    void persistFileData(videoOcrStore.selectedFileId);
-  }
-
-  function handleUseGlobalRegion(): void {
-    if (!videoOcrStore.selectedFileId) {
-      return;
-    }
-
-    videoOcrStore.setFileRegionMode(videoOcrStore.selectedFileId, 'global');
-    void persistFileData(videoOcrStore.selectedFileId);
-  }
-
-  async function handleGlobalRegionChange(region: OcrRegion | undefined): Promise<void> {
-    if (!region) {
-      return;
-    }
-
-    try {
-      videoOcrStore.setGlobalRegion(region);
-      await settingsStore.setVideoOcrGlobalRegion(region);
-      await persistGlobalRegionForLinkedFiles();
-    } catch (error) {
-      console.error('Failed to update global OCR region:', error);
-      toast.error('Failed to save global OCR region');
-    }
+  function handleSetZoneRole(fileId: string, segmentId: string, zoneId: string, role: OcrZoneRole): void {
+    videoOcrStore.setOcrZoneRole(fileId, segmentId, zoneId, role);
+    void persistFileData(fileId);
   }
 
   $effect(() => {
@@ -1052,12 +1007,9 @@
 
   <VideoOcrWorkspace
     file={selectedFile}
-    globalRegion={videoOcrStore.globalRegion}
     logs={videoOcrStore.logs}
     {dialogsOpen}
-    onGlobalRegionChange={handleGlobalRegionChange}
-    onFileRegionChange={handleFileRegionChange}
-    onUseGlobalRegion={handleUseGlobalRegion}
+    onSetZoneRole={handleSetZoneRole}
     onPlaybackError={handlePreviewPlaybackError}
     onClearLogs={() => videoOcrStore.clearLogs()}
   />

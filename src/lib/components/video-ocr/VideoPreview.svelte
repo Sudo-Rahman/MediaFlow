@@ -11,24 +11,18 @@
 
   interface VideoPreviewProps {
     file?: OcrVideoFile;
-    globalRegion?: OcrRegion;
     showSubtitles?: boolean;
     suspendPlayback?: boolean;
-    onGlobalRegionChange?: (region: OcrRegion | undefined) => void | Promise<void>;
-    onFileRegionChange?: (region: OcrRegion | undefined) => void | Promise<void>;
-    onUseGlobalRegion?: () => void;
+    onTimeChange?: (timeMs: number) => void;
     onPlaybackError?: (fileId: string, reason: string) => void | Promise<void>;
     class?: string;
   }
 
   let {
     file,
-    globalRegion,
     showSubtitles = true,
     suspendPlayback = false,
-    onGlobalRegionChange,
-    onFileRegionChange,
-    onUseGlobalRegion,
+    onTimeChange,
     onPlaybackError,
     class: className = '',
   }: VideoPreviewProps = $props();
@@ -37,8 +31,7 @@
   let containerEl: HTMLDivElement | undefined = $state();
   let currentTime = $state(0);
   let isRegionMode = $state(false);
-  let editScope = $state<'all' | 'file'>('all');
-  let region = $state<OcrRegion | undefined>(undefined);
+  let region = $state<OcrRegion>({ ...DEFAULT_OCR_REGION });
   let resumePlayback = $state(false);
   
   // Video bounds within container (for letterboxed videos)
@@ -89,25 +82,8 @@
     });
   });
 
-  // Sync editable region with active editing scope
-  $effect(() => {
-    if (editScope === 'all') {
-      region = globalRegion ? { ...globalRegion } : { ...DEFAULT_OCR_REGION };
-      return;
-    }
-
-    if (file?.ocrRegion) {
-      region = { ...file.ocrRegion };
-    } else {
-      region = undefined;
-    }
-  });
-
   const displayedRegion = $derived.by(() => {
-    if (file?.ocrRegionMode === 'global') {
-      return file.ocrRegion ?? globalRegion ?? DEFAULT_OCR_REGION;
-    }
-    return file?.ocrRegion;
+    return region;
   });
 
   // Get video source URL
@@ -144,12 +120,9 @@
   });
 
   function handleTimeUpdate() {
-    if (!showSubtitles) {
-      return;
-    }
-
     if (videoEl) {
       currentTime = videoEl.currentTime;
+      onTimeChange?.(Math.round(currentTime * 1000));
     }
   }
 
@@ -226,15 +199,8 @@
   }
 
   function handleRegionChange(newRegion: OcrRegion | undefined) {
-    if (editScope === 'all') {
-      const nextRegion = newRegion ?? { ...DEFAULT_OCR_REGION };
-      region = nextRegion;
-      onGlobalRegionChange?.(nextRegion);
-      return;
-    }
-
-    region = newRegion;
-    onFileRegionChange?.(newRegion);
+    const nextRegion = newRegion ?? { ...DEFAULT_OCR_REGION };
+    region = nextRegion;
   }
 
   function setDefaultRegion() {
@@ -243,17 +209,7 @@
   }
 
   function clearRegion() {
-    if (editScope === 'all') {
-      setDefaultRegion();
-      return;
-    }
-
-    handleRegionChange(undefined);
-  }
-
-  function useGlobalRegion() {
-    onUseGlobalRegion?.();
-    editScope = 'all';
+    setDefaultRegion();
   }
 </script>
 
@@ -339,33 +295,6 @@
           Set OCR Region
         {/if}
       </Button>
-
-      <div class="flex items-center gap-1 rounded-md border p-1">
-        <Button
-          variant={editScope === 'all' ? 'secondary' : 'ghost'}
-          size="sm"
-          class="h-7 px-2 text-xs"
-          onclick={() => editScope = 'all'}
-        >
-          All files
-        </Button>
-        <Button
-          variant={editScope === 'file' ? 'secondary' : 'ghost'}
-          size="sm"
-          class="h-7 px-2 text-xs"
-          onclick={() => editScope = 'file'}
-          disabled={!file}
-        >
-          This file
-        </Button>
-      </div>
-
-      {#if file?.ocrRegionMode === 'custom'}
-        <Button variant="ghost" size="sm" class="text-xs" onclick={useGlobalRegion}>
-          Use global region
-        </Button>
-      {/if}
-
       {#if region}
         <Button
           variant="ghost"
@@ -394,7 +323,7 @@
       {/if}
     </div>
     <p class="text-xs text-muted-foreground mt-2 px-2">
-      Tip: Use All files for a shared default region, or This file for an override.
+      Tip: This default region remains available until timeline zones can be edited from the preview.
     </p>
   {/if}
 </div>

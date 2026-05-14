@@ -65,6 +65,20 @@ describe('OCR selection helpers', () => {
     expect(lanes.find((entry) => entry.id === 'c')?.lane).toBe(0);
   });
 
+  it('keeps role blocks independently lane-assigned by caller grouping', () => {
+    const main = assignOcrTimelineLanes([block('main', 0, 5_000)]);
+    const onscreen = assignOcrTimelineLanes([
+      block('sign', 1_000, 4_000),
+      block('board', 2_000, 3_000),
+    ]);
+
+    expect(main).toEqual([expect.objectContaining({ id: 'main', lane: 0 })]);
+    expect(onscreen).toEqual([
+      expect.objectContaining({ id: 'sign', lane: 0 }),
+      expect.objectContaining({ id: 'board', lane: 1 }),
+    ]);
+  });
+
   it('reports invalid segments and regions', () => {
     const errors = validateVideoOcrSelection(
       {

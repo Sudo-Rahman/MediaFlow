@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { OcrPreviewSourceIdentity, VideoOcrPersistenceData } from '$lib/types';
+import { createDefaultVideoOcrSelection } from '$lib/utils';
 import {
   OCR_PREVIEW_CACHE_VERSION,
   getReusableOcrPreview,
@@ -32,11 +33,12 @@ function persistedPreview(
   sourceIdentity: OcrPreviewSourceIdentity | null = identity(),
 ): VideoOcrPersistenceData {
   return {
-    version: 1,
+    version: 2,
     videoPath: '/Volumes/NAS/source.mkv',
     previewPath: '/tmp/mediaflow_preview/source.mp4',
     previewSourceIdentity: sourceIdentity ?? undefined,
     previewVersion: OCR_PREVIEW_CACHE_VERSION,
+    ocrSelection: createDefaultVideoOcrSelection(60_000),
     ocrVersions: [],
     createdAt: '2026-05-09T00:00:00.000Z',
     updatedAt: '2026-05-09T00:00:00.000Z',

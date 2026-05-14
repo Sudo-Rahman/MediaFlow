@@ -15,6 +15,7 @@
     OcrConfig,
     OcrLiveDetectionEvent,
     OcrModelsStatus,
+    OcrOutputFormat,
     OcrProgressEvent,
     OcrRegion,
     OcrRetryMode,
@@ -48,7 +49,7 @@
     summarizeOcrFiles,
   } from '$lib/components/video-ocr/video-ocr-processing';
   import type { ProcessVideoOcrFileResult } from '$lib/components/video-ocr/video-ocr-processing';
-  import { createOcrSegmentFromZone } from '$lib/utils';
+  import { createOcrSegmentFromZone, getAllowedOcrExportFormats } from '$lib/utils';
   import { logAndToast } from '$lib/utils/log-toast';
 
   const VIDEO_FORMATS = VIDEO_EXTENSIONS.map((ext) => ext.toUpperCase()).join(', ');
@@ -89,6 +90,9 @@
     resultDialogFileId
       ? videoOcrStore.videoFiles.find((file) => file.id === resultDialogFileId) ?? null
       : null,
+  );
+  const resultDialogAllowedFormats = $derived(
+    resultDialogFile ? getAllowedOcrExportFormats(resultDialogFile.ocrSelection) : ['srt', 'vtt'] as OcrOutputFormat[],
   );
   const retryDialogFile = $derived(
     retryDialogFileId
@@ -1120,6 +1124,7 @@
 <VideoOcrDialogs
   {resultDialogOpen}
   {resultDialogFile}
+  {resultDialogAllowedFormats}
   {retryDialogOpen}
   {retryDialogFile}
   {retryAllDialogOpen}

@@ -19,12 +19,14 @@
     open: boolean;
     onOpenChange: (open: boolean) => void;
     file: OcrVideoFile | null;
+    allowedFormats?: OcrOutputFormat[];
   }
 
   let {
     open = $bindable(false),
     onOpenChange,
     file,
+    allowedFormats = ['srt', 'vtt'],
   }: OcrResultDialogProps = $props();
 
   let currentVersionIndex = $state(0);
@@ -119,6 +121,12 @@
     file && currentVersion ? `${file.path}:${currentVersion.id}:${selectedFormat}` : null
   );
 
+  $effect(() => {
+    if (!allowedFormats.includes(selectedFormat)) {
+      selectedFormat = allowedFormats[0] ?? 'srt';
+    }
+  });
+
   function formatDate(isoDate: string): string {
     const date = new Date(isoDate);
     return date.toLocaleDateString('en-US', {
@@ -146,13 +154,24 @@
     return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
   }
 
+  function formatAssTime(ms: number): string {
+    const centiseconds = Math.floor((ms % 1000) / 10);
+    const hours = Math.floor(ms / 3_600_000);
+    const minutes = Math.floor((ms % 3_600_000) / 60_000);
+    const seconds = Math.floor((ms % 60_000) / 1000);
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(centiseconds).padStart(2, '0')}`;
+  }
+
+  function formatAssText(text: string): string {
+    return text
+      .replace(/\r\n|\r|\n/g, '\\N')
+      .replace(/{/g, '\\{')
+      .replace(/}/g, '\\}');
+  }
+
   function buildFormattedPreview(format: OcrOutputFormat, subtitles: OcrSubtitle[]): string {
     if (subtitles.length === 0) {
       return '';
-    }
-
-    if (format === 'txt') {
-      return subtitles.map((sub) => sub.text).join('\n');
     }
 
     if (format === 'vtt') {
@@ -162,6 +181,26 @@
         )
         .join('\n');
       return `WEBVTT\n\n${body}`;
+    }
+
+    if (format === 'ass') {
+      const events = subtitles
+        .map((sub) =>
+          `Dialogue: 0,${formatAssTime(sub.startTime)},${formatAssTime(sub.endTime)},Default,,0,0,0,,${formatAssText(sub.text)}`
+        )
+        .join('\n');
+      return [
+        '[Script Info]',
+        'ScriptType: v4.00+',
+        '',
+        '[V4+ Styles]',
+        'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+        'Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,0,2,20,20,40,1',
+        '',
+        '[Events]',
+        'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+        events,
+      ].join('\n');
     }
 
     return subtitles
@@ -278,9 +317,14 @@
   currentIndex={currentVersionIndex}
   onIndexChange={(i) => { currentVersionIndex = i; }}
   isLoading={versionsLoading || !file}
-  formats={['srt', 'vtt', 'txt']}
+  formats={allowedFormats}
   selectedFormat={selectedFormat}
-  onFormatChange={(f) => { selectedFormat = f as OcrOutputFormat; }}
+  onFormatChange={(f) => {
+    const nextFormat = f as OcrOutputFormat;
+    if (allowedFormats.includes(nextFormat)) {
+      selectedFormat = nextFormat;
+    }
+  }}
   previewContent={previewText}
   isPreviewLoading={isPreviewPending}
   onExport={handleExport}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import * as AlertDialog from '$lib/components/ui/alert-dialog';
-  import type { OcrConfig, OcrRetryMode, OcrVideoFile } from '$lib/types';
+  import type { OcrConfig, OcrOutputFormat, OcrRetryMode, OcrVideoFile } from '$lib/types';
 
   import OcrResultDialog from './OcrResultDialog.svelte';
   import OcrRetryAllDialog from './OcrRetryAllDialog.svelte';
@@ -11,6 +11,7 @@
   interface VideoOcrDialogsProps {
     resultDialogOpen: boolean;
     resultDialogFile: OcrVideoFile | null;
+    resultDialogAllowedFormats: OcrOutputFormat[];
     retryDialogOpen: boolean;
     retryDialogFile: OcrVideoFile | null;
     retryAllDialogOpen: boolean;
@@ -36,6 +37,7 @@
   let {
     resultDialogOpen = $bindable(false),
     resultDialogFile,
+    resultDialogAllowedFormats,
     retryDialogOpen = $bindable(false),
     retryDialogFile,
     retryAllDialogOpen = $bindable(false),
@@ -58,6 +60,7 @@
   bind:open={resultDialogOpen}
   onOpenChange={onResultDialogOpenChange}
   file={resultDialogFile}
+  allowedFormats={resultDialogAllowedFormats}
 />
 
 <OcrRetryDialog

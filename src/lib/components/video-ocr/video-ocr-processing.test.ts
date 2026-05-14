@@ -21,6 +21,25 @@ vi.mock('$lib/services/ocr-ai-cleanup', () => ({
   cleanupOcrSubtitlesWithAi: vi.fn(),
 }));
 
+function ocrSelection(): OcrVideoFile['ocrSelection'] {
+  return {
+    segments: [
+      {
+        id: 'segment-1',
+        startTimeMs: 0,
+        endTimeMs: 60_000,
+        zones: [
+          {
+            id: 'zone-1',
+            role: 'main_subtitle',
+            region: { x: 0, y: 0.75, width: 1, height: 0.25 },
+          },
+        ],
+      },
+    ],
+  };
+}
+
 function videoFile(overrides: Partial<OcrVideoFile>): OcrVideoFile {
   return {
     id: 'video-1',
@@ -28,7 +47,7 @@ function videoFile(overrides: Partial<OcrVideoFile>): OcrVideoFile {
     name: 'sample.mp4',
     size: 0,
     status: 'pending',
-    ocrRegionMode: 'global',
+    ocrSelection: ocrSelection(),
     ocrVersions: [],
     ...overrides,
   };
@@ -139,12 +158,15 @@ describe('video OCR file summary', () => {
       markPersistedVersions: () => {},
     });
 
-    expect(invokeMock).toHaveBeenCalledWith(
-      'run_ocr_pipeline',
+    const pipelinePayload = invokeMock.mock.calls.find(([command]) => command === 'run_ocr_pipeline')?.[1];
+
+    expect(pipelinePayload).toEqual(
       expect.objectContaining({
         numWorkers: DEFAULT_OCR_WORKER_COUNT,
+        selection: file.ocrSelection,
         videoPath: '/Volumes/NAS/source.mkv',
       }),
     );
+    expect(pipelinePayload).not.toHaveProperty('region');
   });
 });

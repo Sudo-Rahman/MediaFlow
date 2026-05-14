@@ -267,7 +267,7 @@ async function runFullPipeline(
     numWorkers: config.threadCount,
     minConfidence: config.confidenceThreshold,
     cleanup: buildCleanupOptions(config, false),
-    region: current.ocrRegion ?? null,
+    selection: current.ocrSelection,
   });
 
   const rawOcr = normalizeOcrRawFrames(pipelineResult.rawOcr);

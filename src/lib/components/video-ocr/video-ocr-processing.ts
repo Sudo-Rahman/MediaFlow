@@ -10,6 +10,7 @@ import type {
   OcrVideoFile,
   OcrVersion,
 } from '$lib/types';
+import { DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
 import type { OcrSubtitleLike } from '$lib/utils';
 import { videoOcrStore } from '$lib/stores';
 import { cleanupOcrSubtitlesWithAi } from '$lib/services/ocr-ai-cleanup';
@@ -25,6 +26,7 @@ import { logAndToast } from '$lib/utils/log-toast';
 
 export interface ProcessVideoOcrFileOptions {
   file: OcrVideoFile;
+  operationId: string;
   versionName: string;
   mode: OcrRetryMode;
   config: OcrConfig;
@@ -127,10 +129,32 @@ function buildCleanupOptions(config: OcrConfig, disableCleanup: boolean) {
   };
 }
 
+function normalizeRuntimeConfig(config: OcrConfig): OcrConfig {
+  return {
+    ...config,
+    threadCount: DEFAULT_OCR_WORKER_COUNT,
+  };
+}
+
 function logPipelineTimings(fileId: string, timings: OcrPipelineResult['timings']): void {
   videoOcrStore.addLog(
     'info',
     `Pipeline timings: extract ${timings.extractMs}ms, OCR ${timings.ocrMs}ms, subtitles ${timings.subtitleMs}ms, total ${timings.totalMs}ms`,
+    fileId,
+  );
+}
+
+function logPipelineTelemetry(fileId: string, result: OcrPipelineResult, rawOcr: OcrRawFrame[]): void {
+  const { telemetry } = result;
+  videoOcrStore.addLog('info', `Extracted ${result.frameCount} frames`, fileId);
+  videoOcrStore.addLog(
+    'info',
+    `OCR attempted ${telemetry.ocrAttemptedFrames}/${telemetry.extractedFrames} frames (${telemetry.textFrames} with text, ${telemetry.unchangedSkippedFrames} unchanged skipped, ${telemetry.noTextSkippedFrames} low-detail skipped)`,
+    fileId,
+  );
+  videoOcrStore.addLog(
+    'info',
+    `OCR workers: ${telemetry.effectiveWorkers}, engine threads: ${telemetry.engineThreads}, raw frames kept: ${rawOcr.length}`,
     fileId,
   );
 }
@@ -179,6 +203,7 @@ async function runAiCleanup(
 
 async function runFromRaw(
   file: OcrVideoFile,
+  operationId: string,
   rawOcr: OcrRawFrame[],
   mode: OcrRetryMode,
   config: OcrConfig,
@@ -195,6 +220,7 @@ async function runFromRaw(
 
   const rawSubtitles = await invoke<OcrSubtitleLike[]>('generate_subtitles_from_ocr', {
     fileId: file.id,
+    operationId,
     frameResults: toRustOcrFrames(rawOcr),
     fps: rawFrameRate,
     minConfidence: config.confidenceThreshold,
@@ -221,6 +247,7 @@ async function runFromRaw(
 
 async function runFullPipeline(
   file: OcrVideoFile,
+  operationId: string,
   config: OcrConfig,
   getFreshFile: (fileId: string) => OcrVideoFile | undefined,
   aiCleanupControllers: Map<string, AbortController>,
@@ -233,6 +260,7 @@ async function runFullPipeline(
   const pipelineResult = await invoke<OcrPipelineResult>('run_ocr_pipeline', {
     videoPath: current.path,
     fileId: file.id,
+    operationId,
     language: config.language,
     fps: config.frameRate,
     useGpu: config.useGpu,
@@ -256,8 +284,7 @@ async function runFullPipeline(
     );
   }
 
-  videoOcrStore.addLog('info', `Extracted ${pipelineResult.frameCount} frames`, file.id);
-  videoOcrStore.addLog('info', `OCR processed ${rawOcr.length} frames with text`, file.id);
+  logPipelineTelemetry(file.id, pipelineResult, rawOcr);
   logPipelineTimings(file.id, pipelineResult.timings);
 
   return {
@@ -270,6 +297,7 @@ async function runFullPipeline(
 
 export async function processVideoOcrFile({
   file,
+  operationId,
   versionName,
   mode,
   config,
@@ -281,7 +309,8 @@ export async function processVideoOcrFile({
 }: ProcessVideoOcrFileOptions): Promise<ProcessVideoOcrFileResult> {
   let effectiveMode = mode;
   let rawSource: OcrRawFrame[] = [];
-  let rawFrameRate = config.frameRate;
+  const runtimeConfig = normalizeRuntimeConfig(config);
+  let rawFrameRate = runtimeConfig.frameRate;
 
   const freshFile = getFreshFile(file.id) ?? file;
   if (mode !== 'full_pipeline') {
@@ -294,7 +323,7 @@ export async function processVideoOcrFile({
       }
     } else {
       rawSource = sourceVersion.rawOcr;
-      rawFrameRate = resolveOcrVersionRawFrameRate(sourceVersion, config.frameRate);
+      rawFrameRate = resolveOcrVersionRawFrameRate(sourceVersion, runtimeConfig.frameRate);
     }
   }
 
@@ -305,13 +334,14 @@ export async function processVideoOcrFile({
     if (effectiveMode === 'full_pipeline') {
       const result = await runFullPipeline(
         file,
-        config,
+        operationId,
+        runtimeConfig,
         getFreshFile,
         aiCleanupControllers,
       );
       rawOcr = result.rawOcr;
       finalSubtitles = result.finalSubtitles;
-      rawFrameRate = config.frameRate;
+      rawFrameRate = runtimeConfig.frameRate;
     } else {
       rawOcr = rawSource;
       videoOcrStore.addLog(
@@ -321,9 +351,10 @@ export async function processVideoOcrFile({
       );
       finalSubtitles = await runFromRaw(
         file,
+        operationId,
         rawOcr,
         effectiveMode,
-        config,
+        runtimeConfig,
         aiCleanupControllers,
         rawFrameRate,
       );
@@ -332,7 +363,7 @@ export async function processVideoOcrFile({
     const version = createOcrVersion(
       versionName,
       effectiveMode,
-      config,
+      runtimeConfig,
       rawOcr,
       finalSubtitles,
       rawFrameRate,

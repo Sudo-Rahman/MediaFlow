@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { OcrVideoFile, OcrVersion } from '$lib/types';
-import { DEFAULT_OCR_CONFIG } from '$lib/types';
+import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
 import { videoOcrStore } from '$lib/stores';
 import { processVideoOcrFile, summarizeOcrFiles } from './video-ocr-processing';
 
@@ -109,6 +109,15 @@ describe('video OCR file summary', () => {
         subtitleMs: 1,
         totalMs: 3,
       },
+      telemetry: {
+        extractedFrames: 0,
+        ocrAttemptedFrames: 0,
+        textFrames: 0,
+        unchangedSkippedFrames: 0,
+        noTextSkippedFrames: 0,
+        effectiveWorkers: 1,
+        engineThreads: 1,
+      },
     });
 
     const [addedFile] = videoOcrStore.addFilesFromPaths(['/Volumes/NAS/source.mkv']);
@@ -120,6 +129,7 @@ describe('video OCR file summary', () => {
     const file = videoOcrStore.videoFiles[0];
     await processVideoOcrFile({
       file,
+      operationId: 'ocr-run-1',
       versionName: 'Version 1',
       mode: 'full_pipeline',
       config: { ...DEFAULT_OCR_CONFIG, aiCleanupEnabled: false },
@@ -132,6 +142,7 @@ describe('video OCR file summary', () => {
     expect(invokeMock).toHaveBeenCalledWith(
       'run_ocr_pipeline',
       expect.objectContaining({
+        numWorkers: DEFAULT_OCR_WORKER_COUNT,
         videoPath: '/Volumes/NAS/source.mkv',
       }),
     );

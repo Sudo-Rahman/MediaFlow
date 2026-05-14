@@ -128,6 +128,10 @@
     return videoOcrStore.videoFiles.find((file) => file.id === fileId);
   }
 
+  function createOcrOperationId(fileId: string): string {
+    return `${fileId}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  }
+
   function markPersistedOcrVersions(videoPath: string, versions: OcrVersion[]): void {
     if (versions.length === 0) {
       return;
@@ -233,6 +237,7 @@
     const unlisten = await listen<OcrProgressEvent>('ocr-progress', (event) => {
       const {
         fileId,
+        operationId,
         phase,
         current,
         total,
@@ -249,7 +254,7 @@
         return;
       }
 
-      videoOcrStore.updateProgress(fileId, {
+      videoOcrStore.updateProgressForOperation(fileId, operationId, {
         phase,
         current,
         total,
@@ -668,10 +673,12 @@
 
         const file = getFreshFile(entry.id) ?? entry;
         const versionName = generateOcrVersionName(file.ocrVersions);
+        const operationId = createOcrOperationId(file.id);
 
-        videoOcrStore.startProcessing(file.id);
+        videoOcrStore.startProcessing(file.id, operationId);
         const result = await processVideoOcrFile({
           file,
+          operationId,
           versionName,
           mode: 'full_pipeline',
           config: { ...videoOcrStore.config },
@@ -729,12 +736,14 @@
     });
 
     videoOcrStore.setProcessingScope([file.id]);
-    videoOcrStore.startProcessing(file.id);
+    const operationId = createOcrOperationId(file.id);
+    videoOcrStore.startProcessing(file.id, operationId);
 
     let result: ProcessVideoOcrFileResult;
     try {
       result = await processVideoOcrFile({
         file,
+        operationId,
         versionName,
         mode,
         config,
@@ -781,10 +790,12 @@
 
         const file = getFreshFile(entry.id) ?? entry;
         const versionName = generateOcrVersionName(file.ocrVersions);
+        const operationId = createOcrOperationId(file.id);
 
-        videoOcrStore.startProcessing(file.id);
+        videoOcrStore.startProcessing(file.id, operationId);
         const result = await processVideoOcrFile({
           file,
+          operationId,
           versionName,
           mode,
           config,

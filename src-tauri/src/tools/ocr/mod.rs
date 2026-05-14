@@ -43,6 +43,18 @@ pub(crate) struct OcrPipelineTimings {
     pub(crate) total_ms: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OcrPipelineTelemetry {
+    pub(crate) extracted_frames: u32,
+    pub(crate) ocr_attempted_frames: u32,
+    pub(crate) text_frames: u32,
+    pub(crate) unchanged_skipped_frames: u32,
+    pub(crate) no_text_skipped_frames: u32,
+    pub(crate) effective_workers: u32,
+    pub(crate) engine_threads: i32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OcrPipelineResult {
@@ -50,6 +62,7 @@ pub(crate) struct OcrPipelineResult {
     pub(crate) subtitles: Vec<OcrSubtitleEntry>,
     pub(crate) frame_count: u32,
     pub(crate) timings: OcrPipelineTimings,
+    pub(crate) telemetry: OcrPipelineTelemetry,
 }
 
 /// OCR subtitle entry

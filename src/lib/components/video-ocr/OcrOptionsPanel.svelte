@@ -22,7 +22,6 @@
     actionHint: string;
     primaryAction: 'start' | 'retry';
     availableLanguages?: string[];  // Languages with installed models
-    maxThreads?: number;            // Max available threads
     onConfigChange: (updates: Partial<OcrConfig>) => void;
     onStart: () => void;
     onRetryAll: () => void;
@@ -40,7 +39,6 @@
     actionHint,
     primaryAction = 'start',
     availableLanguages = [],
-    maxThreads = navigator.hardwareConcurrency || 4,
     onConfigChange,
     onStart,
     onRetryAll,
@@ -66,10 +64,6 @@
 
   function handleConfidenceChange(value: number) {
     onConfigChange({ confidenceThreshold: value / 100 });
-  }
-
-  function handleThreadCountChange(value: number) {
-    onConfigChange({ threadCount: value });
   }
 
   function handleSimilarityThresholdChange(value: number) {
@@ -193,25 +187,6 @@
     />
     <p class="text-xs text-muted-foreground">
       Ignore OCR results below this confidence level
-    </p>
-  </div>
-
-  <!-- Requested OCR Parallelism -->
-  <div class="space-y-2">
-    <div class="flex justify-between">
-      <Label>Requested OCR Parallelism</Label>
-      <span class="text-sm text-muted-foreground">{config.threadCount} / {maxThreads}</span>
-    </div>
-    <Slider
-      type="single"
-      value={config.threadCount}
-      onValueChange={handleThreadCountChange}
-      min={1}
-      max={maxThreads}
-      step={1}
-    />
-    <p class="text-xs text-muted-foreground">
-      Higher values request more concurrent OCR work. The app chooses the effective worker and thread layout automatically.
     </p>
   </div>
 

@@ -1094,6 +1094,7 @@ where
 pub(crate) async fn generate_subtitles_from_ocr(
     app: tauri::AppHandle,
     file_id: String,
+    operation_id: String,
     frame_results: Vec<OcrFrameResult>,
     fps: f64,
     min_confidence: f64,
@@ -1113,6 +1114,7 @@ pub(crate) async fn generate_subtitles_from_ocr(
         "ocr-progress",
         serde_json::json!({
             "fileId": file_id,
+            "operationId": operation_id.clone(),
             "phase": "generating",
             "current": 0,
             "total": frame_results.len(),
@@ -1122,6 +1124,7 @@ pub(crate) async fn generate_subtitles_from_ocr(
 
     let app_for_progress = app.clone();
     let file_id_for_progress = file_id.clone();
+    let operation_id_for_progress = operation_id.clone();
     let subtitles = generate_subtitles_core(
         &frame_results,
         fps,
@@ -1132,6 +1135,7 @@ pub(crate) async fn generate_subtitles_from_ocr(
                 "ocr-progress",
                 serde_json::json!({
                     "fileId": file_id_for_progress.clone(),
+                    "operationId": operation_id_for_progress.clone(),
                     "phase": "generating",
                     "current": current,
                     "total": total,
@@ -1146,6 +1150,7 @@ pub(crate) async fn generate_subtitles_from_ocr(
         "ocr-progress",
         serde_json::json!({
             "fileId": file_id,
+            "operationId": operation_id.clone(),
             "phase": "generating",
             "current": total_frames,
             "total": total_frames,

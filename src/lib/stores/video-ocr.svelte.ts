@@ -16,7 +16,7 @@ import type {
   OcrModelsStatus,
   OcrPreviewSourceIdentity,
 } from '$lib/types';
-import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_REGION } from '$lib/types';
+import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_REGION, DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
 
 // ============================================================================
 // STATE
@@ -38,6 +38,7 @@ let cancelledFileIds = $state<Set<string>>(new Set());
 
 // Operation tracking for cancellation
 let currentOperationId = $state<string | null>(null);
+let activeOperationIdsByFileId = $state.raw<Map<string, string>>(new Map());
 
 // Scoped run targets (for precise global progress aggregation)
 let processingScopeFileIds = $state<Set<string>>(new Set());
@@ -417,11 +418,29 @@ export const videoOcrStore = {
   // Actions - OCR Progress
   // -------------------------------------------------------------------------
   updateProgress(fileId: string, progress: OcrProgress) {
+    if (cancelledFileIds.has(fileId)) {
+      return;
+    }
+
     videoFiles = videoFiles.map(f =>
       f.id === fileId
         ? mergeFileProgress(f, progress)
         : f
     );
+  },
+
+  updateProgressForOperation(fileId: string, operationId: string | null | undefined, progress: OcrProgress) {
+    if (cancelledFileIds.has(fileId)) {
+      return;
+    }
+
+    const activeOperationId = activeOperationIdsByFileId.get(fileId);
+
+    if (operationId && activeOperationId !== operationId) {
+      return;
+    }
+
+    this.updateProgress(fileId, progress);
   },
 
   setPhase(fileId: string, phase: OcrPhase, current: number = 0, total: number = 0) {
@@ -470,7 +489,7 @@ export const videoOcrStore = {
   // Actions - Config
   // -------------------------------------------------------------------------
   updateConfig(updates: Partial<OcrConfig>) {
-    config = { ...config, ...updates };
+    config = { ...config, ...updates, threadCount: DEFAULT_OCR_WORKER_COUNT };
   },
 
   setFrameRate(frameRate: number) {
@@ -501,9 +520,11 @@ export const videoOcrStore = {
   },
 
   startProcessing(fileId: string, operationId?: string) {
+    const nextOperationId = operationId ?? fileId;
     isProcessing = true;
     currentProcessingId = fileId;
-    currentOperationId = operationId ?? fileId;
+    currentOperationId = nextOperationId;
+    activeOperationIdsByFileId = new Map(activeOperationIdsByFileId).set(fileId, nextOperationId);
     this.addLog('info', 'Starting OCR processing...', fileId);
   },
 
@@ -511,6 +532,7 @@ export const videoOcrStore = {
     isProcessing = false;
     currentProcessingId = null;
     currentOperationId = null;
+    activeOperationIdsByFileId = new Map();
     cancelledFileIds = new Set();
     isCancelling = false;
     processingScopeFileIds = new Set();
@@ -617,6 +639,7 @@ export const videoOcrStore = {
     isProcessing = false;
     currentProcessingId = null;
     currentOperationId = null;
+    activeOperationIdsByFileId = new Map();
     cancelledFileIds = new Set();
     isCancelling = false;
     processingScopeFileIds = new Set();
@@ -715,7 +738,7 @@ function mergeProgress(previous: OcrProgress | undefined, incoming: OcrProgress)
     return previous;
   }
 
-  if (incomingOrder > previousOrder && previous.percentage < 100) {
+  if (incomingOrder > previousOrder && previous.percentage < 100 && previous.phase !== 'extracting') {
     return previous;
   }
 

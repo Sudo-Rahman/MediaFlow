@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use image::{DynamicImage, RgbImage};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::time::timeout;
 
@@ -15,25 +16,349 @@ use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::validation::validate_media_path;
 use crate::tools::ffprobe::get_media_duration_us;
 use crate::tools::ocr::engine::{
-    create_ocr_engine, get_ocr_models_dir, resolve_ocr_engine_threads, resolve_ocr_worker_count,
+    create_ocr_engine, get_ocr_models_dir, resolve_ocr_engine_threads,
+    resolve_ocr_worker_count_for_backend,
 };
 use crate::tools::ocr::progress::OcrProgressEmitter;
 use crate::tools::ocr::subtitles::generate_subtitles_core;
 use crate::tools::ocr::{
-    OcrPipelineResult, OcrPipelineTimings, OcrRegion, OcrSubtitleCleanupOptions,
+    OcrFrameResult, OcrPipelineResult, OcrPipelineTelemetry, OcrPipelineTimings, OcrRegion,
+    OcrSubtitleCleanupOptions,
 };
 
 const OCR_PIPELINE_TIMEOUT: Duration = Duration::from_secs(1800);
-const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
-const PNG_IEND_TYPE: &[u8; 4] = b"IEND";
 const FRAME_CHANNEL_CAPACITY: usize = 8;
-const WORKER_QUEUE_CAPACITY: usize = 1;
+const WORKER_DISPATCH_CHUNK_SIZE: usize = 4;
+const WORKER_QUEUE_CAPACITY: usize = WORKER_DISPATCH_CHUNK_SIZE;
+const REGION_OCR_FRAME_WIDTH: u32 = 960;
+const REGION_OCR_FRAME_HEIGHT: u32 = 180;
+const FULL_OCR_FRAME_WIDTH: u32 = 960;
+const FULL_OCR_FRAME_HEIGHT: u32 = 540;
+const FRAME_FINGERPRINT_WIDTH: u32 = 32;
+const FRAME_FINGERPRINT_HEIGHT: u32 = 18;
+const DETAIL_FINGERPRINT_WIDTH: u32 = 128;
+const DETAIL_FINGERPRINT_HEIGHT: u32 = 72;
+const UNCHANGED_MEAN_ABS_DIFF_THRESHOLD: f32 = 1.25;
+const UNCHANGED_MAX_ABS_DIFF_THRESHOLD: u8 = 32;
+const UNCHANGED_CHANGED_CELL_DIFF_THRESHOLD: u8 = 8;
+const UNCHANGED_CHANGED_CELL_RATIO_THRESHOLD: f32 = 0.02;
+const UNCHANGED_DETAIL_MEAN_ABS_DIFF_THRESHOLD: f32 = 1.25;
+const UNCHANGED_DETAIL_MAX_ABS_DIFF_THRESHOLD: u8 = 18;
+const UNCHANGED_DETAIL_CHANGED_SAMPLE_DIFF_THRESHOLD: u8 = 8;
+const UNCHANGED_DETAIL_CHANGED_SAMPLE_RATIO_THRESHOLD: f32 = 0.004;
+const LOW_DETAIL_VARIANCE_THRESHOLD: f32 = 12.0;
+const LOW_DETAIL_EDGE_DENSITY_THRESHOLD: f32 = 0.015;
+
+#[derive(Clone, Debug)]
+struct FrameFingerprint {
+    cells: Vec<u8>,
+    detail_samples: Vec<u8>,
+    variance: f32,
+    edge_density: f32,
+}
+
+struct FrameFingerprintDelta {
+    mean_abs_diff: f32,
+    max_abs_diff: u8,
+    changed_cell_ratio: f32,
+}
+
+struct DetailFingerprintDelta {
+    mean_abs_diff: f32,
+    max_abs_diff: u8,
+    changed_sample_ratio: f32,
+}
+
+#[derive(Clone, Copy)]
+struct OcrFrameOutputSpec {
+    width: u32,
+    height: u32,
+}
+
+impl OcrFrameOutputSpec {
+    fn byte_len(self) -> usize {
+        (self.width as usize)
+            .saturating_mul(self.height as usize)
+            .saturating_mul(3)
+    }
+}
+
+struct OcrTelemetryCounters {
+    ocr_attempted_frames: AtomicU32,
+    text_frames: AtomicU32,
+    unchanged_skipped_frames: AtomicU32,
+    no_text_skipped_frames: AtomicU32,
+    effective_workers: u32,
+    engine_threads: i32,
+}
+
+impl OcrTelemetryCounters {
+    fn new(effective_workers: usize, engine_threads: i32) -> Self {
+        Self {
+            ocr_attempted_frames: AtomicU32::new(0),
+            text_frames: AtomicU32::new(0),
+            unchanged_skipped_frames: AtomicU32::new(0),
+            no_text_skipped_frames: AtomicU32::new(0),
+            effective_workers: effective_workers as u32,
+            engine_threads,
+        }
+    }
+
+    fn snapshot(&self, extracted_frames: u32) -> OcrPipelineTelemetry {
+        OcrPipelineTelemetry {
+            extracted_frames,
+            ocr_attempted_frames: self.ocr_attempted_frames.load(Ordering::Relaxed),
+            text_frames: self.text_frames.load(Ordering::Relaxed),
+            unchanged_skipped_frames: self.unchanged_skipped_frames.load(Ordering::Relaxed),
+            no_text_skipped_frames: self.no_text_skipped_frames.load(Ordering::Relaxed),
+            effective_workers: self.effective_workers,
+            engine_threads: self.engine_threads,
+        }
+    }
+}
+
+fn create_frame_fingerprint(image: &DynamicImage) -> FrameFingerprint {
+    let grayscale = image.to_luma8();
+    let (width, height) = grayscale.dimensions();
+    if width == 0 || height == 0 {
+        return FrameFingerprint {
+            cells: vec![0; (FRAME_FINGERPRINT_WIDTH * FRAME_FINGERPRINT_HEIGHT) as usize],
+            detail_samples: vec![
+                0;
+                (DETAIL_FINGERPRINT_WIDTH * DETAIL_FINGERPRINT_HEIGHT) as usize
+            ],
+            variance: 0.0,
+            edge_density: 0.0,
+        };
+    }
+
+    let mut cells =
+        Vec::with_capacity((FRAME_FINGERPRINT_WIDTH * FRAME_FINGERPRINT_HEIGHT) as usize);
+    for cell_y in 0..FRAME_FINGERPRINT_HEIGHT {
+        let y_start = cell_y * height / FRAME_FINGERPRINT_HEIGHT;
+        let y_end = ((cell_y + 1) * height / FRAME_FINGERPRINT_HEIGHT)
+            .max(y_start + 1)
+            .min(height);
+
+        for cell_x in 0..FRAME_FINGERPRINT_WIDTH {
+            let x_start = cell_x * width / FRAME_FINGERPRINT_WIDTH;
+            let x_end = ((cell_x + 1) * width / FRAME_FINGERPRINT_WIDTH)
+                .max(x_start + 1)
+                .min(width);
+
+            let mut sum = 0_u64;
+            let mut count = 0_u64;
+            for y in y_start..y_end {
+                for x in x_start..x_end {
+                    sum += grayscale.get_pixel(x, y)[0] as u64;
+                    count += 1;
+                }
+            }
+
+            cells.push((sum / count.max(1)) as u8);
+        }
+    }
+
+    let mut detail_samples =
+        Vec::with_capacity((DETAIL_FINGERPRINT_WIDTH * DETAIL_FINGERPRINT_HEIGHT) as usize);
+    for sample_y in 0..DETAIL_FINGERPRINT_HEIGHT {
+        let y = ((sample_y * height) / DETAIL_FINGERPRINT_HEIGHT).min(height - 1);
+        for sample_x in 0..DETAIL_FINGERPRINT_WIDTH {
+            let x = ((sample_x * width) / DETAIL_FINGERPRINT_WIDTH).min(width - 1);
+            detail_samples.push(grayscale.get_pixel(x, y)[0]);
+        }
+    }
+
+    let mean = cells.iter().map(|value| *value as f32).sum::<f32>() / cells.len() as f32;
+    let variance = cells
+        .iter()
+        .map(|value| {
+            let delta = *value as f32 - mean;
+            delta * delta
+        })
+        .sum::<f32>()
+        / cells.len() as f32;
+
+    let mut edge_count = 0_u32;
+    let mut edge_total = 0_u32;
+    for y in 0..FRAME_FINGERPRINT_HEIGHT {
+        for x in 0..FRAME_FINGERPRINT_WIDTH {
+            let index = (y * FRAME_FINGERPRINT_WIDTH + x) as usize;
+            let value = cells[index] as i16;
+            if x + 1 < FRAME_FINGERPRINT_WIDTH {
+                let right = cells[(y * FRAME_FINGERPRINT_WIDTH + x + 1) as usize] as i16;
+                if (value - right).abs() > 24 {
+                    edge_count += 1;
+                }
+                edge_total += 1;
+            }
+            if y + 1 < FRAME_FINGERPRINT_HEIGHT {
+                let bottom = cells[((y + 1) * FRAME_FINGERPRINT_WIDTH + x) as usize] as i16;
+                if (value - bottom).abs() > 24 {
+                    edge_count += 1;
+                }
+                edge_total += 1;
+            }
+        }
+    }
+
+    FrameFingerprint {
+        cells,
+        detail_samples,
+        variance,
+        edge_density: edge_count as f32 / edge_total.max(1) as f32,
+    }
+}
+
+fn fingerprint_delta(
+    current: &FrameFingerprint,
+    previous: &FrameFingerprint,
+) -> FrameFingerprintDelta {
+    let len = current.cells.len().min(previous.cells.len());
+    if len == 0 {
+        return FrameFingerprintDelta {
+            mean_abs_diff: f32::MAX,
+            max_abs_diff: u8::MAX,
+            changed_cell_ratio: 1.0,
+        };
+    }
+
+    let mut diff_sum = 0_u32;
+    let mut max_abs_diff = 0_u8;
+    let mut changed_cells = 0_u32;
+    for (current, previous) in current.cells.iter().zip(previous.cells.iter()).take(len) {
+        let abs_diff = current.abs_diff(*previous);
+        diff_sum += abs_diff as u32;
+        max_abs_diff = max_abs_diff.max(abs_diff);
+        if abs_diff >= UNCHANGED_CHANGED_CELL_DIFF_THRESHOLD {
+            changed_cells += 1;
+        }
+    }
+
+    FrameFingerprintDelta {
+        mean_abs_diff: diff_sum as f32 / len as f32,
+        max_abs_diff,
+        changed_cell_ratio: changed_cells as f32 / len as f32,
+    }
+}
+
+fn detail_fingerprint_delta(
+    current: &FrameFingerprint,
+    previous: &FrameFingerprint,
+) -> DetailFingerprintDelta {
+    let len = current
+        .detail_samples
+        .len()
+        .min(previous.detail_samples.len());
+    if len == 0 {
+        return DetailFingerprintDelta {
+            mean_abs_diff: f32::MAX,
+            max_abs_diff: u8::MAX,
+            changed_sample_ratio: 1.0,
+        };
+    }
+
+    let mut diff_sum = 0_u32;
+    let mut max_abs_diff = 0_u8;
+    let mut changed_samples = 0_u32;
+    for (current, previous) in current
+        .detail_samples
+        .iter()
+        .zip(previous.detail_samples.iter())
+        .take(len)
+    {
+        let abs_diff = current.abs_diff(*previous);
+        diff_sum += abs_diff as u32;
+        max_abs_diff = max_abs_diff.max(abs_diff);
+        if abs_diff >= UNCHANGED_DETAIL_CHANGED_SAMPLE_DIFF_THRESHOLD {
+            changed_samples += 1;
+        }
+    }
+
+    DetailFingerprintDelta {
+        mean_abs_diff: diff_sum as f32 / len as f32,
+        max_abs_diff,
+        changed_sample_ratio: changed_samples as f32 / len as f32,
+    }
+}
+
+fn is_visually_unchanged(current: &FrameFingerprint, previous: &FrameFingerprint) -> bool {
+    let delta = fingerprint_delta(current, previous);
+    let detail_delta = detail_fingerprint_delta(current, previous);
+    delta.mean_abs_diff <= UNCHANGED_MEAN_ABS_DIFF_THRESHOLD
+        && delta.max_abs_diff <= UNCHANGED_MAX_ABS_DIFF_THRESHOLD
+        && delta.changed_cell_ratio <= UNCHANGED_CHANGED_CELL_RATIO_THRESHOLD
+        && detail_delta.mean_abs_diff <= UNCHANGED_DETAIL_MEAN_ABS_DIFF_THRESHOLD
+        && detail_delta.max_abs_diff <= UNCHANGED_DETAIL_MAX_ABS_DIFF_THRESHOLD
+        && detail_delta.changed_sample_ratio <= UNCHANGED_DETAIL_CHANGED_SAMPLE_RATIO_THRESHOLD
+}
+
+fn is_low_detail_no_text(fingerprint: &FrameFingerprint) -> bool {
+    fingerprint.variance <= LOW_DETAIL_VARIANCE_THRESHOLD
+        && fingerprint.edge_density <= LOW_DETAIL_EDGE_DENSITY_THRESHOLD
+}
+
+fn can_clone_previous_frame_result(
+    frame: &StreamedFrame,
+    fingerprint: &FrameFingerprint,
+    previous_result: &OcrFrameResult,
+    previous_fingerprint: &FrameFingerprint,
+) -> bool {
+    previous_result.frame_index.saturating_add(1) == frame.frame_index
+        && is_visually_unchanged(fingerprint, previous_fingerprint)
+}
+
+fn empty_frame_result(frame: &StreamedFrame) -> OcrFrameResult {
+    OcrFrameResult {
+        frame_index: frame.frame_index,
+        time_ms: frame.time_ms,
+        text: String::new(),
+        confidence: 0.0,
+    }
+}
+
+fn clone_frame_result_for_frame(
+    previous: &OcrFrameResult,
+    frame: &StreamedFrame,
+) -> OcrFrameResult {
+    OcrFrameResult {
+        frame_index: frame.frame_index,
+        time_ms: frame.time_ms,
+        text: previous.text.clone(),
+        confidence: previous.confidence,
+    }
+}
+
+fn push_ocr_result(
+    results: &Arc<Mutex<Vec<OcrFrameResult>>>,
+    frame_result: OcrFrameResult,
+) -> Result<(), String> {
+    let mut guard = results
+        .lock()
+        .map_err(|_| "Failed to collect OCR result".to_string())?;
+    guard.push(frame_result);
+    Ok(())
+}
+
+fn emit_processed_frame_progress(
+    processed_frames: &AtomicU32,
+    progress: Option<&OcrProgressEmitter>,
+    total_frames_hint: u32,
+) {
+    let current = processed_frames.fetch_add(1, Ordering::Relaxed) + 1;
+    if let Some(progress) = progress {
+        progress.emit(
+            current,
+            format!("Processing frame {}/{}...", current, total_frames_hint),
+        );
+    }
+}
 
 fn summarize_ocr_results(
     frame_index: u32,
     time_ms: u64,
     ocr_results: &[ocr_rs::OcrResult_],
-) -> crate::tools::ocr::OcrFrameResult {
+) -> OcrFrameResult {
     let mut sorted_results: Vec<_> = ocr_results.iter().collect();
     sorted_results.sort_by(|a, b| {
         let a_top = a.bbox.rect.top();
@@ -60,7 +385,7 @@ fn summarize_ocr_results(
             / sorted_results.len() as f64
     };
 
-    crate::tools::ocr::OcrFrameResult {
+    OcrFrameResult {
         frame_index,
         time_ms,
         text: combined_text,
@@ -72,22 +397,36 @@ fn summarize_ocr_results(
 struct PipelineProgressContext {
     app: tauri::AppHandle,
     file_id: String,
+    operation_id: String,
     extraction: OcrProgressEmitter,
     ocr: OcrProgressEmitter,
 }
 
 impl PipelineProgressContext {
-    fn new(app: tauri::AppHandle, file_id: String, estimated_frames: u32) -> Self {
+    fn new(
+        app: tauri::AppHandle,
+        file_id: String,
+        operation_id: String,
+        estimated_frames: u32,
+    ) -> Self {
         Self {
             extraction: OcrProgressEmitter::new(
                 app.clone(),
                 file_id.clone(),
+                Some(operation_id.clone()),
                 "extracting",
                 estimated_frames,
             ),
-            ocr: OcrProgressEmitter::new(app.clone(), file_id.clone(), "ocr", estimated_frames),
+            ocr: OcrProgressEmitter::new(
+                app.clone(),
+                file_id.clone(),
+                Some(operation_id.clone()),
+                "ocr",
+                estimated_frames,
+            ),
             app,
             file_id,
+            operation_id,
         }
     }
 
@@ -95,6 +434,7 @@ impl PipelineProgressContext {
         OcrProgressEmitter::new(
             self.app.clone(),
             self.file_id.clone(),
+            Some(self.operation_id.clone()),
             "extracting",
             frame_count,
         )
@@ -102,19 +442,31 @@ impl PipelineProgressContext {
     }
 
     fn emit_ocr_complete(&self, frame_count: u32) {
-        OcrProgressEmitter::new(self.app.clone(), self.file_id.clone(), "ocr", frame_count)
-            .emit_force(frame_count, "OCR processing complete".to_string());
+        OcrProgressEmitter::new(
+            self.app.clone(),
+            self.file_id.clone(),
+            Some(self.operation_id.clone()),
+            "ocr",
+            frame_count,
+        )
+        .emit_force(frame_count, "OCR processing complete".to_string());
     }
 
     fn new_generating_emitter(&self, total: u32) -> OcrProgressEmitter {
-        OcrProgressEmitter::new(self.app.clone(), self.file_id.clone(), "generating", total)
+        OcrProgressEmitter::new(
+            self.app.clone(),
+            self.file_id.clone(),
+            Some(self.operation_id.clone()),
+            "generating",
+            total,
+        )
     }
 }
 
 struct StreamedFrame {
     frame_index: u32,
     time_ms: u64,
-    png_bytes: Vec<u8>,
+    rgb_bytes: Vec<u8>,
 }
 
 enum WorkerMessage {
@@ -142,7 +494,25 @@ fn clear_operation_pid(file_id: &str) -> Option<u32> {
         .and_then(|mut guard| guard.remove(file_id))
 }
 
-fn build_ocr_filter_string(fps: f64, region: Option<&OcrRegion>) -> String {
+fn output_spec_for_region(region: Option<&OcrRegion>) -> OcrFrameOutputSpec {
+    if region.is_some() {
+        OcrFrameOutputSpec {
+            width: REGION_OCR_FRAME_WIDTH,
+            height: REGION_OCR_FRAME_HEIGHT,
+        }
+    } else {
+        OcrFrameOutputSpec {
+            width: FULL_OCR_FRAME_WIDTH,
+            height: FULL_OCR_FRAME_HEIGHT,
+        }
+    }
+}
+
+fn build_ocr_filter_string(
+    fps: f64,
+    region: Option<&OcrRegion>,
+    spec: OcrFrameOutputSpec,
+) -> String {
     let mut filters = vec![format!("fps={}", fps)];
     if let Some(region) = region {
         filters.push(format!(
@@ -150,6 +520,15 @@ fn build_ocr_filter_string(fps: f64, region: Option<&OcrRegion>) -> String {
             region.width, region.height, region.x, region.y
         ));
     }
+    filters.push(format!(
+        "scale={}:{}:force_original_aspect_ratio=decrease",
+        spec.width, spec.height
+    ));
+    filters.push(format!(
+        "pad={}:{}:(ow-iw)/2:(oh-ih)/2",
+        spec.width, spec.height
+    ));
+    filters.push("format=rgb24".to_string());
     filters.join(",")
 }
 
@@ -169,68 +548,26 @@ fn has_fatal_error(target: &Arc<Mutex<Option<String>>>) -> bool {
     target.lock().map(|guard| guard.is_some()).unwrap_or(false)
 }
 
-fn find_png_signature(buffer: &[u8]) -> Option<usize> {
-    buffer
-        .windows(PNG_SIGNATURE.len())
-        .position(|window| window == PNG_SIGNATURE)
+fn take_next_raw_frame(buffer: &mut Vec<u8>, frame_byte_len: usize) -> Option<Vec<u8>> {
+    if buffer.len() < frame_byte_len {
+        return None;
+    }
+
+    Some(buffer.drain(..frame_byte_len).collect())
 }
 
-fn take_next_png_frame(buffer: &mut Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-    let Some(signature_index) = find_png_signature(buffer) else {
-        let tail_len = buffer.len().min(PNG_SIGNATURE.len().saturating_sub(1));
-        if buffer.len() > tail_len {
-            buffer.drain(..buffer.len() - tail_len);
-        }
-        return Ok(None);
-    };
-
-    if signature_index > 0 {
-        buffer.drain(..signature_index);
-    }
-
-    if buffer.len() < PNG_SIGNATURE.len() {
-        return Ok(None);
-    }
-
-    let mut cursor = PNG_SIGNATURE.len();
-    loop {
-        if buffer.len() < cursor + 8 {
-            return Ok(None);
-        }
-
-        let chunk_len = u32::from_be_bytes([
-            buffer[cursor],
-            buffer[cursor + 1],
-            buffer[cursor + 2],
-            buffer[cursor + 3],
-        ]) as usize;
-        let chunk_type = &buffer[cursor + 4..cursor + 8];
-        let chunk_end = cursor
-            .checked_add(12)
-            .and_then(|value| value.checked_add(chunk_len))
-            .ok_or_else(|| "PNG chunk length overflow".to_string())?;
-
-        if buffer.len() < chunk_end {
-            return Ok(None);
-        }
-
-        cursor = chunk_end;
-        if chunk_type == PNG_IEND_TYPE {
-            return Ok(Some(buffer.drain(..cursor).collect()));
-        }
-    }
-}
-
-async fn read_ffmpeg_png_stream(
+async fn read_ffmpeg_rgb_stream(
     stdout: tokio::process::ChildStdout,
     fps: f64,
+    output_spec: OcrFrameOutputSpec,
     frame_tx: tokio::sync::mpsc::Sender<StreamedFrame>,
 ) -> Result<u32, String> {
     let mut stdout = stdout;
     let mut read_buffer = vec![0_u8; 64 * 1024];
-    let mut png_buffer = Vec::new();
+    let mut raw_buffer = Vec::with_capacity(output_spec.byte_len() * 2);
     let mut frame_index = 0_u32;
     let frame_duration_ms = 1000.0 / fps;
+    let frame_byte_len = output_spec.byte_len();
 
     loop {
         let read_bytes = stdout
@@ -241,14 +578,14 @@ async fn read_ffmpeg_png_stream(
             break;
         }
 
-        png_buffer.extend_from_slice(&read_buffer[..read_bytes]);
-        while let Some(frame_bytes) = take_next_png_frame(&mut png_buffer)? {
+        raw_buffer.extend_from_slice(&read_buffer[..read_bytes]);
+        while let Some(frame_bytes) = take_next_raw_frame(&mut raw_buffer, frame_byte_len) {
             let time_ms = ((frame_index as f64) * frame_duration_ms).round() as u64;
             frame_tx
                 .send(StreamedFrame {
                     frame_index,
                     time_ms,
-                    png_bytes: frame_bytes,
+                    rgb_bytes: frame_bytes,
                 })
                 .await
                 .map_err(|_| "OCR frame channel closed unexpectedly".to_string())?;
@@ -258,8 +595,8 @@ async fn read_ffmpeg_png_stream(
 
     drop(frame_tx);
 
-    if !png_buffer.is_empty() {
-        return Err("Incomplete PNG frame received from ffmpeg".to_string());
+    if !raw_buffer.is_empty() {
+        return Err("Incomplete raw OCR frame received from ffmpeg".to_string());
     }
 
     Ok(frame_index)
@@ -318,14 +655,17 @@ fn process_streamed_frames(
     models_dir: &Path,
     language: &str,
     use_gpu: bool,
+    output_spec: OcrFrameOutputSpec,
     requested_workers: u32,
     progress: Option<OcrProgressEmitter>,
     total_frames_hint: u32,
     file_id: &str,
-) -> Result<Vec<crate::tools::ocr::OcrFrameResult>, String> {
-    let worker_count = resolve_ocr_worker_count(requested_workers);
+) -> Result<(Vec<OcrFrameResult>, OcrPipelineTelemetry), String> {
+    let worker_count = resolve_ocr_worker_count_for_backend(requested_workers, use_gpu);
     let engine_threads = resolve_ocr_engine_threads(worker_count);
+    let enable_engine_parallel = worker_count == 1;
     let processed_frames = Arc::new(AtomicU32::new(0));
+    let telemetry = Arc::new(OcrTelemetryCounters::new(worker_count, engine_threads));
     let fatal_error = Arc::new(Mutex::new(None));
     let results = Arc::new(Mutex::new(Vec::new()));
 
@@ -341,63 +681,128 @@ fn process_streamed_frames(
         let language = language.to_string();
         let file_id = file_id.to_string();
         let processed_frames = Arc::clone(&processed_frames);
+        let telemetry = Arc::clone(&telemetry);
         let fatal_error = Arc::clone(&fatal_error);
         let results = Arc::clone(&results);
         let progress = progress.clone();
 
         worker_handles.push(std::thread::spawn(move || {
-            let engine = match create_ocr_engine(&models_dir, &language, use_gpu, engine_threads) {
+            let engine = match create_ocr_engine(
+                &models_dir,
+                &language,
+                use_gpu,
+                engine_threads,
+                enable_engine_parallel,
+            ) {
                 Ok(engine) => engine,
                 Err(error) => {
                     set_fatal_error(&fatal_error, error);
                     return;
                 }
             };
+            let mut previous_fingerprint: Option<FrameFingerprint> = None;
+            let mut previous_result: Option<OcrFrameResult> = None;
 
             while let Ok(message) = worker_rx.recv() {
                 match message {
                     WorkerMessage::Shutdown => break,
-                    WorkerMessage::Frame(frame) => {
+                    WorkerMessage::Frame(mut frame) => {
                         if is_operation_cancelled(&file_id) {
                             set_fatal_error(&fatal_error, "OCR cancelled".to_string());
                             break;
                         }
 
-                        let image = match image::load_from_memory(&frame.png_bytes) {
-                            Ok(image) => image,
-                            Err(_) => {
-                                let current = processed_frames.fetch_add(1, Ordering::Relaxed) + 1;
-                                if let Some(progress) = progress.as_ref() {
-                                    progress.emit(
-                                        current,
-                                        format!(
-                                            "Processing frame {}/{}...",
-                                            current, total_frames_hint
-                                        ),
-                                    );
-                                }
+                        let image = match RgbImage::from_raw(
+                            output_spec.width,
+                            output_spec.height,
+                            mem::take(&mut frame.rgb_bytes),
+                        ) {
+                            Some(image) => DynamicImage::ImageRgb8(image),
+                            None => {
+                                emit_processed_frame_progress(
+                                    &processed_frames,
+                                    progress.as_ref(),
+                                    total_frames_hint,
+                                );
                                 continue;
                             }
                         };
 
+                        let fingerprint = create_frame_fingerprint(&image);
+                        if is_low_detail_no_text(&fingerprint) {
+                            let frame_result = empty_frame_result(&frame);
+                            if let Err(error) = push_ocr_result(&results, frame_result.clone()) {
+                                set_fatal_error(&fatal_error, error);
+                                break;
+                            }
+                            previous_fingerprint = Some(fingerprint);
+                            previous_result = Some(frame_result);
+                            telemetry
+                                .no_text_skipped_frames
+                                .fetch_add(1, Ordering::Relaxed);
+                            emit_processed_frame_progress(
+                                &processed_frames,
+                                progress.as_ref(),
+                                total_frames_hint,
+                            );
+                            continue;
+                        }
+
+                        if let (Some(prev_fingerprint), Some(prev_result)) =
+                            (previous_fingerprint.as_ref(), previous_result.as_ref())
+                        {
+                            if can_clone_previous_frame_result(
+                                &frame,
+                                &fingerprint,
+                                prev_result,
+                                prev_fingerprint,
+                            ) {
+                                let frame_result =
+                                    clone_frame_result_for_frame(prev_result, &frame);
+                                if let Err(error) = push_ocr_result(&results, frame_result.clone())
+                                {
+                                    set_fatal_error(&fatal_error, error);
+                                    break;
+                                }
+                                previous_fingerprint = Some(fingerprint);
+                                previous_result = Some(frame_result);
+                                telemetry
+                                    .unchanged_skipped_frames
+                                    .fetch_add(1, Ordering::Relaxed);
+                                emit_processed_frame_progress(
+                                    &processed_frames,
+                                    progress.as_ref(),
+                                    total_frames_hint,
+                                );
+                                continue;
+                            }
+                        }
+
+                        telemetry
+                            .ocr_attempted_frames
+                            .fetch_add(1, Ordering::Relaxed);
                         if let Ok(ocr_results) = engine.recognize(&image) {
                             let frame_result = summarize_ocr_results(
                                 frame.frame_index,
                                 frame.time_ms,
                                 &ocr_results,
                             );
-                            if let Ok(mut guard) = results.lock() {
-                                guard.push(frame_result);
+                            if !frame_result.text.trim().is_empty() {
+                                telemetry.text_frames.fetch_add(1, Ordering::Relaxed);
+                            }
+                            previous_fingerprint = Some(fingerprint);
+                            previous_result = Some(frame_result.clone());
+                            if let Err(error) = push_ocr_result(&results, frame_result) {
+                                set_fatal_error(&fatal_error, error);
+                                break;
                             }
                         }
 
-                        let current = processed_frames.fetch_add(1, Ordering::Relaxed) + 1;
-                        if let Some(progress) = progress.as_ref() {
-                            progress.emit(
-                                current,
-                                format!("Processing frame {}/{}...", current, total_frames_hint),
-                            );
-                        }
+                        emit_processed_frame_progress(
+                            &processed_frames,
+                            progress.as_ref(),
+                            total_frames_hint,
+                        );
                     }
                 }
 
@@ -411,6 +816,7 @@ fn process_streamed_frames(
     let dispatch_result = (|| -> Result<(), String> {
         let mut frame_rx = frame_rx;
         let mut next_worker = 0_usize;
+        let mut frames_sent_to_worker = 0_usize;
 
         while let Some(frame) = frame_rx.blocking_recv() {
             if has_fatal_error(&fatal_error) {
@@ -425,7 +831,11 @@ fn process_streamed_frames(
             worker_senders[next_worker]
                 .send(WorkerMessage::Frame(frame))
                 .map_err(|_| "Failed to dispatch OCR frame to worker".to_string())?;
-            next_worker = (next_worker + 1) % worker_count;
+            frames_sent_to_worker += 1;
+            if frames_sent_to_worker >= WORKER_DISPATCH_CHUNK_SIZE {
+                next_worker = (next_worker + 1) % worker_count;
+                frames_sent_to_worker = 0;
+            }
         }
 
         Ok(())
@@ -453,7 +863,7 @@ fn process_streamed_frames(
     let mut collected = mem::take(&mut *guard);
     drop(guard);
     collected.sort_by_key(|result| result.frame_index);
-    Ok(collected)
+    Ok((collected, telemetry.snapshot(0)))
 }
 
 async fn run_ocr_pipeline_with_bins(
@@ -480,7 +890,8 @@ async fn run_ocr_pipeline_with_bins(
 
     let result = async {
         let total_timer = Instant::now();
-        let filter_str = build_ocr_filter_string(fps, region.as_ref());
+        let output_spec = output_spec_for_region(region.as_ref());
+        let filter_str = build_ocr_filter_string(fps, region.as_ref(), output_spec);
 
         let mut child = tokio::process::Command::new(ffmpeg_path)
             .args([
@@ -492,10 +903,10 @@ async fn run_ocr_pipeline_with_bins(
                 video_path,
                 "-vf",
                 &filter_str,
-                "-c:v",
-                "png",
+                "-pix_fmt",
+                "rgb24",
                 "-f",
-                "image2pipe",
+                "rawvideo",
                 "-progress",
                 "pipe:2",
                 "pipe:1",
@@ -526,7 +937,8 @@ async fn run_ocr_pipeline_with_bins(
             estimated_frames,
             stderr_progress,
         ));
-        let stream_reader_task = tokio::spawn(read_ffmpeg_png_stream(stdout, fps, frame_tx));
+        let stream_reader_task =
+            tokio::spawn(read_ffmpeg_rgb_stream(stdout, fps, output_spec, frame_tx));
 
         let ocr_start = Instant::now();
         let ocr_progress = progress.as_ref().map(|progress| progress.ocr.clone());
@@ -539,6 +951,7 @@ async fn run_ocr_pipeline_with_bins(
                 &models_dir,
                 &language,
                 use_gpu,
+                output_spec,
                 requested_workers,
                 ocr_progress,
                 estimated_frames,
@@ -596,9 +1009,10 @@ async fn run_ocr_pipeline_with_bins(
             return Err(format!("Frame extraction failed: {}", stderr_output));
         }
 
-        let raw_ocr = ocr_task
+        let (raw_ocr, mut telemetry) = ocr_task
             .await
             .map_err(|error| format!("OCR processing task failed: {}", error))??;
+        telemetry.extracted_frames = frame_count;
         let ocr_ms = ocr_start.elapsed().as_millis() as u64;
 
         if is_operation_cancelled(file_id) {
@@ -645,6 +1059,7 @@ async fn run_ocr_pipeline_with_bins(
                 subtitle_ms,
                 total_ms: total_timer.elapsed().as_millis() as u64,
             },
+            telemetry,
         })
     }
     .await;
@@ -665,6 +1080,7 @@ pub(crate) async fn run_ocr_pipeline(
     app: tauri::AppHandle,
     video_path: String,
     file_id: String,
+    operation_id: String,
     language: String,
     fps: f64,
     use_gpu: bool,
@@ -689,7 +1105,8 @@ pub(crate) async fn run_ocr_pipeline(
         })
         .unwrap_or(1000);
 
-    let progress = PipelineProgressContext::new(app, file_id.clone(), estimated_frames);
+    let progress =
+        PipelineProgressContext::new(app, file_id.clone(), operation_id, estimated_frames);
     progress
         .extraction
         .emit_force(0, "Starting frame extraction...".to_string());
@@ -720,21 +1137,15 @@ mod tests {
 
     use serial_test::serial;
 
-    use crate::tools::ocr::OcrSubtitleCleanupOptions;
+    use image::{DynamicImage, ImageBuffer, Rgba};
 
-    use super::{PNG_SIGNATURE, run_ocr_pipeline_with_bins, take_next_png_frame};
+    use crate::tools::ocr::{OcrFrameResult, OcrSubtitleCleanupOptions};
 
-    fn make_test_png(width: u32, height: u32) -> Vec<u8> {
-        let image = image::DynamicImage::new_rgba8(width, height);
-        let mut bytes = Vec::new();
-        image
-            .write_to(
-                &mut std::io::Cursor::new(&mut bytes),
-                image::ImageFormat::Png,
-            )
-            .expect("png generation should succeed");
-        bytes
-    }
+    use super::{
+        build_ocr_filter_string, can_clone_previous_frame_result, clone_frame_result_for_frame,
+        create_frame_fingerprint, empty_frame_result, is_low_detail_no_text, is_visually_unchanged,
+        output_spec_for_region, run_ocr_pipeline_with_bins, take_next_raw_frame,
+    };
 
     async fn ensure_models_dir() -> Result<std::path::PathBuf, String> {
         let models_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ocr-models");
@@ -791,55 +1202,246 @@ mod tests {
         }
     }
 
-    #[test]
-    fn take_next_png_frame_handles_partial_reads() {
-        let png = make_test_png(4, 4);
-        let mut buffer = png[..png.len() / 2].to_vec();
-        assert!(
-            take_next_png_frame(&mut buffer)
-                .expect("partial png should parse")
-                .is_none()
-        );
+    fn solid_image(width: u32, height: u32, value: u8) -> DynamicImage {
+        DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
+            width,
+            height,
+            Rgba([value, value, value, 255]),
+        ))
+    }
 
-        buffer.extend_from_slice(&png[png.len() / 2..]);
-        let frame = take_next_png_frame(&mut buffer)
-            .expect("complete png should parse")
-            .expect("png frame should be extracted");
-        assert_eq!(frame, png);
+    fn text_like_image() -> DynamicImage {
+        let mut image = ImageBuffer::from_pixel(320, 96, Rgba([12, 12, 12, 255]));
+        for y in 34..62 {
+            for x in 48..272 {
+                if (x / 8 + y / 6) % 2 == 0 {
+                    image.put_pixel(x, y, Rgba([245, 245, 245, 255]));
+                }
+            }
+        }
+        DynamicImage::ImageRgba8(image)
+    }
+
+    fn text_variant_image(variant: u8) -> DynamicImage {
+        let mut image = ImageBuffer::from_pixel(320, 96, Rgba([12, 12, 12, 255]));
+        let bars = match variant {
+            0 => [(72, 38, 88, 62), (112, 38, 128, 62), (152, 38, 168, 62)],
+            _ => [(92, 38, 108, 62), (132, 38, 148, 62), (172, 38, 188, 62)],
+        };
+
+        for (x_start, y_start, x_end, y_end) in bars {
+            for y in y_start..y_end {
+                for x in x_start..x_end {
+                    image.put_pixel(x, y, Rgba([245, 245, 245, 255]));
+                }
+            }
+        }
+
+        DynamicImage::ImageRgba8(image)
+    }
+
+    fn same_density_text_variant_image(variant: u8) -> DynamicImage {
+        let mut image = ImageBuffer::from_pixel(320, 96, Rgba([12, 12, 12, 255]));
+        let boxes = [(72, 36, 104, 64), (124, 36, 156, 64), (176, 36, 208, 64)];
+        for (x_start, y_start, x_end, y_end) in boxes {
+            match variant {
+                0 => {
+                    for x in [x_start + 8, x_start + 20] {
+                        for y in y_start..y_end {
+                            image.put_pixel(x, y, Rgba([245, 245, 245, 255]));
+                            image.put_pixel(x + 1, y, Rgba([245, 245, 245, 255]));
+                        }
+                    }
+                }
+                _ => {
+                    for y in [y_start + 8, y_start + 20] {
+                        for x in x_start..x_end {
+                            image.put_pixel(x, y, Rgba([245, 245, 245, 255]));
+                            image.put_pixel(x, y + 1, Rgba([245, 245, 245, 255]));
+                        }
+                    }
+                }
+            }
+        }
+
+        DynamicImage::ImageRgba8(image)
+    }
+
+    #[test]
+    fn frame_fingerprint_marks_identical_frames_as_unchanged() {
+        let previous = create_frame_fingerprint(&solid_image(320, 96, 24));
+        let current = create_frame_fingerprint(&solid_image(320, 96, 25));
+
+        assert!(is_visually_unchanged(&current, &previous));
+    }
+
+    #[test]
+    fn frame_fingerprint_rejects_subtitle_text_changes() {
+        let previous = create_frame_fingerprint(&text_variant_image(0));
+        let current = create_frame_fingerprint(&text_variant_image(1));
+
+        assert!(!is_visually_unchanged(&current, &previous));
+    }
+
+    #[test]
+    fn frame_fingerprint_rejects_same_density_glyph_changes() {
+        let previous = create_frame_fingerprint(&same_density_text_variant_image(0));
+        let current = create_frame_fingerprint(&same_density_text_variant_image(1));
+
+        assert!(!is_visually_unchanged(&current, &previous));
+    }
+
+    #[test]
+    fn low_detail_detector_skips_blank_regions_but_not_text_like_regions() {
+        let blank = create_frame_fingerprint(&solid_image(320, 96, 8));
+        let text_like = create_frame_fingerprint(&text_like_image());
+
+        assert!(is_low_detail_no_text(&blank));
+        assert!(!is_low_detail_no_text(&text_like));
+    }
+
+    #[test]
+    fn cloned_frame_result_preserves_text_with_new_timing() {
+        let previous = OcrFrameResult {
+            frame_index: 7,
+            time_ms: 1400,
+            text: "hello".to_string(),
+            confidence: 0.82,
+        };
+        let frame = super::StreamedFrame {
+            frame_index: 8,
+            time_ms: 1600,
+            rgb_bytes: Vec::new(),
+        };
+
+        let cloned = clone_frame_result_for_frame(&previous, &frame);
+
+        assert_eq!(cloned.frame_index, 8);
+        assert_eq!(cloned.time_ms, 1600);
+        assert_eq!(cloned.text, "hello");
+        assert_eq!(cloned.confidence, 0.82);
+    }
+
+    #[test]
+    fn empty_frame_result_keeps_frame_timing() {
+        let frame = super::StreamedFrame {
+            frame_index: 12,
+            time_ms: 2400,
+            rgb_bytes: Vec::new(),
+        };
+
+        let result = empty_frame_result(&frame);
+
+        assert_eq!(result.frame_index, 12);
+        assert_eq!(result.time_ms, 2400);
+        assert!(result.text.is_empty());
+        assert_eq!(result.confidence, 0.0);
+    }
+
+    #[test]
+    fn duplicate_skip_only_reuses_consecutive_frames() {
+        let previous_fingerprint = create_frame_fingerprint(&solid_image(320, 96, 24));
+        let current_fingerprint = create_frame_fingerprint(&solid_image(320, 96, 24));
+        let previous = OcrFrameResult {
+            frame_index: 3,
+            time_ms: 600,
+            text: "old text".to_string(),
+            confidence: 0.9,
+        };
+        let consecutive = super::StreamedFrame {
+            frame_index: 4,
+            time_ms: 800,
+            rgb_bytes: Vec::new(),
+        };
+        let non_consecutive = super::StreamedFrame {
+            frame_index: 8,
+            time_ms: 1600,
+            rgb_bytes: Vec::new(),
+        };
+
+        assert!(can_clone_previous_frame_result(
+            &consecutive,
+            &current_fingerprint,
+            &previous,
+            &previous_fingerprint,
+        ));
+        assert!(!can_clone_previous_frame_result(
+            &non_consecutive,
+            &current_fingerprint,
+            &previous,
+            &previous_fingerprint,
+        ));
+    }
+
+    #[test]
+    fn duplicate_skip_does_not_reuse_changed_subtitle_text() {
+        let previous_fingerprint = create_frame_fingerprint(&text_variant_image(0));
+        let current_fingerprint = create_frame_fingerprint(&text_variant_image(1));
+        let previous = OcrFrameResult {
+            frame_index: 3,
+            time_ms: 600,
+            text: "old text".to_string(),
+            confidence: 0.9,
+        };
+        let next = super::StreamedFrame {
+            frame_index: 4,
+            time_ms: 800,
+            rgb_bytes: Vec::new(),
+        };
+
+        assert!(!can_clone_previous_frame_result(
+            &next,
+            &current_fingerprint,
+            &previous,
+            &previous_fingerprint,
+        ));
+    }
+
+    #[test]
+    fn take_next_raw_frame_handles_partial_reads() {
+        let raw_frame = vec![42; 12];
+        let mut buffer = raw_frame[..6].to_vec();
+        assert!(take_next_raw_frame(&mut buffer, raw_frame.len()).is_none());
+
+        buffer.extend_from_slice(&raw_frame[6..]);
+        let frame = take_next_raw_frame(&mut buffer, raw_frame.len())
+            .expect("complete raw frame should be extracted");
+        assert_eq!(frame, raw_frame);
         assert!(buffer.is_empty());
     }
 
     #[test]
-    fn take_next_png_frame_extracts_multiple_concatenated_frames() {
-        let first = make_test_png(3, 3);
-        let second = make_test_png(5, 5);
+    fn take_next_raw_frame_extracts_multiple_concatenated_frames() {
+        let first = vec![1; 6];
+        let second = vec![2; 6];
         let mut buffer = first.clone();
         buffer.extend_from_slice(&second);
 
-        let extracted_first = take_next_png_frame(&mut buffer)
-            .expect("first png should parse")
-            .expect("first frame should exist");
+        let extracted_first =
+            take_next_raw_frame(&mut buffer, 6).expect("first frame should exist");
         assert_eq!(extracted_first, first);
 
-        let extracted_second = take_next_png_frame(&mut buffer)
-            .expect("second png should parse")
-            .expect("second frame should exist");
+        let extracted_second =
+            take_next_raw_frame(&mut buffer, 6).expect("second frame should exist");
         assert_eq!(extracted_second, second);
         assert!(buffer.is_empty());
     }
 
     #[test]
-    fn take_next_png_frame_discards_trailing_noise_before_signature() {
-        let png = make_test_png(2, 2);
-        let mut buffer = b"noise".to_vec();
-        buffer.extend_from_slice(PNG_SIGNATURE);
-        buffer.extend_from_slice(&png[PNG_SIGNATURE.len()..]);
+    fn region_filter_scales_to_fixed_rgb_frame() {
+        let region = super::OcrRegion {
+            x: 0.0,
+            y: 0.7,
+            width: 1.0,
+            height: 0.3,
+        };
+        let spec = output_spec_for_region(Some(&region));
+        let filter = build_ocr_filter_string(5.0, Some(&region), spec);
 
-        let extracted = take_next_png_frame(&mut buffer)
-            .expect("png with leading noise should parse")
-            .expect("frame should be extracted");
-        assert_eq!(extracted, png);
-        assert!(buffer.is_empty());
+        assert!(filter.contains("crop=iw*1:ih*0.3:iw*0:ih*0.7"));
+        assert!(filter.contains("scale=960:180:force_original_aspect_ratio=decrease"));
+        assert!(filter.contains("pad=960:180:(ow-iw)/2:(oh-ih)/2"));
+        assert!(filter.ends_with("format=rgb24"));
     }
 
     #[tokio::test]
@@ -919,6 +1521,69 @@ mod tests {
                 .lock()
                 .expect("ocr pid map should lock")
                 .contains_key(&file_id)
+        );
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn benchmark_ocr_pipeline_from_env() {
+        let video_path = std::env::var("MEDIAFLOW_OCR_BENCH_VIDEO")
+            .expect("MEDIAFLOW_OCR_BENCH_VIDEO must point to a local benchmark video");
+        let fps = std::env::var("MEDIAFLOW_OCR_BENCH_FPS")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(5.0);
+        let workers = std::env::var("MEDIAFLOW_OCR_BENCH_WORKERS")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(8);
+        let use_gpu = std::env::var("MEDIAFLOW_OCR_BENCH_GPU")
+            .map(|value| value != "0")
+            .unwrap_or(true);
+        let region = Some(super::OcrRegion {
+            x: 0.0,
+            y: 0.70,
+            width: 1.0,
+            height: 0.30,
+        });
+        let models_dir = ensure_models_dir().await.expect("models should exist");
+        let started_at = std::time::Instant::now();
+
+        let result = run_ocr_pipeline_with_bins(
+            crate::test_support::ffmpeg::ffmpeg_path(),
+            &video_path,
+            "bench-pipeline",
+            &models_dir,
+            "multi",
+            fps,
+            use_gpu,
+            workers,
+            0.5,
+            default_cleanup(),
+            region,
+            None,
+            (60.0 * fps).ceil() as u32,
+            None,
+        )
+        .await
+        .expect("benchmark pipeline should succeed");
+
+        println!(
+            "OCR_BENCH total_wall_ms={} frame_count={} raw_ocr={} subtitles={} attempted={} text_frames={} skipped_unchanged={} skipped_no_text={} workers={} engine_threads={} extract_ms={} ocr_ms={} subtitle_ms={} total_ms={}",
+            started_at.elapsed().as_millis(),
+            result.frame_count,
+            result.raw_ocr.len(),
+            result.subtitles.len(),
+            result.telemetry.ocr_attempted_frames,
+            result.telemetry.text_frames,
+            result.telemetry.unchanged_skipped_frames,
+            result.telemetry.no_text_skipped_frames,
+            result.telemetry.effective_workers,
+            result.telemetry.engine_threads,
+            result.timings.extract_ms,
+            result.timings.ocr_ms,
+            result.timings.subtitle_ms,
+            result.timings.total_ms,
         );
     }
 }

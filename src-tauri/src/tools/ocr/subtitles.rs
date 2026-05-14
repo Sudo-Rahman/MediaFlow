@@ -396,18 +396,30 @@ mod tests {
                 time_ms: 0,
                 text: "Hello world".to_string(),
                 confidence: 0.92,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
             OcrFrameResult {
                 frame_index: 1,
                 time_ms: 500,
                 text: "Hello world".to_string(),
                 confidence: 0.93,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
             OcrFrameResult {
                 frame_index: 2,
                 time_ms: 1000,
                 text: "Hello world".to_string(),
                 confidence: 0.94,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
         ];
 
@@ -434,18 +446,30 @@ mod tests {
                 time_ms: 0,
                 text: "Timing test".to_string(),
                 confidence: 0.95,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
             OcrFrameResult {
                 frame_index: 1,
                 time_ms: 67,
                 text: "Timing test".to_string(),
                 confidence: 0.95,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
             OcrFrameResult {
                 frame_index: 2,
                 time_ms: 133,
                 text: "Timing test".to_string(),
                 confidence: 0.95,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
         ];
 
@@ -471,18 +495,30 @@ mod tests {
                 time_ms: 0,
                 text: "Fallback timing".to_string(),
                 confidence: 0.95,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
             OcrFrameResult {
                 frame_index: 1,
                 time_ms: 0,
                 text: "Fallback timing".to_string(),
                 confidence: 0.95,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
             OcrFrameResult {
                 frame_index: 2,
                 time_ms: 0,
                 text: "Fallback timing".to_string(),
                 confidence: 0.95,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
         ];
 
@@ -509,18 +545,30 @@ mod tests {
                 time_ms: 0,
                 text: "Je suis une longue phrase".to_string(),
                 confidence: 0.95,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
             OcrFrameResult {
                 frame_index: 1,
                 time_ms: 500,
                 text: "Je su1s unel0ngu phrase".to_string(), // B: Anomalous
                 confidence: 0.96,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
             OcrFrameResult {
                 frame_index: 2,
                 time_ms: 1000,
                 text: "Je suis une longue phrase".to_string(), // A: Back to normal
                 confidence: 0.95,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
         ];
 
@@ -552,24 +600,40 @@ mod tests {
                 time_ms: 0,
                 text: "Je suis une longue phrase".to_string(),
                 confidence: 0.95,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
             OcrFrameResult {
                 frame_index: 1,
                 time_ms: 500,
                 text: "Je su1s unel0ngu phrase".to_string(),
                 confidence: 0.96,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
             OcrFrameResult {
                 frame_index: 2,
                 time_ms: 1000,
                 text: "Je suis une longue phrase".to_string(),
                 confidence: 0.95,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
             OcrFrameResult {
                 frame_index: 3,
                 time_ms: 1500,
                 text: "Une autre phrase".to_string(),
                 confidence: 0.95,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
         ];
 
@@ -599,12 +663,20 @@ mod tests {
                 time_ms: 0,
                 text: "www.example.com".to_string(),
                 confidence: 0.99,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
             OcrFrameResult {
                 frame_index: 1,
                 time_ms: 1000,
                 text: "Real subtitle".to_string(),
                 confidence: 0.99,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
         ];
 
@@ -631,6 +703,10 @@ mod tests {
             time_ms: 0,
             text: "Hello".to_string(),
             confidence: 0.99,
+            segment_id: None,
+            zone_id: None,
+            role: None,
+            region: None,
         }];
 
         let zero_error = super::generate_subtitles_core(
@@ -676,12 +752,20 @@ mod tests {
                 time_ms: 0,
                 text: "Hello".to_string(),
                 confidence: 0.10,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
             OcrFrameResult {
                 frame_index: 1,
                 time_ms: 1000,
                 text: "World".to_string(),
                 confidence: 0.15,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
         ];
 
@@ -704,6 +788,10 @@ mod tests {
             time_ms: 0,
             text: "Single frame".to_string(),
             confidence: 0.99,
+            segment_id: None,
+            zone_id: None,
+            role: None,
+            region: None,
         }];
 
         let subtitles = super::generate_subtitles_core(
@@ -728,12 +816,20 @@ mod tests {
                 time_ms: 0,
                 text: "today we fight together".to_string(),
                 confidence: 0.95,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
             OcrFrameResult {
                 frame_index: 1,
                 time_ms: 500,
                 text: "today we fight togather".to_string(),
                 confidence: 0.96,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
         ];
 
@@ -1040,6 +1136,10 @@ where
             start_time: seg.start_time,
             end_time,
             confidence,
+            segment_id: None,
+            zone_id: None,
+            role: None,
+            region: None,
         });
     }
 

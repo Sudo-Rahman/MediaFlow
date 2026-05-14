@@ -13,7 +13,7 @@ pub(crate) async fn export_ocr_subtitles(
     let content = match format.as_str() {
         "srt" => format_srt(&subtitles),
         "vtt" => format_vtt(&subtitles),
-        "ass" => format_ass(&subtitles),
+        "ass" => format_ass(&subtitles, 1920, 1080),
         "txt" => format_txt(&subtitles),
         _ => return Err(format!("Unsupported format: {}", format)),
     };
@@ -66,15 +66,27 @@ fn format_txt(subtitles: &[OcrSubtitleEntry]) -> String {
 }
 
 /// Format subtitles as ASS with a single default bottom subtitle style.
-fn format_ass(subtitles: &[OcrSubtitleEntry]) -> String {
+fn format_ass(subtitles: &[OcrSubtitleEntry], width: u32, height: u32) -> String {
     let events = subtitles
         .iter()
         .map(|sub| {
+            let text = format_ass_text(&sub.text);
+            let positioned = sub
+                .region
+                .as_ref()
+                .map(|region| {
+                    let x = ((region.x + region.width / 2.0) * width as f64).round() as u32;
+                    let y = ((region.y + region.height + 0.03).min(0.95) * height as f64).round()
+                        as u32;
+                    format!("{{\\pos({},{})}}{}", x, y, text)
+                })
+                .unwrap_or(text);
+
             format!(
                 "Dialogue: 0,{},{},Default,,0,0,0,,{}",
                 format_ass_time(sub.start_time),
                 format_ass_time(sub.end_time),
-                format_ass_text(&sub.text)
+                positioned
             )
         })
         .collect::<Vec<_>>()
@@ -83,6 +95,8 @@ fn format_ass(subtitles: &[OcrSubtitleEntry]) -> String {
     [
         "[Script Info]".to_string(),
         "ScriptType: v4.00+".to_string(),
+        format!("PlayResX: {}", width),
+        format!("PlayResY: {}", height),
         String::new(),
         "[V4+ Styles]".to_string(),
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding".to_string(),
@@ -98,8 +112,10 @@ fn format_ass(subtitles: &[OcrSubtitleEntry]) -> String {
 fn format_ass_text(text: &str) -> String {
     text.replace("\r\n", "\n")
         .replace('\r', "\n")
+        .replace('\\', "\\\\")
+        .replace('{', "\\{")
+        .replace('}', "\\}")
         .replace('\n', "\\N")
-        .replace(['{', '}'], "")
 }
 
 /// Format time for SRT (00:00:00,000)
@@ -148,6 +164,10 @@ mod tests {
                 start_time: 0,
                 end_time: 1200,
                 confidence: 0.95,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
             OcrSubtitleEntry {
                 id: "sub-2".to_string(),
@@ -155,6 +175,10 @@ mod tests {
                 start_time: 1500,
                 end_time: 2600,
                 confidence: 0.92,
+                segment_id: None,
+                zone_id: None,
+                role: None,
+                region: None,
             },
         ]
     }
@@ -185,12 +209,41 @@ mod tests {
         let mut subtitles = sample_subtitles();
         subtitles[0].text = "Hello\n{ignored}".to_string();
 
-        let ass = format_ass(&subtitles);
+        let ass = format_ass(&subtitles, 1920, 1080);
 
         assert!(ass.starts_with("[Script Info]\nScriptType: v4.00+"));
         assert!(ass.contains("[V4+ Styles]"));
         assert!(ass.contains("[Events]"));
-        assert!(ass.contains("Dialogue: 0,0:00:00.00,0:00:01.20,Default,,0,0,0,,Hello\\Nignored"));
+        assert!(
+            ass.contains("Dialogue: 0,0:00:00.00,0:00:01.20,Default,,0,0,0,,Hello\\N\\{ignored\\}")
+        );
+    }
+
+    #[test]
+    fn format_ass_positions_on_screen_text() {
+        let subtitles = vec![OcrSubtitleEntry {
+            id: "sub-positioned".to_string(),
+            text: "Exit".to_string(),
+            start_time: 1000,
+            end_time: 2500,
+            confidence: 0.92,
+            segment_id: Some("segment-sign".to_string()),
+            zone_id: Some("zone-sign".to_string()),
+            role: Some(crate::tools::ocr::OcrZoneRole::OnScreenText),
+            region: Some(crate::tools::ocr::OcrRegion {
+                x: 0.7,
+                y: 0.1,
+                width: 0.2,
+                height: 0.1,
+            }),
+        }];
+
+        let ass = format_ass(&subtitles, 1920, 1080);
+
+        assert!(ass.contains("[Script Info]"));
+        assert!(ass.contains("Dialogue:"));
+        assert!(ass.contains("\\pos("));
+        assert!(ass.contains("Exit"));
     }
 
     #[tokio::test]

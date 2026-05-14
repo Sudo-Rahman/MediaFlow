@@ -314,6 +314,10 @@ fn empty_frame_result(frame: &StreamedFrame) -> OcrFrameResult {
         time_ms: frame.time_ms,
         text: String::new(),
         confidence: 0.0,
+        segment_id: None,
+        zone_id: None,
+        role: None,
+        region: None,
     }
 }
 
@@ -326,6 +330,10 @@ fn clone_frame_result_for_frame(
         time_ms: frame.time_ms,
         text: previous.text.clone(),
         confidence: previous.confidence,
+        segment_id: previous.segment_id.clone(),
+        zone_id: previous.zone_id.clone(),
+        role: previous.role.clone(),
+        region: previous.region.clone(),
     }
 }
 
@@ -390,6 +398,10 @@ fn summarize_ocr_results(
         time_ms,
         text: combined_text,
         confidence: avg_confidence,
+        segment_id: None,
+        zone_id: None,
+        role: None,
+        region: None,
     }
 }
 
@@ -1307,6 +1319,10 @@ mod tests {
             time_ms: 1400,
             text: "hello".to_string(),
             confidence: 0.82,
+            segment_id: None,
+            zone_id: None,
+            role: None,
+            region: None,
         };
         let frame = super::StreamedFrame {
             frame_index: 8,
@@ -1347,6 +1363,10 @@ mod tests {
             time_ms: 600,
             text: "old text".to_string(),
             confidence: 0.9,
+            segment_id: None,
+            zone_id: None,
+            role: None,
+            region: None,
         };
         let consecutive = super::StreamedFrame {
             frame_index: 4,
@@ -1382,6 +1402,10 @@ mod tests {
             time_ms: 600,
             text: "old text".to_string(),
             confidence: 0.9,
+            segment_id: None,
+            zone_id: None,
+            role: None,
+            region: None,
         };
         let next = super::StreamedFrame {
             frame_index: 4,

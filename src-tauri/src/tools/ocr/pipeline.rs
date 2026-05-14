@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::mem;
 use std::path::Path;
 use std::process::Stdio;
@@ -5,7 +6,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use image::{DynamicImage, RgbImage};
+use image::{DynamicImage, RgbImage, imageops::FilterType};
+use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::time::timeout;
 
@@ -22,8 +24,9 @@ use crate::tools::ocr::engine::{
 use crate::tools::ocr::progress::OcrProgressEmitter;
 use crate::tools::ocr::subtitles::generate_subtitles_core;
 use crate::tools::ocr::{
-    OcrFrameResult, OcrPipelineResult, OcrPipelineTelemetry, OcrPipelineTimings, OcrRegion,
-    OcrSubtitleCleanupOptions,
+    OcrFrameResult, OcrLiveDetectionEvent, OcrPipelineResult, OcrPipelineTelemetry,
+    OcrPipelineTimings, OcrRegion, OcrSelection, OcrSubtitleCleanupOptions, OcrZone,
+    validate_ocr_selection,
 };
 
 const OCR_PIPELINE_TIMEOUT: Duration = Duration::from_secs(1800);
@@ -405,6 +408,106 @@ fn summarize_ocr_results(
     }
 }
 
+struct ActiveZone<'a> {
+    segment_id: &'a str,
+    zone: &'a OcrZone,
+}
+
+#[derive(Clone)]
+struct LiveDetectionContext {
+    app: tauri::AppHandle,
+    file_id: String,
+    operation_id: String,
+}
+
+fn active_zones_for_time(selection: &OcrSelection, time_ms: u64) -> Vec<ActiveZone<'_>> {
+    selection
+        .segments
+        .iter()
+        .filter(|segment| time_ms >= segment.start_time_ms && time_ms < segment.end_time_ms)
+        .flat_map(|segment| {
+            segment.zones.iter().map(move |zone| ActiveZone {
+                segment_id: &segment.id,
+                zone,
+            })
+        })
+        .collect()
+}
+
+fn crop_rect_for_region(region: &OcrRegion, width: u32, height: u32) -> (u32, u32, u32, u32) {
+    let x = (region.x * width as f64).round() as u32;
+    let y = (region.y * height as f64).round() as u32;
+    let w = (region.width * width as f64).round().max(1.0) as u32;
+    let h = (region.height * height as f64).round().max(1.0) as u32;
+    (
+        x,
+        y,
+        w.min(width.saturating_sub(x)),
+        h.min(height.saturating_sub(y)),
+    )
+}
+
+fn target_spec_for_zone(region: &OcrRegion) -> OcrFrameOutputSpec {
+    if region.width >= 0.95 && region.height >= 0.95 {
+        OcrFrameOutputSpec {
+            width: FULL_OCR_FRAME_WIDTH,
+            height: FULL_OCR_FRAME_HEIGHT,
+        }
+    } else {
+        OcrFrameOutputSpec {
+            width: REGION_OCR_FRAME_WIDTH,
+            height: REGION_OCR_FRAME_HEIGHT,
+        }
+    }
+}
+
+fn zone_result_key(segment_id: &str, zone_id: &str) -> String {
+    format!("{}::{}", segment_id, zone_id)
+}
+
+fn summarize_zone_ocr_results(
+    frame: &StreamedFrame,
+    active_zone: &ActiveZone<'_>,
+    ocr_results: &[ocr_rs::OcrResult_],
+) -> OcrFrameResult {
+    let mut frame_result = summarize_ocr_results(frame.frame_index, frame.time_ms, ocr_results);
+    frame_result.segment_id = Some(active_zone.segment_id.to_string());
+    frame_result.zone_id = Some(active_zone.zone.id.clone());
+    frame_result.role = Some(active_zone.zone.role.clone());
+    frame_result.region = Some(active_zone.zone.region.clone());
+    frame_result
+}
+
+fn empty_zone_frame_result(frame: &StreamedFrame, active_zone: &ActiveZone<'_>) -> OcrFrameResult {
+    OcrFrameResult {
+        frame_index: frame.frame_index,
+        time_ms: frame.time_ms,
+        text: String::new(),
+        confidence: 0.0,
+        segment_id: Some(active_zone.segment_id.to_string()),
+        zone_id: Some(active_zone.zone.id.clone()),
+        role: Some(active_zone.zone.role.clone()),
+        region: Some(active_zone.zone.region.clone()),
+    }
+}
+
+fn emit_live_detection(ctx: Option<&LiveDetectionContext>, detection: &OcrFrameResult) {
+    if detection.text.trim().is_empty() {
+        return;
+    }
+
+    if let Some(ctx) = ctx {
+        let _ = ctx.app.emit(
+            "ocr-live-detection",
+            OcrLiveDetectionEvent {
+                file_id: ctx.file_id.clone(),
+                operation_id: Some(ctx.operation_id.clone()),
+                detection: detection.clone(),
+            },
+        );
+    }
+}
+
 #[derive(Clone)]
 struct PipelineProgressContext {
     app: tauri::AppHandle,
@@ -668,10 +771,12 @@ fn process_streamed_frames(
     language: &str,
     use_gpu: bool,
     output_spec: OcrFrameOutputSpec,
+    selection: OcrSelection,
     requested_workers: u32,
     progress: Option<OcrProgressEmitter>,
     total_frames_hint: u32,
     file_id: &str,
+    live_detection: Option<LiveDetectionContext>,
 ) -> Result<(Vec<OcrFrameResult>, OcrPipelineTelemetry), String> {
     let worker_count = resolve_ocr_worker_count_for_backend(requested_workers, use_gpu);
     let engine_threads = resolve_ocr_engine_threads(worker_count);
@@ -692,11 +797,13 @@ fn process_streamed_frames(
         let models_dir = models_dir.to_path_buf();
         let language = language.to_string();
         let file_id = file_id.to_string();
+        let selection = selection.clone();
         let processed_frames = Arc::clone(&processed_frames);
         let telemetry = Arc::clone(&telemetry);
         let fatal_error = Arc::clone(&fatal_error);
         let results = Arc::clone(&results);
         let progress = progress.clone();
+        let live_detection = live_detection.clone();
 
         worker_handles.push(std::thread::spawn(move || {
             let engine = match create_ocr_engine(
@@ -712,8 +819,8 @@ fn process_streamed_frames(
                     return;
                 }
             };
-            let mut previous_fingerprint: Option<FrameFingerprint> = None;
-            let mut previous_result: Option<OcrFrameResult> = None;
+            let mut previous_by_zone: HashMap<String, (FrameFingerprint, OcrFrameResult)> =
+                HashMap::new();
 
             while let Ok(message) = worker_rx.recv() {
                 match message {
@@ -740,18 +847,8 @@ fn process_streamed_frames(
                             }
                         };
 
-                        let fingerprint = create_frame_fingerprint(&image);
-                        if is_low_detail_no_text(&fingerprint) {
-                            let frame_result = empty_frame_result(&frame);
-                            if let Err(error) = push_ocr_result(&results, frame_result.clone()) {
-                                set_fatal_error(&fatal_error, error);
-                                break;
-                            }
-                            previous_fingerprint = Some(fingerprint);
-                            previous_result = Some(frame_result);
-                            telemetry
-                                .no_text_skipped_frames
-                                .fetch_add(1, Ordering::Relaxed);
+                        let active_zones = active_zones_for_time(&selection, frame.time_ms);
+                        if active_zones.is_empty() {
                             emit_processed_frame_progress(
                                 &processed_frames,
                                 progress.as_ref(),
@@ -760,53 +857,81 @@ fn process_streamed_frames(
                             continue;
                         }
 
-                        if let (Some(prev_fingerprint), Some(prev_result)) =
-                            (previous_fingerprint.as_ref(), previous_result.as_ref())
-                        {
-                            if can_clone_previous_frame_result(
-                                &frame,
-                                &fingerprint,
-                                prev_result,
-                                prev_fingerprint,
-                            ) {
-                                let frame_result =
-                                    clone_frame_result_for_frame(prev_result, &frame);
+                        for active_zone in active_zones {
+                            let zone_key =
+                                zone_result_key(active_zone.segment_id, &active_zone.zone.id);
+                            let (x, y, width, height) = crop_rect_for_region(
+                                &active_zone.zone.region,
+                                output_spec.width,
+                                output_spec.height,
+                            );
+                            if width == 0 || height == 0 {
+                                continue;
+                            }
+
+                            let target_spec = target_spec_for_zone(&active_zone.zone.region);
+                            let crop = image.crop_imm(x, y, width, height).resize_exact(
+                                target_spec.width,
+                                target_spec.height,
+                                FilterType::Triangle,
+                            );
+                            let fingerprint = create_frame_fingerprint(&crop);
+                            if is_low_detail_no_text(&fingerprint) {
+                                let frame_result = empty_zone_frame_result(&frame, &active_zone);
                                 if let Err(error) = push_ocr_result(&results, frame_result.clone())
                                 {
                                     set_fatal_error(&fatal_error, error);
                                     break;
                                 }
-                                previous_fingerprint = Some(fingerprint);
-                                previous_result = Some(frame_result);
+                                previous_by_zone.insert(zone_key, (fingerprint, frame_result));
                                 telemetry
-                                    .unchanged_skipped_frames
+                                    .no_text_skipped_frames
                                     .fetch_add(1, Ordering::Relaxed);
-                                emit_processed_frame_progress(
-                                    &processed_frames,
-                                    progress.as_ref(),
-                                    total_frames_hint,
-                                );
                                 continue;
                             }
-                        }
 
-                        telemetry
-                            .ocr_attempted_frames
-                            .fetch_add(1, Ordering::Relaxed);
-                        if let Ok(ocr_results) = engine.recognize(&image) {
-                            let frame_result = summarize_ocr_results(
-                                frame.frame_index,
-                                frame.time_ms,
-                                &ocr_results,
-                            );
-                            if !frame_result.text.trim().is_empty() {
-                                telemetry.text_frames.fetch_add(1, Ordering::Relaxed);
+                            if let Some((prev_fingerprint, prev_result)) =
+                                previous_by_zone.get(&zone_key)
+                            {
+                                if can_clone_previous_frame_result(
+                                    &frame,
+                                    &fingerprint,
+                                    prev_result,
+                                    prev_fingerprint,
+                                ) {
+                                    let frame_result =
+                                        clone_frame_result_for_frame(prev_result, &frame);
+                                    emit_live_detection(live_detection.as_ref(), &frame_result);
+                                    if let Err(error) =
+                                        push_ocr_result(&results, frame_result.clone())
+                                    {
+                                        set_fatal_error(&fatal_error, error);
+                                        break;
+                                    }
+                                    previous_by_zone.insert(zone_key, (fingerprint, frame_result));
+                                    telemetry
+                                        .unchanged_skipped_frames
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    continue;
+                                }
                             }
-                            previous_fingerprint = Some(fingerprint);
-                            previous_result = Some(frame_result.clone());
-                            if let Err(error) = push_ocr_result(&results, frame_result) {
-                                set_fatal_error(&fatal_error, error);
-                                break;
+
+                            telemetry
+                                .ocr_attempted_frames
+                                .fetch_add(1, Ordering::Relaxed);
+                            if let Ok(ocr_results) = engine.recognize(&crop) {
+                                let frame_result =
+                                    summarize_zone_ocr_results(&frame, &active_zone, &ocr_results);
+                                if !frame_result.text.trim().is_empty() {
+                                    telemetry.text_frames.fetch_add(1, Ordering::Relaxed);
+                                }
+                                previous_by_zone
+                                    .insert(zone_key, (fingerprint, frame_result.clone()));
+                                emit_live_detection(live_detection.as_ref(), &frame_result);
+                                if let Err(error) = push_ocr_result(&results, frame_result) {
+                                    set_fatal_error(&fatal_error, error);
+                                    break;
+                                }
                             }
                         }
 
@@ -889,7 +1014,7 @@ async fn run_ocr_pipeline_with_bins(
     requested_workers: u32,
     min_confidence: f64,
     cleanup: OcrSubtitleCleanupOptions,
-    region: Option<OcrRegion>,
+    selection: OcrSelection,
     duration_us: Option<u64>,
     estimated_frames: u32,
     progress: Option<PipelineProgressContext>,
@@ -902,8 +1027,8 @@ async fn run_ocr_pipeline_with_bins(
 
     let result = async {
         let total_timer = Instant::now();
-        let output_spec = output_spec_for_region(region.as_ref());
-        let filter_str = build_ocr_filter_string(fps, region.as_ref(), output_spec);
+        let output_spec = output_spec_for_region(None);
+        let filter_str = build_ocr_filter_string(fps, None, output_spec);
 
         let mut child = tokio::process::Command::new(ffmpeg_path)
             .args([
@@ -954,6 +1079,11 @@ async fn run_ocr_pipeline_with_bins(
 
         let ocr_start = Instant::now();
         let ocr_progress = progress.as_ref().map(|progress| progress.ocr.clone());
+        let live_detection = progress.as_ref().map(|progress| LiveDetectionContext {
+            app: progress.app.clone(),
+            file_id: progress.file_id.clone(),
+            operation_id: progress.operation_id.clone(),
+        });
         let models_dir = models_dir.to_path_buf();
         let language = language.to_string();
         let file_id_owned = file_id.to_string();
@@ -964,10 +1094,12 @@ async fn run_ocr_pipeline_with_bins(
                 &language,
                 use_gpu,
                 output_spec,
+                selection,
                 requested_workers,
                 ocr_progress,
                 estimated_frames,
                 &file_id_owned,
+                live_detection,
             )
         });
 
@@ -1099,7 +1231,7 @@ pub(crate) async fn run_ocr_pipeline(
     num_workers: u32,
     min_confidence: f64,
     cleanup: Option<OcrSubtitleCleanupOptions>,
-    region: Option<OcrRegion>,
+    selection: OcrSelection,
 ) -> Result<OcrPipelineResult, String> {
     validate_media_path(&video_path)?;
 
@@ -1111,6 +1243,17 @@ pub(crate) async fn run_ocr_pipeline(
     let ffmpeg_path = resolve_ffmpeg_path(&app)?;
     let models_dir = get_ocr_models_dir(&app)?;
     let duration_us = get_media_duration_us(&app, &video_path).await.ok();
+    let duration_ms = duration_us
+        .map(|duration_us| duration_us / 1000)
+        .unwrap_or_else(|| {
+            selection
+                .segments
+                .iter()
+                .map(|segment| segment.end_time_ms)
+                .max()
+                .unwrap_or(1)
+        });
+    validate_ocr_selection(&selection, duration_ms)?;
     let estimated_frames = duration_us
         .map(|duration_us| {
             (((duration_us as f64 / 1_000_000.0) * fps).ceil() as u32).saturating_add(1)
@@ -1134,7 +1277,7 @@ pub(crate) async fn run_ocr_pipeline(
         num_workers,
         min_confidence,
         cleanup.unwrap_or_default(),
-        region,
+        selection,
         duration_us,
         estimated_frames,
         Some(progress),
@@ -1151,7 +1294,10 @@ mod tests {
 
     use image::{DynamicImage, ImageBuffer, Rgba};
 
-    use crate::tools::ocr::{OcrFrameResult, OcrSubtitleCleanupOptions};
+    use crate::tools::ocr::{
+        OcrFrameResult, OcrRegion, OcrSegment, OcrSelection, OcrSubtitleCleanupOptions, OcrZone,
+        OcrZoneRole,
+    };
 
     use super::{
         build_ocr_filter_string, can_clone_previous_frame_result, clone_frame_result_for_frame,
@@ -1176,6 +1322,87 @@ mod tests {
 
     fn default_cleanup() -> OcrSubtitleCleanupOptions {
         OcrSubtitleCleanupOptions::default()
+    }
+
+    fn default_selection() -> OcrSelection {
+        OcrSelection {
+            segments: vec![OcrSegment {
+                id: "default-segment".to_string(),
+                start_time_ms: 0,
+                end_time_ms: 60_000,
+                zones: vec![OcrZone {
+                    id: "default-zone".to_string(),
+                    role: OcrZoneRole::MainSubtitle,
+                    region: OcrRegion {
+                        x: 0.0,
+                        y: 0.75,
+                        width: 1.0,
+                        height: 0.25,
+                    },
+                    label: None,
+                }],
+            }],
+        }
+    }
+
+    fn full_frame_selection() -> OcrSelection {
+        OcrSelection {
+            segments: vec![OcrSegment {
+                id: "full-frame-segment".to_string(),
+                start_time_ms: 0,
+                end_time_ms: 60_000,
+                zones: vec![OcrZone {
+                    id: "full-frame-zone".to_string(),
+                    role: OcrZoneRole::MainSubtitle,
+                    region: OcrRegion {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 1.0,
+                        height: 1.0,
+                    },
+                    label: None,
+                }],
+            }],
+        }
+    }
+
+    fn selection_with_overlap() -> OcrSelection {
+        OcrSelection {
+            segments: vec![
+                OcrSegment {
+                    id: "dialogue-segment".to_string(),
+                    start_time_ms: 0,
+                    end_time_ms: 5_000,
+                    zones: vec![OcrZone {
+                        id: "dialogue-zone".to_string(),
+                        role: OcrZoneRole::MainSubtitle,
+                        region: OcrRegion {
+                            x: 0.0,
+                            y: 0.75,
+                            width: 1.0,
+                            height: 0.25,
+                        },
+                        label: None,
+                    }],
+                },
+                OcrSegment {
+                    id: "sign-segment".to_string(),
+                    start_time_ms: 1_000,
+                    end_time_ms: 4_000,
+                    zones: vec![OcrZone {
+                        id: "sign-zone".to_string(),
+                        role: OcrZoneRole::OnScreenText,
+                        region: OcrRegion {
+                            x: 0.25,
+                            y: 0.2,
+                            width: 0.3,
+                            height: 0.2,
+                        },
+                        label: Some("Sign".to_string()),
+                    }],
+                },
+            ],
+        }
     }
 
     fn normalized_words(text: &str) -> Vec<String> {
@@ -1452,6 +1679,32 @@ mod tests {
     }
 
     #[test]
+    fn active_zones_for_time_returns_union_from_overlapping_segments() {
+        let selection = selection_with_overlap();
+        let active = super::active_zones_for_time(&selection, 2500);
+
+        assert_eq!(active.len(), 2);
+        assert_eq!(active[0].zone.id, "dialogue-zone");
+        assert_eq!(active[1].zone.id, "sign-zone");
+    }
+
+    #[test]
+    fn crop_region_to_image_bounds_scales_relative_region() {
+        let rect = super::crop_rect_for_region(
+            &OcrRegion {
+                x: 0.25,
+                y: 0.5,
+                width: 0.5,
+                height: 0.25,
+            },
+            1920,
+            1080,
+        );
+
+        assert_eq!(rect, (480, 540, 960, 270));
+    }
+
+    #[test]
     fn region_filter_scales_to_fixed_rgb_frame() {
         let region = super::OcrRegion {
             x: 0.0,
@@ -1485,7 +1738,7 @@ mod tests {
             1,
             0.5,
             default_cleanup(),
-            None,
+            full_frame_selection(),
             None,
             100,
             None,
@@ -1523,7 +1776,7 @@ mod tests {
                     1,
                     0.5,
                     default_cleanup(),
-                    None,
+                    default_selection(),
                     None,
                     1000,
                     None,
@@ -1564,12 +1817,6 @@ mod tests {
         let use_gpu = std::env::var("MEDIAFLOW_OCR_BENCH_GPU")
             .map(|value| value != "0")
             .unwrap_or(true);
-        let region = Some(super::OcrRegion {
-            x: 0.0,
-            y: 0.70,
-            width: 1.0,
-            height: 0.30,
-        });
         let models_dir = ensure_models_dir().await.expect("models should exist");
         let started_at = std::time::Instant::now();
 
@@ -1584,7 +1831,7 @@ mod tests {
             workers,
             0.5,
             default_cleanup(),
-            region,
+            default_selection(),
             None,
             (60.0 * fps).ceil() as u32,
             None,

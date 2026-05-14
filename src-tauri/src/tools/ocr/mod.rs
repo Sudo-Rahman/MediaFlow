@@ -62,7 +62,9 @@ pub(crate) struct OcrSelection {
 /// OCR frame result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct OcrFrameResult {
+    #[serde(rename = "frameIndex", alias = "frame_index")]
     pub(crate) frame_index: u32,
+    #[serde(rename = "timeMs", alias = "time_ms")]
     pub(crate) time_ms: u64,
     pub(crate) text: String,
     pub(crate) confidence: f64,
@@ -115,6 +117,14 @@ pub(crate) struct OcrPipelineResult {
     pub(crate) frame_count: u32,
     pub(crate) timings: OcrPipelineTimings,
     pub(crate) telemetry: OcrPipelineTelemetry,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OcrLiveDetectionEvent {
+    pub(crate) file_id: String,
+    pub(crate) operation_id: Option<String>,
+    pub(crate) detection: OcrFrameResult,
 }
 
 /// OCR subtitle entry

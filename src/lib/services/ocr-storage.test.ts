@@ -113,6 +113,59 @@ describe('OCR storage', () => {
     );
   });
 
+  it('rejects malformed v2 OCR selection segments', async () => {
+    loadMediaflowDataMock.mockResolvedValueOnce({
+      version: 1,
+      videoOcr: {
+        version: 2,
+        videoPath: '/movie.mp4',
+        ocrSelection: {
+          segments: ['not-a-segment'],
+        },
+        ocrVersions: [],
+        createdAt: '2026-05-14T00:00:00.000Z',
+        updatedAt: '2026-05-14T00:00:00.000Z',
+      },
+    });
+
+    await expect(loadOcrData('/movie.mp4')).rejects.toThrow(
+      'This Video OCR data was created with an older MediaFlow version and is not supported.',
+    );
+  });
+
+  it('rejects malformed v2 OCR selection zones', async () => {
+    loadMediaflowDataMock.mockResolvedValueOnce({
+      version: 1,
+      videoOcr: {
+        version: 2,
+        videoPath: '/movie.mp4',
+        ocrSelection: {
+          segments: [
+            {
+              id: 'ocr-segment-1',
+              startTimeMs: 0,
+              endTimeMs: 60_000,
+              zones: [
+                {
+                  id: 'ocr-zone-1',
+                  role: 'commentary',
+                  region: { x: 0, y: 0.75, width: 1, height: Number.NaN },
+                },
+              ],
+            },
+          ],
+        },
+        ocrVersions: [],
+        createdAt: '2026-05-14T00:00:00.000Z',
+        updatedAt: '2026-05-14T00:00:00.000Z',
+      },
+    });
+
+    await expect(loadOcrData('/movie.mp4')).rejects.toThrow(
+      'This Video OCR data was created with an older MediaFlow version and is not supported.',
+    );
+  });
+
   it('rejects legacy OCR region persistence', async () => {
     loadMediaflowDataMock.mockResolvedValueOnce({
       version: 1,

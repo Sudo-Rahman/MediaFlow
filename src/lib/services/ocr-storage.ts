@@ -3,7 +3,11 @@ import type {
   OcrRetryMode,
   OcrSubtitle,
   OcrRawFrame,
+  OcrRegion,
+  OcrSegment,
   OcrVersion,
+  OcrZone,
+  OcrZoneRole,
   OcrPreviewSourceIdentity,
   VideoOcrSelection,
   VideoOcrPersistenceData,
@@ -28,6 +32,39 @@ function isOcrVersion(value: unknown): value is OcrVersion {
     && Array.isArray(value.finalSubtitles);
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isOcrZoneRole(value: unknown): value is OcrZoneRole {
+  return value === 'main_subtitle' || value === 'on_screen_text';
+}
+
+function isOcrRegion(value: unknown): value is OcrRegion {
+  return isRecord(value)
+    && isFiniteNumber(value.x)
+    && isFiniteNumber(value.y)
+    && isFiniteNumber(value.width)
+    && isFiniteNumber(value.height);
+}
+
+function isOcrZone(value: unknown): value is OcrZone {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && isOcrZoneRole(value.role)
+    && isOcrRegion(value.region)
+    && (value.label === undefined || typeof value.label === 'string');
+}
+
+function isOcrSegment(value: unknown): value is OcrSegment {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && isFiniteNumber(value.startTimeMs)
+    && isFiniteNumber(value.endTimeMs)
+    && Array.isArray(value.zones)
+    && value.zones.every(isOcrZone);
+}
+
 function isVideoOcrPersistenceData(value: unknown): value is VideoOcrPersistenceData {
   if (!isRecord(value) || 'ocrRegion' in value || 'ocrRegionMode' in value || value.version !== 2) {
     return false;
@@ -39,6 +76,7 @@ function isVideoOcrPersistenceData(value: unknown): value is VideoOcrPersistence
     && typeof value.updatedAt === 'string'
     && isRecord(selection)
     && Array.isArray(selection.segments)
+    && selection.segments.every(isOcrSegment)
     && Array.isArray(value.ocrVersions)
     && value.ocrVersions.every(isOcrVersion);
 }

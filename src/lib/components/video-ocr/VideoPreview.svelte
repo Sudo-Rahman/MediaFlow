@@ -4,10 +4,9 @@
   import { cn } from '$lib/utils';
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { Button } from '$lib/components/ui/button';
-  import { Maximize2, Minimize2, RotateCcw, Frame } from '@lucide/svelte';
+  import { Maximize2, Minimize2, RotateCcw } from '@lucide/svelte';
   import SubtitleOverlay from './SubtitleOverlay.svelte';
   import RegionSelector from './RegionSelector.svelte';
-  import { Tooltip, TooltipContent, TooltipTrigger } from '$lib/components/ui/tooltip';
 
   interface VideoPreviewProps {
     file?: OcrVideoFile;
@@ -29,9 +28,9 @@
 
   let videoEl: HTMLVideoElement | undefined = $state();
   let containerEl: HTMLDivElement | undefined = $state();
-  let currentTime = $state(0);
+  let currentTimesByFileId = $state.raw<Record<string, number>>({});
   let isRegionMode = $state(false);
-  let region = $state<OcrRegion>({ ...DEFAULT_OCR_REGION });
+  let regionsByFileId = $state.raw<Record<string, OcrRegion>>({});
   let resumePlayback = $state(false);
   
   // Video bounds within container (for letterboxed videos)
@@ -82,9 +81,9 @@
     });
   });
 
-  const displayedRegion = $derived.by(() => {
-    return region;
-  });
+  const currentTime = $derived(file ? currentTimesByFileId[file.id] ?? 0 : 0);
+  const region = $derived(file ? regionsByFileId[file.id] ?? DEFAULT_OCR_REGION : DEFAULT_OCR_REGION);
+  const displayedRegion = $derived(region);
 
   // Get video source URL
   const videoSrc = $derived(
@@ -121,8 +120,11 @@
 
   function handleTimeUpdate() {
     if (videoEl) {
-      currentTime = videoEl.currentTime;
-      onTimeChange?.(Math.round(currentTime * 1000));
+      const nextTime = videoEl.currentTime;
+      if (file) {
+        currentTimesByFileId = { ...currentTimesByFileId, [file.id]: nextTime };
+      }
+      onTimeChange?.(Math.round(nextTime * 1000));
     }
   }
 
@@ -199,17 +201,22 @@
   }
 
   function handleRegionChange(newRegion: OcrRegion | undefined) {
+    if (!file) {
+      return;
+    }
+
     const nextRegion = newRegion ?? { ...DEFAULT_OCR_REGION };
-    region = nextRegion;
+    regionsByFileId = { ...regionsByFileId, [file.id]: nextRegion };
   }
 
-  function setDefaultRegion() {
-    const defaultRegion = { ...DEFAULT_OCR_REGION };
-    handleRegionChange(defaultRegion);
-  }
+  function resetRegion() {
+    if (!file) {
+      return;
+    }
 
-  function clearRegion() {
-    setDefaultRegion();
+    const nextRegionsByFileId = { ...regionsByFileId };
+    delete nextRegionsByFileId[file.id];
+    regionsByFileId = nextRegionsByFileId;
   }
 </script>
 
@@ -295,32 +302,14 @@
           Set OCR Region
         {/if}
       </Button>
-      {#if region}
-        <Button
-          variant="ghost"
-          size="sm"
-          onclick={clearRegion}
-        >
-          <RotateCcw class="size-4 mr-2" />
-          Clear Region
-        </Button>
-      {:else}
-        <Tooltip>
-          <TooltipTrigger>
-            <Button
-              variant="ghost"
-              size="sm"
-              onclick={setDefaultRegion}
-            >
-              <Frame class="size-4 mr-2" />
-              Default
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>Use default region (bottom 25%)</p>
-          </TooltipContent>
-        </Tooltip>
-      {/if}
+      <Button
+        variant="ghost"
+        size="sm"
+        onclick={resetRegion}
+      >
+        <RotateCcw class="size-4 mr-2" />
+        Reset Region
+      </Button>
     </div>
     <p class="text-xs text-muted-foreground mt-2 px-2">
       Tip: This default region remains available until timeline zones can be edited from the preview.

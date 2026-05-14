@@ -10,6 +10,8 @@
     selection: VideoOcrSelection;
     durationMs: number;
     currentTimeMs: number;
+    selectedSegmentId?: string | null;
+    selectedZoneId?: string | null;
     onSelect?: (segmentId: string, zoneId: string) => void;
     onSetRole?: (segmentId: string, zoneId: string, role: OcrZoneRole) => void;
     onDeleteZone?: (segmentId: string, zoneId: string) => void;
@@ -36,6 +38,8 @@
     selection,
     durationMs,
     currentTimeMs,
+    selectedSegmentId = null,
+    selectedZoneId = null,
     onSelect,
     onSetRole,
     onDeleteZone,
@@ -124,6 +128,8 @@
                     class={cn(
                       'absolute h-6 overflow-hidden rounded-md border px-2 text-left text-xs font-medium shadow-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                       roleConfig.blockClass,
+                      selectedSegmentId === block.segmentId && selectedZoneId === block.zoneId
+                        && 'ring-2 ring-ring ring-offset-1 ring-offset-background',
                     )}
                     style={`left: ${left}%; width: ${width}%; top: ${8 + block.lane * 30}px;`}
                     title={`${block.label} ${formatTime(block.startTimeMs)}-${formatTime(block.endTimeMs)}`}

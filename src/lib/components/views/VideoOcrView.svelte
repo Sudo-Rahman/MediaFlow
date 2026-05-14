@@ -19,6 +19,7 @@
     OcrVideoFile,
     OcrVersion,
     OcrZoneRole,
+    VideoOcrSelection,
     VideoOcrPersistenceData,
   } from '$lib/types';
   import { VIDEO_EXTENSIONS } from '$lib/types';
@@ -966,6 +967,36 @@
     void persistFileData(fileId);
   }
 
+  function handleDeleteZone(fileId: string, segmentId: string, zoneId: string): void {
+    const file = getFreshFile(fileId);
+    if (!file) {
+      return;
+    }
+
+    const totalZones = file.ocrSelection.segments.reduce(
+      (count, segment) => count + segment.zones.length,
+      0,
+    );
+    if (totalZones <= 1) {
+      toast.warning('At least one OCR zone is required.');
+      return;
+    }
+
+    const nextSelection: VideoOcrSelection = {
+      segments: file.ocrSelection.segments
+        .map((segment) => ({
+          ...segment,
+          zones: segment.id === segmentId
+            ? segment.zones.filter((zone) => zone.id !== zoneId)
+            : segment.zones.map((zone) => ({ ...zone, region: { ...zone.region } })),
+        }))
+        .filter((segment) => segment.zones.length > 0),
+    };
+
+    videoOcrStore.setOcrSelection(fileId, nextSelection);
+    void persistFileData(fileId);
+  }
+
   $effect(() => {
     const versionedItems = videoOcrStore.videoFiles.flatMap((file) =>
       file.ocrVersions.map((version) => ({
@@ -1010,6 +1041,7 @@
     logs={videoOcrStore.logs}
     {dialogsOpen}
     onSetZoneRole={handleSetZoneRole}
+    onDeleteZone={handleDeleteZone}
     onPlaybackError={handlePreviewPlaybackError}
     onClearLogs={() => videoOcrStore.clearLogs()}
   />

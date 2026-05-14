@@ -28,6 +28,23 @@ function isOcrRetryMode(value: unknown): value is OcrRetryMode {
     || value === 'ai_only';
 }
 
+function isOcrRawFrame(value: unknown): value is OcrRawFrame {
+  return isRecord(value)
+    && isFiniteNumber(value.frameIndex)
+    && isFiniteNumber(value.timeMs)
+    && typeof value.text === 'string'
+    && isFiniteNumber(value.confidence);
+}
+
+function isOcrSubtitle(value: unknown): value is OcrSubtitle {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && typeof value.text === 'string'
+    && isFiniteNumber(value.startTime)
+    && isFiniteNumber(value.endTime)
+    && isFiniteNumber(value.confidence);
+}
+
 function isOcrVersion(value: unknown): value is OcrVersion {
   return isRecord(value)
     && typeof value.id === 'string'
@@ -37,7 +54,9 @@ function isOcrVersion(value: unknown): value is OcrVersion {
     && isRecord(value.configSnapshot)
     && toFinitePositiveNumber(value.configSnapshot.frameRate) !== null
     && Array.isArray(value.rawOcr)
-    && Array.isArray(value.finalSubtitles);
+    && value.rawOcr.every(isOcrRawFrame)
+    && Array.isArray(value.finalSubtitles)
+    && value.finalSubtitles.every(isOcrSubtitle);
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -359,10 +378,10 @@ export async function saveOcrData(
       version: 2,
       videoPath,
       previewPath: data.previewPath,
-      previewSourceIdentity: data.previewSourceIdentity,
+      previewSourceIdentity: sanitizePreviewSourceIdentity(data.previewSourceIdentity),
       previewVersion: data.previewVersion,
       ocrSelection: sanitizeOcrSelection(data.ocrSelection),
-      ocrVersions: data.ocrVersions.map(normalizeOcrVersion),
+      ocrVersions: data.ocrVersions.map(normalizeAndSanitizeOcrVersion),
       createdAt: data.createdAt || now,
       updatedAt: now,
     },

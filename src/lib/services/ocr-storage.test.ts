@@ -130,6 +130,72 @@ describe('OCR storage', () => {
     });
   });
 
+  it('sanitizes preview source identity fields before saving', async () => {
+    saveMediaflowDataMock.mockResolvedValueOnce(true);
+    loadMediaflowDataMock.mockResolvedValueOnce(null);
+    const data: VideoOcrPersistenceData = {
+      version: 2,
+      videoPath: '/movie.mp4',
+      previewSourceIdentity: {
+        path: '/movie.mp4',
+        size: 123,
+        modifiedMs: 1_778_000_000_000,
+        unexpectedIdentity: 'drop me',
+      } as unknown as VideoOcrPersistenceData['previewSourceIdentity'],
+      ocrSelection: createDefaultVideoOcrSelection(60_000),
+      ocrVersions: [],
+      createdAt: '2026-05-14T00:00:00.000Z',
+      updatedAt: '2026-05-14T00:00:00.000Z',
+    };
+
+    await saveOcrData('/movie.mp4', data);
+
+    const saved = saveMediaflowDataMock.mock.calls[0]?.[1] as { videoOcr?: VideoOcrPersistenceData };
+    expect(saved.videoOcr?.previewSourceIdentity).toEqual({
+      path: '/movie.mp4',
+      size: 123,
+      modifiedMs: 1_778_000_000_000,
+    });
+  });
+
+  it('sanitizes OCR version fields before saving', async () => {
+    saveMediaflowDataMock.mockResolvedValueOnce(true);
+    loadMediaflowDataMock.mockResolvedValueOnce(null);
+    const data: VideoOcrPersistenceData = {
+      version: 2,
+      videoPath: '/movie.mp4',
+      ocrSelection: createDefaultVideoOcrSelection(60_000),
+      ocrVersions: [
+        {
+          id: 'ocr-v-1',
+          name: 'Version 1',
+          createdAt: '2026-05-14T00:00:00.000Z',
+          mode: 'full_pipeline',
+          configSnapshot: { ...DEFAULT_OCR_CONFIG, frameRate: 12 },
+          rawOcr: [],
+          finalSubtitles: [],
+          unexpectedVersion: 'drop me',
+        } as unknown as VideoOcrPersistenceData['ocrVersions'][number],
+      ],
+      createdAt: '2026-05-14T00:00:00.000Z',
+      updatedAt: '2026-05-14T00:00:00.000Z',
+    };
+
+    await saveOcrData('/movie.mp4', data);
+
+    const saved = saveMediaflowDataMock.mock.calls[0]?.[1] as { videoOcr?: VideoOcrPersistenceData };
+    expect(saved.videoOcr?.ocrVersions[0]).toEqual({
+      id: 'ocr-v-1',
+      name: 'Version 1',
+      createdAt: '2026-05-14T00:00:00.000Z',
+      mode: 'full_pipeline',
+      configSnapshot: { ...DEFAULT_OCR_CONFIG, frameRate: 12 },
+      rawFrameRate: 12,
+      rawOcr: [],
+      finalSubtitles: [],
+    });
+  });
+
   it('loads valid video OCR selection data and normalizes versions', async () => {
     const ocrSelection = createDefaultVideoOcrSelection(60_000);
     loadMediaflowDataMock.mockResolvedValueOnce({
@@ -201,6 +267,64 @@ describe('OCR storage', () => {
             configSnapshot: { ...DEFAULT_OCR_CONFIG, frameRate: 12 },
             rawOcr: [],
             finalSubtitles: [],
+          },
+        ],
+        createdAt: '2026-05-14T00:00:00.000Z',
+        updatedAt: '2026-05-14T00:00:00.000Z',
+      },
+    });
+
+    await expect(loadOcrData('/movie.mp4')).rejects.toThrow(
+      'This Video OCR data was created with an older MediaFlow version and is not supported.',
+    );
+  });
+
+  it('rejects malformed raw OCR frame entries on load', async () => {
+    loadMediaflowDataMock.mockResolvedValueOnce({
+      version: 1,
+      videoOcr: {
+        version: 2,
+        videoPath: '/movie.mp4',
+        ocrSelection: createDefaultVideoOcrSelection(60_000),
+        ocrVersions: [
+          {
+            id: 'ocr-v-1',
+            name: 'Version 1',
+            createdAt: '2026-05-14T00:00:00.000Z',
+            mode: 'full_pipeline',
+            configSnapshot: { ...DEFAULT_OCR_CONFIG, frameRate: 12 },
+            rawOcr: [{ frameIndex: 0, timeMs: '0', text: 'Hello', confidence: 0.9 }],
+            finalSubtitles: [],
+          },
+        ],
+        createdAt: '2026-05-14T00:00:00.000Z',
+        updatedAt: '2026-05-14T00:00:00.000Z',
+      },
+    });
+
+    await expect(loadOcrData('/movie.mp4')).rejects.toThrow(
+      'This Video OCR data was created with an older MediaFlow version and is not supported.',
+    );
+  });
+
+  it('rejects malformed OCR subtitle entries on load', async () => {
+    loadMediaflowDataMock.mockResolvedValueOnce({
+      version: 1,
+      videoOcr: {
+        version: 2,
+        videoPath: '/movie.mp4',
+        ocrSelection: createDefaultVideoOcrSelection(60_000),
+        ocrVersions: [
+          {
+            id: 'ocr-v-1',
+            name: 'Version 1',
+            createdAt: '2026-05-14T00:00:00.000Z',
+            mode: 'full_pipeline',
+            configSnapshot: { ...DEFAULT_OCR_CONFIG, frameRate: 12 },
+            rawOcr: [],
+            finalSubtitles: [
+              { id: 'sub-1', text: 'Hello', startTime: 0, endTime: Number.NaN, confidence: 0.9 },
+            ],
           },
         ],
         createdAt: '2026-05-14T00:00:00.000Z',

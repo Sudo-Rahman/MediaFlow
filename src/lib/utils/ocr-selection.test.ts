@@ -1,0 +1,106 @@
+import { describe, expect, it } from 'vitest';
+
+import type { OcrSegment, VideoOcrSelection } from '$lib/types';
+import {
+  DEFAULT_MAIN_SUBTITLE_REGION,
+  assignOcrTimelineLanes,
+  createDefaultVideoOcrSelection,
+  getActiveOcrZonesAtTime,
+  getAllowedOcrExportFormats,
+  validateVideoOcrSelection,
+} from './ocr-selection';
+
+describe('OCR selection helpers', () => {
+  it('creates a full-duration main subtitle default selection', () => {
+    const selection = createDefaultVideoOcrSelection(125_000);
+
+    expect(selection.segments).toHaveLength(1);
+    expect(selection.segments[0]).toMatchObject({
+      startTimeMs: 0,
+      endTimeMs: 125_000,
+    });
+    expect(selection.segments[0].zones[0]).toMatchObject({
+      role: 'main_subtitle',
+      region: DEFAULT_MAIN_SUBTITLE_REGION,
+    });
+  });
+
+  it('returns the union of zones from overlapping segments', () => {
+    const selection: VideoOcrSelection = {
+      segments: [
+        segment('dialogue', 0, 5_000, 'main_subtitle'),
+        segment('sign', 2_000, 3_000, 'on_screen_text'),
+      ],
+    };
+
+    expect(getActiveOcrZonesAtTime(selection, 1_000).map((zone) => zone.role)).toEqual(['main_subtitle']);
+    expect(getActiveOcrZonesAtTime(selection, 2_500).map((zone) => zone.role)).toEqual([
+      'main_subtitle',
+      'on_screen_text',
+    ]);
+  });
+
+  it('requires ASS when positioned text exists', () => {
+    expect(getAllowedOcrExportFormats({ segments: [segment('dialogue', 0, 5_000, 'main_subtitle')] }))
+      .toEqual(['srt', 'vtt']);
+    expect(getAllowedOcrExportFormats({ segments: [segment('sign', 0, 5_000, 'on_screen_text')] }))
+      .toEqual(['ass']);
+  });
+
+  it('assigns overlapping timeline blocks to separate lanes', () => {
+    const lanes = assignOcrTimelineLanes([
+      block('a', 0, 5_000),
+      block('b', 1_000, 2_000),
+      block('c', 5_000, 8_000),
+    ]);
+
+    expect(lanes.find((entry) => entry.id === 'a')?.lane).toBe(0);
+    expect(lanes.find((entry) => entry.id === 'b')?.lane).toBe(1);
+    expect(lanes.find((entry) => entry.id === 'c')?.lane).toBe(0);
+  });
+
+  it('reports invalid segments and regions', () => {
+    const errors = validateVideoOcrSelection(
+      {
+        segments: [
+          {
+            id: 'bad',
+            startTimeMs: 8_000,
+            endTimeMs: 2_000,
+            zones: [
+              {
+                id: 'zone-bad',
+                role: 'main_subtitle',
+                region: { x: -1, y: 0, width: 0.01, height: 0.25 },
+              },
+            ],
+          },
+        ],
+      },
+      10_000,
+    );
+
+    expect(errors).toContain('Segment bad must start before it ends.');
+    expect(errors).toContain('Zone zone-bad must stay within the video frame.');
+    expect(errors).toContain('Zone zone-bad is too small.');
+  });
+});
+
+function segment(id: string, startTimeMs: number, endTimeMs: number, role: 'main_subtitle' | 'on_screen_text'): OcrSegment {
+  return {
+    id,
+    startTimeMs,
+    endTimeMs,
+    zones: [
+      {
+        id: `${id}-zone`,
+        role,
+        region: DEFAULT_MAIN_SUBTITLE_REGION,
+      },
+    ],
+  };
+}
+
+function block(id: string, startTimeMs: number, endTimeMs: number) {
+  return { id, startTimeMs, endTimeMs };
+}

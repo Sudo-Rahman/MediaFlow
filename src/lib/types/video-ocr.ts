@@ -30,9 +30,8 @@ export interface OcrVideoFile {
   transcodingProgress?: number;
   transcodingCodec?: string;   // Active transcoding codec label (e.g. H.264 VideoToolbox)
   
-  // OCR region (relative coordinates 0-1)
-  ocrRegion?: OcrRegion;
-  ocrRegionMode: OcrRegionMode;
+  // OCR selection segments and zones (relative coordinates 0-1)
+  ocrSelection: VideoOcrSelection;
   
   // OCR results
   ocrVersions: OcrVersion[];
@@ -61,6 +60,43 @@ export interface OcrRegion {
   y: number;           // Top position (0-1 relative to video height)
   width: number;       // Width (0-1 relative to video width)
   height: number;      // Height (0-1 relative to video height)
+}
+
+export type OcrZoneRole = 'main_subtitle' | 'on_screen_text';
+
+export interface OcrZone {
+  id: string;
+  region: OcrRegion;
+  role: OcrZoneRole;
+  label?: string;
+}
+
+export interface OcrSegment {
+  id: string;
+  startTimeMs: number;
+  endTimeMs: number;
+  zones: OcrZone[];
+}
+
+export interface VideoOcrSelection {
+  segments: OcrSegment[];
+}
+
+export interface OcrZoneFrame {
+  frameIndex: number;
+  timeMs: number;
+  segmentId: string;
+  zoneId: string;
+  role: OcrZoneRole;
+  region: OcrRegion;
+  text: string;
+  confidence: number;
+}
+
+export interface OcrLiveDetectionEvent {
+  fileId: string;
+  operationId?: string | null;
+  detection: OcrZoneFrame;
 }
 
 export type OcrRegionMode = 'global' | 'custom';
@@ -184,12 +220,12 @@ export interface OcrConfig {
   aiCleanupModel: string;         // LLM model for OCR cleanup
 }
 
-export type OcrOutputFormat = 'srt' | 'vtt' | 'txt';
+export type OcrOutputFormat = 'srt' | 'vtt' | 'ass';
 
 export const OCR_OUTPUT_FORMATS: { value: OcrOutputFormat; label: string }[] = [
   { value: 'srt', label: 'SubRip (.srt)' },
   { value: 'vtt', label: 'WebVTT (.vtt)' },
-  { value: 'txt', label: 'Plain Text (.txt)' },
+  { value: 'ass', label: 'Advanced SubStation Alpha (.ass)' },
 ];
 
 const DEFAULT_AI_CLEANUP_PROVIDER = getDefaultLLMProvider();

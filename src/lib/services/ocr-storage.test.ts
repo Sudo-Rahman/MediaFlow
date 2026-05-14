@@ -95,6 +95,59 @@ describe('OCR storage', () => {
     expect(data?.ocrVersions[0].rawFrameRate).toBe(12);
   });
 
+  it('rejects malformed preview metadata on load', async () => {
+    loadMediaflowDataMock.mockResolvedValueOnce({
+      version: 1,
+      videoOcr: {
+        version: 2,
+        videoPath: '/movie.mp4',
+        previewPath: 12,
+        previewVersion: 'ocr-preview-v3',
+        previewSourceIdentity: {
+          path: '/movie.mp4',
+          size: -1,
+          modifiedMs: 1_778_000_000_000,
+        },
+        ocrSelection: createDefaultVideoOcrSelection(60_000),
+        ocrVersions: [],
+        createdAt: '2026-05-14T00:00:00.000Z',
+        updatedAt: '2026-05-14T00:00:00.000Z',
+      },
+    });
+
+    await expect(loadOcrData('/movie.mp4')).rejects.toThrow(
+      'This Video OCR data was created with an older MediaFlow version and is not supported.',
+    );
+  });
+
+  it('rejects invalid OCR version modes on load', async () => {
+    loadMediaflowDataMock.mockResolvedValueOnce({
+      version: 1,
+      videoOcr: {
+        version: 2,
+        videoPath: '/movie.mp4',
+        ocrSelection: createDefaultVideoOcrSelection(60_000),
+        ocrVersions: [
+          {
+            id: 'ocr-v-1',
+            name: 'Version 1',
+            createdAt: '2026-05-14T00:00:00.000Z',
+            mode: 'legacy_mode',
+            configSnapshot: { ...DEFAULT_OCR_CONFIG, frameRate: 12 },
+            rawOcr: [],
+            finalSubtitles: [],
+          },
+        ],
+        createdAt: '2026-05-14T00:00:00.000Z',
+        updatedAt: '2026-05-14T00:00:00.000Z',
+      },
+    });
+
+    await expect(loadOcrData('/movie.mp4')).rejects.toThrow(
+      'This Video OCR data was created with an older MediaFlow version and is not supported.',
+    );
+  });
+
   it('rejects malformed v2 OCR selection persistence', async () => {
     loadMediaflowDataMock.mockResolvedValueOnce({
       version: 1,
@@ -133,7 +186,24 @@ describe('OCR storage', () => {
     );
   });
 
-  it('rejects malformed v2 OCR selection zones', async () => {
+  it.each([
+    {
+      name: 'invalid role',
+      zone: {
+        id: 'ocr-zone-1',
+        role: 'commentary',
+        region: { x: 0, y: 0.75, width: 1, height: 0.25 },
+      },
+    },
+    {
+      name: 'invalid geometry',
+      zone: {
+        id: 'ocr-zone-1',
+        role: 'main_subtitle',
+        region: { x: 0, y: 0.75, width: 1, height: Number.NaN },
+      },
+    },
+  ])('rejects malformed v2 OCR selection zones: $name', async ({ zone }) => {
     loadMediaflowDataMock.mockResolvedValueOnce({
       version: 1,
       videoOcr: {
@@ -145,13 +215,7 @@ describe('OCR storage', () => {
               id: 'ocr-segment-1',
               startTimeMs: 0,
               endTimeMs: 60_000,
-              zones: [
-                {
-                  id: 'ocr-zone-1',
-                  role: 'commentary',
-                  region: { x: 0, y: 0.75, width: 1, height: Number.NaN },
-                },
-              ],
+              zones: [zone],
             },
           ],
         },

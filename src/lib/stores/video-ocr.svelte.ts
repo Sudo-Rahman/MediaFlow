@@ -258,13 +258,14 @@ export const videoOcrStore = {
         return f;
       }
 
+      const { ocrSelection, ...updatesWithoutSelection } = updates;
       const durationMs = updates.duration ? Math.round(updates.duration * 1000) : undefined;
-      const nextUpdates = updates.ocrSelection
-        ? { ...updates, ocrSelection: cloneSelection(updates.ocrSelection) }
-        : updates;
+      const nextUpdates = ocrSelection === undefined
+        ? updatesWithoutSelection
+        : { ...updatesWithoutSelection, ocrSelection: cloneSelection(ocrSelection) };
       const nextFile = { ...f, ...nextUpdates };
       if (
-        !updates.ocrSelection
+        ocrSelection === undefined
         && durationMs
         && f.ocrSelection.segments.length === 1
         && f.ocrSelection.segments[0].endTimeMs === 1

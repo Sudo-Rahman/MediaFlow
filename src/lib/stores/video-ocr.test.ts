@@ -80,6 +80,15 @@ describe('video OCR store', () => {
     expect(storedZone.role).toBe('main_subtitle');
   });
 
+  it('ignores undefined OCR selections passed through updateFile', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    const existingSelection = videoOcrStore.videoFiles[0].ocrSelection;
+
+    videoOcrStore.updateFile(file.id, { ocrSelection: undefined });
+
+    expect(videoOcrStore.videoFiles[0].ocrSelection).toEqual(existingSelection);
+  });
+
   it('preserves explicit OCR selection when duration is updated at the same time', () => {
     const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
     const segment = createOcrSegmentFromZone(10_000, 60_000, DEFAULT_MAIN_SUBTITLE_REGION);

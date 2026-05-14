@@ -21,12 +21,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function isOcrRetryMode(value: unknown): value is OcrRetryMode {
+  return value === 'full_pipeline'
+    || value === 'cleanup_only'
+    || value === 'cleanup_and_ai'
+    || value === 'ai_only';
+}
+
 function isOcrVersion(value: unknown): value is OcrVersion {
   return isRecord(value)
     && typeof value.id === 'string'
     && typeof value.name === 'string'
     && typeof value.createdAt === 'string'
-    && typeof value.mode === 'string'
+    && isOcrRetryMode(value.mode)
     && isRecord(value.configSnapshot)
     && toFinitePositiveNumber(value.configSnapshot.frameRate) !== null
     && Array.isArray(value.rawOcr)
@@ -35,6 +42,10 @@ function isOcrVersion(value: unknown): value is OcrVersion {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isFiniteNonNegativeNumber(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= 0;
 }
 
 function isOcrZoneRole(value: unknown): value is OcrZoneRole {
@@ -66,6 +77,13 @@ function isOcrSegment(value: unknown): value is OcrSegment {
     && value.zones.every(isOcrZone);
 }
 
+function isOcrPreviewSourceIdentity(value: unknown): value is OcrPreviewSourceIdentity {
+  return isRecord(value)
+    && typeof value.path === 'string'
+    && isFiniteNonNegativeNumber(value.size)
+    && isFiniteNonNegativeNumber(value.modifiedMs);
+}
+
 function isSemanticallyValidOcrSelection(selection: VideoOcrSelection): boolean {
   if (selection.segments.length === 0) {
     return false;
@@ -93,9 +111,62 @@ function isVideoOcrPersistenceData(value: unknown): value is VideoOcrPersistence
   return typeof value.videoPath === 'string'
     && typeof value.createdAt === 'string'
     && typeof value.updatedAt === 'string'
+    && (value.previewPath === undefined || typeof value.previewPath === 'string')
+    && (value.previewVersion === undefined || typeof value.previewVersion === 'string')
+    && (
+      value.previewSourceIdentity === undefined
+      || isOcrPreviewSourceIdentity(value.previewSourceIdentity)
+    )
     && isSemanticallyValidOcrSelection(ocrSelection)
     && Array.isArray(value.ocrVersions)
     && value.ocrVersions.every(isOcrVersion);
+}
+
+function sanitizeOcrSelection(selection: VideoOcrSelection): VideoOcrSelection {
+  return {
+    segments: selection.segments.map((segment) => ({
+      id: segment.id,
+      startTimeMs: segment.startTimeMs,
+      endTimeMs: segment.endTimeMs,
+      zones: segment.zones.map((zone) => ({
+        id: zone.id,
+        role: zone.role,
+        ...(zone.label !== undefined ? { label: zone.label } : {}),
+        region: {
+          x: zone.region.x,
+          y: zone.region.y,
+          width: zone.region.width,
+          height: zone.region.height,
+        },
+      })),
+    })),
+  };
+}
+
+function sanitizePreviewSourceIdentity(
+  previewSourceIdentity: OcrPreviewSourceIdentity | undefined,
+): OcrPreviewSourceIdentity | undefined {
+  return previewSourceIdentity
+    ? {
+        path: previewSourceIdentity.path,
+        size: previewSourceIdentity.size,
+        modifiedMs: previewSourceIdentity.modifiedMs,
+      }
+    : undefined;
+}
+
+function normalizeAndSanitizeOcrVersion(version: OcrVersion): OcrVersion {
+  const normalized = normalizeOcrVersion(version);
+  return {
+    id: normalized.id,
+    name: normalized.name,
+    createdAt: normalized.createdAt,
+    mode: normalized.mode,
+    configSnapshot: { ...normalized.configSnapshot },
+    rawFrameRate: normalized.rawFrameRate,
+    rawOcr: [...normalized.rawOcr],
+    finalSubtitles: [...normalized.finalSubtitles],
+  };
 }
 
 function toFiniteNonNegativeNumber(value: unknown): number | null {
@@ -261,9 +332,15 @@ export async function loadOcrData(videoPath: string): Promise<VideoOcrPersistenc
   }
 
   return {
-    ...videoOcr,
     version: 2,
-    ocrVersions: videoOcr.ocrVersions.map(normalizeOcrVersion),
+    videoPath: videoOcr.videoPath,
+    previewPath: videoOcr.previewPath,
+    previewSourceIdentity: sanitizePreviewSourceIdentity(videoOcr.previewSourceIdentity),
+    previewVersion: videoOcr.previewVersion,
+    ocrSelection: sanitizeOcrSelection(videoOcr.ocrSelection),
+    ocrVersions: videoOcr.ocrVersions.map(normalizeAndSanitizeOcrVersion),
+    createdAt: videoOcr.createdAt,
+    updatedAt: videoOcr.updatedAt,
   };
 }
 

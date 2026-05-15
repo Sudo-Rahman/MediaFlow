@@ -7,9 +7,15 @@ import {
   clampRegion,
   createOcrSegmentFromZone,
   createDefaultVideoOcrSelection,
+  createOcrTimelineViewport,
+  createOcrTimelineTicks,
+  createOcrTimelineMinorTicks,
+  getOcrTimelineWheelIntent,
   getActiveOcrZonesAtTime,
   getAllowedOcrExportFormats,
   normalizeOcrZoneLabels,
+  panOcrTimelineViewport,
+  zoomOcrTimelineViewport,
   validateVideoOcrSelection,
 } from './ocr-selection';
 
@@ -229,6 +235,93 @@ describe('OCR selection helpers', () => {
       'Zone 1',
       'Shop sign',
       'Zone 2',
+    ]);
+  });
+
+  it('creates a clamped OCR timeline viewport with a 10 second minimum window', () => {
+    expect(createOcrTimelineViewport(120_000, 50_000, 2_000)).toEqual({
+      startTimeMs: 50_000,
+      endTimeMs: 60_000,
+    });
+
+    expect(createOcrTimelineViewport(120_000, 118_000, 10_000)).toEqual({
+      startTimeMs: 110_000,
+      endTimeMs: 120_000,
+    });
+  });
+
+  it('zooms an OCR timeline viewport around the pointer anchor', () => {
+    const viewport = createOcrTimelineViewport(120_000, 0, 120_000);
+
+    expect(zoomOcrTimelineViewport(viewport, 120_000, 60_000, 0.5)).toEqual({
+      startTimeMs: 30_000,
+      endTimeMs: 90_000,
+    });
+  });
+
+  it('pans an OCR timeline viewport without leaving the video duration', () => {
+    const viewport = createOcrTimelineViewport(120_000, 30_000, 30_000);
+
+    expect(panOcrTimelineViewport(viewport, 120_000, 20_000)).toEqual({
+      startTimeMs: 50_000,
+      endTimeMs: 80_000,
+    });
+
+    expect(panOcrTimelineViewport(viewport, 120_000, -60_000)).toEqual({
+      startTimeMs: 0,
+      endTimeMs: 30_000,
+    });
+  });
+
+  it('keeps vertical trackpad scrolling separate from timeline zoom', () => {
+    expect(
+      getOcrTimelineWheelIntent({
+        deltaX: 0,
+        deltaY: 120,
+        ctrlKey: false,
+        viewportWindowMs: 30_000,
+        durationMs: 120_000,
+      }),
+    ).toEqual({ type: 'none' });
+
+    expect(
+      getOcrTimelineWheelIntent({
+        deltaX: 0,
+        deltaY: 120,
+        ctrlKey: true,
+        viewportWindowMs: 30_000,
+        durationMs: 120_000,
+      }),
+    ).toEqual({ type: 'zoom', zoomFactor: expect.any(Number) });
+  });
+
+  it('builds evenly spaced OCR timeline ticks for the visible viewport', () => {
+    const ticks = createOcrTimelineTicks({ startTimeMs: 30_000, endTimeMs: 90_000 });
+
+    expect(ticks.map((tick) => tick.timeMs)).toEqual([30_000, 40_000, 50_000, 60_000, 70_000, 80_000, 90_000]);
+    expect(ticks.map((tick) => tick.label)).toEqual(['0:30', '0:40', '0:50', '1:00', '1:10', '1:20', '1:30']);
+  });
+
+  it('builds unlabeled minor OCR timeline ticks between major ticks', () => {
+    const ticks = createOcrTimelineMinorTicks({ startTimeMs: 30_000, endTimeMs: 50_000 });
+
+    expect(ticks.map((tick) => tick.timeMs)).toEqual([
+      31_000,
+      32_000,
+      33_000,
+      34_000,
+      36_000,
+      37_000,
+      38_000,
+      39_000,
+      41_000,
+      42_000,
+      43_000,
+      44_000,
+      46_000,
+      47_000,
+      48_000,
+      49_000,
     ]);
   });
 });

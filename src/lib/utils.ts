@@ -35,11 +35,24 @@ export {
   selectionHasRole,
   getAllowedOcrExportFormats,
   normalizeOcrZoneLabels,
+  createOcrTimelineViewport,
+  zoomOcrTimelineViewport,
+  panOcrTimelineViewport,
+  createOcrTimelineTicks,
+  createOcrTimelineMinorTicks,
+  getOcrTimelineWheelIntent,
   assignOcrTimelineLanes,
   validateVideoOcrSelection,
   clampRegion,
 } from "./utils/ocr-selection";
-export type { TimelineBlock, TimelineBlockWithLane } from "./utils/ocr-selection";
+export type {
+  OcrTimelineTick,
+  OcrTimelineViewport,
+  OcrTimelineWheelInput,
+  OcrTimelineWheelIntent,
+  TimelineBlock,
+  TimelineBlockWithLane,
+} from "./utils/ocr-selection";
 export {
   normalizeOcrRawFrame,
   normalizeOcrRawFrames,

@@ -1,6 +1,16 @@
 <script lang="ts">
   import type { OcrZoneRole, VideoOcrSelection } from '$lib/types';
-  import { assignOcrTimelineLanes, cn } from '$lib/utils';
+  import type { OcrTimelineViewport } from '$lib/utils';
+  import {
+    assignOcrTimelineLanes,
+    cn,
+    createOcrTimelineMinorTicks,
+    createOcrTimelineTicks,
+    createOcrTimelineViewport,
+    getOcrTimelineWheelIntent,
+    panOcrTimelineViewport,
+    zoomOcrTimelineViewport,
+  } from '$lib/utils';
   import { Badge } from '$lib/components/ui/badge';
   import { Input } from '$lib/components/ui/input';
   import * as ContextMenu from '$lib/components/ui/context-menu';
@@ -39,6 +49,7 @@
   const TIMELINE_LANE_HEIGHT_PX = 28;
   const TIMELINE_LANE_GAP_PX = 10;
   const TIMELINE_TRACK_PAD_PX = 6;
+  const TIMELINE_RULER_HEIGHT_PX = 18;
 
   type TimelineDrag =
     | { type: 'seek'; trackEl: HTMLElement }
@@ -75,6 +86,8 @@
   let editingLabel = $state<{ segmentId: string; zoneId: string; value: string } | null>(null);
   let labelInputEl = $state<HTMLInputElement | null>(null);
   let focusedLabelKey: string | null = null;
+  let timelineViewport = $state<OcrTimelineViewport>({ startTimeMs: 0, endTimeMs: 1 });
+  let lastDurationMs = 0;
 
   const roles: RoleConfig[] = [
     {
@@ -93,6 +106,28 @@
 
   const safeDurationMs = $derived(Number.isFinite(durationMs) && durationMs > 0 ? durationMs : 1);
   const segmentCount = $derived(selection.segments.length);
+  const visibleViewport = $derived(
+    createOcrTimelineViewport(
+      safeDurationMs,
+      timelineViewport.startTimeMs,
+      timelineViewport.endTimeMs - timelineViewport.startTimeMs,
+    ),
+  );
+  const viewportWindowMs = $derived(visibleViewport.endTimeMs - visibleViewport.startTimeMs);
+  const timelineTicks = $derived(createOcrTimelineTicks(visibleViewport));
+  const timelineMinorTicks = $derived(createOcrTimelineMinorTicks(visibleViewport));
+  const playheadInViewport = $derived(
+    currentTimeMs >= visibleViewport.startTimeMs && currentTimeMs <= visibleViewport.endTimeMs,
+  );
+
+  $effect(() => {
+    if (lastDurationMs === safeDurationMs) {
+      return;
+    }
+
+    lastDurationMs = safeDurationMs;
+    timelineViewport = createOcrTimelineViewport(safeDurationMs);
+  });
 
   function blocksForRole(role: OcrZoneRole): RoleBlock[] {
     return selection.segments.flatMap((segment) =>
@@ -109,8 +144,22 @@
     );
   }
 
-  function percentage(timeMs: number): number {
-    return Math.max(0, Math.min(100, (timeMs / safeDurationMs) * 100));
+  function viewportPercentage(timeMs: number): number {
+    return Math.max(0, Math.min(100, ((timeMs - visibleViewport.startTimeMs) / viewportWindowMs) * 100));
+  }
+
+  function blockOverlapsViewport(block: RoleBlock): boolean {
+    return block.endTimeMs > visibleViewport.startTimeMs && block.startTimeMs < visibleViewport.endTimeMs;
+  }
+
+  function blockStartPercentage(block: RoleBlock): number {
+    return viewportPercentage(Math.max(block.startTimeMs, visibleViewport.startTimeMs));
+  }
+
+  function blockWidthPercentage(block: RoleBlock): number {
+    const visibleStartTimeMs = Math.max(block.startTimeMs, visibleViewport.startTimeMs);
+    const visibleEndTimeMs = Math.min(block.endTimeMs, visibleViewport.endTimeMs);
+    return Math.max(1.5, viewportPercentage(visibleEndTimeMs) - viewportPercentage(visibleStartTimeMs));
   }
 
   function formatTime(timeMs: number): string {
@@ -123,7 +172,8 @@
 
   function timelineTrackStyle(laneCount: number): string {
     const contentMinHeight =
-      TIMELINE_TRACK_PAD_PX * 2
+      TIMELINE_RULER_HEIGHT_PX
+      + TIMELINE_TRACK_PAD_PX * 2
       + laneCount * TIMELINE_LANE_HEIGHT_PX
       + Math.max(0, laneCount - 1) * TIMELINE_LANE_GAP_PX;
 
@@ -133,6 +183,7 @@
       `--timeline-lane-gap: ${TIMELINE_LANE_GAP_PX}px`,
       `--timeline-track-min-height: ${contentMinHeight}px`,
       `--timeline-track-pad: ${TIMELINE_TRACK_PAD_PX}px`,
+      `--timeline-ruler-height: ${TIMELINE_RULER_HEIGHT_PX}px`,
     ].join('; ');
   }
 
@@ -198,10 +249,41 @@
     labelInputEl.select();
   });
 
-  function timeFromPointer(event: PointerEvent, trackEl: HTMLElement): number {
+  function timeFromPointer(event: PointerEvent | WheelEvent, trackEl: HTMLElement): number {
     const rect = trackEl.getBoundingClientRect();
     const ratio = rect.width > 0 ? (event.clientX - rect.left) / rect.width : 0;
-    return Math.round(Math.max(0, Math.min(1, ratio)) * safeDurationMs);
+    return Math.round(visibleViewport.startTimeMs + Math.max(0, Math.min(1, ratio)) * viewportWindowMs);
+  }
+
+  function handleTimelineWheel(event: WheelEvent): void {
+    if (!(event.currentTarget instanceof HTMLElement)) {
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const intent = getOcrTimelineWheelIntent({
+      deltaX: event.deltaX,
+      deltaY: event.deltaY,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      viewportWindowMs,
+      durationMs: safeDurationMs,
+      trackWidth: rect.width,
+    });
+
+    if (intent.type === 'none') {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (intent.type === 'pan') {
+      timelineViewport = panOcrTimelineViewport(visibleViewport, safeDurationMs, intent.deltaTimeMs);
+      return;
+    }
+
+    const anchorTimeMs = timeFromPointer(event, event.currentTarget);
+    timelineViewport = zoomOcrTimelineViewport(visibleViewport, safeDurationMs, anchorTimeMs, intent.zoomFactor);
   }
 
   function startSeek(event: PointerEvent): void {
@@ -368,7 +450,7 @@
 
     <div class="grid min-h-0 flex-1 grid-rows-2 gap-2">
       {#each roles as roleConfig (roleConfig.role)}
-        {@const blocks = assignOcrTimelineLanes(blocksForRole(roleConfig.role))}
+        {@const blocks = assignOcrTimelineLanes(blocksForRole(roleConfig.role).filter(blockOverlapsViewport))}
         {@const laneCount = Math.max(1, ...blocks.map((block) => block.lane + 1))}
         <section class="flex min-h-0 flex-col gap-1">
           <div class="shrink-0 text-[11px] font-semibold leading-none text-muted-foreground">{roleConfig.label}</div>
@@ -385,7 +467,28 @@
               style={timelineTrackStyle(laneCount)}
               onpointerdown={startSeek}
               onkeydown={handleTrackKeydown}
+              onwheel={handleTimelineWheel}
             >
+              <div
+                class="timeline-ruler pointer-events-none sticky top-0 z-20 h-[var(--timeline-ruler-height)] border-b bg-background/95 shadow-[0_1px_0_hsl(var(--border)/0.8)]"
+              >
+                {#each timelineMinorTicks as tick (tick.timeMs)}
+                  <div
+                    class="absolute bottom-0 h-2.5 w-px bg-border/50"
+                    style={`left: ${viewportPercentage(tick.timeMs)}%;`}
+                  ></div>
+                {/each}
+                {#each timelineTicks as tick (tick.timeMs)}
+                  <div
+                    class="absolute bottom-0 top-1 w-px bg-border/80"
+                    style={`left: ${viewportPercentage(tick.timeMs)}%;`}
+                  >
+                    <span class="absolute left-1 top-0 whitespace-nowrap text-[10px] font-medium leading-none text-muted-foreground">
+                      {tick.label}
+                    </span>
+                  </div>
+                {/each}
+              </div>
               {#each laneSeparatorIndexes(laneCount) as laneIndex (laneIndex)}
                 <div
                   class="timeline-lane-separator pointer-events-none absolute left-0 right-0 h-px bg-border"
@@ -393,13 +496,15 @@
                 ></div>
               {/each}
               {#if blocks.length === 0}
-                <div class="absolute inset-0 flex items-center px-3 text-xs text-muted-foreground">
+                <div
+                  class="absolute bottom-0 left-0 right-0 top-[var(--timeline-ruler-height)] flex items-center px-3 text-xs text-muted-foreground"
+                >
                   {roleConfig.emptyLabel}
                 </div>
               {/if}
               {#each blocks as block (block.id)}
-                {@const left = percentage(block.startTimeMs)}
-                {@const width = Math.max(1.5, percentage(block.endTimeMs) - left)}
+                {@const left = blockStartPercentage(block)}
+                {@const width = blockWidthPercentage(block)}
                 <ContextMenu.Root>
                   <ContextMenu.Trigger>
                     {#if editingLabel?.segmentId === block.segmentId && editingLabel.zoneId === block.zoneId}
@@ -482,20 +587,22 @@
                   </ContextMenu.Content>
                 </ContextMenu.Root>
               {/each}
-              <div
-                class="pointer-events-none absolute bottom-1 top-1 w-0.5 -translate-x-1/2 rounded-full bg-foreground shadow-[0_0_0_3px_hsl(var(--foreground)/0.12)]"
-                style={`left: ${percentage(currentTimeMs)}%`}
-                aria-label="Current playback position"
-              ></div>
-              <button
-                type="button"
-                data-timeline-control="true"
-                class="absolute bottom-1 top-1 w-2 -translate-x-1/2 cursor-grab rounded-full border border-foreground/15 bg-background/35 shadow-sm active:cursor-grabbing"
-                style={`left: ${percentage(currentTimeMs)}%`}
-                aria-label="Drag playback position"
-                title="Drag playback position"
-                onpointerdown={startSeek}
-              ></button>
+              {#if playheadInViewport}
+                <div
+                  class="pointer-events-none absolute bottom-[var(--timeline-track-pad)] top-[calc(var(--timeline-ruler-height)+var(--timeline-track-pad))] w-0.5 -translate-x-1/2 rounded-sm bg-foreground shadow-[0_0_0_3px_hsl(var(--foreground)/0.12)]"
+                  style={`left: ${viewportPercentage(currentTimeMs)}%`}
+                  aria-label="Current playback position"
+                ></div>
+                <button
+                  type="button"
+                  data-timeline-control="true"
+                  class="absolute bottom-[var(--timeline-track-pad)] top-[calc(var(--timeline-ruler-height)+var(--timeline-track-pad))] w-2 -translate-x-1/2 cursor-grab rounded-xs border border-foreground/15 bg-background/35 shadow-sm active:cursor-grabbing"
+                  style={`left: ${viewportPercentage(currentTimeMs)}%`}
+                  aria-label="Drag playback position"
+                  title="Drag playback position"
+                  onpointerdown={startSeek}
+                ></button>
+              {/if}
             </div>
           </ScrollArea>
         </section>
@@ -513,6 +620,8 @@
 
   .timeline-lane-separator {
     top: calc(
+      var(--timeline-ruler-height)
+      +
       var(--timeline-track-pad)
       + (var(--lane-separator-index) * var(--timeline-lane-step))
       - (var(--timeline-lane-gap) / 2)
@@ -520,7 +629,11 @@
   }
 
   .timeline-block {
-    top: calc(var(--timeline-track-pad) + (var(--lane) * var(--timeline-lane-step)));
+    top: calc(
+      var(--timeline-ruler-height)
+      + var(--timeline-track-pad)
+      + (var(--lane) * var(--timeline-lane-step))
+    );
     height: var(--timeline-lane-height);
     line-height: var(--timeline-lane-height);
   }

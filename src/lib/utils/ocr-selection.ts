@@ -11,6 +11,23 @@ import type {
 export const DEFAULT_MAIN_SUBTITLE_REGION: OcrRegion = { ...DEFAULT_OCR_REGION };
 
 const MIN_REGION_SIZE = 0.02;
+const MIN_TIMELINE_VIEWPORT_MS = 10_000;
+const TIMELINE_TICK_TARGET_COUNT = 8;
+const TIMELINE_TICK_INTERVALS_MS = [
+  1_000,
+  2_000,
+  5_000,
+  10_000,
+  15_000,
+  30_000,
+  60_000,
+  120_000,
+  300_000,
+  600_000,
+  900_000,
+  1_800_000,
+  3_600_000,
+];
 
 export interface TimelineBlock {
   id: string;
@@ -20,6 +37,31 @@ export interface TimelineBlock {
 
 export interface TimelineBlockWithLane extends TimelineBlock {
   lane: number;
+}
+
+export interface OcrTimelineViewport {
+  startTimeMs: number;
+  endTimeMs: number;
+}
+
+export interface OcrTimelineTick {
+  timeMs: number;
+  label: string;
+}
+
+export type OcrTimelineWheelIntent =
+  | { type: 'none' }
+  | { type: 'pan'; deltaTimeMs: number }
+  | { type: 'zoom'; zoomFactor: number };
+
+export interface OcrTimelineWheelInput {
+  deltaX: number;
+  deltaY: number;
+  ctrlKey: boolean;
+  metaKey?: boolean;
+  viewportWindowMs: number;
+  durationMs: number;
+  trackWidth?: number;
 }
 
 export function createDefaultVideoOcrSelection(durationMs: number): VideoOcrSelection {
@@ -117,6 +159,113 @@ export function assignOcrTimelineLanes<T extends TimelineBlock>(blocks: T[]): Ar
   });
 }
 
+export function createOcrTimelineViewport(
+  durationMs: number,
+  requestedStartTimeMs = 0,
+  requestedWindowMs = durationMs,
+): OcrTimelineViewport {
+  const safeDurationMs = normalizePositiveDurationMs(durationMs);
+  const minWindowMs = Math.min(MIN_TIMELINE_VIEWPORT_MS, safeDurationMs);
+  const windowMs = Math.max(minWindowMs, Math.min(safeDurationMs, normalizePositiveDurationMs(requestedWindowMs)));
+  const maxStartTimeMs = Math.max(0, safeDurationMs - windowMs);
+  const startTimeMs = Math.max(0, Math.min(normalizeTimeMs(requestedStartTimeMs, 0), maxStartTimeMs));
+
+  return {
+    startTimeMs,
+    endTimeMs: startTimeMs + windowMs,
+  };
+}
+
+export function zoomOcrTimelineViewport(
+  viewport: OcrTimelineViewport,
+  durationMs: number,
+  anchorTimeMs: number,
+  zoomFactor: number,
+): OcrTimelineViewport {
+  const currentWindowMs = Math.max(1, viewport.endTimeMs - viewport.startTimeMs);
+  const nextWindowMs = currentWindowMs * Math.max(0.1, zoomFactor);
+  const safeAnchorTimeMs = Math.max(viewport.startTimeMs, Math.min(anchorTimeMs, viewport.endTimeMs));
+  const anchorRatio = (safeAnchorTimeMs - viewport.startTimeMs) / currentWindowMs;
+
+  return createOcrTimelineViewport(
+    durationMs,
+    safeAnchorTimeMs - nextWindowMs * anchorRatio,
+    nextWindowMs,
+  );
+}
+
+export function panOcrTimelineViewport(
+  viewport: OcrTimelineViewport,
+  durationMs: number,
+  deltaTimeMs: number,
+): OcrTimelineViewport {
+  return createOcrTimelineViewport(
+    durationMs,
+    viewport.startTimeMs + deltaTimeMs,
+    viewport.endTimeMs - viewport.startTimeMs,
+  );
+}
+
+export function createOcrTimelineTicks(viewport: OcrTimelineViewport): OcrTimelineTick[] {
+  const startTimeMs = normalizeTimeMs(viewport.startTimeMs, 0);
+  const endTimeMs = Math.max(startTimeMs + 1, normalizeTimeMs(viewport.endTimeMs, startTimeMs + 1));
+  const intervalMs = chooseTimelineTickIntervalMs(endTimeMs - startTimeMs);
+  const firstTickMs = Math.ceil(startTimeMs / intervalMs) * intervalMs;
+  const ticks: OcrTimelineTick[] = [];
+
+  for (let timeMs = firstTickMs; timeMs <= endTimeMs; timeMs += intervalMs) {
+    ticks.push({ timeMs, label: formatTimelineTickLabel(timeMs) });
+  }
+
+  return ticks;
+}
+
+export function createOcrTimelineMinorTicks(viewport: OcrTimelineViewport): OcrTimelineTick[] {
+  const startTimeMs = normalizeTimeMs(viewport.startTimeMs, 0);
+  const endTimeMs = Math.max(startTimeMs + 1, normalizeTimeMs(viewport.endTimeMs, startTimeMs + 1));
+  const majorIntervalMs = chooseTimelineTickIntervalMs(endTimeMs - startTimeMs);
+  const minorIntervalMs = Math.max(1, Math.round(majorIntervalMs / 5));
+  const firstTickMs = Math.ceil(startTimeMs / minorIntervalMs) * minorIntervalMs;
+  const ticks: OcrTimelineTick[] = [];
+
+  for (let timeMs = firstTickMs; timeMs <= endTimeMs; timeMs += minorIntervalMs) {
+    if (timeMs % majorIntervalMs === 0) {
+      continue;
+    }
+
+    ticks.push({ timeMs, label: '' });
+  }
+
+  return ticks;
+}
+
+export function getOcrTimelineWheelIntent(input: OcrTimelineWheelInput): OcrTimelineWheelIntent {
+  const viewportWindowMs = normalizePositiveDurationMs(input.viewportWindowMs);
+  const durationMs = normalizePositiveDurationMs(input.durationMs);
+  const zoomGesture = input.ctrlKey || input.metaKey === true;
+
+  if (zoomGesture) {
+    return {
+      type: 'zoom',
+      zoomFactor: Math.exp(input.deltaY * 0.002),
+    };
+  }
+
+  const horizontalIntent = Math.abs(input.deltaX) > Math.abs(input.deltaY);
+  if (horizontalIntent && viewportWindowMs < durationMs) {
+    const trackWidth = Number.isFinite(input.trackWidth) && input.trackWidth && input.trackWidth > 0
+      ? input.trackWidth
+      : 1;
+
+    return {
+      type: 'pan',
+      deltaTimeMs: (input.deltaX / trackWidth) * viewportWindowMs,
+    };
+  }
+
+  return { type: 'none' };
+}
+
 export function validateVideoOcrSelection(selection: VideoOcrSelection, durationMs: number): string[] {
   const errors: string[] = [];
   const durationIsPositiveFinite = Number.isFinite(durationMs) && durationMs > 0;
@@ -187,6 +336,26 @@ function normalizeTimeMs(value: number, fallback: number): number {
 
 function normalizePositiveDurationMs(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.max(1, Math.round(value)) : 1;
+}
+
+function chooseTimelineTickIntervalMs(windowMs: number): number {
+  const targetIntervalMs = windowMs / TIMELINE_TICK_TARGET_COUNT;
+  return TIMELINE_TICK_INTERVALS_MS.find((intervalMs) => intervalMs >= targetIntervalMs)
+    ?? TIMELINE_TICK_INTERVALS_MS.at(-1)
+    ?? 3_600_000;
+}
+
+function formatTimelineTickLabel(timeMs: number): string {
+  const totalSeconds = Math.floor(Math.max(0, timeMs) / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+  }
+
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
 function isDefaultZoneLabel(label: string): boolean {

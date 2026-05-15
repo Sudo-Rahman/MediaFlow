@@ -276,9 +276,7 @@
 
   function handleRegionCommit(region: OcrRegion): void {
     if (editingZone) {
-      void onUpdateZoneRegion?.(editingZone.segmentId, editingZone.zoneId, region);
-      editingZone = null;
-      editingRegion = undefined;
+      editingRegion = region;
       return;
     }
 
@@ -292,6 +290,16 @@
     void onAddSegmentFromRegion(region, drawingStartTimeMs, endTimeMs);
     isDrawingZone = false;
     drawingRegion = undefined;
+  }
+
+  function saveZoneEditing(): void {
+    if (!editingZone || !editingRegion) {
+      return;
+    }
+
+    void onUpdateZoneRegion?.(editingZone.segmentId, editingZone.zoneId, editingRegion);
+    editingZone = null;
+    editingRegion = undefined;
   }
 
   function cancelRegionSelection(): void {
@@ -501,7 +509,7 @@
           oncommit={handleRegionCommit}
           oncancel={cancelRegionSelection}
         />
-        <div class="absolute right-3 top-3">
+        <div class="absolute right-3 top-3 flex items-center gap-2">
           <Button
             type="button"
             variant="secondary"
@@ -510,6 +518,16 @@
           >
             Cancel
           </Button>
+          {#if isEditingZone}
+            <Button
+              type="button"
+              size="sm"
+              disabled={!editingRegion}
+              onclick={saveZoneEditing}
+            >
+              Save
+            </Button>
+          {/if}
         </div>
       {/if}
       </ContextMenu.Trigger>

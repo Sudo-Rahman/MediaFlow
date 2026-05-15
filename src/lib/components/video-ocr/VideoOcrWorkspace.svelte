@@ -7,6 +7,7 @@
   interface VideoOcrWorkspaceProps {
     file: OcrVideoFile | null;
     liveDetections: OcrZoneFrame[];
+    liveDetectionCount: number;
     dialogsOpen: boolean;
     onAddSegmentFromRegion: (
       fileId: string,
@@ -25,6 +26,7 @@
   let {
     file,
     liveDetections,
+    liveDetectionCount,
     dialogsOpen,
     onAddSegmentFromRegion,
     onUpdateZoneRegion,
@@ -131,6 +133,7 @@
   <VideoPreview
     file={file ?? undefined}
     {liveDetections}
+    {liveDetectionCount}
     showSubtitles={!dialogsOpen}
     suspendPlayback={dialogsOpen}
     {seekRequest}

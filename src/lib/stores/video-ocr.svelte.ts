@@ -44,6 +44,7 @@ let cancelledFileIds = $state<Set<string>>(new Set());
 let currentOperationId = $state<string | null>(null);
 let activeOperationIdsByFileId = $state.raw<Map<string, string>>(new Map());
 let liveDetectionsByFileId = $state.raw<Map<string, OcrZoneFrame[]>>(new Map());
+let liveDetectionCountsByFileId = $state.raw<Map<string, number>>(new Map());
 
 // Scoped run targets (for precise global progress aggregation)
 let processingScopeFileIds = $state<Set<string>>(new Set());
@@ -612,20 +613,32 @@ export const videoOcrStore = {
     const existing = liveDetectionsByFileId.get(fileId) ?? [];
     const next = [...existing, cloneLiveDetection(detection)].slice(-100);
     liveDetectionsByFileId = new Map(liveDetectionsByFileId).set(fileId, next);
+    liveDetectionCountsByFileId = new Map(liveDetectionCountsByFileId).set(
+      fileId,
+      (liveDetectionCountsByFileId.get(fileId) ?? 0) + 1,
+    );
   },
 
   getLiveDetections(fileId: string): OcrZoneFrame[] {
     return (liveDetectionsByFileId.get(fileId) ?? []).map(cloneLiveDetection);
   },
 
+  getLiveDetectionCount(fileId: string): number {
+    return liveDetectionCountsByFileId.get(fileId) ?? 0;
+  },
+
   clearLiveDetections(fileId: string) {
-    if (!liveDetectionsByFileId.has(fileId)) {
+    if (!liveDetectionsByFileId.has(fileId) && !liveDetectionCountsByFileId.has(fileId)) {
       return;
     }
 
     const next = new Map(liveDetectionsByFileId);
     next.delete(fileId);
     liveDetectionsByFileId = next;
+
+    const nextCounts = new Map(liveDetectionCountsByFileId);
+    nextCounts.delete(fileId);
+    liveDetectionCountsByFileId = nextCounts;
   },
 
   // -------------------------------------------------------------------------
@@ -711,6 +724,7 @@ export const videoOcrStore = {
     currentOperationId = null;
     activeOperationIdsByFileId = new Map();
     liveDetectionsByFileId = new Map();
+    liveDetectionCountsByFileId = new Map();
     cancelledFileIds = new Set();
     isCancelling = false;
     processingScopeFileIds = new Set();
@@ -743,6 +757,7 @@ export const videoOcrStore = {
   cancelAll() {
     isCancelling = true;
     liveDetectionsByFileId = new Map();
+    liveDetectionCountsByFileId = new Map();
 
     // Cancel all processing files
     videoFiles = videoFiles.map(f => {
@@ -832,6 +847,7 @@ export const videoOcrStore = {
     currentOperationId = null;
     activeOperationIdsByFileId = new Map();
     liveDetectionsByFileId = new Map();
+    liveDetectionCountsByFileId = new Map();
     cancelledFileIds = new Set();
     isCancelling = false;
     processingScopeFileIds = new Set();

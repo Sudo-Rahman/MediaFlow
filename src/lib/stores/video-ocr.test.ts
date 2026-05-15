@@ -461,6 +461,18 @@ describe('video OCR store', () => {
     expect(detections.at(-1)?.text).toBe('Text 100');
   });
 
+  it('tracks the total live OCR detection count separately from the capped list', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+
+    videoOcrStore.startProcessing(file.id, 'ocr-run-1');
+    for (let index = 0; index < 125; index += 1) {
+      videoOcrStore.addLiveDetection(file.id, 'ocr-run-1', createLiveDetection(`Text ${index}`, index));
+    }
+
+    expect(videoOcrStore.getLiveDetections(file.id)).toHaveLength(100);
+    expect(videoOcrStore.getLiveDetectionCount(file.id)).toBe(125);
+  });
+
   it('clears old live OCR detections when processing starts again', () => {
     const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
 

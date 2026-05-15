@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { OcrZoneFrame, OcrZoneRole } from '$lib/types';
+  import type { OcrZoneFrame, OcrZoneRole, VideoOcrSelection } from '$lib/types';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
@@ -8,13 +8,16 @@
 
   interface LiveOcrHoverCardProps {
     detections: OcrZoneFrame[];
+    detectionCount?: number;
+    selection?: VideoOcrSelection;
     onOpenChange?: (open: boolean) => void;
   }
 
-  let { detections, onOpenChange }: LiveOcrHoverCardProps = $props();
+  let { detections, detectionCount, selection, onOpenChange }: LiveOcrHoverCardProps = $props();
 
   const visibleDetections = $derived(detections.slice(-8).reverse());
   const allDetections = $derived([...detections].reverse());
+  const displayDetectionCount = $derived(Math.max(detections.length, detectionCount ?? 0));
 
   let dialogOpen = $state(false);
   let hoverOpen = $state(false);
@@ -32,10 +35,35 @@
     return role === 'main_subtitle' ? 'Main subtitle' : 'On-screen text';
   }
 
+  function zoneLabel(detection: OcrZoneFrame): string {
+    const segment = selection?.segments.find((entry) => entry.id === detection.segmentId);
+    const zoneIndex = segment?.zones.findIndex((zone) => zone.id === detection.zoneId) ?? -1;
+
+    if (!segment || zoneIndex < 0) {
+      return 'Unknown zone';
+    }
+
+    return segment.zones[zoneIndex].label?.trim() || `Zone ${zoneIndex + 1}`;
+  }
+
   function formatConfidence(confidence: number): string {
     return `${Math.round(Math.max(0, Math.min(1, confidence)) * 100)}%`;
   }
 </script>
+
+{#snippet detectionItem(detection: OcrZoneFrame)}
+  {@const scopeLabel = `${roleLabel(detection.role)} · ${zoneLabel(detection)}`}
+  <div class="rounded-md border bg-muted/30 p-3">
+    <div class="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+      <span class="shrink-0 font-mono">{formatTimeMs(detection.timeMs)}</span>
+      <Badge variant="outline" class="min-w-0 max-w-44 truncate text-[10px]" title={scopeLabel}>
+        {scopeLabel}
+      </Badge>
+      <span class="ml-auto shrink-0 font-medium text-foreground">{formatConfidence(detection.confidence)}</span>
+    </div>
+    <p class="whitespace-pre-wrap text-sm text-foreground">{detection.text}</p>
+  </div>
+{/snippet}
 
 <HoverCard.Root
   bind:open={hoverOpen}
@@ -54,7 +82,7 @@
         size="sm"
         class="h-7 px-2 text-xs"
       >
-        Live detections · {detections.length}
+        Live detections · {displayDetectionCount}
       </Button>
     {/snippet}
   </HoverCard.Trigger>
@@ -77,14 +105,7 @@
       <ScrollArea class="h-64" scrollbarYClasses="w-2">
         <div class="flex flex-col gap-2 p-3">
           {#each visibleDetections as detection (`${detection.frameIndex}:${detection.segmentId}:${detection.zoneId}:${detection.timeMs}`)}
-            <div class="rounded-md border bg-muted/30 p-2">
-              <div class="mb-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-                <span class="font-mono">{formatTimeMs(detection.timeMs)}</span>
-                <span>{roleLabel(detection.role)}</span>
-                <span class="ml-auto font-medium text-foreground">{formatConfidence(detection.confidence)}</span>
-              </div>
-              <p class="line-clamp-2 text-xs text-foreground">{detection.text}</p>
-            </div>
+            {@render detectionItem(detection)}
           {/each}
         </div>
       </ScrollArea>
@@ -109,8 +130,8 @@
 </HoverCard.Root>
 
 <Dialog.Root bind:open={dialogOpen}>
-  <Dialog.Content class="flex max-h-[85vh] max-w-3xl flex-col overflow-hidden">
-    <Dialog.Header>
+  <Dialog.Content class="flex h-[85dvh] max-h-[calc(100dvh-2rem)] max-w-3xl flex-col overflow-hidden">
+    <Dialog.Header class="shrink-0">
       <Dialog.Title>Live OCR detections</Dialog.Title>
       <Dialog.Description>
         Provisional OCR text detected during the current run.
@@ -121,14 +142,7 @@
       <ScrollArea class="min-h-0 flex-1 rounded-md border" scrollbarYClasses="w-2">
         <div class="flex flex-col gap-2 p-3">
           {#each allDetections as detection (`dialog:${detection.frameIndex}:${detection.segmentId}:${detection.zoneId}:${detection.timeMs}`)}
-            <div class="rounded-md border bg-muted/30 p-3">
-              <div class="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
-                <span class="font-mono">{formatTimeMs(detection.timeMs)}</span>
-                <Badge variant="outline" class="text-[10px]">{roleLabel(detection.role)}</Badge>
-                <span class="ml-auto font-medium text-foreground">{formatConfidence(detection.confidence)}</span>
-              </div>
-              <p class="whitespace-pre-wrap text-sm text-foreground">{detection.text}</p>
-            </div>
+            {@render detectionItem(detection)}
           {/each}
         </div>
       </ScrollArea>

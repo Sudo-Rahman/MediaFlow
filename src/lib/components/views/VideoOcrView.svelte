@@ -86,6 +86,9 @@
   const selectedLiveDetections = $derived(
     selectedFile ? videoOcrStore.getLiveDetections(selectedFile.id) : [],
   );
+  const selectedLiveDetectionCount = $derived(
+    selectedFile ? videoOcrStore.getLiveDetectionCount(selectedFile.id) : 0,
+  );
   const resultDialogFile = $derived(
     resultDialogFileId
       ? videoOcrStore.videoFiles.find((file) => file.id === resultDialogFileId) ?? null
@@ -1116,6 +1119,7 @@
   <VideoOcrWorkspace
     file={selectedFile}
     liveDetections={selectedLiveDetections}
+    liveDetectionCount={selectedLiveDetectionCount}
     {dialogsOpen}
     onAddSegmentFromRegion={handleAddSegmentFromRegion}
     onUpdateZoneRegion={handleUpdateZoneRegion}

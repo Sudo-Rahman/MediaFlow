@@ -18,6 +18,7 @@
   interface VideoPreviewProps {
     file?: OcrVideoFile;
     liveDetections?: OcrZoneFrame[];
+    liveDetectionCount?: number;
     showSubtitles?: boolean;
     suspendPlayback?: boolean;
     seekRequest?: VideoSeekRequest | null;
@@ -41,6 +42,7 @@
   let {
     file,
     liveDetections = [],
+    liveDetectionCount = 0,
     showSubtitles = true,
     suspendPlayback = false,
     seekRequest = null,
@@ -477,9 +479,11 @@
       {/if}
 
       <div class="absolute left-3 top-3 flex flex-col items-start gap-2">
-        {#if hasLiveDetections && !isDrawingZone}
+        {#if file && hasLiveDetections && !isDrawingZone}
           <LiveOcrHoverCard
             detections={liveDetections}
+            detectionCount={liveDetectionCount}
+            selection={file.ocrSelection}
             onOpenChange={(open) => {
               liveDetectionsHoverOpen = open;
             }}

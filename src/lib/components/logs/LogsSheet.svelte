@@ -22,6 +22,7 @@
     { value: 'extraction', label: 'Extraction' },
     { value: 'rename', label: 'Rename' },
     { value: 'transcode', label: 'Transcode' },
+    { value: 'video-ocr', label: 'Video OCR' },
     { value: 'system', label: 'System' }
   ];
 

@@ -64,6 +64,8 @@
   let contextZone = $state<VisibleZoneEntry | undefined>();
   let resumePlayback = $state(false);
   let lastAppliedSeekRequestId = $state<number | null>(null);
+  let isPointerInsidePreview = $state(false);
+  let liveDetectionsHoverOpen = $state(false);
   
   // Video bounds within container (for letterboxed videos)
   // These are relative values (0-1) within the container
@@ -142,7 +144,15 @@
       }));
     });
   });
-  const shouldShowZoneHint = $derived(!!file && !isDrawingZone && !isEditingZone && visibleZoneEntries.length === 0);
+  const hasLiveDetections = $derived(liveDetections.length > 0);
+  const shouldShowZoneHint = $derived(
+    !!file
+      && !isDrawingZone
+      && !isEditingZone
+      && visibleZoneEntries.length === 0
+      && !isPointerInsidePreview
+      && (!hasLiveDetections || !liveDetectionsHoverOpen),
+  );
 
   $effect(() => {
     if (!videoEl || !file || !seekRequest || seekRequest.fileId !== file.id) {
@@ -419,6 +429,12 @@
         bind:ref={containerEl}
         class="relative bg-black rounded-lg overflow-hidden flex-1 min-h-0"
         oncontextmenu={handlePreviewContextMenu}
+        onpointerenter={() => {
+          isPointerInsidePreview = true;
+        }}
+        onpointerleave={() => {
+          isPointerInsidePreview = false;
+        }}
       >
       <!-- svelte-ignore a11y_media_has_caption -->
       <video
@@ -452,17 +468,22 @@
         {/each}
       {/if}
 
-      {#if liveDetections.length > 0 && !isDrawingZone}
-        <div class="absolute left-3 top-3">
-          <LiveOcrHoverCard detections={liveDetections} />
-        </div>
-      {/if}
+      <div class="absolute left-3 top-3 flex flex-col items-start gap-2">
+        {#if hasLiveDetections && !isDrawingZone}
+          <LiveOcrHoverCard
+            detections={liveDetections}
+            onOpenChange={(open) => {
+              liveDetectionsHoverOpen = open;
+            }}
+          />
+        {/if}
 
-      {#if shouldShowZoneHint}
-        <span class="pointer-events-none absolute left-3 top-3 rounded bg-black/70 px-2 py-1 text-xs text-white shadow-sm">
-          Right-click to add OCR zones
-        </span>
-      {/if}
+        {#if shouldShowZoneHint}
+          <span class="pointer-events-none rounded bg-black/70 px-2 py-1 text-xs text-white shadow-sm">
+            Right-click to add OCR zones
+          </span>
+        {/if}
+      </div>
 
       <!-- Region selector overlay -->
       {#if isDrawingZone || isEditingZone}

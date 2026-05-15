@@ -4,7 +4,6 @@ export { default as RegionSelector } from './RegionSelector.svelte';
 export { default as SubtitleOverlay } from './SubtitleOverlay.svelte';
 export { default as OcrOptionsPanel } from './OcrOptionsPanel.svelte';
 export { default as OcrProgressBar } from './OcrProgressBar.svelte';
-export { default as OcrLogPanel } from './OcrLogPanel.svelte';
 export { default as OcrZoneContextMenu } from './OcrZoneContextMenu.svelte';
 export { default as OcrResultDialog } from './OcrResultDialog.svelte';
 export { default as OcrRetryDialog } from './OcrRetryDialog.svelte';

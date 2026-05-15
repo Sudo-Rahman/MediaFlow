@@ -8,14 +8,16 @@
 
   interface LiveOcrHoverCardProps {
     detections: OcrZoneFrame[];
+    onOpenChange?: (open: boolean) => void;
   }
 
-  let { detections }: LiveOcrHoverCardProps = $props();
+  let { detections, onOpenChange }: LiveOcrHoverCardProps = $props();
 
   const visibleDetections = $derived(detections.slice(-8).reverse());
   const allDetections = $derived([...detections].reverse());
 
   let dialogOpen = $state(false);
+  let hoverOpen = $state(false);
 
   function formatTimeMs(timeMs: number): string {
     const safeTimeMs = Math.max(0, Math.round(timeMs));
@@ -35,7 +37,14 @@
   }
 </script>
 
-<HoverCard.Root openDelay={150} closeDelay={100}>
+<HoverCard.Root
+  bind:open={hoverOpen}
+  openDelay={150}
+  closeDelay={100}
+  onOpenChange={(open) => {
+    onOpenChange?.(open);
+  }}
+>
   <HoverCard.Trigger>
     {#snippet child({ props })}
       <Button
@@ -43,7 +52,7 @@
         type="button"
         variant="secondary"
         size="sm"
-        class="h-7 rounded bg-background/90 px-2 text-xs shadow-sm backdrop-blur hover:bg-background"
+        class="h-7 px-2 text-xs"
       >
         Live detections · {detections.length}
       </Button>
@@ -54,7 +63,7 @@
     side="bottom"
     sideOffset={6}
     collisionPadding={16}
-    class="w-80 overflow-hidden rounded-lg p-0"
+    class="w-80 overflow-hidden p-0"
   >
     <div class="flex items-center justify-between gap-3 border-b px-3 py-2">
       <div class="min-w-0">
@@ -109,7 +118,7 @@
     </Dialog.Header>
 
     {#if allDetections.length > 0}
-      <ScrollArea class="h-[60vh] rounded-md border" scrollbarYClasses="w-2">
+      <ScrollArea class="min-h-0 flex-1 rounded-md border" scrollbarYClasses="w-2">
         <div class="flex flex-col gap-2 p-3">
           {#each allDetections as detection (`dialog:${detection.frameIndex}:${detection.segmentId}:${detection.zoneId}:${detection.timeMs}`)}
             <div class="rounded-md border bg-muted/30 p-3">

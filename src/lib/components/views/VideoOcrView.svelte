@@ -1083,6 +1083,7 @@
         persisted: persistedOcrVersionKeys.has(buildOcrVersionKey(file.path, version.id))
           ? 'mediaflow' as const
           : 'memory' as const,
+        allowedFormats: getAllowedOcrExportFormats(file.ocrSelection),
         subtitleFile: ocrVersionToSubtitleFile(file.path, file.name, version),
       })),
     );
@@ -1110,7 +1111,6 @@
   <VideoOcrWorkspace
     file={selectedFile}
     liveDetections={selectedLiveDetections}
-    logs={videoOcrStore.logs}
     {dialogsOpen}
     onAddSegmentFromRegion={handleAddSegmentFromRegion}
     onUpdateZoneRegion={handleUpdateZoneRegion}
@@ -1118,7 +1118,6 @@
     onDeleteZone={handleDeleteZone}
     onTrimSegment={handleTrimSegment}
     onPlaybackError={handlePreviewPlaybackError}
-    onClearLogs={() => videoOcrStore.clearLogs()}
   />
 
   <div class="w-80 border-l overflow-auto flex flex-col p-4">

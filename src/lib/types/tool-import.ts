@@ -51,6 +51,7 @@ export interface VersionedImportItem extends ImportItemBase {
   versionName: string;
   versionCreatedAt: string;
   persisted: 'memory' | 'mediaflow';
+  allowedFormats?: readonly string[];
   subtitleFile: SubtitleFile;
 }
 

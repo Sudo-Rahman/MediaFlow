@@ -1,0 +1,57 @@
+<h2>OCR zone roles</h2>
+<p class="subtitle">Same OCR pipeline, different subtitle output behavior depending on what the zone represents.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Preview-first editor with zone roles</div>
+  <div class="mockup-body">
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div style="height:340px;background:#0b1220;border-radius:8px;position:relative;overflow:hidden;border:1px solid #263244">
+        <div style="position:absolute;inset:24px 48px;background:linear-gradient(135deg,#202b3d,#101827);border:1px solid #334155;border-radius:6px"></div>
+
+        <div style="position:absolute;right:78px;top:54px;width:170px;height:70px;border:2px solid #f59e0b;background:rgba(245,158,11,.14);border-radius:4px"></div>
+        <div style="position:absolute;right:82px;top:130px;background:#fef3c7;color:#92400e;border:1px solid #fbbf24;border-radius:999px;padding:4px 8px;font-size:12px">On-screen text</div>
+        <div style="position:absolute;right:82px;top:72px;color:white;background:rgba(15,23,42,.74);padding:4px 6px;border-radius:4px;font-size:12px">出口 / Exit</div>
+
+        <div style="position:absolute;left:70px;right:70px;bottom:58px;height:58px;border:2px solid #60a5fa;background:rgba(96,165,250,.16);border-radius:4px"></div>
+        <div style="position:absolute;left:50%;bottom:22px;transform:translateX(-50%);background:#111827;color:white;border:1px solid #334155;border-radius:6px;padding:8px 16px;font-size:15px;min-width:300px;text-align:center">I need to get out of here.</div>
+        <div style="position:absolute;left:76px;bottom:122px;background:#dbeafe;color:#1e3a8a;border:1px solid #60a5fa;border-radius:999px;padding:4px 8px;font-size:12px">Main subtitle</div>
+
+        <div style="position:absolute;left:50%;top:18px;transform:translateX(-50%);background:rgba(15,23,42,.86);color:white;border:1px solid rgba(148,163,184,.28);border-radius:999px;padding:5px 10px;font-size:12px">02:35 - 2 OCR zones</div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div style="border:1px solid #bfdbfe;background:#eff6ff;border-radius:8px;padding:12px">
+          <div class="label">Main subtitle zone</div>
+          <h3 style="margin:4px 0 6px">Dialogue subtitles</h3>
+          <p style="margin:0;color:#475569;font-size:13px">OCR text becomes normal bottom subtitles. Best for hardcoded dialogue or karaoke-style captions.</p>
+        </div>
+        <div style="border:1px solid #fbbf24;background:#fffbeb;border-radius:8px;padding:12px">
+          <div class="label">On-screen text zone</div>
+          <h3 style="margin:4px 0 6px">Signs, boards, notes</h3>
+          <p style="margin:0;color:#475569;font-size:13px">OCR text is rendered near the source region, so translated signs stay visually attached to the object.</p>
+        </div>
+      </div>
+
+      <div style="border:1px solid #d7dde8;border-radius:8px;padding:14px;background:white">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <strong>OCR timeline</strong>
+          <div style="font-size:12px;color:#64748b">Rows show roles, not implementation details</div>
+        </div>
+        <div style="position:relative;height:112px;border-radius:6px;background:#f8fafc;border:1px solid #e2e8f0;padding:16px 12px">
+          <div style="position:absolute;left:12px;right:12px;top:36px;height:4px;background:#cbd5e1;border-radius:999px"></div>
+          <div style="position:absolute;left:16%;right:22%;top:24px;height:26px;background:#bfdbfe;border:1px solid #60a5fa;border-radius:5px;font-size:12px;color:#1e3a8a;padding:5px 8px">Main subtitle</div>
+          <div style="position:absolute;left:42%;right:36%;top:62px;height:26px;background:#fef3c7;border:1px solid #f59e0b;border-radius:5px;font-size:12px;color:#92400e;padding:5px 8px">On-screen text</div>
+          <div style="position:absolute;left:52%;top:14px;width:2px;height:82px;background:#0f172a"></div>
+          <div style="position:absolute;left:12px;bottom:7px;font-size:11px;color:#64748b">00:00</div>
+          <div style="position:absolute;left:50%;bottom:7px;font-size:11px;color:#64748b">02:35</div>
+          <div style="position:absolute;right:12px;bottom:7px;font-size:11px;color:#64748b">05:00</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Recommended model</h3>
+  <p>Each zone has a role. “Main subtitle” zones feed the normal subtitle track. “On-screen text” zones create positioned cues anchored to the region. The OCR extraction can be identical; the role affects merge, display, and export behavior.</p>
+</div>

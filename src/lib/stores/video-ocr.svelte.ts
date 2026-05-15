@@ -21,6 +21,7 @@ import type {
 } from '$lib/types';
 import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
 import { clampRegion, createDefaultVideoOcrSelection } from '$lib/utils';
+import { logStore } from './logs.svelte';
 
 // ============================================================================
 // STATE
@@ -746,8 +747,16 @@ export const videoOcrStore = {
   // Actions - Logs
   // -------------------------------------------------------------------------
   addLog(level: OcrLogEntry['level'], message: string, fileId?: string) {
-    const fileName = fileId ? videoFiles.find(f => f.id === fileId)?.name : undefined;
-    const logMessage = fileName ? `[${fileName}] ${message}` : message;
+    const file = fileId ? videoFiles.find(f => f.id === fileId) : undefined;
+    const logMessage = file ? `[${file.name}] ${message}` : message;
+
+    logStore.addLog({
+      level,
+      source: 'video-ocr',
+      title: message,
+      details: logMessage,
+      context: file ? { filePath: file.path } : undefined,
+    });
 
     logs = [
       ...logs,

@@ -149,7 +149,8 @@ function buildItemSignature(item: ImportItem): string {
     return `path|${item.key}|${item.kind}|${item.path}|${item.name}`;
   }
 
-  return `versioned|${item.key}|${item.kind}|${item.mediaPath}|${item.versionId}|${item.persisted}|${item.subtitleFile.path}|${item.subtitleFile.name}`;
+  const allowedFormats = item.allowedFormats?.join(',') ?? '';
+  return `versioned|${item.key}|${item.kind}|${item.mediaPath}|${item.versionId}|${item.persisted}|${item.subtitleFile.path}|${item.subtitleFile.name}|${allowedFormats}`;
 }
 
 function buildItemsSignature(items: ImportItem[]): string {

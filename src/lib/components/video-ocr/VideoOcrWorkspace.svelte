@@ -1,14 +1,12 @@
 <script lang="ts">
-  import type { OcrLogEntry, OcrRegion, OcrVideoFile, OcrZoneFrame, OcrZoneRole } from '$lib/types';
+  import type { OcrRegion, OcrVideoFile, OcrZoneFrame, OcrZoneRole } from '$lib/types';
 
-  import OcrLogPanel from './OcrLogPanel.svelte';
   import OcrTimeline from './OcrTimeline.svelte';
   import VideoPreview from './VideoPreview.svelte';
 
   interface VideoOcrWorkspaceProps {
     file: OcrVideoFile | null;
     liveDetections: OcrZoneFrame[];
-    logs: OcrLogEntry[];
     dialogsOpen: boolean;
     onAddSegmentFromRegion: (
       fileId: string,
@@ -21,13 +19,11 @@
     onDeleteZone: (fileId: string, segmentId: string, zoneId: string) => void | Promise<void>;
     onTrimSegment: (fileId: string, segmentId: string, startTimeMs: number, endTimeMs: number) => void | Promise<void>;
     onPlaybackError: (fileId: string, reason: string) => void | Promise<void>;
-    onClearLogs: () => void;
   }
 
   let {
     file,
     liveDetections,
-    logs,
     dialogsOpen,
     onAddSegmentFromRegion,
     onUpdateZoneRegion,
@@ -35,7 +31,6 @@
     onDeleteZone,
     onTrimSegment,
     onPlaybackError,
-    onClearLogs,
   }: VideoOcrWorkspaceProps = $props();
 
   let playbackTime = $state<{ fileId: string | null; timeMs: number }>({ fileId: null, timeMs: 0 });
@@ -119,7 +114,7 @@
   }
 </script>
 
-<div class="flex-1 min-h-0 overflow-hidden p-4 grid grid-rows-[minmax(0,2fr)_auto_minmax(0,1fr)] gap-4">
+<div class="flex-1 min-h-0 overflow-hidden p-4 grid grid-rows-[minmax(0,1fr)_auto] gap-4">
   <VideoPreview
     file={file ?? undefined}
     {liveDetections}
@@ -149,12 +144,4 @@
       onTrimSegment={handleTrimSegment}
     />
   {/if}
-
-  <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
-    <OcrLogPanel
-      {logs}
-      onClear={onClearLogs}
-      class="flex-1 flex flex-col"
-    />
-  </div>
 </div>

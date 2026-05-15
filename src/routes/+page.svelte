@@ -29,10 +29,10 @@
   } from '$lib/services/versioned-export';
   import { LogsSheet } from '$lib/components/logs';
   import { AlertCircle, ScrollText, Download, AudioLines, ScanText, Languages, FileOutput, FileVideo, GitMerge, PenLine } from '@lucide/svelte';
-  import { OCR_OUTPUT_FORMATS } from '$lib/types';
+  import { OCR_OUTPUT_FORMATS, type OcrOutputFormat, type VideoOcrSelection } from '$lib/types';
   import type { ToolId } from '$lib/types/tool-import';
   import { formatFileSize } from '$lib/utils/format';
-  import { OS, formatTransferRate, normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils';
+  import { OS, formatTransferRate, getAllowedOcrExportFormats, normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils';
   import { logStore } from '$lib/stores/logs.svelte';
   import { audioToSubsStore, videoOcrStore, translationStore, extractionStore, mergeStore, renameStore, transcodeStore, updaterStore } from '$lib/stores';
   import { logAndToast } from '$lib/utils/log-toast';
@@ -59,6 +59,11 @@
     value: format.value,
     label: format.label,
   }));
+
+  function getGlobalOcrExportFormats(selection: VideoOcrSelection): OcrOutputFormat[] {
+    const allowedFormats = getAllowedOcrExportFormats(selection);
+    return allowedFormats.includes('ass') ? allowedFormats : [...allowedFormats, 'ass'];
+  }
 
   // References to views for drag & drop forwarding
   let extractViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
@@ -388,11 +393,13 @@
   const ocrExportGroups = $derived.by(() => {
     return videoOcrStore.videoFiles
       .map((file): VersionedExportGroup | null => {
+        const allowedFormats = getGlobalOcrExportFormats(file.ocrSelection);
         const versionEntries = file.ocrVersions.map((version) => ({
           key: `${file.id}:${version.id}`,
           versionId: version.id,
           versionName: version.name,
           createdAt: version.createdAt,
+          allowedFormats,
         }));
 
         if (versionEntries.length === 0) {
@@ -505,6 +512,11 @@
       const file = filesById.get(target.fileId);
       if (!file) {
         throw new Error(`Video file not found: ${target.fileId}`);
+      }
+
+      const allowedFormats = getGlobalOcrExportFormats(file.ocrSelection);
+      if (!allowedFormats.includes(targetFormat)) {
+        throw new Error('Selected OCR zones require ASS export');
       }
 
       const version = file.ocrVersions.find((entry) => entry.id === target.versionId);

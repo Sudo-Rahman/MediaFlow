@@ -233,7 +233,7 @@
       {@const laneCount = Math.max(1, ...blocks.map((block) => block.lane + 1))}
       <section class="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
         <div class="pt-2 text-xs font-medium text-muted-foreground">{roleConfig.label}</div>
-        <ScrollArea class="h-24 rounded-md border bg-muted/20" scrollbarYClasses="w-2">
+        <ScrollArea class="h-19 rounded-md border bg-muted/20" scrollbarYClasses="w-2">
           <div
             class="relative min-w-full"
             data-timeline-track="true"

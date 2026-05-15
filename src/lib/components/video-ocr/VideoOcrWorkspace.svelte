@@ -46,6 +46,9 @@
   const selectedZoneId = $derived(
     selectedZone && selectedZone.fileId === file?.id ? selectedZone.zoneId : null,
   );
+  const workspaceRowsClass = $derived(
+    file ? 'grid-rows-[minmax(0,1fr)_minmax(6rem,30vh)]' : 'grid-rows-[minmax(0,1fr)]',
+  );
 
   function handleTimeChange(timeMs: number): void {
     playbackTime = { fileId: file?.id ?? null, timeMs };
@@ -114,7 +117,7 @@
   }
 </script>
 
-<div class="flex-1 min-h-0 overflow-hidden p-4 grid grid-rows-[minmax(0,1fr)_auto] gap-4">
+<div class={`flex-1 min-h-0 overflow-hidden p-4 grid gap-2 ${workspaceRowsClass}`}>
   <VideoPreview
     file={file ?? undefined}
     {liveDetections}

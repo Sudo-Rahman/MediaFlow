@@ -630,6 +630,29 @@ fn build_ocr_filter_string(fps: f64, spec: OcrFrameOutputSpec) -> String {
     filters.join(",")
 }
 
+fn selection_time_bounds_ms(selection: &OcrSelection) -> Option<(u64, u64)> {
+    let start_time_ms = selection
+        .segments
+        .iter()
+        .map(|segment| segment.start_time_ms)
+        .min()?;
+    let end_time_ms = selection
+        .segments
+        .iter()
+        .map(|segment| segment.end_time_ms)
+        .max()?;
+
+    if start_time_ms >= end_time_ms {
+        None
+    } else {
+        Some((start_time_ms, end_time_ms))
+    }
+}
+
+fn format_ffmpeg_seconds(time_ms: u64) -> String {
+    format!("{:.3}", time_ms as f64 / 1000.0)
+}
+
 fn set_fatal_error(target: &Arc<Mutex<Option<String>>>, message: String) {
     if let Ok(mut guard) = target.lock() {
         if guard.is_none() {
@@ -658,6 +681,7 @@ async fn read_ffmpeg_rgb_stream(
     stdout: tokio::process::ChildStdout,
     fps: f64,
     output_spec: OcrFrameOutputSpec,
+    start_time_ms: u64,
     frame_tx: tokio::sync::mpsc::Sender<StreamedFrame>,
 ) -> Result<u32, String> {
     let mut stdout = stdout;
@@ -678,7 +702,8 @@ async fn read_ffmpeg_rgb_stream(
 
         raw_buffer.extend_from_slice(&read_buffer[..read_bytes]);
         while let Some(frame_bytes) = take_next_raw_frame(&mut raw_buffer, frame_byte_len) {
-            let time_ms = ((frame_index as f64) * frame_duration_ms).round() as u64;
+            let time_ms = start_time_ms
+                .saturating_add(((frame_index as f64) * frame_duration_ms).round() as u64);
             frame_tx
                 .send(StreamedFrame {
                     frame_index,
@@ -999,7 +1024,7 @@ async fn run_ocr_pipeline_with_bins(
     cleanup: OcrSubtitleCleanupOptions,
     selection: OcrSelection,
     duration_us: Option<u64>,
-    estimated_frames: u32,
+    _estimated_frames: u32,
     progress: Option<PipelineProgressContext>,
 ) -> Result<OcrPipelineResult, String> {
     validate_media_path(video_path)?;
@@ -1012,25 +1037,46 @@ async fn run_ocr_pipeline_with_bins(
         let total_timer = Instant::now();
         let output_spec = full_frame_output_spec();
         let filter_str = build_ocr_filter_string(fps, output_spec);
+        let (selection_start_time_ms, selection_end_time_ms) =
+            selection_time_bounds_ms(&selection).unwrap_or((0, duration_us.unwrap_or(0) / 1000));
+        let selection_duration_ms = selection_end_time_ms.saturating_sub(selection_start_time_ms);
+        let seek_start_seconds = format_ffmpeg_seconds(selection_start_time_ms);
+        let seek_duration_seconds = format_ffmpeg_seconds(selection_duration_ms);
+
+        let mut ffmpeg_args = vec![
+            "-y".to_string(),
+            "-v".to_string(),
+            "error".to_string(),
+            "-nostats".to_string(),
+        ];
+        if selection_start_time_ms > 0 {
+            ffmpeg_args.push("-ss".to_string());
+            ffmpeg_args.push(seek_start_seconds);
+        }
+        ffmpeg_args.push("-i".to_string());
+        ffmpeg_args.push(video_path.to_string());
+        if selection_duration_ms > 0 {
+            ffmpeg_args.push("-t".to_string());
+            ffmpeg_args.push(seek_duration_seconds);
+        }
+        ffmpeg_args.extend([
+            "-vf".to_string(),
+            filter_str,
+            "-pix_fmt".to_string(),
+            "rgb24".to_string(),
+            "-f".to_string(),
+            "rawvideo".to_string(),
+            "-progress".to_string(),
+            "pipe:2".to_string(),
+            "pipe:1".to_string(),
+        ]);
+
+        let selected_duration_us = selection_duration_ms.saturating_mul(1000);
+        let selected_frame_estimate =
+            (((selection_duration_ms as f64 / 1000.0) * fps).ceil() as u32).saturating_add(1);
 
         let mut child = tokio::process::Command::new(ffmpeg_path)
-            .args([
-                "-y",
-                "-v",
-                "error",
-                "-nostats",
-                "-i",
-                video_path,
-                "-vf",
-                &filter_str,
-                "-pix_fmt",
-                "rgb24",
-                "-f",
-                "rawvideo",
-                "-progress",
-                "pipe:2",
-                "pipe:1",
-            ])
+            .args(ffmpeg_args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -1053,12 +1099,17 @@ async fn run_ocr_pipeline_with_bins(
         let stderr_progress = progress.clone();
         let stderr_task = tokio::spawn(read_ffmpeg_progress(
             stderr,
-            duration_us,
-            estimated_frames,
+            Some(selected_duration_us),
+            selected_frame_estimate,
             stderr_progress,
         ));
-        let stream_reader_task =
-            tokio::spawn(read_ffmpeg_rgb_stream(stdout, fps, output_spec, frame_tx));
+        let stream_reader_task = tokio::spawn(read_ffmpeg_rgb_stream(
+            stdout,
+            fps,
+            output_spec,
+            selection_start_time_ms,
+            frame_tx,
+        ));
 
         let ocr_start = Instant::now();
         let ocr_progress = progress.as_ref().map(|progress| progress.ocr.clone());
@@ -1080,7 +1131,7 @@ async fn run_ocr_pipeline_with_bins(
                 selection,
                 requested_workers,
                 ocr_progress,
-                estimated_frames,
+                selected_frame_estimate,
                 &file_id_owned,
                 live_detection,
             )
@@ -1237,11 +1288,11 @@ pub(crate) async fn run_ocr_pipeline(
                 .unwrap_or(1)
         });
     validate_ocr_selection(&selection, duration_ms)?;
-    let estimated_frames = duration_us
-        .map(|duration_us| {
-            (((duration_us as f64 / 1_000_000.0) * fps).ceil() as u32).saturating_add(1)
-        })
-        .unwrap_or(1000);
+    let selected_duration_ms = selection_time_bounds_ms(&selection)
+        .map(|(start_time_ms, end_time_ms)| end_time_ms.saturating_sub(start_time_ms))
+        .unwrap_or(duration_ms);
+    let estimated_frames =
+        (((selected_duration_ms as f64 / 1000.0) * fps).ceil() as u32).saturating_add(1);
 
     let progress =
         PipelineProgressContext::new(app, file_id.clone(), operation_id, estimated_frames);
@@ -1670,6 +1721,21 @@ mod tests {
         assert_eq!(active.len(), 2);
         assert_eq!(active[0].zone.id, "dialogue-zone");
         assert_eq!(active[1].zone.id, "sign-zone");
+    }
+
+    #[test]
+    fn selection_time_bounds_cover_active_segment_envelope() {
+        let selection = selection_with_overlap();
+
+        assert_eq!(
+            super::selection_time_bounds_ms(&selection),
+            Some((0, 5_000))
+        );
+    }
+
+    #[test]
+    fn ffmpeg_seconds_are_millisecond_precise() {
+        assert_eq!(super::format_ffmpeg_seconds(12_345), "12.345");
     }
 
     #[test]

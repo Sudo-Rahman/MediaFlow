@@ -36,6 +36,7 @@ export function createDefaultVideoOcrSelection(durationMs: number): VideoOcrSele
             id: generateSelectionId('ocr-zone'),
             role: 'main_subtitle',
             region: { ...DEFAULT_MAIN_SUBTITLE_REGION },
+            label: 'Zone 1',
           },
         ],
       },
@@ -61,8 +62,32 @@ export function createOcrSegmentFromZone(
         id: generateSelectionId('ocr-zone'),
         role,
         region: clampRegion(region),
+        label: 'Zone 1',
       },
     ],
+  };
+}
+
+export function normalizeOcrZoneLabels(selection: VideoOcrSelection): VideoOcrSelection {
+  let defaultZoneIndex = 1;
+
+  return {
+    segments: selection.segments.map((segment) => ({
+      ...segment,
+      zones: segment.zones.map((zone) => {
+        const nextZone = { ...zone, region: { ...zone.region } };
+        const label = nextZone.label?.trim();
+
+        if (label && !isDefaultZoneLabel(label)) {
+          nextZone.label = label;
+          return nextZone;
+        }
+
+        nextZone.label = `Zone ${defaultZoneIndex}`;
+        defaultZoneIndex += 1;
+        return nextZone;
+      }),
+    })),
   };
 }
 
@@ -162,6 +187,10 @@ function normalizeTimeMs(value: number, fallback: number): number {
 
 function normalizePositiveDurationMs(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.max(1, Math.round(value)) : 1;
+}
+
+function isDefaultZoneLabel(label: string): boolean {
+  return /^Zone \d+$/.test(label);
 }
 
 function generateSelectionId(prefix: string): string {

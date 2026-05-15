@@ -2,6 +2,7 @@
   import type { OcrZoneRole, VideoOcrSelection } from '$lib/types';
   import { assignOcrTimelineLanes, cn } from '$lib/utils';
   import { Badge } from '$lib/components/ui/badge';
+  import { Input } from '$lib/components/ui/input';
   import * as ContextMenu from '$lib/components/ui/context-menu';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
 
@@ -14,6 +15,7 @@
     onSelect?: (segmentId: string, zoneId: string) => void;
     onSeek?: (timeMs: number) => void;
     onSetRole?: (segmentId: string, zoneId: string, role: OcrZoneRole) => void;
+    onRenameZone?: (segmentId: string, zoneId: string, label: string) => void;
     onDeleteZone?: (segmentId: string, zoneId: string) => void;
     onTrimSegment?: (segmentId: string, startTimeMs: number, endTimeMs: number) => void;
   }
@@ -64,11 +66,15 @@
     onSelect,
     onSeek,
     onSetRole,
+    onRenameZone,
     onDeleteZone,
     onTrimSegment,
   }: OcrTimelineProps = $props();
 
   let activeDrag: TimelineDrag | null = null;
+  let editingLabel = $state<{ segmentId: string; zoneId: string; value: string } | null>(null);
+  let labelInputEl = $state<HTMLInputElement | null>(null);
+  let focusedLabelKey: string | null = null;
 
   const roles: RoleConfig[] = [
     {
@@ -133,6 +139,64 @@
   function laneSeparatorIndexes(laneCount: number): number[] {
     return Array.from({ length: Math.max(0, laneCount - 1) }, (_, laneIndex) => laneIndex + 1);
   }
+
+  function startLabelEditing(event: MouseEvent, block: RoleBlock): void {
+    event.preventDefault();
+    event.stopPropagation();
+    activeDrag = null;
+    editingLabel = {
+      segmentId: block.segmentId,
+      zoneId: block.zoneId,
+      value: block.label,
+    };
+    onSelect?.(block.segmentId, block.zoneId);
+  }
+
+  function cancelLabelEditing(): void {
+    editingLabel = null;
+    focusedLabelKey = null;
+  }
+
+  function commitLabelEditing(): void {
+    if (!editingLabel) {
+      return;
+    }
+
+    const nextLabel = editingLabel.value.trim();
+    if (nextLabel) {
+      onRenameZone?.(editingLabel.segmentId, editingLabel.zoneId, nextLabel);
+    }
+    editingLabel = null;
+    focusedLabelKey = null;
+  }
+
+  function handleLabelInputKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      commitLabelEditing();
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelLabelEditing();
+    }
+  }
+
+  $effect(() => {
+    if (!editingLabel || !labelInputEl) {
+      return;
+    }
+
+    const labelKey = `${editingLabel.segmentId}:${editingLabel.zoneId}`;
+    if (focusedLabelKey === labelKey) {
+      return;
+    }
+
+    focusedLabelKey = labelKey;
+    labelInputEl.focus();
+    labelInputEl.select();
+  });
 
   function timeFromPointer(event: PointerEvent, trackEl: HTMLElement): number {
     const rect = trackEl.getBoundingClientRect();
@@ -338,36 +402,64 @@
                 {@const width = Math.max(1.5, percentage(block.endTimeMs) - left)}
                 <ContextMenu.Root>
                   <ContextMenu.Trigger>
-                    <button
-                      type="button"
-                      data-timeline-control="true"
-                      class={cn(
-                        'timeline-block absolute cursor-grab overflow-hidden rounded-md border px-2 text-left text-xs font-medium shadow-sm transition-colors hover:bg-accent active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                        roleConfig.blockClass,
-                        selectedSegmentId === block.segmentId && selectedZoneId === block.zoneId
-                          && 'ring-2 ring-ring ring-offset-1 ring-offset-background',
-                      )}
-                      style={`--lane: ${block.lane}; left: ${left}%; width: ${width}%;`}
-                      title={`${block.label} ${formatTime(block.startTimeMs)}-${formatTime(block.endTimeMs)}`}
-                      onpointerdown={(event) => startMove(event, block)}
-                      onclick={() => onSelect?.(block.segmentId, block.zoneId)}
-                    >
-                      <span
+                    {#if editingLabel?.segmentId === block.segmentId && editingLabel.zoneId === block.zoneId}
+                      <div
                         data-timeline-control="true"
-                        data-timeline-handle="true"
-                        class="absolute inset-y-0 left-0 w-2 cursor-ew-resize bg-foreground/15 opacity-0 transition-opacity hover:opacity-100"
-                        role="presentation"
-                        onpointerdown={(event) => startTrim(event, block, 'start')}
-                      ></span>
-                      <span class="block truncate">{block.label}</span>
-                      <span
+                        class={cn(
+                          'timeline-block absolute overflow-hidden rounded-md border px-2 text-left text-xs font-medium shadow-sm ring-2 ring-ring ring-offset-1 ring-offset-background',
+                          roleConfig.blockClass,
+                        )}
+                        style={`--lane: ${block.lane}; left: ${left}%; width: ${width}%;`}
+                      >
+                        <Input
+                          bind:ref={labelInputEl}
+                          data-timeline-control="true"
+                          class="h-full min-w-0 border-0 bg-transparent px-0 text-xs font-medium shadow-none focus-visible:ring-0"
+                          value={editingLabel.value}
+                          oninput={(event) => {
+                            editingLabel = editingLabel
+                              ? { ...editingLabel, value: event.currentTarget.value }
+                              : null;
+                          }}
+                          onkeydown={handleLabelInputKeydown}
+                          onblur={cancelLabelEditing}
+                          onclick={(event) => event.stopPropagation()}
+                          onpointerdown={(event) => event.stopPropagation()}
+                        />
+                      </div>
+                    {:else}
+                      <button
+                        type="button"
                         data-timeline-control="true"
-                        data-timeline-handle="true"
-                        class="absolute inset-y-0 right-0 w-2 cursor-ew-resize bg-foreground/15 opacity-0 transition-opacity hover:opacity-100"
-                        role="presentation"
-                        onpointerdown={(event) => startTrim(event, block, 'end')}
-                      ></span>
-                    </button>
+                        class={cn(
+                          'timeline-block absolute cursor-grab overflow-hidden rounded-md border px-2 text-left text-xs font-medium shadow-sm transition-colors hover:bg-accent active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                          roleConfig.blockClass,
+                          selectedSegmentId === block.segmentId && selectedZoneId === block.zoneId
+                            && 'ring-2 ring-ring ring-offset-1 ring-offset-background',
+                        )}
+                        style={`--lane: ${block.lane}; left: ${left}%; width: ${width}%;`}
+                        title={`${block.label} ${formatTime(block.startTimeMs)}-${formatTime(block.endTimeMs)}`}
+                        onpointerdown={(event) => startMove(event, block)}
+                        ondblclick={(event) => startLabelEditing(event, block)}
+                        onclick={() => onSelect?.(block.segmentId, block.zoneId)}
+                      >
+                        <span
+                          data-timeline-control="true"
+                          data-timeline-handle="true"
+                          class="absolute inset-y-0 left-0 w-2 cursor-ew-resize bg-foreground/15 opacity-0 transition-opacity hover:opacity-100"
+                          role="presentation"
+                          onpointerdown={(event) => startTrim(event, block, 'start')}
+                        ></span>
+                        <span class="block truncate">{block.label}</span>
+                        <span
+                          data-timeline-control="true"
+                          data-timeline-handle="true"
+                          class="absolute inset-y-0 right-0 w-2 cursor-ew-resize bg-foreground/15 opacity-0 transition-opacity hover:opacity-100"
+                          role="presentation"
+                          onpointerdown={(event) => startTrim(event, block, 'end')}
+                        ></span>
+                      </button>
+                    {/if}
                   </ContextMenu.Trigger>
                   <ContextMenu.Content>
                     {#if roleConfig.role !== 'main_subtitle'}

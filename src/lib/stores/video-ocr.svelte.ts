@@ -20,7 +20,7 @@ import type {
   VideoOcrSelection,
 } from '$lib/types';
 import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
-import { clampRegion, createDefaultVideoOcrSelection } from '$lib/utils';
+import { clampRegion, createDefaultVideoOcrSelection, normalizeOcrZoneLabels } from '$lib/utils';
 import { logStore } from './logs.svelte';
 
 // ============================================================================
@@ -97,7 +97,7 @@ function cloneSegment(segment: OcrSegment): OcrSegment {
 }
 
 function cloneSelection(selection: VideoOcrSelection): VideoOcrSelection {
-  return { segments: selection.segments.map(cloneSegment) };
+  return normalizeOcrZoneLabels({ segments: selection.segments.map(cloneSegment) });
 }
 
 function cloneVideoFile(file: OcrVideoFile): OcrVideoFile {
@@ -427,12 +427,12 @@ export const videoOcrStore = {
 
       return {
         ...f,
-        ocrSelection: {
+        ocrSelection: normalizeOcrZoneLabels({
           segments: [
             ...f.ocrSelection.segments.map(cloneSegment),
             cloneSegment(segment),
           ],
-        },
+        }),
       };
     });
   },
@@ -489,6 +489,36 @@ export const videoOcrStore = {
             };
           }),
         },
+      };
+    });
+  },
+
+  setOcrZoneLabel(fileId: string, segmentId: string, zoneId: string, label: string) {
+    const nextLabel = label.trim();
+
+    videoFiles = videoFiles.map(f => {
+      if (f.id !== fileId) {
+        return f;
+      }
+
+      return {
+        ...f,
+        ocrSelection: normalizeOcrZoneLabels({
+          segments: f.ocrSelection.segments.map((segment) => {
+            if (segment.id !== segmentId) {
+              return cloneSegment(segment);
+            }
+
+            return {
+              ...segment,
+              zones: segment.zones.map((zone) => ({
+                ...zone,
+                label: zone.id === zoneId ? nextLabel || undefined : zone.label,
+                region: { ...zone.region },
+              })),
+            };
+          }),
+        }),
       };
     });
   },

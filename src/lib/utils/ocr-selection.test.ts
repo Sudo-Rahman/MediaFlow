@@ -9,6 +9,7 @@ import {
   createDefaultVideoOcrSelection,
   getActiveOcrZonesAtTime,
   getAllowedOcrExportFormats,
+  normalizeOcrZoneLabels,
   validateVideoOcrSelection,
 } from './ocr-selection';
 
@@ -179,6 +180,56 @@ describe('OCR selection helpers', () => {
       width: 0,
       height: 0.5,
     });
+  });
+
+  it('numbers default OCR zone labels across the selection', () => {
+    const selection: VideoOcrSelection = {
+      segments: [
+        segment('first', 0, 5_000, 'main_subtitle'),
+        segment('second', 5_000, 10_000, 'on_screen_text'),
+      ],
+    };
+
+    const normalized = normalizeOcrZoneLabels(selection);
+
+    expect(normalized.segments.flatMap((entry) => entry.zones.map((zone) => zone.label))).toEqual([
+      'Zone 1',
+      'Zone 2',
+    ]);
+  });
+
+  it('renumbers only default OCR zone labels and preserves custom names', () => {
+    const selection: VideoOcrSelection = {
+      segments: [
+        {
+          ...segment('first', 0, 5_000, 'main_subtitle'),
+          zones: [
+            {
+              ...segment('first', 0, 5_000, 'main_subtitle').zones[0],
+              label: 'Zone 8',
+            },
+          ],
+        },
+        {
+          ...segment('second', 5_000, 10_000, 'on_screen_text'),
+          zones: [
+            {
+              ...segment('second', 5_000, 10_000, 'on_screen_text').zones[0],
+              label: 'Shop sign',
+            },
+          ],
+        },
+        segment('third', 10_000, 15_000, 'main_subtitle'),
+      ],
+    };
+
+    const normalized = normalizeOcrZoneLabels(selection);
+
+    expect(normalized.segments.flatMap((entry) => entry.zones.map((zone) => zone.label))).toEqual([
+      'Zone 1',
+      'Shop sign',
+      'Zone 2',
+    ]);
   });
 });
 

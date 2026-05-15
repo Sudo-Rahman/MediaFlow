@@ -34,6 +34,7 @@ export {
   getActiveOcrZonesAtTime,
   selectionHasRole,
   getAllowedOcrExportFormats,
+  normalizeOcrZoneLabels,
   assignOcrTimelineLanes,
   validateVideoOcrSelection,
   clampRegion,

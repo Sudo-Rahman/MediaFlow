@@ -1023,6 +1023,11 @@
     void persistFileData(fileId);
   }
 
+  function handleRenameZone(fileId: string, segmentId: string, zoneId: string, label: string): void {
+    videoOcrStore.setOcrZoneLabel(fileId, segmentId, zoneId, label);
+    void persistFileData(fileId);
+  }
+
   function handleUpdateZoneRegion(fileId: string, segmentId: string, zoneId: string, region: OcrRegion): void {
     videoOcrStore.setOcrZoneRegion(fileId, segmentId, zoneId, region);
     void persistFileData(fileId);
@@ -1115,6 +1120,7 @@
     onAddSegmentFromRegion={handleAddSegmentFromRegion}
     onUpdateZoneRegion={handleUpdateZoneRegion}
     onSetZoneRole={handleSetZoneRole}
+    onRenameZone={handleRenameZone}
     onDeleteZone={handleDeleteZone}
     onTrimSegment={handleTrimSegment}
     onPlaybackError={handlePreviewPlaybackError}

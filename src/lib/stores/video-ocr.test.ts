@@ -39,7 +39,45 @@ describe('video OCR store', () => {
     const segment = createOcrSegmentFromZone(10_000, 120_000, DEFAULT_MAIN_SUBTITLE_REGION);
     videoOcrStore.addOcrSegment(file.id, segment);
 
-    expect(videoOcrStore.videoFiles[0].ocrSelection.segments).toContainEqual(segment);
+    expect(videoOcrStore.videoFiles[0].ocrSelection.segments).toContainEqual({
+      ...segment,
+      zones: [
+        {
+          ...segment.zones[0],
+          label: 'Zone 2',
+        },
+      ],
+    });
+  });
+
+  it('renumbers default OCR zone labels when zones are added through the store', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    videoOcrStore.updateFile(file.id, { duration: 120 });
+
+    videoOcrStore.addOcrSegment(file.id, createOcrSegmentFromZone(10_000, 120_000, DEFAULT_MAIN_SUBTITLE_REGION));
+    videoOcrStore.addOcrSegment(file.id, createOcrSegmentFromZone(20_000, 120_000, DEFAULT_MAIN_SUBTITLE_REGION));
+
+    expect(
+      videoOcrStore.videoFiles[0].ocrSelection.segments.flatMap((segment) =>
+        segment.zones.map((zone) => zone.label),
+      ),
+    ).toEqual(['Zone 1', 'Zone 2', 'Zone 3']);
+  });
+
+  it('renames a zone through the store and preserves the custom name during renumbering', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    videoOcrStore.updateFile(file.id, { duration: 120 });
+    videoOcrStore.addOcrSegment(file.id, createOcrSegmentFromZone(10_000, 120_000, DEFAULT_MAIN_SUBTITLE_REGION));
+
+    const firstSegment = videoOcrStore.videoFiles[0].ocrSelection.segments[0];
+    videoOcrStore.setOcrZoneLabel(file.id, firstSegment.id, firstSegment.zones[0].id, 'Opening subtitles');
+    videoOcrStore.addOcrSegment(file.id, createOcrSegmentFromZone(20_000, 120_000, DEFAULT_MAIN_SUBTITLE_REGION));
+
+    expect(
+      videoOcrStore.videoFiles[0].ocrSelection.segments.flatMap((segment) =>
+        segment.zones.map((zone) => zone.label),
+      ),
+    ).toEqual(['Opening subtitles', 'Zone 1', 'Zone 2']);
   });
 
   it('clones imported OCR selections when adding files', () => {

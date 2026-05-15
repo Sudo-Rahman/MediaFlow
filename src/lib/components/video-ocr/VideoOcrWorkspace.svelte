@@ -16,6 +16,7 @@
     ) => void | Promise<void>;
     onUpdateZoneRegion: (fileId: string, segmentId: string, zoneId: string, region: OcrRegion) => void | Promise<void>;
     onSetZoneRole: (fileId: string, segmentId: string, zoneId: string, role: OcrZoneRole) => void | Promise<void>;
+    onRenameZone: (fileId: string, segmentId: string, zoneId: string, label: string) => void | Promise<void>;
     onDeleteZone: (fileId: string, segmentId: string, zoneId: string) => void | Promise<void>;
     onTrimSegment: (fileId: string, segmentId: string, startTimeMs: number, endTimeMs: number) => void | Promise<void>;
     onPlaybackError: (fileId: string, reason: string) => void | Promise<void>;
@@ -28,6 +29,7 @@
     onAddSegmentFromRegion,
     onUpdateZoneRegion,
     onSetZoneRole,
+    onRenameZone,
     onDeleteZone,
     onTrimSegment,
     onPlaybackError,
@@ -84,6 +86,14 @@
     }
 
     void onSetZoneRole(file.id, segmentId, zoneId, role);
+  }
+
+  function handleRenameZone(segmentId: string, zoneId: string, label: string): void {
+    if (!file) {
+      return;
+    }
+
+    void onRenameZone(file.id, segmentId, zoneId, label);
   }
 
   function handleDeleteZone(segmentId: string, zoneId: string): void {
@@ -143,6 +153,7 @@
       onSelect={handleSelectZone}
       onSeek={handleSeek}
       onSetRole={handleSetZoneRole}
+      onRenameZone={handleRenameZone}
       onDeleteZone={handleDeleteZone}
       onTrimSegment={handleTrimSegment}
     />

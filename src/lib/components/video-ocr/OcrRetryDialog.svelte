@@ -141,7 +141,7 @@
           </Select.Trigger>
           <Select.Content>
             <Select.Group>
-              {#each OCR_LANGUAGES as lang}
+              {#each OCR_LANGUAGES as lang (lang.value)}
                 <Select.Item value={lang.value}>{lang.label}</Select.Item>
               {/each}
             </Select.Group>
@@ -177,24 +177,6 @@
           step={5}
           onValueChange={(value) => config = { ...config, confidenceThreshold: value / 100 }}
         />
-      </div>
-
-      <div class="space-y-2">
-        <div class="flex items-center justify-between">
-          <Label>Requested OCR parallelism</Label>
-          <span class="text-xs text-muted-foreground">{config.threadCount}</span>
-        </div>
-        <Slider
-          type="single"
-          value={config.threadCount}
-          min={1}
-          max={navigator.hardwareConcurrency || 4}
-          step={1}
-          onValueChange={(value) => config = { ...config, threadCount: value }}
-        />
-        <p class="text-xs text-muted-foreground">
-          The app picks the effective worker and thread layout automatically.
-        </p>
       </div>
 
       <div class="flex items-center justify-between">

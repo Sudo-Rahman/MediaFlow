@@ -16,6 +16,7 @@ struct ProgressState {
 pub(super) struct OcrProgressEmitter {
     app: tauri::AppHandle,
     file_id: String,
+    operation_id: Option<String>,
     phase: &'static str,
     total: u32,
     state: Arc<Mutex<ProgressState>>,
@@ -25,12 +26,14 @@ impl OcrProgressEmitter {
     pub(super) fn new(
         app: tauri::AppHandle,
         file_id: impl Into<String>,
+        operation_id: Option<String>,
         phase: &'static str,
         total: u32,
     ) -> Self {
         Self {
             app,
             file_id: file_id.into(),
+            operation_id,
             phase,
             total,
             state: Arc::new(Mutex::new(ProgressState {
@@ -70,6 +73,7 @@ impl OcrProgressEmitter {
             "ocr-progress",
             serde_json::json!({
                 "fileId": self.file_id,
+                "operationId": self.operation_id.clone(),
                 "phase": self.phase,
                 "current": current,
                 "total": self.total,

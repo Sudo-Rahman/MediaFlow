@@ -57,6 +57,15 @@ pub(super) fn resolve_ocr_worker_count(requested_workers: u32) -> usize {
     (requested_workers.max(1) as usize).clamp(1, worker_cap.min(available_workers).max(1))
 }
 
+pub(super) fn resolve_ocr_worker_count_for_backend(requested_workers: u32, use_gpu: bool) -> usize {
+    let resolved_workers = resolve_ocr_worker_count(requested_workers);
+    if use_gpu {
+        resolved_workers.min(2)
+    } else {
+        resolved_workers
+    }
+}
+
 pub(super) fn resolve_ocr_engine_threads(worker_count: usize) -> i32 {
     let physical_cores = num_cpus::get_physical();
     let fallback_cores = num_cpus::get();
@@ -73,6 +82,7 @@ pub(super) fn create_ocr_engine(
     language: &str,
     use_gpu: bool,
     engine_threads: i32,
+    enable_parallel: bool,
 ) -> Result<OcrEngine, String> {
     // Build model paths
     let det_path = models_dir.join(OCR_DET_MODEL);
@@ -106,21 +116,24 @@ pub(super) fn create_ocr_engine(
     let config = if use_gpu {
         #[cfg(target_os = "macos")]
         {
-            OcrEngineConfig::new()
+            OcrEngineConfig::fast()
                 .with_backend(Backend::Metal)
                 .with_threads(engine_threads)
+                .with_parallel(enable_parallel)
         }
         #[cfg(not(target_os = "macos"))]
         {
-            OcrEngineConfig::new()
+            OcrEngineConfig::fast()
                 .with_backend(Backend::Vulkan)
                 .with_threads(engine_threads)
+                .with_parallel(enable_parallel)
         }
     } else {
         // CPU-only mode: force CPU backend to avoid platform auto-selection issues.
-        OcrEngineConfig::new()
+        OcrEngineConfig::fast()
             .with_backend(Backend::CPU)
             .with_threads(engine_threads)
+            .with_parallel(enable_parallel)
     };
 
     // Create the engine
@@ -160,7 +173,7 @@ pub(super) fn get_ocr_models_dir(app: &tauri::AppHandle) -> Result<PathBuf, Stri
 mod tests {
     use super::{
         create_ocr_engine, get_charset_for_language, get_rec_model_for_language,
-        resolve_ocr_engine_threads, resolve_ocr_worker_count,
+        resolve_ocr_engine_threads, resolve_ocr_worker_count, resolve_ocr_worker_count_for_backend,
     };
 
     #[test]
@@ -184,7 +197,7 @@ mod tests {
     #[test]
     fn create_ocr_engine_fails_when_required_models_are_missing() {
         let models_dir = tempfile::tempdir().expect("failed to create tempdir");
-        let error = match create_ocr_engine(models_dir.path(), "multi", false, 1) {
+        let error = match create_ocr_engine(models_dir.path(), "multi", false, 1, false) {
             Ok(_) => panic!("missing detection model should fail"),
             Err(error) => error,
         };
@@ -200,6 +213,15 @@ mod tests {
                 <= std::thread::available_parallelism()
                     .map(|value| value.get())
                     .unwrap()
+        );
+    }
+
+    #[test]
+    fn resolve_ocr_worker_count_caps_gpu_parallelism() {
+        assert!(resolve_ocr_worker_count_for_backend(8, true) <= 2);
+        assert_eq!(
+            resolve_ocr_worker_count_for_backend(1, true),
+            resolve_ocr_worker_count(1)
         );
     }
 

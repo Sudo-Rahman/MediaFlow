@@ -99,11 +99,22 @@ export interface OcrPipelineTimings {
   totalMs: number;
 }
 
+export interface OcrPipelineTelemetry {
+  extractedFrames: number;
+  ocrAttemptedFrames: number;
+  textFrames: number;
+  unchangedSkippedFrames: number;
+  noTextSkippedFrames: number;
+  effectiveWorkers: number;
+  engineThreads: number;
+}
+
 export interface OcrPipelineResult {
   rawOcr: OcrRawFrame[];
   subtitles: OcrSubtitle[];
   frameCount: number;
   timings: OcrPipelineTimings;
+  telemetry: OcrPipelineTelemetry;
 }
 
 export type OcrRetryMode =
@@ -158,7 +169,7 @@ export interface OcrConfig {
   language: OcrLanguage;          // OCR language
   useGpu: boolean;                // Use GPU acceleration
   confidenceThreshold: number;    // Min confidence to keep (0-1)
-  threadCount: number;            // Requested OCR parallelism level
+  threadCount: number;            // Internal OCR worker target; kept for saved config compatibility
 
   // Subtitle cleanup / stabilization
   mergeSimilar: boolean;          // Merge similar consecutive subtitles (recommended)
@@ -184,13 +195,14 @@ export const OCR_OUTPUT_FORMATS: { value: OcrOutputFormat; label: string }[] = [
 const DEFAULT_AI_CLEANUP_PROVIDER = getDefaultLLMProvider();
 const DEFAULT_AI_CLEANUP_MODEL = getDefaultLLMModel(DEFAULT_AI_CLEANUP_PROVIDER);
 
-// Default OCR parallelism request: 2/3 of available cores (calculated at runtime)
+export const DEFAULT_OCR_WORKER_COUNT = 2;
+
 export const DEFAULT_OCR_CONFIG: OcrConfig = {
   frameRate: 10,
   language: 'multi',
   useGpu: true,
   confidenceThreshold: 0.5,
-  threadCount: Math.max(1, Math.floor((navigator.hardwareConcurrency || 4) * 2 / 3)),
+  threadCount: DEFAULT_OCR_WORKER_COUNT,
 
   mergeSimilar: true,
   similarityThreshold: 0.92,
@@ -315,6 +327,7 @@ export interface OcrPreviewTranscodeResult {
 
 export interface OcrProgressEvent {
   fileId: string;
+  operationId?: string | null;
   phase: OcrPhase;
   current: number;
   total: number;

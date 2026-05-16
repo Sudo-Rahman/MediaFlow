@@ -5,7 +5,7 @@ use tauri_plugin_opener::open_url;
 
 const USER_AGENT: &str = "MediaFlow/1.0";
 #[cfg(debug_assertions)]
-const MEDIAFLOW_BASE_URL: &str = "https://mediaflowtools.com";
+const MEDIAFLOW_BASE_URL: &str = "http://localhost:5173";
 #[cfg(not(debug_assertions))]
 const MEDIAFLOW_BASE_URL: &str = "https://mediaflowtools.com";
 const CLIENT_ID: &str = "mediaflow-desktop";

@@ -15,11 +15,11 @@ describe('getAllowedExportFormatOptions', () => {
 
   it('keeps only formats supported by every constrained target', () => {
     const allowedOptions = getAllowedExportFormatOptions(FORMAT_OPTIONS, [
-      { allowedFormats: ['srt', 'vtt'] },
+      { allowedFormats: ['srt', 'vtt', 'ass'] },
       { allowedFormats: ['ass'] },
     ]);
 
-    expect(allowedOptions).toEqual([]);
+    expect(allowedOptions).toEqual([{ value: 'ass', label: 'Advanced SubStation Alpha (.ass)' }]);
   });
 
   it('allows ASS only when an OCR target requires positioned subtitles', () => {

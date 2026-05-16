@@ -144,7 +144,7 @@ export function selectionHasRole(selection: VideoOcrSelection, role: OcrZoneRole
 }
 
 export function getAllowedOcrExportFormats(selection: VideoOcrSelection): OcrOutputFormat[] {
-  return selectionHasRole(selection, 'on_screen_text') ? ['ass'] : ['srt', 'vtt'];
+  return selectionHasRole(selection, 'on_screen_text') ? ['ass'] : ['srt', 'vtt', 'ass'];
 }
 
 export function assignOcrTimelineLanes<T extends TimelineBlock>(blocks: T[]): Array<T & { lane: number }> {

@@ -53,9 +53,9 @@ describe('OCR selection helpers', () => {
     ]);
   });
 
-  it('requires ASS when positioned text exists', () => {
+  it('allows ASS for subtitles and requires ASS when positioned text exists', () => {
     expect(getAllowedOcrExportFormats({ segments: [segment('dialogue', 0, 5_000, 'main_subtitle')] }))
-      .toEqual(['srt', 'vtt']);
+      .toEqual(['srt', 'vtt', 'ass']);
     expect(getAllowedOcrExportFormats({ segments: [segment('sign', 0, 5_000, 'on_screen_text')] }))
       .toEqual(['ass']);
   });

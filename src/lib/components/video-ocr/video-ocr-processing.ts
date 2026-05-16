@@ -31,7 +31,6 @@ export interface ProcessVideoOcrFileOptions {
   aiCleanupControllers: Map<string, AbortController>;
   getFreshFile: (fileId: string) => OcrVideoFile | undefined;
   persistFileData: (fileId: string) => Promise<boolean>;
-  transcodeFileForPreview: (file: OcrVideoFile) => Promise<boolean>;
   markPersistedVersions: (videoPath: string, versions: OcrVersion[]) => void;
   suppressFallbackToast?: boolean;
 }
@@ -45,6 +44,7 @@ export interface VideoOcrFileSummary {
   startTargets: OcrVideoFile[];
   retryTargets: OcrVideoFile[];
   retryAllMissingRawCount: number;
+  scanningCount: number;
   transcodingCount: number;
 }
 
@@ -67,6 +67,7 @@ export function summarizeOcrFiles(files: OcrVideoFile[]): VideoOcrFileSummary {
   const startTargets: OcrVideoFile[] = [];
   const retryTargets: OcrVideoFile[] = [];
   let retryAllMissingRawCount = 0;
+  let scanningCount = 0;
   let transcodingCount = 0;
 
   for (const file of files) {
@@ -74,11 +75,16 @@ export function summarizeOcrFiles(files: OcrVideoFile[]): VideoOcrFileSummary {
       startTargets.push(file);
     }
 
+    if (file.status === 'scanning') {
+      scanningCount += 1;
+    }
+
     if (file.status === 'transcoding') {
       transcodingCount += 1;
     }
 
-    if (file.ocrVersions.length > 0 && !isOcrActiveStatus(file.status)) {
+    const isRetryableStatus = file.status !== 'scanning' && !isOcrActiveStatus(file.status);
+    if (file.ocrVersions.length > 0 && isRetryableStatus) {
       retryTargets.push(file);
       if (!getLatestRawVersion(file)) {
         retryAllMissingRawCount += 1;
@@ -90,12 +96,9 @@ export function summarizeOcrFiles(files: OcrVideoFile[]): VideoOcrFileSummary {
     startTargets,
     retryTargets,
     retryAllMissingRawCount,
+    scanningCount,
     transcodingCount,
   };
-}
-
-export function buildSourcePreviewFallbackKey(file: OcrVideoFile): string {
-  return `${file.id}::${file.path}`;
 }
 
 function formatFrameRate(frameRate: number): string {
@@ -220,24 +223,15 @@ async function runFullPipeline(
   file: OcrVideoFile,
   config: OcrConfig,
   getFreshFile: (fileId: string) => OcrVideoFile | undefined,
-  transcodeFileForPreview: (file: OcrVideoFile) => Promise<boolean>,
   aiCleanupControllers: Map<string, AbortController>,
 ): Promise<{ rawOcr: OcrRawFrame[]; finalSubtitles: OcrSubtitle[] }> {
-  let current = getFreshFile(file.id) ?? file;
-  if (!current.previewPath) {
-    const transcodeOk = await transcodeFileForPreview(current);
-    if (!transcodeOk) {
-      throw new Error('Preview transcoding failed');
-    }
-  }
-
-  current = getFreshFile(file.id) ?? current;
+  const current = getFreshFile(file.id) ?? file;
 
   videoOcrStore.setFileStatus(file.id, 'extracting_frames');
   videoOcrStore.setPhase(file.id, 'extracting', 0, 100);
 
   const pipelineResult = await invoke<OcrPipelineResult>('run_ocr_pipeline', {
-    videoPath: current.previewPath || current.path,
+    videoPath: current.path,
     fileId: file.id,
     language: config.language,
     fps: config.frameRate,
@@ -282,7 +276,6 @@ export async function processVideoOcrFile({
   aiCleanupControllers,
   getFreshFile,
   persistFileData,
-  transcodeFileForPreview,
   markPersistedVersions,
   suppressFallbackToast = false,
 }: ProcessVideoOcrFileOptions): Promise<ProcessVideoOcrFileResult> {
@@ -314,7 +307,6 @@ export async function processVideoOcrFile({
         file,
         config,
         getFreshFile,
-        transcodeFileForPreview,
         aiCleanupControllers,
       );
       rawOcr = result.rawOcr;

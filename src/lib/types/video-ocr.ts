@@ -21,11 +21,14 @@ export interface OcrVideoFile {
   status: OcrFileStatus;
   error?: string;
   
-  // Preview source (either original compatible source or transcoded fallback)
-  previewPath?: string;        // Effective preview media path used by the player
+  // Generated preview media used by the player. Never points at the original source.
+  previewPath?: string;
+  previewSourceIdentity?: OcrPreviewSourceIdentity;
+  previewVersion?: string;
+  previewError?: string;
   isTranscoding?: boolean;
   transcodingProgress?: number;
-  transcodingCodec?: string;   // Active transcoding codec label (e.g. HEVC VideoToolbox)
+  transcodingCodec?: string;   // Active transcoding codec label (e.g. H.264 VideoToolbox)
   
   // OCR region (relative coordinates 0-1)
   ocrRegion?: OcrRegion;
@@ -40,8 +43,9 @@ export interface OcrVideoFile {
 
 export type OcrFileStatus = 
   | 'pending'           // Just added, not processed yet
+  | 'scanning'          // Reading metadata and restoring saved state
   | 'transcoding'       // Converting to preview format
-  | 'ready'             // Ready for OCR
+  | 'ready'             // Source scanned and ready for OCR
   | 'extracting_frames' // Extracting video frames
   | 'ocr_processing'    // Running OCR on frames
   | 'generating_subs'   // Generating subtitles from OCR results
@@ -282,6 +286,8 @@ export interface VideoOcrPersistenceData {
   version: 1;
   videoPath: string;
   previewPath?: string;
+  previewSourceIdentity?: OcrPreviewSourceIdentity;
+  previewVersion?: string;
   ocrRegion?: OcrRegion;
   ocrRegionMode?: OcrRegionMode;
   ocrVersions: OcrVersion[];
@@ -290,6 +296,18 @@ export interface VideoOcrPersistenceData {
 }
 
 export type OcrStorageData = VideoOcrPersistenceData;
+
+export interface OcrPreviewSourceIdentity {
+  path: string;
+  size: number;
+  modifiedMs: number;
+}
+
+export interface OcrPreviewTranscodeResult {
+  path: string;
+  sourceIdentity: OcrPreviewSourceIdentity;
+  previewVersion: string;
+}
 
 // ============================================================================
 // TAURI EVENT PAYLOADS

@@ -1,4 +1,8 @@
+use std::process::Stdio;
+
+use crate::shared::process::wait_with_output_timeout;
 use crate::shared::store::resolve_ffprobe_path;
+use crate::tools::ffprobe::FFPROBE_TIMEOUT;
 use tokio::process::Command;
 
 /// Get media duration in microseconds using ffprobe
@@ -15,7 +19,7 @@ pub(crate) async fn get_media_duration_us_with_ffprobe(
     ffprobe_path: &str,
     path: &str,
 ) -> Result<u64, String> {
-    let output = Command::new(&ffprobe_path)
+    let child = Command::new(ffprobe_path)
         .args([
             "-v",
             "error",
@@ -25,9 +29,12 @@ pub(crate) async fn get_media_duration_us_with_ffprobe(
             "default=noprint_wrappers=1:nokey=1",
             path,
         ])
-        .output()
-        .await
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("Failed to run ffprobe: {}", e))?;
+
+    let output = wait_with_output_timeout(child, "FFprobe", FFPROBE_TIMEOUT).await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

@@ -14,6 +14,7 @@ import type {
   OcrPhase,
   OcrLogEntry,
   OcrModelsStatus,
+  OcrPreviewSourceIdentity,
 } from '$lib/types';
 import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_REGION } from '$lib/types';
 
@@ -77,6 +78,10 @@ function createEmptyVideoFile(path: string, id?: string): OcrVideoFile {
   };
 }
 
+function isOcrReadyFile(file: OcrVideoFile): boolean {
+  return file.status === 'ready' || file.status === 'completed';
+}
+
 // ============================================================================
 // STORE EXPORT
 // ============================================================================
@@ -98,7 +103,7 @@ export const videoOcrStore = {
   },
 
   get readyFiles(): OcrVideoFile[] {
-    return videoFiles.filter(f => f.status === 'ready' || f.status === 'completed');
+    return videoFiles.filter(isOcrReadyFile);
   },
 
   get completedFiles(): OcrVideoFile[] {
@@ -148,8 +153,7 @@ export const videoOcrStore = {
   },
 
   get canStartOcr(): boolean {
-    return videoFiles.some(f => f.status === 'ready' || f.status === 'completed') &&
-      !isProcessing;
+    return videoFiles.some(isOcrReadyFile) && !isProcessing;
   },
 
   isFileCancelled(id: string): boolean {
@@ -189,10 +193,17 @@ export const videoOcrStore = {
   // -------------------------------------------------------------------------
   // Actions - File Management
   // -------------------------------------------------------------------------
-  addFiles(files: OcrVideoFile[]) {
+  addFiles(files: OcrVideoFile[]): OcrVideoFile[] {
     const existingPaths = new Set(videoFiles.map(f => f.path));
     const newFiles = files
-      .filter(f => !existingPaths.has(f.path))
+      .filter((file) => {
+        if (existingPaths.has(file.path)) {
+          return false;
+        }
+
+        existingPaths.add(file.path);
+        return true;
+      })
       .map((file) => ({
         ...file,
         ocrRegionMode: file.ocrRegionMode ?? 'global',
@@ -203,12 +214,13 @@ export const videoOcrStore = {
     if (!selectedFileId && newFiles.length > 0) {
       selectedFileId = newFiles[0].id;
     }
+
+    return newFiles;
   },
 
-  addFilesFromPaths(paths: string[]) {
+  addFilesFromPaths(paths: string[]): OcrVideoFile[] {
     const newFiles: OcrVideoFile[] = paths.map(path => createEmptyVideoFile(path));
-    this.addFiles(newFiles);
-    return newFiles;
+    return this.addFiles(newFiles);
   },
 
   removeFile(id: string) {
@@ -252,6 +264,8 @@ export const videoOcrStore = {
         isTranscoding: true,
         transcodingProgress: 0,
         transcodingCodec: undefined,
+        previewError: undefined,
+        error: undefined,
       } : f
     );
   },
@@ -268,7 +282,12 @@ export const videoOcrStore = {
     );
   },
 
-  finishTranscoding(fileId: string, previewPath: string) {
+  finishTranscoding(
+    fileId: string,
+    previewPath: string,
+    previewSourceIdentity: OcrPreviewSourceIdentity,
+    previewVersion: string,
+  ) {
     videoFiles = videoFiles.map(f =>
       f.id === fileId ? {
         ...f,
@@ -276,22 +295,68 @@ export const videoOcrStore = {
         isTranscoding: false,
         transcodingProgress: 100,
         previewPath,
+        previewSourceIdentity,
+        previewVersion,
+        previewError: undefined,
+        error: undefined,
         transcodingCodec: undefined,
       } : f
     );
   },
 
-  failTranscoding(fileId: string, error: string) {
+  failPreviewTranscoding(fileId: string, error: string) {
     videoFiles = videoFiles.map(f =>
       f.id === fileId ? {
         ...f,
-        status: 'error' as const,
+        status: f.ocrVersions.length > 0 ? 'completed' as const : 'ready' as const,
         isTranscoding: false,
-        error,
+        previewPath: undefined,
+        previewSourceIdentity: undefined,
+        previewVersion: undefined,
+        previewError: error,
+        error: undefined,
         transcodingCodec: undefined,
       } : f
     );
-    this.addLog('error', `Transcoding failed: ${error}`, fileId);
+    this.addLog('warning', `Preview transcoding failed: ${error}`, fileId);
+  },
+
+  cancelPreviewTranscoding(fileId: string) {
+    videoFiles = videoFiles.map(f =>
+      f.id === fileId ? {
+        ...f,
+        status: f.ocrVersions.length > 0 ? 'completed' as const : 'ready' as const,
+        isTranscoding: false,
+        transcodingProgress: 0,
+        transcodingCodec: undefined,
+        error: undefined,
+      } : f
+    );
+    this.addLog('info', 'Preview preparation cancelled', fileId);
+  },
+
+  cancelFilePreparation(fileId: string) {
+    let didCancel = false;
+    videoFiles = videoFiles.map(f => {
+      if (f.id !== fileId || (f.status !== 'scanning' && f.status !== 'transcoding')) {
+        return f;
+      }
+
+      didCancel = true;
+      return {
+        ...f,
+        status: getPreparedFileStatus(f),
+        isTranscoding: false,
+        transcodingProgress: f.status === 'transcoding' ? 0 : f.transcodingProgress,
+        transcodingCodec: undefined,
+        progress: undefined,
+        error: undefined,
+      };
+    });
+
+    if (didCancel) {
+      this.addLog('info', 'File preparation cancelled', fileId);
+    }
   },
 
   // -------------------------------------------------------------------------
@@ -569,7 +634,11 @@ export const videoOcrStore = {
 // ============================================================================
 
 function isProcessingStatus(status: OcrFileStatus): boolean {
-  return ['extracting_frames', 'ocr_processing', 'generating_subs'].includes(status);
+  return ['transcoding', 'extracting_frames', 'ocr_processing', 'generating_subs'].includes(status);
+}
+
+function getPreparedFileStatus(file: OcrVideoFile): OcrFileStatus {
+  return file.ocrVersions.length > 0 ? 'completed' : 'ready';
 }
 
 function getStatusForProgressPhase(phase: OcrPhase): OcrFileStatus {

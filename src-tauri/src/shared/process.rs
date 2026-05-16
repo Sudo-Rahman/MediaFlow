@@ -1,3 +1,6 @@
+use std::process::Output;
+use std::time::Duration;
+
 pub(crate) fn terminate_process(pid: u32) {
     if pid == 0 {
         return;
@@ -40,13 +43,78 @@ pub(crate) fn force_terminate_process(pid: u32) {
     }
 }
 
+pub(crate) async fn wait_with_output_timeout(
+    mut child: tokio::process::Child,
+    label: &str,
+    timeout_duration: Duration,
+) -> Result<Output, String> {
+    use tokio::io::AsyncReadExt;
+    use tokio::time::timeout;
+
+    let pid = child.id();
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let stdout_task = tokio::spawn(async move {
+        let mut buffer = Vec::new();
+        if let Some(mut stdout) = stdout {
+            stdout.read_to_end(&mut buffer).await?;
+        }
+        Ok::<Vec<u8>, std::io::Error>(buffer)
+    });
+    let stderr_task = tokio::spawn(async move {
+        let mut buffer = Vec::new();
+        if let Some(mut stderr) = stderr {
+            stderr.read_to_end(&mut buffer).await?;
+        }
+        Ok::<Vec<u8>, std::io::Error>(buffer)
+    });
+
+    let status = match timeout(timeout_duration, child.wait()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(error)) => {
+            stdout_task.abort();
+            stderr_task.abort();
+            return Err(format!("{} error: {}", label, error));
+        }
+        Err(_) => {
+            if let Some(pid) = pid {
+                force_terminate_process(pid);
+            }
+            let _ = timeout(Duration::from_secs(5), child.wait()).await;
+            stdout_task.abort();
+            stderr_task.abort();
+            return Err(format!(
+                "{} timeout after {} seconds",
+                label,
+                timeout_duration.as_secs()
+            ));
+        }
+    };
+
+    let stdout = stdout_task
+        .await
+        .map_err(|e| format!("Failed to read {} stdout: {}", label, e))?
+        .map_err(|e| format!("Failed to read {} stdout: {}", label, e))?;
+    let stderr = stderr_task
+        .await
+        .map_err(|e| format!("Failed to read {} stderr: {}", label, e))?
+        .map_err(|e| format!("Failed to read {} stderr: {}", label, e))?;
+
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::process::{Child, Command, ExitStatus, Stdio};
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use super::force_terminate_process;
+    use super::{force_terminate_process, wait_with_output_timeout};
 
     #[test]
     fn force_terminate_process_ignores_zero_pid() {
@@ -69,6 +137,29 @@ mod tests {
         assert!(!status.success());
     }
 
+    #[tokio::test]
+    async fn wait_with_output_timeout_captures_output() {
+        let child = spawn_async_output_child();
+
+        let output = wait_with_output_timeout(child, "test process", Duration::from_secs(5))
+            .await
+            .expect("process should finish");
+
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout).contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn wait_with_output_timeout_kills_on_timeout() {
+        let child = spawn_async_sleeping_child();
+
+        let error = wait_with_output_timeout(child, "test process", Duration::from_millis(100))
+            .await
+            .expect_err("process should time out");
+
+        assert!(error.starts_with("test process timeout after "));
+    }
+
     #[cfg(unix)]
     fn spawn_sleeping_child() -> Child {
         Command::new("sleep")
@@ -89,6 +180,46 @@ mod tests {
             .stderr(Stdio::null())
             .spawn()
             .expect("failed to spawn ping process")
+    }
+
+    #[cfg(unix)]
+    fn spawn_async_output_child() -> tokio::process::Child {
+        tokio::process::Command::new("sh")
+            .args(["-c", "printf hello"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn output process")
+    }
+
+    #[cfg(windows)]
+    fn spawn_async_output_child() -> tokio::process::Child {
+        tokio::process::Command::new("cmd")
+            .args(["/C", "echo hello"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn output process")
+    }
+
+    #[cfg(unix)]
+    fn spawn_async_sleeping_child() -> tokio::process::Child {
+        tokio::process::Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn sleep process")
+    }
+
+    #[cfg(windows)]
+    fn spawn_async_sleeping_child() -> tokio::process::Child {
+        tokio::process::Command::new("cmd")
+            .args(["/C", "ping -n 30 127.0.0.1 >NUL"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn sleep process")
     }
 
     fn wait_for_child_exit(child: &mut Child) -> Option<ExitStatus> {

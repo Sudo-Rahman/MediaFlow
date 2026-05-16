@@ -3,6 +3,7 @@ import type {
   OcrOutputFormat,
   OcrRegion,
   OcrSegment,
+  OcrVersion,
   OcrZone,
   OcrZoneRole,
   VideoOcrSelection,
@@ -145,6 +146,14 @@ export function selectionHasRole(selection: VideoOcrSelection, role: OcrZoneRole
 
 export function getAllowedOcrExportFormats(selection: VideoOcrSelection): OcrOutputFormat[] {
   return selectionHasRole(selection, 'on_screen_text') ? ['ass'] : ['srt', 'vtt', 'ass'];
+}
+
+export function getAllowedOcrVersionExportFormats(
+  version: Pick<OcrVersion, 'finalSubtitles'>,
+): OcrOutputFormat[] {
+  return version.finalSubtitles.some((subtitle) => subtitle.role === 'on_screen_text')
+    ? ['ass']
+    : ['srt', 'vtt', 'ass'];
 }
 
 export function assignOcrTimelineLanes<T extends TimelineBlock>(blocks: T[]): Array<T & { lane: number }> {

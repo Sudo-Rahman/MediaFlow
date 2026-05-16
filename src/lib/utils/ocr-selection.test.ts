@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { OcrSegment, VideoOcrSelection } from '$lib/types';
+import type { OcrSegment, OcrVersion, VideoOcrSelection } from '$lib/types';
 import {
   DEFAULT_MAIN_SUBTITLE_REGION,
   assignOcrTimelineLanes,
@@ -13,6 +13,7 @@ import {
   getOcrTimelineWheelIntent,
   getActiveOcrZonesAtTime,
   getAllowedOcrExportFormats,
+  getAllowedOcrVersionExportFormats,
   normalizeOcrZoneLabels,
   panOcrTimelineViewport,
   zoomOcrTimelineViewport,
@@ -58,6 +59,11 @@ describe('OCR selection helpers', () => {
       .toEqual(['srt', 'vtt', 'ass']);
     expect(getAllowedOcrExportFormats({ segments: [segment('sign', 0, 5_000, 'on_screen_text')] }))
       .toEqual(['ass']);
+  });
+
+  it('derives export formats from OCR version subtitle roles', () => {
+    expect(getAllowedOcrVersionExportFormats(versionWithRole('main_subtitle'))).toEqual(['srt', 'vtt', 'ass']);
+    expect(getAllowedOcrVersionExportFormats(versionWithRole('on_screen_text'))).toEqual(['ass']);
   });
 
   it('assigns overlapping timeline blocks to separate lanes', () => {
@@ -343,4 +349,20 @@ function segment(id: string, startTimeMs: number, endTimeMs: number, role: 'main
 
 function block(id: string, startTimeMs: number, endTimeMs: number) {
   return { id, startTimeMs, endTimeMs };
+}
+
+function versionWithRole(role: 'main_subtitle' | 'on_screen_text'): Pick<OcrVersion, 'finalSubtitles'> {
+  return {
+    finalSubtitles: [
+      {
+        id: `${role}-sub`,
+        text: 'Text',
+        startTime: 0,
+        endTime: 1000,
+        confidence: 0.95,
+        role,
+        region: DEFAULT_MAIN_SUBTITLE_REGION,
+      },
+    ],
+  };
 }

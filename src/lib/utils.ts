@@ -34,6 +34,7 @@ export {
   getActiveOcrZonesAtTime,
   selectionHasRole,
   getAllowedOcrExportFormats,
+  getAllowedOcrVersionExportFormats,
   normalizeOcrZoneLabels,
   createOcrTimelineViewport,
   zoomOcrTimelineViewport,

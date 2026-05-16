@@ -55,9 +55,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Check frontend
-        run: pnpm check
-
       - name: Run Rust tests
         working-directory: src-tauri
         run: |

@@ -34,7 +34,11 @@ function isOcrRawFrame(value: unknown): value is OcrRawFrame {
     && isFiniteNonNegativeNumber(value.frameIndex)
     && isFiniteNonNegativeNumber(value.timeMs)
     && typeof value.text === 'string'
-    && isUnitInterval(value.confidence);
+    && isUnitInterval(value.confidence)
+    && isOptionalString(value.segmentId)
+    && isOptionalString(value.zoneId)
+    && isOptionalOcrZoneRole(value.role)
+    && isOptionalOcrRegion(value.region);
 }
 
 function isOcrSubtitle(value: unknown): value is OcrSubtitle {
@@ -44,7 +48,11 @@ function isOcrSubtitle(value: unknown): value is OcrSubtitle {
     && isFiniteNonNegativeNumber(value.startTime)
     && isFiniteNonNegativeNumber(value.endTime)
     && value.endTime > value.startTime
-    && isUnitInterval(value.confidence);
+    && isUnitInterval(value.confidence)
+    && isOptionalString(value.segmentId)
+    && isOptionalString(value.zoneId)
+    && isOptionalOcrZoneRole(value.role)
+    && isOptionalOcrRegion(value.region);
 }
 
 function isOcrVersion(value: unknown): value is OcrVersion {
@@ -73,8 +81,16 @@ function isUnitInterval(value: unknown): value is number {
   return isFiniteNumber(value) && value >= 0 && value <= 1;
 }
 
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === 'string';
+}
+
 function isOcrZoneRole(value: unknown): value is OcrZoneRole {
   return value === 'main_subtitle' || value === 'on_screen_text';
+}
+
+function isOptionalOcrZoneRole(value: unknown): value is OcrZoneRole | undefined {
+  return value === undefined || isOcrZoneRole(value);
 }
 
 function isOcrRegion(value: unknown): value is OcrRegion {
@@ -83,6 +99,20 @@ function isOcrRegion(value: unknown): value is OcrRegion {
     && isFiniteNumber(value.y)
     && isFiniteNumber(value.width)
     && isFiniteNumber(value.height);
+}
+
+function isOptionalOcrRegion(value: unknown): value is OcrRegion | undefined {
+  return value === undefined || isValidOcrResultRegion(value);
+}
+
+function isValidOcrResultRegion(value: unknown): value is OcrRegion {
+  return isOcrRegion(value)
+    && value.x >= 0
+    && value.y >= 0
+    && value.width > 0
+    && value.height > 0
+    && value.x + value.width <= 1
+    && value.y + value.height <= 1;
 }
 
 function isOcrZone(value: unknown): value is OcrZone {
@@ -206,6 +236,7 @@ function sanitizeOcrRawFrame(frame: OcrRawFrame): OcrRawFrame {
     timeMs: frame.timeMs,
     text: frame.text,
     confidence: frame.confidence,
+    ...sanitizeOcrResultMetadata(frame),
   };
 }
 
@@ -216,6 +247,27 @@ function sanitizeOcrSubtitle(subtitle: OcrSubtitle): OcrSubtitle {
     startTime: subtitle.startTime,
     endTime: subtitle.endTime,
     confidence: subtitle.confidence,
+    ...sanitizeOcrResultMetadata(subtitle),
+  };
+}
+
+function sanitizeOcrResultMetadata(
+  result: Pick<OcrRawFrame, 'segmentId' | 'zoneId' | 'role' | 'region'>,
+): Pick<OcrRawFrame, 'segmentId' | 'zoneId' | 'role' | 'region'> {
+  return {
+    ...(typeof result.segmentId === 'string' ? { segmentId: result.segmentId } : {}),
+    ...(typeof result.zoneId === 'string' ? { zoneId: result.zoneId } : {}),
+    ...(isOcrZoneRole(result.role) ? { role: result.role } : {}),
+    ...(isValidOcrResultRegion(result.region)
+      ? {
+          region: {
+            x: result.region.x,
+            y: result.region.y,
+            width: result.region.width,
+            height: result.region.height,
+          },
+        }
+      : {}),
   };
 }
 

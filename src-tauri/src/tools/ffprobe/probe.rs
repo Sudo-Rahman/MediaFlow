@@ -67,7 +67,10 @@ pub(crate) fn parse_primary_video_dimensions(probe_json: &str) -> Result<VideoDi
 
     let video_stream = streams
         .iter()
-        .find(|stream| stream.get("codec_type").and_then(|value| value.as_str()) == Some("video"))
+        .find(|stream| {
+            stream.get("codec_type").and_then(|value| value.as_str()) == Some("video")
+                && !stream_is_attached_picture(stream)
+        })
         .ok_or_else(|| "FFprobe output did not contain valid video dimensions".to_string())?;
     let width = video_stream
         .get("width")
@@ -90,6 +93,27 @@ pub(crate) fn parse_primary_video_dimensions(probe_json: &str) -> Result<VideoDi
     } else {
         Ok(VideoDimensions { width, height })
     }
+}
+
+fn stream_is_attached_picture(stream: &Value) -> bool {
+    stream
+        .get("disposition")
+        .and_then(|disposition| disposition.get("attached_pic"))
+        .is_some_and(ffprobe_flag_is_enabled)
+}
+
+fn ffprobe_flag_is_enabled(value: &Value) -> bool {
+    value.as_bool().unwrap_or_else(|| {
+        value
+            .as_i64()
+            .map(|flag| flag != 0)
+            .or_else(|| {
+                value
+                    .as_str()
+                    .map(|flag| flag == "1" || flag.eq_ignore_ascii_case("true"))
+            })
+            .unwrap_or(false)
+    })
 }
 
 fn stream_rotation_swaps_dimensions(stream: &Value) -> bool {
@@ -180,6 +204,33 @@ mod tests {
             .expect("first video stream dimensions should parse");
 
         assert_eq!(dimensions.width, 1440);
+        assert_eq!(dimensions.height, 1080);
+    }
+
+    #[test]
+    fn parse_primary_video_dimensions_skips_attached_picture_streams() {
+        let json = r#"{
+            "streams": [
+                { "codec_type": "audio", "width": 2, "height": 2 },
+                {
+                    "codec_type": "video",
+                    "width": 600,
+                    "height": 600,
+                    "disposition": { "attached_pic": 1 }
+                },
+                {
+                    "codec_type": "video",
+                    "width": 1920,
+                    "height": 1080,
+                    "disposition": { "attached_pic": 0 }
+                }
+            ]
+        }"#;
+
+        let dimensions = parse_primary_video_dimensions(json)
+            .expect("non-attached video stream dimensions should parse");
+
+        assert_eq!(dimensions.width, 1920);
         assert_eq!(dimensions.height, 1080);
     }
 

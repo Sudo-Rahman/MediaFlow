@@ -102,6 +102,12 @@ struct ContentRect {
     height: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SelectionInterval {
+    start_time_ms: u64,
+    end_time_ms: u64,
+}
+
 struct OcrTelemetryCounters {
     ocr_attempted_frames: AtomicU32,
     text_frames: AtomicU32,
@@ -327,6 +333,7 @@ fn can_clone_previous_frame_result(
         && is_visually_unchanged(fingerprint, previous_fingerprint)
 }
 
+#[cfg(test)]
 fn empty_frame_result(frame: &StreamedFrame) -> OcrFrameResult {
     OcrFrameResult {
         frame_index: frame.frame_index,
@@ -652,6 +659,20 @@ fn set_operation_pid(file_id: &str, pid: u32) {
     }
 }
 
+fn update_operation_pid_if_active(file_id: &str, pid: u32) -> bool {
+    super::state::OCR_PROCESS_IDS
+        .lock()
+        .map(|mut guard| {
+            if let Some(active_pid) = guard.get_mut(file_id) {
+                *active_pid = pid;
+                true
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false)
+}
+
 fn clear_operation_pid(file_id: &str) -> Option<u32> {
     super::state::OCR_PROCESS_IDS
         .lock()
@@ -667,7 +688,8 @@ fn full_frame_output_spec() -> OcrFrameOutputSpec {
 }
 
 fn build_ocr_filter_string(fps: f64, spec: OcrFrameOutputSpec) -> String {
-    let mut filters = vec![format!("fps={}", fps)];
+    let mut filters = Vec::new();
+    filters.push(format!("fps={}", fps));
     filters.push(format!(
         "scale={}:{}:force_original_aspect_ratio=decrease",
         spec.width, spec.height
@@ -680,23 +702,81 @@ fn build_ocr_filter_string(fps: f64, spec: OcrFrameOutputSpec) -> String {
     filters.join(",")
 }
 
-fn selection_time_bounds_ms(selection: &OcrSelection) -> Option<(u64, u64)> {
-    let start_time_ms = selection
-        .segments
-        .iter()
-        .map(|segment| segment.start_time_ms)
-        .min()?;
-    let end_time_ms = selection
-        .segments
-        .iter()
-        .map(|segment| segment.end_time_ms)
-        .max()?;
+fn build_ocr_interval_ffmpeg_args(
+    video_path: &str,
+    fps: f64,
+    output_spec: OcrFrameOutputSpec,
+    interval: SelectionInterval,
+) -> Vec<String> {
+    let mut ffmpeg_args = vec![
+        "-y".to_string(),
+        "-v".to_string(),
+        "error".to_string(),
+        "-nostats".to_string(),
+    ];
 
-    if start_time_ms >= end_time_ms {
-        None
-    } else {
-        Some((start_time_ms, end_time_ms))
+    ffmpeg_args.push("-ss".to_string());
+    ffmpeg_args.push(format_ffmpeg_seconds(interval.start_time_ms));
+    ffmpeg_args.push("-t".to_string());
+    ffmpeg_args.push(format_ffmpeg_seconds(
+        interval.end_time_ms.saturating_sub(interval.start_time_ms),
+    ));
+    ffmpeg_args.push("-i".to_string());
+    ffmpeg_args.push(video_path.to_string());
+    ffmpeg_args.extend([
+        "-vf".to_string(),
+        build_ocr_filter_string(fps, output_spec),
+        "-pix_fmt".to_string(),
+        "rgb24".to_string(),
+        "-f".to_string(),
+        "rawvideo".to_string(),
+        "-progress".to_string(),
+        "pipe:2".to_string(),
+        "pipe:1".to_string(),
+    ]);
+
+    ffmpeg_args
+}
+
+fn selection_intervals_ms(selection: &OcrSelection) -> Vec<SelectionInterval> {
+    let mut intervals = selection
+        .segments
+        .iter()
+        .filter(|segment| segment.start_time_ms < segment.end_time_ms)
+        .map(|segment| SelectionInterval {
+            start_time_ms: segment.start_time_ms,
+            end_time_ms: segment.end_time_ms,
+        })
+        .collect::<Vec<_>>();
+    intervals.sort_by_key(|interval| (interval.start_time_ms, interval.end_time_ms));
+
+    let mut merged: Vec<SelectionInterval> = Vec::with_capacity(intervals.len());
+    for interval in intervals {
+        if let Some(previous) = merged.last_mut() {
+            if interval.start_time_ms <= previous.end_time_ms {
+                previous.end_time_ms = previous.end_time_ms.max(interval.end_time_ms);
+                continue;
+            }
+        }
+        merged.push(interval);
     }
+    merged
+}
+
+fn selection_duration_ms(selection: &OcrSelection) -> u64 {
+    selection_intervals_ms(selection)
+        .iter()
+        .map(|interval| interval.end_time_ms.saturating_sub(interval.start_time_ms))
+        .sum()
+}
+
+fn interval_frame_time_ms(interval: SelectionInterval, frame_index: u32, fps: f64) -> u64 {
+    let frame_duration_ms = 1000.0 / fps;
+    let offset_ms = ((frame_index as f64) * frame_duration_ms).round() as u64;
+    interval
+        .start_time_ms
+        .saturating_add(offset_ms)
+        .min(interval.end_time_ms.saturating_sub(1))
 }
 
 fn format_ffmpeg_seconds(time_ms: u64) -> String {
@@ -731,14 +811,14 @@ async fn read_ffmpeg_rgb_stream(
     stdout: tokio::process::ChildStdout,
     fps: f64,
     output_spec: OcrFrameOutputSpec,
-    start_time_ms: u64,
+    interval: SelectionInterval,
+    frame_index_offset: u32,
     frame_tx: tokio::sync::mpsc::Sender<StreamedFrame>,
 ) -> Result<u32, String> {
     let mut stdout = stdout;
     let mut read_buffer = vec![0_u8; 64 * 1024];
     let mut raw_buffer = Vec::with_capacity(output_spec.byte_len() * 2);
     let mut frame_index = 0_u32;
-    let frame_duration_ms = 1000.0 / fps;
     let frame_byte_len = output_spec.byte_len();
 
     loop {
@@ -752,11 +832,11 @@ async fn read_ffmpeg_rgb_stream(
 
         raw_buffer.extend_from_slice(&read_buffer[..read_bytes]);
         while let Some(frame_bytes) = take_next_raw_frame(&mut raw_buffer, frame_byte_len) {
-            let time_ms = start_time_ms
-                .saturating_add(((frame_index as f64) * frame_duration_ms).round() as u64);
+            let time_ms = interval_frame_time_ms(interval, frame_index, fps);
+            let global_frame_index = frame_index_offset.saturating_add(frame_index);
             frame_tx
                 .send(StreamedFrame {
-                    frame_index,
+                    frame_index: global_frame_index,
                     time_ms,
                     rgb_bytes: frame_bytes,
                 })
@@ -779,6 +859,7 @@ async fn read_ffmpeg_progress(
     stderr: tokio::process::ChildStderr,
     duration_us: Option<u64>,
     estimated_frames: u32,
+    frame_offset: u32,
     progress: Option<PipelineProgressContext>,
 ) -> Result<String, String> {
     let mut tracker = FfmpegProgressTracker::new(duration_us);
@@ -799,9 +880,11 @@ async fn read_ffmpeg_progress(
         if let Some(update) = tracker.handle_line(trimmed) {
             if let (Some(progress_ctx), Some(percent)) = (progress.as_ref(), update.progress) {
                 let current = if estimated_frames > 0 {
-                    (((percent as f64) / 100.0) * estimated_frames as f64).round() as u32
+                    frame_offset.saturating_add(
+                        (((percent as f64) / 100.0) * estimated_frames as f64).round() as u32,
+                    )
                 } else {
-                    0
+                    frame_offset
                 };
                 let message = if update.is_end {
                     "Finishing frame extraction...".to_string()
@@ -821,6 +904,119 @@ async fn read_ffmpeg_progress(
     }
 
     Ok(error_lines.join("\n"))
+}
+
+struct ExtractionResult {
+    frame_count: u32,
+}
+
+async fn extract_selected_intervals_with_ffmpeg(
+    ffmpeg_path: &str,
+    video_path: &str,
+    file_id: &str,
+    fps: f64,
+    output_spec: OcrFrameOutputSpec,
+    intervals: &[SelectionInterval],
+    progress: Option<PipelineProgressContext>,
+    frame_tx: tokio::sync::mpsc::Sender<StreamedFrame>,
+) -> Result<ExtractionResult, String> {
+    let mut total_frame_count = 0_u32;
+
+    for interval in intervals {
+        if is_operation_cancelled(file_id) {
+            return Err("OCR cancelled".to_string());
+        }
+
+        let ffmpeg_args = build_ocr_interval_ffmpeg_args(video_path, fps, output_spec, *interval);
+        let mut child = tokio::process::Command::new(ffmpeg_path)
+            .args(ffmpeg_args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("Failed to start ffmpeg: {}", error))?;
+
+        let child_pid = child.id().unwrap_or(0);
+        if !update_operation_pid_if_active(file_id, child_pid) {
+            terminate_process(child_pid);
+            let _ = child.wait().await;
+            return Err("OCR cancelled".to_string());
+        }
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "Failed to capture ffmpeg stdout".to_string())?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| "Failed to capture ffmpeg stderr".to_string())?;
+
+        let interval_duration_ms = interval.end_time_ms.saturating_sub(interval.start_time_ms);
+        let interval_frame_estimate =
+            (((interval_duration_ms as f64 / 1000.0) * fps).ceil() as u32).saturating_add(1);
+        let stderr_task = tokio::spawn(read_ffmpeg_progress(
+            stderr,
+            Some(interval_duration_ms.saturating_mul(1000)),
+            interval_frame_estimate,
+            total_frame_count,
+            progress.clone(),
+        ));
+        let stream_reader_task = tokio::spawn(read_ffmpeg_rgb_stream(
+            stdout,
+            fps,
+            output_spec,
+            *interval,
+            total_frame_count,
+            frame_tx.clone(),
+        ));
+
+        let wait_status = timeout(OCR_PIPELINE_TIMEOUT, child.wait())
+            .await
+            .map_err(|_| {
+                terminate_process(child_pid);
+                format!(
+                    "OCR pipeline timeout after {} seconds",
+                    OCR_PIPELINE_TIMEOUT.as_secs()
+                )
+            })?
+            .map_err(|error| format!("Failed to wait for ffmpeg: {}", error))?;
+
+        let was_cancelled = !update_operation_pid_if_active(file_id, 0);
+        let stderr_output = match stderr_task.await {
+            Ok(Ok(output)) => output,
+            Ok(Err(_)) | Err(_) if was_cancelled => String::new(),
+            Ok(Err(error)) => return Err(error),
+            Err(error) => return Err(format!("FFmpeg progress task failed: {}", error)),
+        };
+        let interval_frame_count = match stream_reader_task.await {
+            Ok(Ok(frame_count)) => frame_count,
+            Ok(Err(_)) | Err(_) if was_cancelled => 0,
+            Ok(Err(error)) => return Err(error),
+            Err(error) => return Err(format!("Stream reader task failed: {}", error)),
+        };
+
+        if was_cancelled {
+            return Err("OCR cancelled".to_string());
+        }
+
+        if !wait_status.success() {
+            if stderr_output.trim().is_empty() {
+                return Err(format!(
+                    "Frame extraction failed with status {}",
+                    wait_status
+                ));
+            }
+            return Err(format!("Frame extraction failed: {}", stderr_output));
+        }
+
+        total_frame_count = total_frame_count.saturating_add(interval_frame_count);
+    }
+
+    drop(frame_tx);
+
+    Ok(ExtractionResult {
+        frame_count: total_frame_count,
+    })
 }
 
 fn process_streamed_frames(
@@ -1074,7 +1270,7 @@ async fn run_ocr_pipeline_with_bins(
     min_confidence: f64,
     cleanup: OcrSubtitleCleanupOptions,
     selection: OcrSelection,
-    duration_us: Option<u64>,
+    _duration_us: Option<u64>,
     _estimated_frames: u32,
     progress: Option<PipelineProgressContext>,
 ) -> Result<OcrPipelineResult, String> {
@@ -1088,80 +1284,14 @@ async fn run_ocr_pipeline_with_bins(
         let total_timer = Instant::now();
         let output_spec = full_frame_output_spec();
         let content_rect = content_rect_for_source_dimensions(source_dimensions, output_spec);
-        let filter_str = build_ocr_filter_string(fps, output_spec);
-        let (selection_start_time_ms, selection_end_time_ms) =
-            selection_time_bounds_ms(&selection).unwrap_or((0, duration_us.unwrap_or(0) / 1000));
-        let selection_duration_ms = selection_end_time_ms.saturating_sub(selection_start_time_ms);
-        let seek_start_seconds = format_ffmpeg_seconds(selection_start_time_ms);
-        let seek_duration_seconds = format_ffmpeg_seconds(selection_duration_ms);
-
-        let mut ffmpeg_args = vec![
-            "-y".to_string(),
-            "-v".to_string(),
-            "error".to_string(),
-            "-nostats".to_string(),
-        ];
-        if selection_start_time_ms > 0 {
-            ffmpeg_args.push("-ss".to_string());
-            ffmpeg_args.push(seek_start_seconds);
-        }
-        ffmpeg_args.push("-i".to_string());
-        ffmpeg_args.push(video_path.to_string());
-        if selection_duration_ms > 0 {
-            ffmpeg_args.push("-t".to_string());
-            ffmpeg_args.push(seek_duration_seconds);
-        }
-        ffmpeg_args.extend([
-            "-vf".to_string(),
-            filter_str,
-            "-pix_fmt".to_string(),
-            "rgb24".to_string(),
-            "-f".to_string(),
-            "rawvideo".to_string(),
-            "-progress".to_string(),
-            "pipe:2".to_string(),
-            "pipe:1".to_string(),
-        ]);
-
-        let selected_duration_us = selection_duration_ms.saturating_mul(1000);
+        let selection_intervals = selection_intervals_ms(&selection);
+        let selected_duration_ms = selection_duration_ms(&selection);
         let selected_frame_estimate =
-            (((selection_duration_ms as f64 / 1000.0) * fps).ceil() as u32).saturating_add(1);
-
-        let mut child = tokio::process::Command::new(ffmpeg_path)
-            .args(ffmpeg_args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| format!("Failed to start ffmpeg: {}", error))?;
-
-        let child_pid = child.id().unwrap_or(0);
-        set_operation_pid(file_id, child_pid);
-
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| "Failed to capture ffmpeg stdout".to_string())?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| "Failed to capture ffmpeg stderr".to_string())?;
+            (((selected_duration_ms as f64 / 1000.0) * fps).ceil() as u32).saturating_add(1);
 
         let extraction_start = Instant::now();
         let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(FRAME_CHANNEL_CAPACITY);
-        let stderr_progress = progress.clone();
-        let stderr_task = tokio::spawn(read_ffmpeg_progress(
-            stderr,
-            Some(selected_duration_us),
-            selected_frame_estimate,
-            stderr_progress,
-        ));
-        let stream_reader_task = tokio::spawn(read_ffmpeg_rgb_stream(
-            stdout,
-            fps,
-            output_spec,
-            selection_start_time_ms,
-            frame_tx,
-        ));
+        set_operation_pid(file_id, 0);
 
         let ocr_start = Instant::now();
         let ocr_progress = progress.as_ref().map(|progress| progress.ocr.clone());
@@ -1190,54 +1320,34 @@ async fn run_ocr_pipeline_with_bins(
             )
         });
 
-        let wait_status = timeout(OCR_PIPELINE_TIMEOUT, child.wait())
-            .await
-            .map_err(|_| {
-                terminate_process(child_pid);
-                format!(
-                    "OCR pipeline timeout after {} seconds",
-                    OCR_PIPELINE_TIMEOUT.as_secs()
-                )
-            })?
-            .map_err(|error| format!("Failed to wait for ffmpeg: {}", error))?;
-
-        if !is_operation_cancelled(file_id) {
-            set_operation_pid(file_id, 0);
-        }
-
-        let was_cancelled = is_operation_cancelled(file_id);
-
-        let stderr_output = match stderr_task.await {
-            Ok(Ok(output)) => output,
-            Ok(Err(_)) | Err(_) if was_cancelled => String::new(),
-            Ok(Err(error)) => return Err(error),
-            Err(error) => return Err(format!("FFmpeg progress task failed: {}", error)),
-        };
-        let frame_count = match stream_reader_task.await {
-            Ok(Ok(frame_count)) => frame_count,
-            Ok(Err(_)) | Err(_) if was_cancelled => 0,
-            Ok(Err(error)) => return Err(error),
-            Err(error) => return Err(format!("Stream reader task failed: {}", error)),
-        };
+        let extraction = extract_selected_intervals_with_ffmpeg(
+            ffmpeg_path,
+            video_path,
+            file_id,
+            fps,
+            output_spec,
+            &selection_intervals,
+            progress.clone(),
+            frame_tx,
+        )
+        .await;
         let extract_ms = extraction_start.elapsed().as_millis() as u64;
+        let ExtractionResult { frame_count } = match extraction {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = ocr_task.await;
+                return Err(error);
+            }
+        };
 
         if let Some(progress) = progress.as_ref() {
             progress.emit_extraction_complete(frame_count);
         }
 
+        let was_cancelled = is_operation_cancelled(file_id);
         if was_cancelled {
             let _ = ocr_task.await;
             return Err("OCR cancelled".to_string());
-        }
-
-        if !wait_status.success() {
-            if stderr_output.trim().is_empty() {
-                return Err(format!(
-                    "Frame extraction failed with status {}",
-                    wait_status
-                ));
-            }
-            return Err(format!("Frame extraction failed: {}", stderr_output));
         }
 
         let (raw_ocr, mut telemetry) = ocr_task
@@ -1349,9 +1459,7 @@ pub(crate) async fn run_ocr_pipeline(
                 .unwrap_or(1)
         });
     validate_ocr_selection(&selection, duration_ms)?;
-    let selected_duration_ms = selection_time_bounds_ms(&selection)
-        .map(|(start_time_ms, end_time_ms)| end_time_ms.saturating_sub(start_time_ms))
-        .unwrap_or(duration_ms);
+    let selected_duration_ms = selection_duration_ms(&selection).max(1).min(duration_ms);
     let estimated_frames =
         (((selected_duration_ms as f64 / 1000.0) * fps).ceil() as u32).saturating_add(1);
 
@@ -1793,13 +1901,75 @@ mod tests {
     }
 
     #[test]
-    fn selection_time_bounds_cover_active_segment_envelope() {
+    fn selection_intervals_merge_overlapping_segments_without_gaps() {
         let selection = selection_with_overlap();
 
         assert_eq!(
-            super::selection_time_bounds_ms(&selection),
-            Some((0, 5_000))
+            super::selection_intervals_ms(&selection),
+            vec![super::SelectionInterval {
+                start_time_ms: 0,
+                end_time_ms: 5_000,
+            }]
         );
+    }
+
+    #[test]
+    fn selection_intervals_preserve_sparse_active_windows() {
+        let mut selection = selection_with_overlap();
+        selection.segments[0].start_time_ms = 0;
+        selection.segments[0].end_time_ms = 10_000;
+        selection.segments[1].start_time_ms = 50_000;
+        selection.segments[1].end_time_ms = 60_000;
+
+        assert_eq!(
+            super::selection_intervals_ms(&selection),
+            vec![
+                super::SelectionInterval {
+                    start_time_ms: 0,
+                    end_time_ms: 10_000,
+                },
+                super::SelectionInterval {
+                    start_time_ms: 50_000,
+                    end_time_ms: 60_000,
+                },
+            ]
+        );
+        assert_eq!(super::selection_duration_ms(&selection), 20_000);
+    }
+
+    #[test]
+    fn interval_extraction_args_seek_one_active_window() {
+        let args = super::build_ocr_interval_ffmpeg_args(
+            "/tmp/source.mp4",
+            5.0,
+            full_frame_output_spec(),
+            super::SelectionInterval {
+                start_time_ms: 50_000,
+                end_time_ms: 60_000,
+            },
+        );
+
+        assert_eq!(args.iter().filter(|arg| arg.as_str() == "-ss").count(), 1);
+        assert!(args.windows(2).any(|window| window == ["-ss", "50.000"]));
+        assert!(args.windows(2).any(|window| window == ["-t", "10.000"]));
+        assert!(args.windows(2).any(|window| {
+            window == [
+                "-vf",
+                "fps=5,scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2,format=rgb24",
+            ]
+        }));
+    }
+
+    #[test]
+    fn interval_frame_timestamps_remain_source_time_for_each_window() {
+        let interval = super::SelectionInterval {
+            start_time_ms: 50_000,
+            end_time_ms: 60_000,
+        };
+
+        assert_eq!(super::interval_frame_time_ms(interval, 0, 1.0), 50_000);
+        assert_eq!(super::interval_frame_time_ms(interval, 9, 1.0), 59_000);
+        assert_eq!(super::interval_frame_time_ms(interval, 10, 1.0), 59_999);
     }
 
     #[test]

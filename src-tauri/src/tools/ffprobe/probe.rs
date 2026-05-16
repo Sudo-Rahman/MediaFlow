@@ -4,6 +4,7 @@ use crate::shared::process::wait_with_output_timeout;
 use crate::shared::store::resolve_ffprobe_path;
 use crate::shared::validation::validate_media_path;
 use crate::tools::ffprobe::FFPROBE_TIMEOUT;
+use serde_json::Value;
 use tokio::process::Command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,7 +58,7 @@ pub(crate) async fn probe_file_with_ffprobe(
 }
 
 pub(crate) fn parse_primary_video_dimensions(probe_json: &str) -> Result<VideoDimensions, String> {
-    let value: serde_json::Value = serde_json::from_str(probe_json)
+    let value: Value = serde_json::from_str(probe_json)
         .map_err(|e| format!("Failed to parse ffprobe stream metadata: {}", e))?;
     let streams = value
         .get("streams")
@@ -81,7 +82,60 @@ pub(crate) fn parse_primary_video_dimensions(probe_json: &str) -> Result<VideoDi
         .filter(|value| *value > 0)
         .ok_or_else(|| "FFprobe output did not contain valid video dimensions".to_string())?;
 
-    Ok(VideoDimensions { width, height })
+    if stream_rotation_swaps_dimensions(video_stream) {
+        Ok(VideoDimensions {
+            width: height,
+            height: width,
+        })
+    } else {
+        Ok(VideoDimensions { width, height })
+    }
+}
+
+fn stream_rotation_swaps_dimensions(stream: &Value) -> bool {
+    stream_rotation_degrees(stream).is_some_and(is_right_angle_rotation)
+}
+
+fn stream_rotation_degrees(stream: &Value) -> Option<f64> {
+    stream
+        .get("side_data_list")
+        .and_then(|value| value.as_array())
+        .and_then(|side_data_list| {
+            side_data_list.iter().find_map(|side_data| {
+                side_data
+                    .get("rotation")
+                    .and_then(rotation_degrees_from_value)
+                    .or_else(|| {
+                        side_data
+                            .get("tags")
+                            .and_then(|tags| tags.get("rotate"))
+                            .and_then(rotation_degrees_from_value)
+                    })
+            })
+        })
+        .or_else(|| {
+            stream
+                .get("tags")
+                .and_then(|tags| tags.get("rotate"))
+                .and_then(rotation_degrees_from_value)
+        })
+}
+
+fn rotation_degrees_from_value(value: &Value) -> Option<f64> {
+    value.as_f64().or_else(|| {
+        value
+            .as_str()
+            .and_then(|rotation| rotation.trim().parse::<f64>().ok())
+    })
+}
+
+fn is_right_angle_rotation(rotation: f64) -> bool {
+    if !rotation.is_finite() {
+        return false;
+    }
+
+    let normalized = rotation.rem_euclid(360.0).round() as u16;
+    normalized == 90 || normalized == 270
 }
 
 pub(crate) async fn get_primary_video_dimensions_with_ffprobe(
@@ -126,6 +180,106 @@ mod tests {
             .expect("first video stream dimensions should parse");
 
         assert_eq!(dimensions.width, 1440);
+        assert_eq!(dimensions.height, 1080);
+    }
+
+    #[test]
+    fn parse_primary_video_dimensions_swaps_for_side_data_rotation_90() {
+        let json = r#"{
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "width": 1920,
+                    "height": 1080,
+                    "side_data_list": [{ "rotation": 90 }]
+                }
+            ]
+        }"#;
+
+        let dimensions = parse_primary_video_dimensions(json)
+            .expect("rotated video stream dimensions should parse");
+
+        assert_eq!(dimensions.width, 1080);
+        assert_eq!(dimensions.height, 1920);
+    }
+
+    #[test]
+    fn parse_primary_video_dimensions_swaps_for_side_data_tags_rotate_270() {
+        let json = r#"{
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "width": 1920,
+                    "height": 1080,
+                    "side_data_list": [{ "tags": { "rotate": "270" } }]
+                }
+            ]
+        }"#;
+
+        let dimensions = parse_primary_video_dimensions(json)
+            .expect("rotated video stream dimensions should parse");
+
+        assert_eq!(dimensions.width, 1080);
+        assert_eq!(dimensions.height, 1920);
+    }
+
+    #[test]
+    fn parse_primary_video_dimensions_swaps_for_stream_tags_rotate_negative_90() {
+        let json = r#"{
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "width": 1920,
+                    "height": 1080,
+                    "tags": { "rotate": "-90" }
+                }
+            ]
+        }"#;
+
+        let dimensions = parse_primary_video_dimensions(json)
+            .expect("rotated video stream dimensions should parse");
+
+        assert_eq!(dimensions.width, 1080);
+        assert_eq!(dimensions.height, 1920);
+    }
+
+    #[test]
+    fn parse_primary_video_dimensions_swaps_for_nearly_right_angle_rotation() {
+        let json = r#"{
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "width": 1920,
+                    "height": 1080,
+                    "side_data_list": [{ "rotation": "89.9999" }]
+                }
+            ]
+        }"#;
+
+        let dimensions = parse_primary_video_dimensions(json)
+            .expect("rotated video stream dimensions should parse");
+
+        assert_eq!(dimensions.width, 1080);
+        assert_eq!(dimensions.height, 1920);
+    }
+
+    #[test]
+    fn parse_primary_video_dimensions_keeps_original_for_rotation_180() {
+        let json = r#"{
+            "streams": [
+                {
+                    "codec_type": "video",
+                    "width": 1920,
+                    "height": 1080,
+                    "side_data_list": [{ "rotation": 180 }]
+                }
+            ]
+        }"#;
+
+        let dimensions = parse_primary_video_dimensions(json)
+            .expect("rotated video stream dimensions should parse");
+
+        assert_eq!(dimensions.width, 1920);
         assert_eq!(dimensions.height, 1080);
     }
 

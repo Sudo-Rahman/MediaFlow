@@ -732,7 +732,6 @@ export const videoOcrStore = {
 
   cancelProcessing(fileId: string) {
     cancelledFileIds = new Set([...cancelledFileIds, fileId]);
-    isCancelling = true;
     const nextActiveOperationIds = new Map(activeOperationIdsByFileId);
     nextActiveOperationIds.delete(fileId);
     activeOperationIdsByFileId = nextActiveOperationIds;

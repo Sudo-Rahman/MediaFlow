@@ -367,6 +367,21 @@ describe('video OCR store', () => {
     expect(videoOcrStore.videoFiles[0].progress).toBeUndefined();
   });
 
+  it('does not mark the whole OCR batch as cancelling when one file is cancelled', () => {
+    const [firstFile, secondFile] = videoOcrStore.addFilesFromPaths([
+      '/Users/sr-71/Movies/first.mp4',
+      '/Users/sr-71/Movies/second.mp4',
+    ]);
+
+    videoOcrStore.setProcessingScope([firstFile.id, secondFile.id]);
+    videoOcrStore.startProcessing(firstFile.id, 'ocr-run-1');
+    videoOcrStore.cancelProcessing(firstFile.id);
+
+    expect(videoOcrStore.isFileCancelled(firstFile.id)).toBe(true);
+    expect(videoOcrStore.isCancelling).toBe(false);
+    expect(videoOcrStore.processingScopeFileIds.has(secondFile.id)).toBe(true);
+  });
+
   it('ignores progress from an old OCR operation after a new run starts', () => {
     const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
 

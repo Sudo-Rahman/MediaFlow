@@ -638,7 +638,28 @@ impl PipelineProgressContext {
 struct StreamedFrame {
     frame_index: u32,
     time_ms: u64,
+    source_interval_index: u32,
     rgb_bytes: Vec<u8>,
+}
+
+struct PreviousZoneResult {
+    source_interval_index: u32,
+    fingerprint: FrameFingerprint,
+    result: OcrFrameResult,
+}
+
+fn can_clone_previous_zone_result(
+    frame: &StreamedFrame,
+    fingerprint: &FrameFingerprint,
+    previous: &PreviousZoneResult,
+) -> bool {
+    previous.source_interval_index == frame.source_interval_index
+        && can_clone_previous_frame_result(
+            frame,
+            fingerprint,
+            &previous.result,
+            &previous.fingerprint,
+        )
 }
 
 enum WorkerMessage {
@@ -812,6 +833,7 @@ async fn read_ffmpeg_rgb_stream(
     fps: f64,
     output_spec: OcrFrameOutputSpec,
     interval: SelectionInterval,
+    interval_index: u32,
     frame_index_offset: u32,
     frame_tx: tokio::sync::mpsc::Sender<StreamedFrame>,
 ) -> Result<u32, String> {
@@ -838,6 +860,7 @@ async fn read_ffmpeg_rgb_stream(
                 .send(StreamedFrame {
                     frame_index: global_frame_index,
                     time_ms,
+                    source_interval_index: interval_index,
                     rgb_bytes: frame_bytes,
                 })
                 .await
@@ -922,7 +945,7 @@ async fn extract_selected_intervals_with_ffmpeg(
 ) -> Result<ExtractionResult, String> {
     let mut total_frame_count = 0_u32;
 
-    for interval in intervals {
+    for (interval_index, interval) in intervals.iter().enumerate() {
         if is_operation_cancelled(file_id) {
             return Err("OCR cancelled".to_string());
         }
@@ -966,6 +989,7 @@ async fn extract_selected_intervals_with_ffmpeg(
             fps,
             output_spec,
             *interval,
+            u32::try_from(interval_index).unwrap_or(u32::MAX),
             total_frame_count,
             frame_tx.clone(),
         ));
@@ -1074,8 +1098,7 @@ fn process_streamed_frames(
                     return;
                 }
             };
-            let mut previous_by_zone: HashMap<String, (FrameFingerprint, OcrFrameResult)> =
-                HashMap::new();
+            let mut previous_by_zone: HashMap<String, PreviousZoneResult> = HashMap::new();
 
             while let Ok(message) = worker_rx.recv() {
                 match message {
@@ -1137,24 +1160,24 @@ fn process_streamed_frames(
                                     set_fatal_error(&fatal_error, error);
                                     break;
                                 }
-                                previous_by_zone.insert(zone_key, (fingerprint, frame_result));
+                                previous_by_zone.insert(
+                                    zone_key,
+                                    PreviousZoneResult {
+                                        source_interval_index: frame.source_interval_index,
+                                        fingerprint,
+                                        result: frame_result,
+                                    },
+                                );
                                 telemetry
                                     .no_text_skipped_frames
                                     .fetch_add(1, Ordering::Relaxed);
                                 continue;
                             }
 
-                            if let Some((prev_fingerprint, prev_result)) =
-                                previous_by_zone.get(&zone_key)
-                            {
-                                if can_clone_previous_frame_result(
-                                    &frame,
-                                    &fingerprint,
-                                    prev_result,
-                                    prev_fingerprint,
-                                ) {
+                            if let Some(previous) = previous_by_zone.get(&zone_key) {
+                                if can_clone_previous_zone_result(&frame, &fingerprint, previous) {
                                     let frame_result =
-                                        clone_frame_result_for_frame(prev_result, &frame);
+                                        clone_frame_result_for_frame(&previous.result, &frame);
                                     emit_live_detection(live_detection.as_ref(), &frame_result);
                                     if let Err(error) =
                                         push_ocr_result(&results, frame_result.clone())
@@ -1162,7 +1185,14 @@ fn process_streamed_frames(
                                         set_fatal_error(&fatal_error, error);
                                         break;
                                     }
-                                    previous_by_zone.insert(zone_key, (fingerprint, frame_result));
+                                    previous_by_zone.insert(
+                                        zone_key,
+                                        PreviousZoneResult {
+                                            source_interval_index: frame.source_interval_index,
+                                            fingerprint,
+                                            result: frame_result,
+                                        },
+                                    );
                                     telemetry
                                         .unchanged_skipped_frames
                                         .fetch_add(1, Ordering::Relaxed);
@@ -1179,8 +1209,14 @@ fn process_streamed_frames(
                                 if !frame_result.text.trim().is_empty() {
                                     telemetry.text_frames.fetch_add(1, Ordering::Relaxed);
                                 }
-                                previous_by_zone
-                                    .insert(zone_key, (fingerprint, frame_result.clone()));
+                                previous_by_zone.insert(
+                                    zone_key,
+                                    PreviousZoneResult {
+                                        source_interval_index: frame.source_interval_index,
+                                        fingerprint,
+                                        result: frame_result.clone(),
+                                    },
+                                );
                                 emit_live_detection(live_detection.as_ref(), &frame_result);
                                 if let Err(error) = push_ocr_result(&results, frame_result) {
                                     set_fatal_error(&fatal_error, error);
@@ -1505,9 +1541,10 @@ mod tests {
 
     use super::{
         SourceVideoDimensions, build_ocr_filter_string, can_clone_previous_frame_result,
-        clone_frame_result_for_frame, create_frame_fingerprint, empty_frame_result,
-        full_frame_output_spec, get_primary_video_dimensions_with_ffprobe, is_low_detail_no_text,
-        is_visually_unchanged, run_ocr_pipeline_with_bins, take_next_raw_frame,
+        can_clone_previous_zone_result, clone_frame_result_for_frame, create_frame_fingerprint,
+        empty_frame_result, full_frame_output_spec, get_primary_video_dimensions_with_ffprobe,
+        is_low_detail_no_text, is_visually_unchanged, run_ocr_pipeline_with_bins,
+        take_next_raw_frame,
     };
 
     async fn ensure_models_dir() -> Result<std::path::PathBuf, String> {
@@ -1766,6 +1803,7 @@ mod tests {
         let frame = super::StreamedFrame {
             frame_index: 8,
             time_ms: 1600,
+            source_interval_index: 0,
             rgb_bytes: Vec::new(),
         };
 
@@ -1782,6 +1820,7 @@ mod tests {
         let frame = super::StreamedFrame {
             frame_index: 12,
             time_ms: 2400,
+            source_interval_index: 0,
             rgb_bytes: Vec::new(),
         };
 
@@ -1810,11 +1849,13 @@ mod tests {
         let consecutive = super::StreamedFrame {
             frame_index: 4,
             time_ms: 800,
+            source_interval_index: 0,
             rgb_bytes: Vec::new(),
         };
         let non_consecutive = super::StreamedFrame {
             frame_index: 8,
             time_ms: 1600,
+            source_interval_index: 0,
             rgb_bytes: Vec::new(),
         };
 
@@ -1829,6 +1870,43 @@ mod tests {
             &current_fingerprint,
             &previous,
             &previous_fingerprint,
+        ));
+    }
+
+    #[test]
+    fn duplicate_skip_does_not_cross_sparse_interval_boundaries() {
+        let previous_fingerprint = create_frame_fingerprint(&solid_image(320, 96, 24));
+        let current_fingerprint = create_frame_fingerprint(&solid_image(320, 96, 24));
+        let previous = OcrFrameResult {
+            frame_index: 3,
+            time_ms: 1_000,
+            text: "old text".to_string(),
+            confidence: 0.9,
+            segment_id: Some("segment-a".to_string()),
+            zone_id: Some("zone-a".to_string()),
+            role: None,
+            region: None,
+        };
+        let next_interval_first_frame = super::StreamedFrame {
+            frame_index: 4,
+            time_ms: 1_500,
+            source_interval_index: 1,
+            rgb_bytes: Vec::new(),
+        };
+        let previous_zone_result = super::PreviousZoneResult {
+            source_interval_index: 0,
+            fingerprint: previous_fingerprint,
+            result: previous,
+        };
+
+        assert_ne!(
+            previous_zone_result.source_interval_index,
+            next_interval_first_frame.source_interval_index
+        );
+        assert!(!can_clone_previous_zone_result(
+            &next_interval_first_frame,
+            &current_fingerprint,
+            &previous_zone_result,
         ));
     }
 
@@ -1849,6 +1927,7 @@ mod tests {
         let next = super::StreamedFrame {
             frame_index: 4,
             time_ms: 800,
+            source_interval_index: 0,
             rgb_bytes: Vec::new(),
         };
 

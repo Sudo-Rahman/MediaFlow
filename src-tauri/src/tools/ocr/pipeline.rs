@@ -14,9 +14,11 @@ use tokio::time::timeout;
 use crate::shared::ffmpeg_progress::FfmpegProgressTracker;
 use crate::shared::process::terminate_process;
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
-use crate::shared::store::resolve_ffmpeg_path;
+use crate::shared::store::{resolve_ffmpeg_path, resolve_ffprobe_path};
 use crate::shared::validation::validate_media_path;
-use crate::tools::ffprobe::get_media_duration_us;
+use crate::tools::ffprobe::{
+    get_media_duration_us, probe::get_primary_video_dimensions_with_ffprobe,
+};
 use crate::tools::ocr::engine::{
     create_ocr_engine, get_ocr_models_dir, resolve_ocr_engine_threads,
     resolve_ocr_worker_count_for_backend,
@@ -84,6 +86,20 @@ impl OcrFrameOutputSpec {
             .saturating_mul(self.height as usize)
             .saturating_mul(3)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SourceVideoDimensions {
+    width: u32,
+    height: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ContentRect {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
 }
 
 struct OcrTelemetryCounters {
@@ -447,6 +463,40 @@ fn crop_rect_for_region(region: &OcrRegion, width: u32, height: u32) -> (u32, u3
     )
 }
 
+fn content_rect_for_source_dimensions(
+    source: SourceVideoDimensions,
+    output_spec: OcrFrameOutputSpec,
+) -> ContentRect {
+    let source_width = source.width as f64;
+    let source_height = source.height as f64;
+    let output_width = output_spec.width as f64;
+    let output_height = output_spec.height as f64;
+    let scale = (output_width / source_width).min(output_height / source_height);
+    let content_width = (source_width * scale).round().clamp(1.0, output_width) as u32;
+    let content_height = (source_height * scale).round().clamp(1.0, output_height) as u32;
+
+    ContentRect {
+        x: output_spec.width.saturating_sub(content_width) / 2,
+        y: output_spec.height.saturating_sub(content_height) / 2,
+        width: content_width,
+        height: content_height,
+    }
+}
+
+fn crop_rect_for_region_in_content_rect(
+    region: &OcrRegion,
+    content_rect: ContentRect,
+) -> (u32, u32, u32, u32) {
+    let (relative_x, relative_y, width, height) =
+        crop_rect_for_region(region, content_rect.width, content_rect.height);
+    (
+        content_rect.x.saturating_add(relative_x),
+        content_rect.y.saturating_add(relative_y),
+        width,
+        height,
+    )
+}
+
 fn target_spec_for_zone(region: &OcrRegion) -> OcrFrameOutputSpec {
     if region.width >= 0.95 && region.height >= 0.95 {
         OcrFrameOutputSpec {
@@ -779,6 +829,7 @@ fn process_streamed_frames(
     language: &str,
     use_gpu: bool,
     output_spec: OcrFrameOutputSpec,
+    content_rect: ContentRect,
     selection: OcrSelection,
     requested_workers: u32,
     progress: Option<OcrProgressEmitter>,
@@ -868,10 +919,9 @@ fn process_streamed_frames(
                         for active_zone in active_zones {
                             let zone_key =
                                 zone_result_key(active_zone.segment_id, &active_zone.zone.id);
-                            let (x, y, width, height) = crop_rect_for_region(
+                            let (x, y, width, height) = crop_rect_for_region_in_content_rect(
                                 &active_zone.zone.region,
-                                output_spec.width,
-                                output_spec.height,
+                                content_rect,
                             );
                             if width == 0 || height == 0 {
                                 continue;
@@ -1016,6 +1066,7 @@ async fn run_ocr_pipeline_with_bins(
     video_path: &str,
     file_id: &str,
     models_dir: &Path,
+    source_dimensions: SourceVideoDimensions,
     language: &str,
     fps: f64,
     use_gpu: bool,
@@ -1036,6 +1087,7 @@ async fn run_ocr_pipeline_with_bins(
     let result = async {
         let total_timer = Instant::now();
         let output_spec = full_frame_output_spec();
+        let content_rect = content_rect_for_source_dimensions(source_dimensions, output_spec);
         let filter_str = build_ocr_filter_string(fps, output_spec);
         let (selection_start_time_ms, selection_end_time_ms) =
             selection_time_bounds_ms(&selection).unwrap_or((0, duration_us.unwrap_or(0) / 1000));
@@ -1128,6 +1180,7 @@ async fn run_ocr_pipeline_with_bins(
                 &language,
                 use_gpu,
                 output_spec,
+                content_rect,
                 selection,
                 requested_workers,
                 ocr_progress,
@@ -1275,7 +1328,15 @@ pub(crate) async fn run_ocr_pipeline(
 
     let _sleep_guard = SleepInhibitGuard::try_acquire("Running OCR pipeline").ok();
     let ffmpeg_path = resolve_ffmpeg_path(&app)?;
+    let ffprobe_path = resolve_ffprobe_path(&app)?;
     let models_dir = get_ocr_models_dir(&app)?;
+    let source_dimensions = get_primary_video_dimensions_with_ffprobe(&ffprobe_path, &video_path)
+        .await
+        .map(|dimensions| SourceVideoDimensions {
+            width: dimensions.width,
+            height: dimensions.height,
+        })
+        .map_err(|error| format!("Failed to get source video dimensions for OCR: {}", error))?;
     let duration_us = get_media_duration_us(&app, &video_path).await.ok();
     let duration_ms = duration_us
         .map(|duration_us| duration_us / 1000)
@@ -1305,6 +1366,7 @@ pub(crate) async fn run_ocr_pipeline(
         &video_path,
         &file_id,
         &models_dir,
+        source_dimensions,
         &language,
         fps,
         use_gpu,
@@ -1334,10 +1396,10 @@ mod tests {
     };
 
     use super::{
-        build_ocr_filter_string, can_clone_previous_frame_result, clone_frame_result_for_frame,
-        create_frame_fingerprint, empty_frame_result, full_frame_output_spec,
-        is_low_detail_no_text, is_visually_unchanged, run_ocr_pipeline_with_bins,
-        take_next_raw_frame,
+        SourceVideoDimensions, build_ocr_filter_string, can_clone_previous_frame_result,
+        clone_frame_result_for_frame, create_frame_fingerprint, empty_frame_result,
+        full_frame_output_spec, get_primary_video_dimensions_with_ffprobe, is_low_detail_no_text,
+        is_visually_unchanged, run_ocr_pipeline_with_bins, take_next_raw_frame,
     };
 
     async fn ensure_models_dir() -> Result<std::path::PathBuf, String> {
@@ -1357,6 +1419,13 @@ mod tests {
 
     fn default_cleanup() -> OcrSubtitleCleanupOptions {
         OcrSubtitleCleanupOptions::default()
+    }
+
+    fn default_source_dimensions() -> SourceVideoDimensions {
+        SourceVideoDimensions {
+            width: 160,
+            height: 90,
+        }
     }
 
     fn default_selection() -> OcrSelection {
@@ -1755,6 +1824,91 @@ mod tests {
     }
 
     #[test]
+    fn content_rect_for_16_9_source_uses_full_ocr_frame() {
+        let rect = super::content_rect_for_source_dimensions(
+            super::SourceVideoDimensions {
+                width: 1920,
+                height: 1080,
+            },
+            super::full_frame_output_spec(),
+        );
+
+        assert_eq!(
+            rect,
+            super::ContentRect {
+                x: 0,
+                y: 0,
+                width: 960,
+                height: 540,
+            }
+        );
+    }
+
+    #[test]
+    fn content_rect_for_4_3_source_excludes_pillarbox_bars() {
+        let rect = super::content_rect_for_source_dimensions(
+            super::SourceVideoDimensions {
+                width: 1440,
+                height: 1080,
+            },
+            super::full_frame_output_spec(),
+        );
+
+        assert_eq!(
+            rect,
+            super::ContentRect {
+                x: 120,
+                y: 0,
+                width: 720,
+                height: 540,
+            }
+        );
+    }
+
+    #[test]
+    fn content_rect_for_portrait_source_excludes_pillarbox_bars() {
+        let rect = super::content_rect_for_source_dimensions(
+            super::SourceVideoDimensions {
+                width: 1080,
+                height: 1920,
+            },
+            super::full_frame_output_spec(),
+        );
+
+        assert_eq!(
+            rect,
+            super::ContentRect {
+                x: 328,
+                y: 0,
+                width: 304,
+                height: 540,
+            }
+        );
+    }
+
+    #[test]
+    fn crop_region_maps_into_active_content_rect() {
+        let content_rect = super::ContentRect {
+            x: 120,
+            y: 0,
+            width: 720,
+            height: 540,
+        };
+
+        let crop = super::crop_rect_for_region_in_content_rect(
+            &OcrRegion {
+                x: 0.25,
+                y: 0.5,
+                width: 0.5,
+                height: 0.25,
+            },
+            content_rect,
+        );
+
+        assert_eq!(crop, (300, 270, 360, 135));
+    }
+
+    #[test]
     fn full_frame_filter_scales_to_fixed_rgb_frame() {
         let spec = full_frame_output_spec();
         let filter = build_ocr_filter_string(5.0, spec);
@@ -1775,6 +1929,7 @@ mod tests {
             video.to_string_lossy().as_ref(),
             "sample-pipeline",
             &models_dir,
+            default_source_dimensions(),
             "multi",
             1.0,
             false,
@@ -1813,6 +1968,7 @@ mod tests {
                     &video_path,
                     &file_id,
                     &models_dir,
+                    default_source_dimensions(),
                     "multi",
                     30.0,
                     false,
@@ -1861,6 +2017,16 @@ mod tests {
             .map(|value| value != "0")
             .unwrap_or(true);
         let models_dir = ensure_models_dir().await.expect("models should exist");
+        let source_dimensions = get_primary_video_dimensions_with_ffprobe(
+            crate::test_support::ffmpeg::ffprobe_path(),
+            &video_path,
+        )
+        .await
+        .map(|dimensions| SourceVideoDimensions {
+            width: dimensions.width,
+            height: dimensions.height,
+        })
+        .expect("benchmark video dimensions should be available");
         let started_at = std::time::Instant::now();
 
         let result = run_ocr_pipeline_with_bins(
@@ -1868,6 +2034,7 @@ mod tests {
             &video_path,
             "bench-pipeline",
             &models_dir,
+            source_dimensions,
             "multi",
             fps,
             use_gpu,

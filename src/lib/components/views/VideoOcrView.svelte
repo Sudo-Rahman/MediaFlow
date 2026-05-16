@@ -15,7 +15,6 @@
     OcrConfig,
     OcrLiveDetectionEvent,
     OcrModelsStatus,
-    OcrOutputFormat,
     OcrProgressEvent,
     OcrRegion,
     OcrRetryMode,
@@ -35,7 +34,6 @@
     invalidateOcrPreview,
     prepareOcrPreview,
   } from '$lib/services/ocr-preview';
-  import { ocrVersionToSubtitleFile } from '$lib/services/subtitle-interop';
   import { settingsStore, toolImportStore, videoOcrStore } from '$lib/stores';
   import {
     OcrOptionsPanel,
@@ -48,8 +46,12 @@
     processVideoOcrFile,
     summarizeOcrFiles,
   } from '$lib/components/video-ocr/video-ocr-processing';
+  import {
+    buildOcrVersionKey,
+    createOcrVersionedImportItems,
+  } from '$lib/components/video-ocr/ocr-versioned-export';
   import type { ProcessVideoOcrFileResult } from '$lib/components/video-ocr/video-ocr-processing';
-  import { createOcrSegmentFromZone, getAllowedOcrExportFormats } from '$lib/utils';
+  import { createOcrSegmentFromZone } from '$lib/utils';
   import { logAndToast } from '$lib/utils/log-toast';
 
   const VIDEO_FORMATS = VIDEO_EXTENSIONS.map((ext) => ext.toUpperCase()).join(', ');
@@ -94,9 +96,6 @@
       ? videoOcrStore.videoFiles.find((file) => file.id === resultDialogFileId) ?? null
       : null,
   );
-  const resultDialogAllowedFormats = $derived(
-    resultDialogFile ? getAllowedOcrExportFormats(resultDialogFile.ocrSelection) : ['srt', 'vtt'] as OcrOutputFormat[],
-  );
   const retryDialogFile = $derived(
     retryDialogFileId
       ? videoOcrStore.videoFiles.find((file) => file.id === retryDialogFileId) ?? null
@@ -134,10 +133,6 @@
 
     return 'No files ready for OCR';
   });
-
-  function buildOcrVersionKey(videoPath: string, versionId: string): string {
-    return `${videoPath}::${versionId}`;
-  }
 
   function getFreshFile(fileId: string): OcrVideoFile | undefined {
     return videoOcrStore.videoFiles.find((file) => file.id === fileId);
@@ -1077,24 +1072,7 @@
   }
 
   $effect(() => {
-    const versionedItems = videoOcrStore.videoFiles.flatMap((file) =>
-      file.ocrVersions.map((version) => ({
-        key: `video-ocr:${file.path}:${version.id}`,
-        name: `${file.name} - ${version.name}`,
-        kind: 'subtitle' as const,
-        createdAt: Date.parse(version.createdAt) || Date.now(),
-        mediaPath: file.path,
-        mediaName: file.name,
-        versionId: version.id,
-        versionName: version.name,
-        versionCreatedAt: version.createdAt,
-        persisted: persistedOcrVersionKeys.has(buildOcrVersionKey(file.path, version.id))
-          ? 'mediaflow' as const
-          : 'memory' as const,
-        allowedFormats: getAllowedOcrExportFormats(file.ocrSelection),
-        subtitleFile: ocrVersionToSubtitleFile(file.path, file.name, version),
-      })),
-    );
+    const versionedItems = createOcrVersionedImportItems(videoOcrStore.videoFiles, persistedOcrVersionKeys);
 
     toolImportStore.publishVersionedSource('ocr_versions', 'video-ocr', 'OCR', versionedItems);
   });
@@ -1153,7 +1131,6 @@
 <VideoOcrDialogs
   {resultDialogOpen}
   {resultDialogFile}
-  {resultDialogAllowedFormats}
   {retryDialogOpen}
   {retryDialogFile}
   {retryAllDialogOpen}

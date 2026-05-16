@@ -15,19 +15,18 @@
     createOcrResultVersionSnapshot,
   } from './ocr-result-dialog-state';
   import { buildFormattedOcrPreview } from './ocr-preview-format';
+  import { getOcrResultVersionAllowedFormats } from './ocr-versioned-export';
 
   interface OcrResultDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     file: OcrVideoFile | null;
-    allowedFormats?: OcrOutputFormat[];
   }
 
   let {
     open = $bindable(false),
     onOpenChange,
     file,
-    allowedFormats = ['srt', 'vtt'],
   }: OcrResultDialogProps = $props();
 
   let currentVersionIndex = $state(0);
@@ -111,6 +110,7 @@
   onDestroy(clearDeferredVersionLoad);
 
   const currentVersion = $derived(loadedVersions[currentVersionIndex] ?? null);
+  const currentAllowedFormats = $derived(getOcrResultVersionAllowedFormats(currentVersion));
   const normalizedSubtitles = $derived.by(() => {
     if (!open || versionsLoading || !currentVersion) {
       return [];
@@ -123,8 +123,8 @@
   );
 
   $effect(() => {
-    if (!allowedFormats.includes(selectedFormat)) {
-      selectedFormat = allowedFormats[0] ?? 'srt';
+    if (!currentAllowedFormats.includes(selectedFormat)) {
+      selectedFormat = currentAllowedFormats[0] ?? 'srt';
     }
   });
 
@@ -246,11 +246,11 @@
   currentIndex={currentVersionIndex}
   onIndexChange={(i) => { currentVersionIndex = i; }}
   isLoading={versionsLoading || !file}
-  formats={allowedFormats}
+  formats={currentAllowedFormats}
   selectedFormat={selectedFormat}
   onFormatChange={(f) => {
     const nextFormat = f as OcrOutputFormat;
-    if (allowedFormats.includes(nextFormat)) {
+    if (currentAllowedFormats.includes(nextFormat)) {
       selectedFormat = nextFormat;
     }
   }}

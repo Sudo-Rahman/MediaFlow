@@ -256,6 +256,7 @@
   }
 
   function formatUpdateStatus(): string {
+    if (updaterStore.status === 'managed-by-store') return updaterStore.updateManagementLabel;
     if (updaterStore.status === 'unsupported') return 'Unavailable outside the desktop app';
     if (updaterStore.status === 'checking') return 'Checking...';
     if (updaterStore.status === 'available') return `Update available: v${updaterStore.availableVersion}`;
@@ -813,27 +814,31 @@
             <div>
               <p class="font-medium">Updates</p>
               <p class="text-xs text-muted-foreground">{formatUpdateStatus()}</p>
-              <p class="mt-1 text-xs text-muted-foreground">Last check: {formatLastUpdateCheck()}</p>
+              {#if !updaterStore.isManagedByStore}
+                <p class="mt-1 text-xs text-muted-foreground">Last check: {formatLastUpdateCheck()}</p>
+              {/if}
               {#if updaterStore.lastError}
                 <p class="mt-1 text-xs text-destructive">{updaterStore.lastError}</p>
               {/if}
             </div>
             <div class="flex shrink-0 flex-wrap justify-end gap-2">
-              {#if updaterStore.hasUpdate}
+              {#if updaterStore.hasUpdate && !updaterStore.isManagedByStore}
                 <Button variant="default" size="sm" onclick={() => onOpenUpdateDialog?.()}>
                   <Download class="size-4 mr-2" />
                   View update
                 </Button>
               {/if}
-              <Button
-                variant="outline"
-                size="sm"
-                onclick={() => updaterStore.checkForUpdates({ manual: true })}
-                disabled={updaterStore.isBusy}
-              >
-                <RefreshCw class={['size-4 mr-2', updaterStore.status === 'checking' && 'animate-spin']} />
-                Check now
-              </Button>
+              {#if !updaterStore.isManagedByStore}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onclick={() => updaterStore.checkForUpdates({ manual: true })}
+                  disabled={updaterStore.isBusy}
+                >
+                  <RefreshCw class={['size-4 mr-2', updaterStore.status === 'checking' && 'animate-spin']} />
+                  Check now
+                </Button>
+              {/if}
             </div>
           </div>
         </div>

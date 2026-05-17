@@ -1,7 +1,8 @@
 import { isTauri } from '@tauri-apps/api/core';
 import { relaunch } from '@tauri-apps/plugin-process';
-import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater';
+import type { DownloadEvent, Update } from '@tauri-apps/plugin-updater';
 
+import { getUpdateManagementLabel, isMicrosoftStoreDistribution } from '$lib/services';
 import { logAndToast } from '$lib/utils/log-toast';
 
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -11,6 +12,7 @@ const UPDATE_INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 export type UpdaterStatus =
   | 'idle'
   | 'unsupported'
+  | 'managed-by-store'
   | 'checking'
   | 'available'
   | 'up-to-date'
@@ -36,6 +38,10 @@ let currentUpdate = $state.raw<Update | null>(null);
 let intervalId: ReturnType<typeof setInterval> | null = null;
 let initialized = false;
 
+async function loadUpdaterPlugin(): Promise<typeof import('@tauri-apps/plugin-updater')> {
+  return import('@tauri-apps/plugin-updater');
+}
+
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -53,6 +59,14 @@ function setAvailableUpdate(update: Update | null): void {
 
 function resetProgress(): void {
   progress = null;
+}
+
+function setManagedByStore(): void {
+  status = 'managed-by-store';
+  lastCheckAt = new Date();
+  lastError = null;
+  resetProgress();
+  setAvailableUpdate(null);
 }
 
 function updateDownloadProgress(event: DownloadEvent): void {
@@ -138,6 +152,14 @@ export const updaterStore = {
     return status === 'available' && availableVersion !== null;
   },
 
+  get isManagedByStore() {
+    return status === 'managed-by-store';
+  },
+
+  get updateManagementLabel() {
+    return getUpdateManagementLabel();
+  },
+
   get isBusy() {
     return status === 'checking'
       || status === 'downloading'
@@ -152,6 +174,11 @@ export const updaterStore = {
   initialize(): void {
     if (initialized) return;
     initialized = true;
+
+    if (isMicrosoftStoreDistribution()) {
+      setManagedByStore();
+      return;
+    }
 
     void this.checkForUpdates({ manual: false });
     intervalId = setInterval(() => {
@@ -168,6 +195,19 @@ export const updaterStore = {
   },
 
   async checkForUpdates({ manual = false }: { manual?: boolean } = {}): Promise<void> {
+    if (isMicrosoftStoreDistribution()) {
+      setManagedByStore();
+      if (manual) {
+        logAndToast.info({
+          source: 'updater',
+          title: 'Updates are managed by Microsoft Store',
+          details: 'Install updates from Microsoft Store.',
+          showToast: true,
+        });
+      }
+      return;
+    }
+
     if (!isTauri()) {
       status = 'unsupported';
       lastCheckAt = new Date();
@@ -183,6 +223,7 @@ export const updaterStore = {
     resetProgress();
 
     try {
+      const { check } = await loadUpdaterPlugin();
       const update = await check({ timeout: UPDATE_CHECK_TIMEOUT_MS });
       lastCheckAt = new Date();
 
@@ -216,6 +257,10 @@ export const updaterStore = {
   },
 
   async installAndRelaunch(): Promise<void> {
+    if (isMicrosoftStoreDistribution()) {
+      throw new Error('Updates are managed by Microsoft Store.');
+    }
+
     if (!currentUpdate) {
       throw new Error('No update is available.');
     }

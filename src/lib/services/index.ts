@@ -1,4 +1,5 @@
 export * from './async-task-queue';
+export * from './distribution';
 export * from './ffprobe';
 export * from './ffmpeg';
 export * from './llm-client';

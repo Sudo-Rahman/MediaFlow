@@ -32,6 +32,18 @@ test('renderPackageManifest includes Store identity fields', () => {
   assert.match(manifest, /Publisher="CN=Publisher"/);
 });
 
+test('renderPackageManifest uses the restricted capabilities namespace for full trust', () => {
+  const manifest = renderPackageManifest(manifestInputs);
+
+  assert.match(
+    manifest,
+    /xmlns:rescap="http:\/\/schemas\.microsoft\.com\/appx\/manifest\/foundation\/windows10\/restrictedcapabilities"/,
+  );
+  assert.match(manifest, /IgnorableNamespaces="[^"]*\brescap\b[^"]*"/);
+  assert.match(manifest, /<rescap:Capability Name="runFullTrust" \/>/);
+  assert.doesNotMatch(manifest, /<uap:Capability Name="runFullTrust" \/>/);
+});
+
 test('renderPackageManifest escapes XML attribute values', () => {
   const manifest = renderPackageManifest({
     ...manifestInputs,

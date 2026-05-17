@@ -99,7 +99,8 @@ export function renderPackageManifest({
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
-  IgnorableNamespaces="uap desktop6">
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap desktop6 rescap">
   <Identity
     Name="${escaped.identityName}"
     Publisher="${escaped.publisher}"
@@ -128,7 +129,7 @@ export function renderPackageManifest({
     </Application>
   </Applications>
   <Capabilities>
-    <uap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="runFullTrust" />
   </Capabilities>
 </Package>
 `;

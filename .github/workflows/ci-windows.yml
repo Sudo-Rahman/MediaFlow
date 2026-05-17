@@ -171,7 +171,7 @@ jobs:
           }
 
           Invoke-LibHarness
-          Invoke-LibHarness -TestArgs @("btbn_latest_page_contains_download_url_for_supported_variant", "--ignored")
+          Invoke-LibHarness "tools::ffmpeg::download::btbn::tests::btbn_latest_page_contains_download_url_for_supported_variant" "--ignored" "--exact"
 
       - name: Build Tauri app
         run: pnpm tauri build --no-bundle

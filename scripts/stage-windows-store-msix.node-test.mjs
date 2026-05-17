@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -258,6 +258,31 @@ test('stageWindowsStoreMsix rejects src-tauri stage dir without deleting sentine
       rootDir,
       env: createRequiredEnv(targetDir, {
         MICROSOFT_STORE_MSIX_STAGE_DIR: join(rootDir, 'src-tauri'),
+      }),
+    }),
+    /Unsafe MSIX stage directory/,
+  );
+
+  assert.equal(await readFile(sentinelPath, 'utf8'), 'must remain');
+});
+
+test('stageWindowsStoreMsix rejects symlinked stage ancestors without deleting real files', async () => {
+  const { rootDir, targetDir } = await createMinimalMsixFixture();
+  const distDir = join(rootDir, 'dist');
+  const symlinkPath = join(distDir, 'repo-link');
+  const victimDir = join(rootDir, 'src-tauri', 'victim');
+  const sentinelPath = join(victimDir, 'sentinel.txt');
+
+  await mkdir(distDir, { recursive: true });
+  await mkdir(victimDir, { recursive: true });
+  await writeFile(sentinelPath, 'must remain');
+  await symlink(rootDir, symlinkPath, 'dir');
+
+  await assert.rejects(
+    () => stageWindowsStoreMsix({
+      rootDir,
+      env: createRequiredEnv(targetDir, {
+        MICROSOFT_STORE_MSIX_STAGE_DIR: join(symlinkPath, 'src-tauri', 'victim'),
       }),
     }),
     /Unsafe MSIX stage directory/,

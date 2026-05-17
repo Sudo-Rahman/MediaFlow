@@ -1,5 +1,15 @@
 import { constants as fsConstants } from 'node:fs';
-import { access, cp, copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  cp,
+  copyFile,
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, isAbsolute, join, parse, relative, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -53,7 +63,46 @@ function isPathInside(parentDir, childPath) {
   return relativePath.length > 0 && !relativePath.startsWith('..') && !isAbsolute(relativePath);
 }
 
-function assertSafeStageDir({ rootDir, targetDir, stageDir }) {
+async function optionalRealpath(path) {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
+async function assertNoSymlinkedStageAncestors({ distDir, stageDir }) {
+  const relativeStageDir = relative(distDir, stageDir);
+  const stageParts = relativeStageDir.length === 0 ? [] : relativeStageDir.split(/[\\/]+/);
+  let currentPath = distDir;
+
+  for (const part of ['', ...stageParts]) {
+    if (part) {
+      currentPath = join(currentPath, part);
+    }
+
+    try {
+      const stats = await lstat(currentPath);
+      if (stats.isSymbolicLink()) {
+        throw new Error(
+          `Unsafe MSIX stage directory: ${currentPath} is a symbolic link in the stage path`,
+        );
+      }
+    } catch (error) {
+      if (error && error.code === 'ENOENT') {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+}
+
+async function assertSafeStageDir({ rootDir, targetDir, stageDir }) {
   const distDir = resolve(rootDir, 'dist');
 
   if (stageDir === parse(stageDir).root) {
@@ -84,6 +133,47 @@ function assertSafeStageDir({ rootDir, targetDir, stageDir }) {
 
   if (!isPathInside(distDir, stageDir)) {
     throw new Error(`Unsafe MSIX stage directory: ${stageDir} must be inside ${distDir}`);
+  }
+
+  await assertNoSymlinkedStageAncestors({ distDir, stageDir });
+
+  const realRootDir = await realpath(rootDir);
+  const realDistDir = await optionalRealpath(distDir);
+  const realTargetDir = await optionalRealpath(targetDir);
+  const realStageDir = await optionalRealpath(stageDir);
+
+  if (realDistDir && realDistDir !== realRootDir && !isPathInside(realRootDir, realDistDir)) {
+    throw new Error(`Unsafe MSIX stage directory: ${distDir} must be inside ${rootDir}`);
+  }
+
+  if (realStageDir) {
+    if (realStageDir === realRootDir) {
+      throw new Error(`Unsafe MSIX stage directory: ${stageDir} resolves to the repository root`);
+    }
+
+    if (realDistDir) {
+      if (realStageDir === realDistDir) {
+        throw new Error(`Unsafe MSIX stage directory: ${stageDir} resolves to the dist directory`);
+      }
+
+      if (!isPathInside(realDistDir, realStageDir)) {
+        throw new Error(`Unsafe MSIX stage directory: ${stageDir} must resolve inside ${distDir}`);
+      }
+    }
+
+    if (realTargetDir) {
+      if (realStageDir === realTargetDir) {
+        throw new Error(
+          `Unsafe MSIX stage directory: ${stageDir} resolves to the Cargo target directory`,
+        );
+      }
+
+      if (isPathInside(realStageDir, realTargetDir)) {
+        throw new Error(
+          `Unsafe MSIX stage directory: ${stageDir} resolves to an ancestor of the Cargo target directory`,
+        );
+      }
+    }
   }
 }
 
@@ -291,7 +381,7 @@ export async function stageWindowsStoreMsix({ rootDir = process.cwd(), env = pro
     absoluteRootDir,
     optionalValue(env.MICROSOFT_STORE_MSIX_STAGE_DIR, DEFAULT_STAGE_DIR),
   );
-  assertSafeStageDir({ rootDir: absoluteRootDir, targetDir, stageDir });
+  await assertSafeStageDir({ rootDir: absoluteRootDir, targetDir, stageDir });
   const executablePath = await firstExisting(
     [join(targetDir, manifestInputs.packageExecutable)],
     manifestInputs.packageExecutable,

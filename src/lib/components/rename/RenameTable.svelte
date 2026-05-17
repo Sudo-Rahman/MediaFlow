@@ -6,6 +6,7 @@
   import type { RenameFile } from '$lib/types/rename';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Button } from '$lib/components/ui/button';
+  import * as Empty from '$lib/components/ui/empty';
   import { Progress } from '$lib/components/ui/progress';
   import * as Tooltip from '$lib/components/ui/tooltip';
 
@@ -125,6 +126,7 @@
             <Checkbox
               checked={file.selected}
               onCheckedChange={() => onToggleSelection?.(file.id)}
+              aria-label={`Select ${file.originalName}${file.extension}`}
             />
           </div>
 
@@ -214,8 +216,8 @@
 
   <!-- Empty state -->
   {#if files.length === 0}
-    <div class="flex-1 flex items-center justify-center text-muted-foreground">
-      <p class="text-sm">No files to display</p>
-    </div>
+    <Empty.Root class="flex-1 border-0 py-8">
+      <Empty.Description>No files to display</Empty.Description>
+    </Empty.Root>
   {/if}
 </div>

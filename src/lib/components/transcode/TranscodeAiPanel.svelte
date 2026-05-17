@@ -2,10 +2,13 @@
   import { Loader2, Sparkles, Wand2 } from '@lucide/svelte';
 
   import { LlmProviderModelSelector } from '$lib/components/llm';
+  import * as Alert from '$lib/components/ui/alert';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
-  import { Label } from '$lib/components/ui/label';
+  import * as Empty from '$lib/components/ui/empty';
+  import * as Field from '$lib/components/ui/field';
+  import * as Item from '$lib/components/ui/item';
   import { Textarea } from '$lib/components/ui/textarea';
   import type { TranscodeAiIntent, TranscodeAiSizePreference, TranscodeFile, LLMProvider } from '$lib/types';
 
@@ -133,8 +136,8 @@
     />
 
     <div class="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-      <div class="space-y-2">
-        <Label class="text-sm font-medium">Optimization target</Label>
+      <Field.Field class="gap-2">
+        <Field.Label>Optimization target</Field.Label>
         <div class="flex flex-wrap gap-2">
           {#each INTENT_OPTIONS as option (option.value)}
             <Button
@@ -146,10 +149,10 @@
             </Button>
           {/each}
         </div>
-      </div>
+      </Field.Field>
 
-      <div class="space-y-2">
-        <Label class="text-sm font-medium">Size preference</Label>
+      <Field.Field class="gap-2">
+        <Field.Label>Size preference</Field.Label>
         <div class="flex flex-nowrap gap-2">
           {#each SIZE_OPTIONS as option (option.value)}
             <Button
@@ -162,11 +165,11 @@
             </Button>
           {/each}
         </div>
-      </div>
+      </Field.Field>
     </div>
 
-    <div class="space-y-2">
-      <Label class="text-sm font-medium" for="transcode-ai-user-prompt">Optional instruction</Label>
+    <Field.Field class="gap-2">
+      <Field.Label for="transcode-ai-user-prompt">Optional instruction</Field.Label>
       <Textarea
         id="transcode-ai-user-prompt"
         value={userPrompt}
@@ -174,10 +177,10 @@
         placeholder="Example: Keep all original audio tracks and make the video as small as practical."
         oninput={(event) => onUserPromptChange?.(event.currentTarget.value)}
       />
-      <p class="text-xs text-muted-foreground">
+      <Field.Description class="text-xs">
         Use this to steer codec or quality choices. Requests unrelated to transcoding will be rejected.
-      </p>
-    </div>
+      </Field.Description>
+    </Field.Field>
 
     <div class="flex flex-wrap gap-2">
       <Button onclick={handleAnalyzeSelected} disabled={isAnalyzing || selectedFile.status !== 'ready'}>
@@ -199,47 +202,68 @@
     </div>
 
     {#if selectedFile.aiStatus === 'error' && selectedFile.aiError}
-      <div class="rounded-lg border border-destructive/40 bg-destructive/5 p-4 space-y-2">
-        <p class="font-medium text-destructive">AI request rejected</p>
-        <p class="text-sm text-muted-foreground">{selectedFile.aiError}</p>
-      </div>
+      <Alert.Root variant="destructive">
+        <Alert.Title>AI request rejected</Alert.Title>
+        <Alert.Description>{selectedFile.aiError}</Alert.Description>
+      </Alert.Root>
     {:else if selectedFile.aiRecommendation}
-      <div class="rounded-lg border bg-muted/30 p-4 space-y-3">
-        <div class="flex items-center justify-between gap-3">
+      <Card.Root>
+        <Card.Header class="pb-3">
           <div>
-            <p class="font-medium">Latest AI recommendation</p>
-            <p class="text-xs text-muted-foreground">
+            <Card.Title>Latest AI recommendation</Card.Title>
+            <Card.Description>
               {selectedFile.aiRecommendation.provider} · {selectedFile.aiRecommendation.model}
-            </p>
+            </Card.Description>
           </div>
-          <div class="flex flex-wrap justify-end gap-2">
+          <Card.Action class="flex flex-wrap justify-end gap-2">
             <Badge>{selectedFile.aiRecommendation.intent}</Badge>
             <Badge variant="outline">
               {formatSizePreference(selectedFile.aiRecommendation.sizePreference)}
             </Badge>
-          </div>
-        </div>
-        <Textarea value={selectedFile.aiRecommendation.rationale} readonly class="min-h-24 text-sm" />
-        <div class="rounded-md border bg-background p-3 text-sm space-y-1">
-          <p><span class="font-medium">Container:</span> {selectedFile.profile.containerId.toUpperCase()}</p>
-          <p><span class="font-medium">Video:</span> {formatVideoSummary(selectedFile)}</p>
-          <p><span class="font-medium">Audio:</span> {formatAudioSummary(selectedFile)}</p>
-          <p><span class="font-medium">Subtitles:</span> {formatSubtitleSummary(selectedFile)}</p>
-          <p><span class="font-medium">AI overrides:</span> {formatAiGeneratedSummary(selectedFile)}</p>
-        </div>
-        {#if selectedFile.aiRecommendation.warnings?.length}
-          <div class="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm space-y-1">
-            <p class="font-medium">AI warnings</p>
-            {#each selectedFile.aiRecommendation.warnings as warning, index (index)}
-              <p class="text-muted-foreground">{warning}</p>
-            {/each}
-          </div>
-        {/if}
-      </div>
+          </Card.Action>
+        </Card.Header>
+        <Card.Content class="space-y-3">
+          <Textarea value={selectedFile.aiRecommendation.rationale} readonly class="min-h-24 text-sm" />
+          <Item.Group class="gap-2">
+            <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+              <Item.Title>Container</Item.Title>
+              <Item.Description>{selectedFile.profile.containerId.toUpperCase()}</Item.Description>
+            </Item.Root>
+            <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+              <Item.Title>Video</Item.Title>
+              <Item.Description>{formatVideoSummary(selectedFile)}</Item.Description>
+            </Item.Root>
+            <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+              <Item.Title>Audio</Item.Title>
+              <Item.Description>{formatAudioSummary(selectedFile)}</Item.Description>
+            </Item.Root>
+            <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+              <Item.Title>Subtitles</Item.Title>
+              <Item.Description>{formatSubtitleSummary(selectedFile)}</Item.Description>
+            </Item.Root>
+            <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+              <Item.Title>AI overrides</Item.Title>
+              <Item.Description>{formatAiGeneratedSummary(selectedFile)}</Item.Description>
+            </Item.Root>
+          </Item.Group>
+          {#if selectedFile.aiRecommendation.warnings?.length}
+            <Alert.Root role="status" aria-live="polite" class="border-amber-500/40 text-amber-700 dark:text-amber-300">
+              <Alert.Title>AI warnings</Alert.Title>
+              <Alert.Description class="space-y-1">
+                {#each selectedFile.aiRecommendation.warnings as warning, index (index)}
+                  <p>{warning}</p>
+                {/each}
+              </Alert.Description>
+            </Alert.Root>
+          {/if}
+        </Card.Content>
+      </Card.Root>
     {:else}
-      <div class="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-        AI recommendations will appear here and automatically fill the advanced settings below.
-      </div>
+      <Empty.Root class="border p-4">
+        <Empty.Description>
+          AI recommendations will appear here and automatically fill the advanced settings below.
+        </Empty.Description>
+      </Empty.Root>
     {/if}
   </Card.Content>
 </Card.Root>

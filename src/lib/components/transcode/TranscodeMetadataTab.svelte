@@ -17,12 +17,13 @@
   } from '$lib/services/transcode';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
+  import * as Card from '$lib/components/ui/card';
   import { Checkbox } from '$lib/components/ui/checkbox';
+  import * as Empty from '$lib/components/ui/empty';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import * as Select from '$lib/components/ui/select';
   import { formatBitrate, formatLanguage, formatResolution } from '$lib/utils/format';
-  import { cn } from '$lib/utils';
 
   import type { TranscodeMetadataUpdater } from './types';
 
@@ -236,155 +237,156 @@
 </script>
 
 <div class="space-y-4">
-  <div class="rounded-md border bg-muted/20 p-3">
-    <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-      <div class="min-w-0 space-y-1">
-        <div class="flex flex-wrap items-center gap-2">
-          <Layers class="size-4 text-muted-foreground" />
-          <p class="text-sm font-medium">Output metadata</p>
-          <Badge variant="outline">{selectedContainer?.label ?? file.profile.containerId.toUpperCase()}</Badge>
-          <Badge variant="secondary">{outputTracks.length} output track{outputTracks.length === 1 ? '' : 's'}</Badge>
-          {#if schema.clearsMatroskaStatistics}
-            <Badge variant="outline">Matroska stale stats cleared</Badge>
-          {/if}
-        </div>
-        <p class="text-xs text-muted-foreground">
-          Edit the metadata that will be written to the transcoded output.
-        </p>
-      </div>
-
-      <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
-        {#if schema.supportsContainerTitle}
-          <div class="min-w-56 space-y-1">
-            <Label for="metadata-container-title" class="text-xs">Output title</Label>
-            <Input
-              id="metadata-container-title"
-              value={file.metadata.containerTitle ?? ''}
-              placeholder="Optional file title"
-              disabled={isProcessing}
-              oninput={(event) => updateContainerTitle(event.currentTarget.value)}
-              class="h-8"
-            />
+  <Card.Root>
+    <Card.Content>
+      <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div class="min-w-0 space-y-1">
+          <div class="flex flex-wrap items-center gap-2">
+            <Layers class="size-4 text-muted-foreground" />
+            <p class="text-sm font-medium">Output metadata</p>
+            <Badge variant="outline">{selectedContainer?.label ?? file.profile.containerId.toUpperCase()}</Badge>
+            <Badge variant="secondary">{outputTracks.length} output track{outputTracks.length === 1 ? '' : 's'}</Badge>
+            {#if schema.clearsMatroskaStatistics}
+              <Badge variant="outline">Matroska stale stats cleared</Badge>
+            {/if}
           </div>
-        {/if}
+          <p class="text-xs text-muted-foreground">
+            Edit the metadata that will be written to the transcoded output.
+          </p>
+        </div>
 
-        <Button
-          variant="outline"
-          size="sm"
-          onclick={onResetMetadata}
-          disabled={isProcessing || !onResetMetadata}
-        >
-          <RotateCcw class="mr-2 size-3.5" />
-          Reset from source
-        </Button>
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
+          {#if schema.supportsContainerTitle}
+            <div class="min-w-56 space-y-1">
+              <Label for="metadata-container-title" class="text-xs">Output title</Label>
+              <Input
+                id="metadata-container-title"
+                value={file.metadata.containerTitle ?? ''}
+                placeholder="Optional file title"
+                disabled={isProcessing}
+                oninput={(event) => updateContainerTitle(event.currentTarget.value)}
+                class="h-8"
+              />
+            </div>
+          {/if}
+
+          <Button
+            variant="outline"
+            size="sm"
+            onclick={onResetMetadata}
+            disabled={isProcessing || !onResetMetadata}
+          >
+            <RotateCcw class="mr-2 size-3.5" />
+            Reset from source
+          </Button>
+        </div>
       </div>
-    </div>
-  </div>
+    </Card.Content>
+  </Card.Root>
 
   {#if outputTracks.length > 0}
-    <div
-      class={cn(
-        'rounded-md border bg-background p-3 transition-colors',
-        selectedCount > 0 ? 'border-primary/50' : 'border-border',
-      )}
-    >
-      <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <label class="flex items-center gap-2 text-sm font-medium">
-          <Checkbox
-            checked={selectedCount === outputTracks.length}
-            indeterminate={selectedCount > 0 && selectedCount < outputTracks.length}
-            onCheckedChange={(checked) => setAllSelected(Boolean(checked))}
-            disabled={isProcessing}
-          />
-          <span>{selectedCount > 0 ? `${selectedCount} selected` : 'Select tracks for batch editing'}</span>
-        </label>
+    <Card.Root class={selectedCount > 0 ? 'border-primary/50' : undefined}>
+      <Card.Content>
+        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <label class="flex items-center gap-2 text-sm font-medium">
+            <Checkbox
+              checked={selectedCount === outputTracks.length}
+              indeterminate={selectedCount > 0 && selectedCount < outputTracks.length}
+              onCheckedChange={(checked) => setAllSelected(Boolean(checked))}
+              disabled={isProcessing}
+            />
+            <span>{selectedCount > 0 ? `${selectedCount} selected` : 'Select tracks for batch editing'}</span>
+          </label>
 
-        {#if selectedCount > 0}
-          <div class="flex flex-col gap-2 xl:flex-row xl:items-end">
-            {#if schema.supportsLanguage}
-              <div class="space-y-1">
-                <Label class="text-xs">Batch language</Label>
-                <div class="flex gap-2">
-                  <Select.Root
-                    type="single"
-                    value={batchLanguage}
-                    onValueChange={(value) => batchLanguage = value}
-                    disabled={isProcessing}
-                  >
-                    <Select.Trigger class="h-8 w-36">
-                      {formatLanguage(batchLanguage)}
-                    </Select.Trigger>
-                    <Select.Content>
-                      <Select.Group>
-                        {#each COMMON_LANGUAGES as language (language.code)}
-                          <Select.Item value={language.code}>{language.label}</Select.Item>
-                        {/each}
-                      </Select.Group>
-                    </Select.Content>
-                  </Select.Root>
-                  <Button variant="outline" size="sm" onclick={applyBatchLanguage} disabled={isProcessing}>
-                    Apply
-                  </Button>
+          {#if selectedCount > 0}
+            <div class="flex flex-col gap-2 xl:flex-row xl:items-end">
+              {#if schema.supportsLanguage}
+                <div class="space-y-1">
+                  <Label class="text-xs">Batch language</Label>
+                  <div class="flex gap-2">
+                    <Select.Root
+                      type="single"
+                      value={batchLanguage}
+                      onValueChange={(value) => batchLanguage = value}
+                      disabled={isProcessing}
+                    >
+                      <Select.Trigger class="h-8 w-36">
+                        {formatLanguage(batchLanguage)}
+                      </Select.Trigger>
+                      <Select.Content>
+                        <Select.Group>
+                          {#each COMMON_LANGUAGES as language (language.code)}
+                            <Select.Item value={language.code}>{language.label}</Select.Item>
+                          {/each}
+                        </Select.Group>
+                      </Select.Content>
+                    </Select.Root>
+                    <Button variant="outline" size="sm" onclick={applyBatchLanguage} disabled={isProcessing}>
+                      Apply
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            {/if}
+              {/if}
 
-            {#if schema.supportsTrackTitle}
-              <div class="space-y-1">
-                <Label for="metadata-title-pattern" class="text-xs">Title pattern</Label>
-                <div class="flex gap-2">
-                  <Input
-                    id="metadata-title-pattern"
-                    value={batchTitlePattern}
-                    placeholder={'English Audio {n}'}
-                    oninput={(event) => batchTitlePattern = event.currentTarget.value}
-                    disabled={isProcessing}
-                    class="h-8 w-44"
-                  />
-                  <Button variant="outline" size="sm" onclick={applyBatchTitlePattern} disabled={isProcessing}>
-                    Apply
-                  </Button>
-                  <Button variant="ghost" size="sm" onclick={clearBatchTitle} disabled={isProcessing}>
-                    Clear
-                  </Button>
+              {#if schema.supportsTrackTitle}
+                <div class="space-y-1">
+                  <Label for="metadata-title-pattern" class="text-xs">Title pattern</Label>
+                  <div class="flex gap-2">
+                    <Input
+                      id="metadata-title-pattern"
+                      value={batchTitlePattern}
+                      placeholder={'English Audio {n}'}
+                      oninput={(event) => batchTitlePattern = event.currentTarget.value}
+                      disabled={isProcessing}
+                      class="h-8 w-44"
+                    />
+                    <Button variant="outline" size="sm" onclick={applyBatchTitlePattern} disabled={isProcessing}>
+                      Apply
+                    </Button>
+                    <Button variant="ghost" size="sm" onclick={clearBatchTitle} disabled={isProcessing}>
+                      Clear
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            {/if}
+              {/if}
 
-            {#if schema.supportsDefault || schema.supportsForced}
-              <div class="flex flex-wrap gap-2">
-                {#if schema.supportsDefault}
-                  <Button variant="outline" size="sm" onclick={() => applyBatchFlag('default', true)} disabled={isProcessing}>
-                    Set default
-                  </Button>
-                  <Button variant="ghost" size="sm" onclick={() => applyBatchFlag('default', false)} disabled={isProcessing}>
-                    Clear default
-                  </Button>
-                {/if}
-                {#if schema.supportsForced}
-                  <Button variant="outline" size="sm" onclick={() => applyBatchFlag('forced', true)} disabled={isProcessing}>
-                    Set forced
-                  </Button>
-                  <Button variant="ghost" size="sm" onclick={() => applyBatchFlag('forced', false)} disabled={isProcessing}>
-                    Clear forced
-                  </Button>
-                {/if}
-              </div>
-            {/if}
-          </div>
-        {/if}
-      </div>
-    </div>
+              {#if schema.supportsDefault || schema.supportsForced}
+                <div class="flex flex-wrap gap-2">
+                  {#if schema.supportsDefault}
+                    <Button variant="outline" size="sm" onclick={() => applyBatchFlag('default', true)} disabled={isProcessing}>
+                      Set default
+                    </Button>
+                    <Button variant="ghost" size="sm" onclick={() => applyBatchFlag('default', false)} disabled={isProcessing}>
+                      Clear default
+                    </Button>
+                  {/if}
+                  {#if schema.supportsForced}
+                    <Button variant="outline" size="sm" onclick={() => applyBatchFlag('forced', true)} disabled={isProcessing}>
+                      Set forced
+                    </Button>
+                    <Button variant="ghost" size="sm" onclick={() => applyBatchFlag('forced', false)} disabled={isProcessing}>
+                      Clear forced
+                    </Button>
+                  {/if}
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      </Card.Content>
+    </Card.Root>
 
     <div class="space-y-3">
       {#each groupedTracks as [type, tracks] (type)}
-        <section class="rounded-md border">
-          <div class="flex items-center justify-between border-b bg-muted/20 px-3 py-2">
-            <p class="text-sm font-medium">{formatTypeLabel(type)}</p>
-            <Badge variant="secondary">{tracks.length}</Badge>
-          </div>
+        <Card.Root>
+          <Card.Header class="border-b pb-3">
+            <Card.Title>{formatTypeLabel(type)}</Card.Title>
+            <Card.Action>
+              <Badge variant="secondary">{tracks.length}</Badge>
+            </Card.Action>
+          </Card.Header>
 
-          <div class="divide-y">
+          <Card.Content class="divide-y p-0">
             {#each tracks as track (track.key)}
               <div class="grid gap-3 p-3 xl:grid-cols-[minmax(14rem,1fr)_minmax(13rem,1.2fr)_9rem_10rem] xl:items-center">
                 <div class="min-w-0">
@@ -478,13 +480,13 @@
                 {/if}
               </div>
             {/each}
-          </div>
-        </section>
+          </Card.Content>
+        </Card.Root>
       {/each}
     </div>
   {:else}
-    <div class="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-      No output tracks are enabled for the current transcode profile.
-    </div>
+    <Empty.Root class="border p-4">
+      <Empty.Description>No output tracks are enabled for the current transcode profile.</Empty.Description>
+    </Empty.Root>
   {/if}
 </div>

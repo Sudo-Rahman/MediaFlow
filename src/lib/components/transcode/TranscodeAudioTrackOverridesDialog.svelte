@@ -12,8 +12,10 @@
   } from '$lib/types';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
+  import * as Card from '$lib/components/ui/card';
   import * as Dialog from '$lib/components/ui/dialog';
-  import { Separator } from '$lib/components/ui/separator';
+  import * as Empty from '$lib/components/ui/empty';
+  import * as Item from '$lib/components/ui/item';
   import { Switch } from '$lib/components/ui/switch';
   import {
     cloneAudioTrackOverride,
@@ -267,74 +269,90 @@
 
     {#if file && audioTracks.length > 0}
       <div class="flex min-h-0 flex-1 flex-col gap-4 py-2 lg:flex-row">
-        <div class="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-muted/20 p-3 lg:w-72 lg:flex-none">
-          <div class="mb-3 flex items-center justify-between gap-3">
-            <p class="text-sm font-medium">Detected audio tracks</p>
-            <Badge variant="outline">{audioTracks.length}</Badge>
-          </div>
+        <Card.Root class="flex min-h-0 flex-col overflow-hidden lg:w-72 lg:flex-none">
+          <Card.Header class="pb-3">
+            <Card.Title>Detected audio tracks</Card.Title>
+            <Card.Action>
+              <Badge variant="outline">{audioTracks.length}</Badge>
+            </Card.Action>
+          </Card.Header>
 
-          <div class="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-            {#each audioTracks as track (track.id)}
-              {@const isSelected = selectedTrack?.id === track.id}
-              {@const isCustom = hasDraftOverride(track.id)}
-              <button
-                class={cn(
-                  'w-full rounded-lg border bg-background px-3 py-2 text-left transition-colors',
-                  isSelected ? 'border-primary bg-primary/5' : 'hover:bg-muted/50',
-                )}
-                onclick={() => selectedTrackId = track.id}
-              >
-                <div class="flex items-start justify-between gap-3">
-                  <div class="min-w-0">
-                    <p class="truncate text-sm font-medium">{getTrackLabel(track)} · {getTrackDescription(track)}</p>
-                    <p class="truncate text-xs text-muted-foreground">{getTrackMeta(track)}</p>
-                    <p class="truncate text-xs text-muted-foreground">{getTrackModeSummary(track.id)}</p>
-                  </div>
+          <Card.Content class="min-h-0 flex-1 overflow-y-auto">
+            <div class="flex flex-col gap-2" aria-label="Detected audio tracks">
+              {#each audioTracks as track (track.id)}
+                {@const isSelected = selectedTrack?.id === track.id}
+                {@const isCustom = hasDraftOverride(track.id)}
+                <Item.Root
+                  variant="outline"
+                  size="sm"
+                  class={cn(
+                    'cursor-pointer items-start text-left',
+                    isSelected && 'border-primary bg-primary/5',
+                  )}
+                >
+                  {#snippet child({ props })}
+                    <button
+                      {...props}
+                      type="button"
+                      aria-pressed={isSelected}
+                      onclick={() => selectedTrackId = track.id}
+                    >
+                      <Item.Content class="min-w-0">
+                        <Item.Title class="truncate">{getTrackLabel(track)} · {getTrackDescription(track)}</Item.Title>
+                        <Item.Description class="truncate">{getTrackMeta(track)}</Item.Description>
+                        <Item.Description class="truncate">{getTrackModeSummary(track.id)}</Item.Description>
+                      </Item.Content>
 
-                  <Badge variant={isCustom ? 'default' : 'outline'}>
-                    {isCustom ? 'Custom' : 'Global'}
-                  </Badge>
-                </div>
-              </button>
-            {/each}
-          </div>
-        </div>
+                      <Item.Actions>
+                        <Badge variant={isCustom ? 'default' : 'outline'}>
+                          {isCustom ? 'Custom' : 'Global'}
+                        </Badge>
+                      </Item.Actions>
+                    </button>
+                  {/snippet}
+                </Item.Root>
+              {/each}
+            </div>
+          </Card.Content>
+        </Card.Root>
 
         <div class="min-h-0 flex-1 overflow-auto">
           <div class="h-full min-h-0 px-4">
             {#if selectedTrack && selectedTrackEffectiveSettings}
               <div class="space-y-4 pb-1">
-                <div class="rounded-lg border bg-muted/20 p-4">
-                  <div class="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p class="text-sm font-medium">{getTrackLabel(selectedTrack)}</p>
-                      <p class="text-sm text-muted-foreground">{getTrackDescription(selectedTrack)}</p>
+                <Card.Root>
+                  <Card.Content class="space-y-4">
+                    <div class="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p class="text-sm font-medium">{getTrackLabel(selectedTrack)}</p>
+                        <p class="text-sm text-muted-foreground">{getTrackDescription(selectedTrack)}</p>
+                      </div>
+
+                      <Badge variant={selectedTrackOverride ? 'default' : 'outline'}>
+                        {selectedTrackOverride ? 'Custom' : 'Global'}
+                      </Badge>
                     </div>
 
-                    <Badge variant={selectedTrackOverride ? 'default' : 'outline'}>
-                      {selectedTrackOverride ? 'Custom' : 'Global'}
-                    </Badge>
-                  </div>
+                    <div class="flex flex-wrap items-center gap-3">
+                      <label class="flex items-center gap-2 text-sm">
+                        <Switch
+                          checked={Boolean(selectedTrackOverride)}
+                          onCheckedChange={(checked) => setCustomEnabled(selectedTrack.id, checked)}
+                        />
+                        <span>Use custom settings for this track</span>
+                      </label>
 
-                  <div class="mt-4 flex flex-wrap items-center gap-3">
-                    <label class="flex items-center gap-2 text-sm">
-                      <Switch
-                        checked={Boolean(selectedTrackOverride)}
-                        onCheckedChange={(checked) => setCustomEnabled(selectedTrack.id, checked)}
-                      />
-                      <span>Use custom settings for this track</span>
-                    </label>
-
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onclick={() => removeTrackOverride(selectedTrack.id)}
-                      disabled={!selectedTrackOverride}
-                    >
-                      Reset to global
-                    </Button>
-                  </div>
-                </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onclick={() => removeTrackOverride(selectedTrack.id)}
+                        disabled={!selectedTrackOverride}
+                      >
+                        Reset to global
+                      </Button>
+                    </div>
+                  </Card.Content>
+                </Card.Root>
 
                 {#if selectedTrackOverride}
                   <TranscodeAudioSettingsForm
@@ -366,17 +384,37 @@
                     />
                   {/if}
                 {:else}
-                  <div class="rounded-lg border border-dashed p-4 text-sm text-muted-foreground space-y-2">
-                    <p>This track currently inherits the global audio settings from the Audio tab.</p>
-                    <Separator />
-                    <div class="grid gap-2 text-foreground sm:grid-cols-2">
-                      <p><span class="font-medium">Mode:</span> {selectedTrackEffectiveSettings.mode}</p>
-                      <p><span class="font-medium">Encoder:</span> {selectedTrackEncoder?.label ?? selectedTrackEffectiveSettings.encoderId ?? 'N/A'}</p>
-                      <p><span class="font-medium">Bitrate:</span> {selectedTrackEffectiveSettings.bitrateKbps ? `${selectedTrackEffectiveSettings.bitrateKbps} kbps` : 'Source / automatic'}</p>
-                      <p><span class="font-medium">Channels:</span> {selectedTrackEffectiveSettings.channels ?? 'Source / automatic'}</p>
-                      <p><span class="font-medium">Sample rate:</span> {selectedTrackEffectiveSettings.sampleRate ? `${selectedTrackEffectiveSettings.sampleRate} Hz` : 'Source / automatic'}</p>
-                    </div>
-                  </div>
+                  <Card.Root>
+                    <Card.Header class="pb-3">
+                      <Card.Description>
+                        This track currently inherits the global audio settings from the Audio tab.
+                      </Card.Description>
+                    </Card.Header>
+                    <Card.Content>
+                      <Item.Group class="gap-2 sm:grid sm:grid-cols-2">
+                        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+                          <Item.Title>Mode</Item.Title>
+                          <Item.Description>{selectedTrackEffectiveSettings.mode}</Item.Description>
+                        </Item.Root>
+                        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+                          <Item.Title>Encoder</Item.Title>
+                          <Item.Description>{selectedTrackEncoder?.label ?? selectedTrackEffectiveSettings.encoderId ?? 'N/A'}</Item.Description>
+                        </Item.Root>
+                        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+                          <Item.Title>Bitrate</Item.Title>
+                          <Item.Description>{selectedTrackEffectiveSettings.bitrateKbps ? `${selectedTrackEffectiveSettings.bitrateKbps} kbps` : 'Source / automatic'}</Item.Description>
+                        </Item.Root>
+                        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+                          <Item.Title>Channels</Item.Title>
+                          <Item.Description>{selectedTrackEffectiveSettings.channels ?? 'Source / automatic'}</Item.Description>
+                        </Item.Root>
+                        <Item.Root variant="outline" size="xs" class="justify-between sm:col-span-2" role="listitem">
+                          <Item.Title>Sample rate</Item.Title>
+                          <Item.Description>{selectedTrackEffectiveSettings.sampleRate ? `${selectedTrackEffectiveSettings.sampleRate} Hz` : 'Source / automatic'}</Item.Description>
+                        </Item.Root>
+                      </Item.Group>
+                    </Card.Content>
+                  </Card.Root>
                 {/if}
               </div>
             {/if}
@@ -393,9 +431,9 @@
         </Button>
       </Dialog.Footer>
     {:else}
-      <div class="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-        No audio tracks were detected in this file.
-      </div>
+      <Empty.Root class="border p-4">
+        <Empty.Description>No audio tracks were detected in this file.</Empty.Description>
+      </Empty.Root>
     {/if}
   </Dialog.Content>
 </Dialog.Root>

@@ -4,9 +4,11 @@
 
   import type { TranscodeFile, TranscodePreset, TranscodePresetTab } from '$lib/types';
   import { Button } from '$lib/components/ui/button';
+  import { Label } from '$lib/components/ui/label';
   import { Input } from '$lib/components/ui/input';
   import * as Select from '$lib/components/ui/select';
   import * as Dialog from '$lib/components/ui/dialog';
+  import * as Empty from '$lib/components/ui/empty';
 
   interface Props {
     open: boolean;
@@ -99,6 +101,10 @@
     await onSave?.(name);
     savePresetNames[tab] = '';
   }
+
+  const controlId = $props.id();
+  const presetSelectId = `${controlId}-preset-select`;
+  const savePresetNameId = `${controlId}-save-preset-name`;
 </script>
 
 <Dialog.Root bind:open>
@@ -110,35 +116,42 @@
 
     {#if selectedFile}
       <div class="space-y-3">
-        <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto]">
-          <Select.Root
-            type="single"
-            value={getSelectedPresetId()}
-            onValueChange={(value) => setSelectedPresetId(value)}
-          >
-            <Select.Trigger class="w-full">
-              {getSelectedPresetId()
-                ? presets.find((preset) => preset.id === getSelectedPresetId())?.name
-                : 'Select a saved preset'}
-            </Select.Trigger>
-            <Select.Content>
-              <Select.Group>
-                {#each presets as preset (preset.id)}
-                  <Select.Item value={preset.id}>{preset.name}</Select.Item>
-                {/each}
-              </Select.Group>
-            </Select.Content>
-          </Select.Root>
+        <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-end">
+          <div class="space-y-2">
+            <Label for={presetSelectId}>Saved preset</Label>
+            <Select.Root
+              type="single"
+              value={getSelectedPresetId()}
+              onValueChange={(value) => setSelectedPresetId(value)}
+            >
+              <Select.Trigger id={presetSelectId} class="w-full">
+                {getSelectedPresetId()
+                  ? presets.find((preset) => preset.id === getSelectedPresetId())?.name
+                  : 'Select a saved preset'}
+              </Select.Trigger>
+              <Select.Content>
+                <Select.Group>
+                  {#each presets as preset (preset.id)}
+                    <Select.Item value={preset.id}>{preset.name}</Select.Item>
+                  {/each}
+                </Select.Group>
+              </Select.Content>
+            </Select.Root>
+          </div>
           <Button variant="outline" onclick={handleApply} disabled={!getSelectedPresetId()}>Apply</Button>
           <Button variant="ghost" onclick={handleDelete} disabled={!getSelectedPresetId()}>Delete</Button>
         </div>
 
-        <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
-          <Input
-            placeholder={`Save current ${tab} settings as...`}
-            value={getSavePresetName()}
-            oninput={(event) => setSavePresetName(event.currentTarget.value)}
-          />
+        <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+          <div class="space-y-2">
+            <Label for={savePresetNameId}>Preset name</Label>
+            <Input
+              id={savePresetNameId}
+              placeholder={`Save current ${tab} settings as...`}
+              value={getSavePresetName()}
+              oninput={(event) => setSavePresetName(event.currentTarget.value)}
+            />
+          </div>
           <Button onclick={handleSave}>
             <Save class="size-4 mr-2" />
             Save Preset
@@ -146,9 +159,9 @@
         </div>
       </div>
     {:else}
-      <div class="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-        Select a file to manage presets for the active tab.
-      </div>
+      <Empty.Root class="border p-4">
+        <Empty.Description>Select a file to manage presets for the active tab.</Empty.Description>
+      </Empty.Root>
     {/if}
   </Dialog.Content>
 </Dialog.Root>

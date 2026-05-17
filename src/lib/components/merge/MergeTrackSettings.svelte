@@ -9,6 +9,7 @@
   import { Separator } from '$lib/components/ui/separator';
   import * as Dialog from '$lib/components/ui/dialog';
   import * as Select from '$lib/components/ui/select';
+  import * as Item from '$lib/components/ui/item';
   import { Video, Volume2, Subtitles, Clock, Languages } from '@lucide/svelte';
 
   interface MergeTrackSettingsProps {
@@ -80,9 +81,10 @@
     </Dialog.Header>
 
     {#if track && config}
-      <div class="dialog-scroll-body space-y-4 py-4">
-        <div class="rounded-md bg-muted/50 p-3 text-sm">
-          <div class="flex items-center gap-2 flex-wrap">
+      <div class="dialog-scroll-body px-1 space-y-4 py-4">
+        <Item.Root size="sm" variant="muted">
+          <Item.Content>
+          <div class="flex items-center gap-2 flex-wrap text-sm">
             <span class="font-medium">{track.codec.toUpperCase()}</span>
             {#if track.type === 'video' && track.width && track.height}
               <span class="text-muted-foreground">• {track.width}x{track.height}</span>
@@ -91,7 +93,8 @@
               <span class="text-muted-foreground">• {track.channels}ch</span>
             {/if}
           </div>
-        </div>
+          </Item.Content>
+        </Item.Root>
 
         <Separator />
 
@@ -118,7 +121,7 @@
             </Select.Trigger>
             <Select.Content>
               <Select.Group>
-                {#each COMMON_LANGUAGES as lang}
+                {#each COMMON_LANGUAGES as lang (lang.code)}
                   <Select.Item value={lang.code}>{lang.label}</Select.Item>
                 {/each}
               </Select.Group>

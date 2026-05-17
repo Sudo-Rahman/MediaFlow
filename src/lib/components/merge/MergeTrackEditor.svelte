@@ -7,6 +7,8 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import * as Card from '$lib/components/ui/card';
+  import * as Empty from '$lib/components/ui/empty';
+  import * as Item from '$lib/components/ui/item';
 
   interface MergeTrackEditorProps {
     tracks: MergeTrack[];
@@ -86,7 +88,7 @@
 </script>
 
 <div class={cn('space-y-4', className)}>
-  {#each Object.entries(groupedTracks) as [type, typeTracks]}
+  {#each Object.entries(groupedTracks) as [type, typeTracks] (type)}
     {#if typeTracks.length > 0}
       {@const typeConfig = TYPE_CONFIG[type as keyof typeof TYPE_CONFIG]}
       {@const Icon = typeConfig?.icon}
@@ -100,14 +102,17 @@
           </div>
         </Card.Header>
         <Card.Content class="pt-0 space-y-1.5">
+          <Item.Group class="gap-1.5">
           {#each typeTracks as track (track.id)}
             {@const config = getConfig(track.id)}
             {@const enabled = isEnabled(track.id)}
             {@const trackTypeConfig = TYPE_CONFIG[track.type as keyof typeof TYPE_CONFIG]}
-            <div
+            <Item.Root
+              size="sm"
+              variant="outline"
               class={cn(
-                'flex items-center gap-2 rounded-md border p-2.5 transition-all',
-                enabled ? 'bg-card' : 'bg-muted/30 opacity-60',
+                'transition-all',
+                !enabled && 'opacity-60',
                 dragOverTrackId === track.id && 'border-primary border-dashed',
                 draggedTrackId === track.id && 'opacity-50',
                 trackTypeConfig?.color
@@ -125,11 +130,12 @@
               </div>
 
               <Checkbox
+                aria-label={`Toggle track #${track.originalIndex} ${track.codec.toUpperCase()}`}
                 checked={enabled}
                 onCheckedChange={() => onToggleTrack?.(track.id)}
               />
 
-              <div class="flex-1 min-w-0">
+              <Item.Content class="min-w-0">
                 <div class="flex items-center gap-2 flex-wrap">
                   <Badge variant="outline" class="font-mono text-xs">
                     #{track.originalIndex}
@@ -182,29 +188,35 @@
                     </span>
                   {/if}
                 </div>
-              </div>
+              </Item.Content>
 
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                class="shrink-0"
-                onclick={() => onEditTrack?.(track.id)}
-              >
-                <Settings2 class="size-4" />
-                <span class="sr-only">Edit</span>
-              </Button>
-            </div>
+              <Item.Actions class="shrink-0">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onclick={() => onEditTrack?.(track.id)}
+                >
+                  <Settings2 class="size-4" />
+                  <span class="sr-only">Edit</span>
+                </Button>
+              </Item.Actions>
+            </Item.Root>
           {/each}
+          </Item.Group>
         </Card.Content>
       </Card.Root>
     {/if}
   {/each}
 
   {#if tracks.length === 0}
-    <Card.Root>
-      <Card.Content class="py-8 text-center text-muted-foreground">
-        <p>Select a file to view its tracks</p>
-      </Card.Content>
-    </Card.Root>
+    <Empty.Root class="border-0 py-8">
+      <Empty.Header>
+        <Empty.Media>
+          <Video class="size-10 text-muted-foreground/50" />
+        </Empty.Media>
+        <Empty.Title class="text-base">Select a file</Empty.Title>
+        <Empty.Description>Select a file to view its tracks</Empty.Description>
+      </Empty.Header>
+    </Empty.Root>
   {/if}
 </div>

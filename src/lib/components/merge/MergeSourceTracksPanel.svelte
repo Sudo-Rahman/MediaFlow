@@ -7,6 +7,8 @@
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import * as Card from '$lib/components/ui/card';
+  import * as Empty from '$lib/components/ui/empty';
+  import * as Item from '$lib/components/ui/item';
 
   interface Props {
     onEditTrack: (trackId: string) => void;
@@ -69,19 +71,24 @@
               <Card.Title class="text-sm capitalize">{type} ({tracks.length})</Card.Title>
             </div>
           </Card.Header>
-          <Card.Content class="pt-0 space-y-1.5">
+          <Card.Content class="pt-0">
+            <Item.Group class="gap-1.5">
             {#each tracks as track (track.id)}
               {@const config = mergeStore.getSourceTrackConfig(track.id)}
               {@const enabled = config?.enabled ?? true}
-              <div
-                class="flex items-center gap-2 rounded-md border p-2.5 transition-all {getTrackTypeColor(track.type)} {!enabled ? 'opacity-50' : ''}"
+              <Item.Root
+                size="sm"
+                variant="outline"
+                class="{getTrackTypeColor(track.type)} {!enabled ? 'opacity-50' : ''}"
+                role="listitem"
               >
                 <Checkbox
+                  aria-label={`Toggle source track #${track.originalIndex} ${track.codec.toUpperCase()}`}
                   checked={enabled}
                   onCheckedChange={() => mergeStore.toggleSourceTrack(track.id)}
                 />
 
-                <div class="flex-1 min-w-0">
+                <Item.Content class="min-w-0">
                   <div class="flex items-center gap-2 flex-wrap">
                     <Badge variant="outline" class="font-mono text-xs">#{track.originalIndex}</Badge>
                     <span class="font-medium text-sm">{track.codec.toUpperCase()}</span>
@@ -115,24 +122,34 @@
                       </span>
                     {/if}
                   </div>
-                </div>
+                </Item.Content>
 
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onclick={() => onEditTrack(track.id)}
-                >
-                  <Settings2 class="size-4" />
-                </Button>
-              </div>
+                <Item.Actions>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onclick={() => onEditTrack(track.id)}
+                  >
+                    <Settings2 class="size-4" />
+                    <span class="sr-only">Edit track</span>
+                  </Button>
+                </Item.Actions>
+              </Item.Root>
             {/each}
+            </Item.Group>
           </Card.Content>
         </Card.Root>
       {/if}
     {/each}
   </div>
 {:else}
-  <div class="flex items-center justify-center py-20 text-muted-foreground">
-    <p>Select a video to view its tracks</p>
-  </div>
+  <Empty.Root class="border-0 py-20">
+    <Empty.Header>
+      <Empty.Media>
+        <Video class="size-10 text-muted-foreground/50" />
+      </Empty.Media>
+      <Empty.Title class="text-base">Select a video</Empty.Title>
+      <Empty.Description>Select a video to view its tracks</Empty.Description>
+    </Empty.Header>
+  </Empty.Root>
 {/if}

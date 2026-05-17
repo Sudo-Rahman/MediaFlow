@@ -4,6 +4,7 @@
   import { formatDuration, formatFileSize, formatChannels } from '$lib/utils/format';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
+  import * as Empty from '$lib/components/ui/empty';
   import { Progress } from '$lib/components/ui/progress';
   import { FileItemCard } from '$lib/components/shared';
   import {
@@ -185,9 +186,13 @@
   {/each}
   
   {#if files.length === 0}
-    <div class="text-center py-8 text-muted-foreground">
-      <AudioLines class="size-8 mx-auto mb-2 opacity-50" />
-      <p class="text-sm">No audio files</p>
-    </div>
+    <Empty.Root class="border-0 py-8">
+      <Empty.Header>
+        <Empty.Media>
+          <AudioLines class="size-8 text-muted-foreground/50" />
+        </Empty.Media>
+        <Empty.Title class="text-sm">No audio files</Empty.Title>
+      </Empty.Header>
+    </Empty.Root>
   {/if}
 </div>

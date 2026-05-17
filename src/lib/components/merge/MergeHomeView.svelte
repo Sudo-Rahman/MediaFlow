@@ -150,7 +150,7 @@
 
           <div class="flex shrink-0 gap-2">
             {#if mergeStore.importedTracks.length > 0 && mergeStore.videoFiles.length > 0}
-              <ButtonGroup.Root class="shrink-0 gap-0 overflow-hidden rounded-4xl shadow-xs">
+              <ButtonGroup.Root class="shrink-0" aria-label="Auto-match controls">
                 <Tooltip.Root>
                   <Tooltip.Trigger>
                     {#snippet child({ props })}
@@ -158,7 +158,7 @@
                         {...props}
                         variant="outline"
                         size="sm"
-                        class="h-8 min-w-0 rounded-r-none border-r-0 px-2.5"
+                        class="h-8 min-w-0 px-2.5"
                         onclick={onAutoMatch}
                       >
                         {#if autoMatchMode === 'classic'}
@@ -179,7 +179,7 @@
                       : 'Open the AI match workspace'}
                   </Tooltip.Content>
                 </Tooltip.Root>
-                <div class="self-stretch w-px bg-border"></div>
+                <ButtonGroup.Separator />
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger>
                     {#snippet child({ props })}
@@ -187,7 +187,7 @@
                         {...props}
                         variant="outline"
                         size="icon-sm"
-                        class="h-8 w-8 rounded-l-none border-l-0"
+                        class="h-8 w-8"
                         title="Choose auto-match mode"
                       >
                         <ChevronDown class="size-4" />

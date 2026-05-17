@@ -1,6 +1,6 @@
 <script lang="ts">
   import * as RadioGroup from '$lib/components/ui/radio-group';
-  import { Label } from '$lib/components/ui/label';
+  import * as Field from '$lib/components/ui/field';
   import { OutputFolderField } from '$lib/components/shared';
   import type { RenameMode } from '$lib/types/rename';
   import type { ResolvedOutputFolderDisplay } from '$lib/utils';
@@ -22,22 +22,28 @@
   function handleModeChange(value: string): void {
     onModeChange(value as RenameMode);
   }
+
+  const controlId = $props.id();
+  const renameModeId = `${controlId}-rename-mode`;
+  const copyModeId = `${controlId}-copy-mode`;
 </script>
 
 <div class="space-y-4">
-  <div class="space-y-2">
-    <Label class="text-xs uppercase tracking-wide text-muted-foreground">Mode</Label>
+  <Field.FieldSet class="gap-2">
+    <Field.FieldLegend variant="label" class="mb-0 text-xs uppercase tracking-wide text-muted-foreground">
+      Mode
+    </Field.FieldLegend>
     <RadioGroup.Root value={mode} onValueChange={handleModeChange} class="flex gap-4">
-      <label class="flex cursor-pointer items-center gap-2">
-        <RadioGroup.Item value="rename" />
-        <span class="text-sm">Rename</span>
-      </label>
-      <label class="flex cursor-pointer items-center gap-2">
-        <RadioGroup.Item value="copy" />
-        <span class="text-sm">Copy</span>
-      </label>
+      <Field.Field orientation="horizontal" class="w-auto items-center gap-2">
+        <RadioGroup.Item id={renameModeId} value="rename" />
+        <Field.FieldLabel for={renameModeId} class="cursor-pointer text-sm">Rename</Field.FieldLabel>
+      </Field.Field>
+      <Field.Field orientation="horizontal" class="w-auto items-center gap-2">
+        <RadioGroup.Item id={copyModeId} value="copy" />
+        <Field.FieldLabel for={copyModeId} class="cursor-pointer text-sm">Copy</Field.FieldLabel>
+      </Field.Field>
     </RadioGroup.Root>
-  </div>
+  </Field.FieldSet>
 
   {#if mode === 'copy'}
     <OutputFolderField

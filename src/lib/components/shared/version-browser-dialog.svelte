@@ -1,11 +1,14 @@
 <script lang="ts">
   import { ChevronLeft, ChevronRight, Copy, Download, Check, Trash2, Loader2 } from '@lucide/svelte';
+  import { useId } from 'bits-ui';
   import { onDestroy, type Snippet } from 'svelte';
 
   import * as Dialog from '$lib/components/ui/dialog';
   import { Button } from '$lib/components/ui/button';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { Badge } from '$lib/components/ui/badge';
+  import * as Empty from '$lib/components/ui/empty';
+  import * as Field from '$lib/components/ui/field';
   import * as Select from '$lib/components/ui/select';
   import { Separator } from '$lib/components/ui/separator';
 
@@ -68,6 +71,8 @@
   const currentVersion = $derived(versions[currentIndex] ?? null);
   const hasMultipleVersions = $derived(versions.length > 1);
   const showFormatSelector = $derived(formats && formats.length > 0 && selectedFormat && onFormatChange);
+  const baseId = useId();
+  const formatSelectId = `${baseId}-version-format`;
 
   function goToPreviousVersion(): void {
     if (currentIndex > 0) {
@@ -186,14 +191,14 @@
 
       <!-- Format selector (only shown when formats are provided) -->
       {#if showFormatSelector}
-        <div class="flex items-center gap-4 py-3">
-          <span class="text-sm text-muted-foreground">Format:</span>
+        <Field.Field orientation="horizontal" class="items-center gap-4 py-3">
+          <Field.FieldLabel for={formatSelectId} class="text-sm text-muted-foreground">Format</Field.FieldLabel>
           <Select.Root
             type="single"
             value={selectedFormat}
             onValueChange={(v) => v && onFormatChange?.(v)}
           >
-            <Select.Trigger class="w-36">
+            <Select.Trigger id={formatSelectId} class="w-36">
               <span>{selectedFormat?.toUpperCase()}</span>
             </Select.Trigger>
             <Select.Content>
@@ -204,12 +209,12 @@
               </Select.Group>
             </Select.Content>
           </Select.Root>
-        </div>
+        </Field.Field>
       {/if}
 
       <!-- Preview -->
       <div class="flex-1">
-        <ScrollArea orientation="both" class="h-[calc(50vh-200px)] rounded-md border bg-muted/30">
+        <ScrollArea orientation="both" class="h-[calc(50vh-200px)] rounded-2xl border bg-card">
           {#if isPreviewLoading}
             <p class="p-6 text-sm text-muted-foreground text-center">Preparing preview...</p>
           {:else if previewContent}
@@ -217,14 +222,20 @@
               <pre class="p-4 text-xs whitespace-pre-wrap leading-relaxed font-mono">{previewContent}</pre>
             </div>
           {:else}
-            <p class="p-6 text-sm text-muted-foreground text-center">No content in this version</p>
+            <Empty.Root class="min-h-32 flex-none border-0 p-6">
+              <Empty.Header>
+                <Empty.Title>No content in this version</Empty.Title>
+              </Empty.Header>
+            </Empty.Root>
           {/if}
         </ScrollArea>
       </div>
     {:else}
-      <div class="flex flex-col items-center justify-center h-64 text-muted-foreground">
-        <p>No versions available</p>
-      </div>
+      <Empty.Root class="h-64 flex-none border-0">
+        <Empty.Header>
+          <Empty.Title>No versions available</Empty.Title>
+        </Empty.Header>
+      </Empty.Root>
     {/if}
 
     <Dialog.Footer class="flex items-center justify-between gap-2">

@@ -6,6 +6,8 @@
   import { MergeGroupEditor } from '$lib/components/merge';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
+  import * as Accordion from '$lib/components/ui/accordion';
+  import * as Empty from '$lib/components/ui/empty';
   import { cn } from '$lib/utils';
 
   interface MergeTrackGroupsProps {
@@ -73,6 +75,21 @@
     mergeStore.collapseAllGroups();
   }
 
+  function getOpenGroupIds(typeGroups: TrackGroup[]): string[] {
+    return typeGroups.filter((group) => !group.collapsed).map((group) => group.id);
+  }
+
+  function handleTypeGroupsValueChange(value: string[] | string | undefined, typeGroups: TrackGroup[]): void {
+    const openIds = new Set(Array.isArray(value) ? value : value ? [value] : []);
+
+    for (const group of typeGroups) {
+      const shouldBeOpen = openIds.has(group.id);
+      if (!group.collapsed !== shouldBeOpen) {
+        mergeStore.toggleGroupCollapsed(group.id);
+      }
+    }
+  }
+
   // Generate groups when video files or imported tracks change
   // Use untrack to avoid circular dependency
   let lastVideoCount = $state(0);
@@ -130,6 +147,7 @@
         size="icon"
         onclick={handleRefreshGroups}
         title="Refresh groups"
+        aria-label="Refresh groups"
       >
         <RefreshCw class="size-4" />
       </Button>
@@ -138,16 +156,20 @@
 
   <!-- Groups List -->
   <div class="flex-1 overflow-y-auto">
-    <div class="p-4 space-y-6">
+    <div class="flex flex-col gap-6 p-4">
       {#if groups.length === 0}
-        <div class="text-center py-12 text-muted-foreground">
-          <LayoutGrid class="size-12 mx-auto mb-4 opacity-50" />
-          <p>No tracks to display</p>
-          <p class="text-sm mt-1">Import videos and tracks to get started</p>
-        </div>
+        <Empty.Root class="border-0 py-12">
+          <Empty.Header>
+            <Empty.Media>
+              <LayoutGrid class="size-12 text-muted-foreground/50" />
+            </Empty.Media>
+            <Empty.Title class="text-base">No tracks to display</Empty.Title>
+            <Empty.Description>Import videos and tracks to get started</Empty.Description>
+          </Empty.Header>
+        </Empty.Root>
       {:else}
-        {#each Array.from(groupsByType.entries()) as [type, typeGroups]}
-          <div class="space-y-3">
+        {#each Array.from(groupsByType.entries()) as [type, typeGroups] (type)}
+          <div class="flex flex-col gap-3">
             <!-- Type Header -->
             <div class="flex items-center gap-2">
               <h4 class="font-semibold text-sm uppercase tracking-wide text-muted-foreground">
@@ -159,14 +181,19 @@
             </div>
 
             <!-- Groups for this type -->
-            <div class="space-y-2">
+            <Accordion.Root
+              type="multiple"
+              value={getOpenGroupIds(typeGroups)}
+              onValueChange={(value) => handleTypeGroupsValueChange(value, typeGroups)}
+              class="gap-2 overflow-visible border-0 bg-transparent"
+            >
               {#each typeGroups as group (group.id)}
                 <MergeTrackGroupCard
                   {group}
                   onEdit={handleEditGroup}
                 />
               {/each}
-            </div>
+            </Accordion.Root>
           </div>
         {/each}
       {/if}

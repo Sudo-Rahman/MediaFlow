@@ -3,6 +3,7 @@
   import type { TranslationJob } from '$lib/types';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
+  import * as Empty from '$lib/components/ui/empty';
   import { Progress } from '$lib/components/ui/progress';
   import { FileItemCard } from '$lib/components/shared';
   import {
@@ -111,6 +112,7 @@
                   onViewResult(job);
                 }}
                 title="View results"
+                aria-label="View results"
               >
                 <FileText class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
               </Button>
@@ -127,6 +129,7 @@
                 }}
                 disabled={disabled}
                 title="Retry"
+                aria-label="Retry translation"
               >
                 <RotateCw class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
               </Button>
@@ -142,6 +145,7 @@
                   onCancel(job.id);
                 }}
                 title="Cancel"
+                aria-label="Cancel translation"
               >
                 <X class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
               </Button>
@@ -156,6 +160,7 @@
                 }}
                 disabled={disabled}
                 title="Remove"
+                aria-label="Remove file"
               >
                 <Trash2 class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
               </Button>
@@ -173,9 +178,13 @@
   {/each}
 
   {#if jobs.length === 0}
-    <div class="text-center py-8 text-muted-foreground">
-      <Languages class="size-8 mx-auto mb-2 opacity-50" />
-      <p class="text-sm">No subtitle files</p>
-    </div>
+    <Empty.Root class="border-0 py-8">
+      <Empty.Header>
+        <Empty.Media class="opacity-50">
+          <Languages class="size-8" />
+        </Empty.Media>
+        <Empty.Title class="text-sm">No subtitle files</Empty.Title>
+      </Empty.Header>
+    </Empty.Root>
   {/if}
 </div>

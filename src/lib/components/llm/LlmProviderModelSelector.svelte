@@ -1,11 +1,13 @@
 <script lang="ts">
   import { Bot, Check, ChevronsUpDown, Key, Plus, X } from '@lucide/svelte';
+  import { useId } from 'bits-ui';
 
   import MediaFlowSignInPrompt from '$lib/components/account/MediaFlowSignInPrompt.svelte';
+  import * as Alert from '$lib/components/ui/alert';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import * as Command from '$lib/components/ui/command';
-  import { Label } from '$lib/components/ui/label';
+  import * as Field from '$lib/components/ui/field';
   import * as Popover from '$lib/components/ui/popover';
   import * as Select from '$lib/components/ui/select';
   import { settingsStore } from '$lib/stores';
@@ -38,6 +40,9 @@
 
   const providerKeys = getSelectableLLMProviders();
   const showProviderSelector = providerKeys.length > 1;
+  const baseId = useId();
+  const providerSelectId = `${baseId}-provider`;
+  const modelSelectId = `${baseId}-model`;
   const normalizedSelection = $derived(normalizeLLMSelection(provider, model));
   const effectiveProvider = $derived(normalizedSelection.provider);
   const effectiveModel = $derived(normalizedSelection.model);
@@ -115,8 +120,7 @@
     openRouterSearch = '';
   }
 
-  async function handleRemoveModel(event: MouseEvent, modelId: string): Promise<void> {
-    event.stopPropagation();
+  async function handleRemoveModel(modelId: string): Promise<void> {
     await settingsStore.removeOpenRouterModel(modelId);
 
     if (effectiveModel === modelId) {
@@ -127,14 +131,14 @@
 
 <div class={cn('space-y-4', className)}>
   {#if showProviderSelector}
-    <div class="space-y-2">
-      <Label class="text-sm font-medium">AI Provider</Label>
+    <Field.Field>
+      <Field.FieldLabel for={providerSelectId}>AI Provider</Field.FieldLabel>
       <Select.Root
         type="single"
         value={effectiveProvider}
         onValueChange={handleProviderChange}
       >
-        <Select.Trigger class="w-full">
+        <Select.Trigger id={providerSelectId} class="w-full">
           <div class="flex items-center gap-2">
             <Bot class="size-4" />
             <span>{currentProvider.name}</span>
@@ -163,18 +167,18 @@
             </Select.Group>
         </Select.Content>
       </Select.Root>
-    </div>
+    </Field.Field>
   {/if}
 
-  <div class="space-y-2">
-    <Label class="text-sm font-medium">Model</Label>
+  <Field.Field>
+    <Field.FieldLabel for={modelSelectId}>Model</Field.FieldLabel>
     {#if hasModels}
       <Select.Root
         type="single"
         value={effectiveModel}
         onValueChange={handleModelChange}
       >
-        <Select.Trigger class="w-full">
+        <Select.Trigger id={modelSelectId} class="w-full">
           {getSelectedModelName()}
         </Select.Trigger>
         <Select.Content>
@@ -191,6 +195,7 @@
           {#snippet child({ props })}
             <Button
               {...props}
+              id={modelSelectId}
               variant="outline"
               role="combobox"
               aria-expanded={openRouterOpen}
@@ -226,28 +231,31 @@
               </Command.Empty>
               <Command.Group>
                 {#each filteredModels as savedModel (savedModel)}
-                  <Command.Item
-                    value={savedModel}
-                    onSelect={() => handleOpenRouterModelSelect(savedModel)}
-                    class="w-full items-center justify-between rounded-full"
-                  >
-                    <div class="flex items-center gap-2 min-w-0 flex-1">
-                      {#if effectiveModel === savedModel}
-                        <Check class="size-4 shrink-0" />
-                      {:else}
-                        <div class="size-4 shrink-0"></div>
-                      {/if}
-                      <span class="truncate">{savedModel}</span>
-                    </div>
+                  <div class="flex items-center gap-1">
+                    <Command.Item
+                      value={savedModel}
+                      onSelect={() => handleOpenRouterModelSelect(savedModel)}
+                      class="min-w-0 flex-1 rounded-full"
+                    >
+                      <div class="flex min-w-0 flex-1 items-center gap-2">
+                        {#if effectiveModel === savedModel}
+                          <Check class="size-4 shrink-0" />
+                        {:else}
+                          <div class="size-4 shrink-0"></div>
+                        {/if}
+                        <span class="truncate">{savedModel}</span>
+                      </div>
+                    </Command.Item>
                     <button
                       type="button"
-                      class="size-6 flex items-center justify-center rounded-full hover:bg-destructive/20 text-muted-foreground hover:text-destructive shrink-0"
-                      onclick={(event) => handleRemoveModel(event, savedModel)}
+                      class="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/20 hover:text-destructive"
+                      onclick={() => handleRemoveModel(savedModel)}
                       title="Remove model"
+                      aria-label={`Remove ${savedModel}`}
                     >
                       <X class="size-3" />
                     </button>
-                  </Command.Item>
+                  </div>
                 {/each}
               </Command.Group>
               {#if openRouterSearch.trim() && !searchMatchesExisting}
@@ -270,7 +278,7 @@
         Type a model ID and press Enter to save it
       </p>
     {/if}
-  </div>
+  </Field.Field>
 
   {#if !hasApiKey}
     {#if effectiveProvider === 'mediaflow'}
@@ -279,20 +287,20 @@
         description="MediaFlow uses your account credits for managed AI features."
       />
     {:else}
-      <div class="flex items-center gap-3 p-3 rounded-lg bg-destructive/10 border border-destructive/20">
-        <Key class="size-4 text-destructive shrink-0" />
-        <div class="flex-1 text-sm">
-          <p class="font-medium text-destructive">API key required</p>
-          <p class="text-muted-foreground">
-            Configure your {currentProvider.name} API key in Settings
-          </p>
-        </div>
+      <Alert.Root variant="destructive">
+        <Key class="size-4" />
+        <Alert.Title>API key required</Alert.Title>
+        <Alert.Description>
+          Configure your {currentProvider.name} API key in Settings
+        </Alert.Description>
         {#if onNavigateToSettings}
-          <Button variant="outline" size="sm" onclick={() => onNavigateToSettings?.()}>
-            Settings
-          </Button>
+          <Alert.Action>
+            <Button variant="outline" size="sm" onclick={() => onNavigateToSettings?.()}>
+              Settings
+            </Button>
+          </Alert.Action>
         {/if}
-      </div>
+      </Alert.Root>
     {/if}
   {/if}
 </div>

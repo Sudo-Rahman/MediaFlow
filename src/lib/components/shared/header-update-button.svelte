@@ -2,6 +2,7 @@
   import { Download } from '@lucide/svelte';
 
   import { Button } from '$lib/components/ui/button';
+  import { Badge } from '$lib/components/ui/badge';
 
   interface HeaderUpdateButtonProps {
     version: string;
@@ -30,8 +31,8 @@
     <Download class="size-3.5" />
   {:else}
     Update
-    <span class="rounded-full bg-primary px-1.5 py-px text-[10px] font-medium leading-none text-primary-foreground">
+    <Badge class="h-4 px-1.5 text-[10px] leading-none">
       v{version}
-    </span>
+    </Badge>
   {/if}
 </Button>

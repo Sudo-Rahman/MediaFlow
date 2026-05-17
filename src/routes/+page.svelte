@@ -11,6 +11,7 @@
   import { Progress } from '$lib/components/ui/progress';
   import { Alert, AlertTitle, AlertDescription } from '$lib/components';
   import * as HoverCard from '$lib/components/ui/hover-card';
+  import * as Item from '$lib/components/ui/item';
   import { AppUpdateDialog, HeaderUpdateButton, VersionedExportDialog } from '$lib/components/shared';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
   import AppHeader from '$lib/components/layout/app-header.svelte';
@@ -707,15 +708,19 @@
               <div class="space-y-2">
                 {#each globalToolProgress.tools as metric (metric.toolId)}
                   {@const ToolIcon = metric.icon}
-                  <div class="rounded-2xl border bg-muted/30 px-2.5 py-2">
-                    <div class="mb-1 flex items-center gap-2">
+                  <Item.Root variant="muted" size="xs" class="items-start">
+                    <Item.Media class="mt-0.5">
                       <ToolIcon class="size-4 text-muted-foreground" />
-                      <p class="truncate text-xs font-medium flex-1">{metric.label}</p>
-                      <p class="text-[11px] font-medium tabular-nums">{Math.round(metric.percentage)}%</p>
-                    </div>
-                    <Progress value={metric.percentage} class="h-1.5" />
-                    <p class="mt-1 truncate text-[11px] text-muted-foreground">{metric.detailText}</p>
-                  </div>
+                    </Item.Media>
+                    <Item.Content class="min-w-0 gap-1">
+                      <div class="flex items-center gap-2">
+                        <p class="truncate text-xs font-medium flex-1">{metric.label}</p>
+                        <p class="text-[11px] font-medium tabular-nums">{Math.round(metric.percentage)}%</p>
+                      </div>
+                      <Progress value={metric.percentage} class="h-1.5" />
+                      <p class="truncate text-[11px] text-muted-foreground">{metric.detailText}</p>
+                    </Item.Content>
+                  </Item.Root>
                 {/each}
               </div>
             </HoverCard.Content>

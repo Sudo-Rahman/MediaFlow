@@ -7,6 +7,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import * as Card from '$lib/components/ui/card';
   import * as Alert from '$lib/components/ui/alert';
+  import * as Item from '$lib/components/ui/item';
   import { OutputFolderField } from '$lib/components/shared';
   import { resolveOutputFolderDisplay } from '$lib/utils';
   import { formatTransferRate } from '$lib/utils';
@@ -103,26 +104,30 @@
     </div>
 
     <!-- Summary -->
-    <div class="rounded-md bg-muted/50 p-3 space-y-2">
-      <div class="flex items-center justify-between text-sm">
-        <span class="text-muted-foreground">Videos to merge</span>
+    <div class="flex w-full flex-col gap-2">
+      <Item.Root size="xs" variant="muted" class="justify-between">
+        <Item.Content>
+          <Item.Title>Videos to merge</Item.Title>
+        </Item.Content>
         <Badge variant={videosCount > 0 ? 'default' : 'secondary'}>
           {videosCount}
         </Badge>
-      </div>
-      <div class="flex items-center justify-between text-sm">
-        <span class="text-muted-foreground">Total tracks attached</span>
+      </Item.Root>
+      <Item.Root size="xs" variant="muted" class="justify-between">
+        <Item.Content>
+          <Item.Title>Total tracks attached</Item.Title>
+        </Item.Content>
         <Badge variant={enabledTracksCount > 0 ? 'default' : 'secondary'}>
           {enabledTracksCount}
         </Badge>
-      </div>
+      </Item.Root>
     </div>
 
     <!-- Progress -->
     {#if isProcessing || isCompleted}
       <div class="space-y-3">
         {#if isCompleted}
-          <Alert.Root class="border-green-500/50 bg-green-500/10">
+          <Alert.Root role="status" aria-live="polite" class="border-green-500/50 bg-green-500/10">
             <CheckCircle class="size-4 text-green-500" />
             <Alert.Title>Merge complete!</Alert.Title>
             <Alert.Description>
@@ -130,7 +135,8 @@
             </Alert.Description>
           </Alert.Root>
         {:else}
-          <div class="space-y-2 rounded-md border bg-muted/30 px-3 py-2">
+          <Item.Root variant="outline" class="items-stretch">
+            <Item.Content class="min-w-0">
             <p class="text-sm font-medium">Merging...</p>
             {#if currentFileName}
               <p class="text-xs text-muted-foreground truncate" title={currentFileName}>
@@ -142,14 +148,15 @@
               <p class="text-[11px] text-muted-foreground">
                 File progress: {Math.round(currentFileProgress)}%
                 {#if currentSpeedBytesPerSec && currentSpeedBytesPerSec > 0}
-                  {' '}· {formatTransferRate(currentSpeedBytesPerSec)}
+                  <span> · {formatTransferRate(currentSpeedBytesPerSec)}</span>
                 {/if}
               </p>
               <p class="text-[11px] text-muted-foreground">
                 {completedFiles}/{videosCount} files completed
               </p>
             </div>
-          </div>
+            </Item.Content>
+          </Item.Root>
         {/if}
       </div>
     {/if}

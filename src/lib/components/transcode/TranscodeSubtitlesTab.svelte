@@ -2,6 +2,9 @@
   import type { Track, TranscodeFile, TranscodeSubtitleEncoderCapability, TranscodeSubtitleMode } from '$lib/types';
   import type { TranscodeModeOption } from '$lib/services/transcode';
   import { formatLanguage } from '$lib/utils/format';
+  import * as Card from '$lib/components/ui/card';
+  import * as Empty from '$lib/components/ui/empty';
+  import * as Item from '$lib/components/ui/item';
   import { Label } from '$lib/components/ui/label';
   import * as Select from '$lib/components/ui/select';
 
@@ -27,17 +30,21 @@
     updateProfile,
     createId,
   }: Props = $props();
+
+  const controlId = $props.id();
+  const subtitleModeId = `${controlId}-subtitle-mode`;
+  const subtitleEncoderId = `${controlId}-subtitle-encoder`;
 </script>
 
 {#if selectedSubtitleTracks.length === 0}
-  <div class="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-    No subtitle tracks were detected in this file.
-  </div>
+  <Empty.Root class="border p-4">
+    <Empty.Description>No subtitle tracks were detected in this file.</Empty.Description>
+  </Empty.Root>
 {:else}
   <div class="grid gap-4 lg:grid-cols-2">
     <div class="space-y-4">
       <div class="space-y-2">
-        <Label>Subtitle mode</Label>
+        <Label for={subtitleModeId}>Subtitle mode</Label>
         <Select.Root
           type="single"
           value={file.profile.subtitles.mode}
@@ -47,7 +54,7 @@
             });
           }}
         >
-          <Select.Trigger class="w-full">{file.profile.subtitles.mode}</Select.Trigger>
+          <Select.Trigger id={subtitleModeId} class="w-full">{file.profile.subtitles.mode}</Select.Trigger>
           <Select.Content>
             <Select.Group>
               {#each availableSubtitleModeOptions as option (option.value)}
@@ -60,7 +67,7 @@
 
       {#if file.profile.subtitles.mode === 'convert_text'}
         <div class="space-y-2">
-          <Label>Subtitle encoder</Label>
+          <Label for={subtitleEncoderId}>Subtitle encoder</Label>
           <Select.Root
             type="single"
             value={file.profile.subtitles.encoderId}
@@ -70,7 +77,7 @@
               });
             }}
           >
-            <Select.Trigger class="w-full">{selectedSubtitleEncoder?.label ?? 'Select encoder'}</Select.Trigger>
+            <Select.Trigger id={subtitleEncoderId} class="w-full">{selectedSubtitleEncoder?.label ?? 'Select encoder'}</Select.Trigger>
             <Select.Content>
               <Select.Group>
                 {#each availableSubtitleEncoders as encoder (encoder.id)}
@@ -81,25 +88,35 @@
           </Select.Root>
         </div>
       {:else}
-        <div class="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-          {file.profile.subtitles.mode === 'copy'
-            ? 'Subtitle tracks will be copied without conversion.'
-            : 'Subtitles are disabled for this output.'}
-        </div>
+        <Item.Root variant="outline" size="sm">
+          <Item.Description>
+            {file.profile.subtitles.mode === 'copy'
+              ? 'Subtitle tracks will be copied without conversion.'
+              : 'Subtitles are disabled for this output.'}
+          </Item.Description>
+        </Item.Root>
       {/if}
     </div>
 
-    <div class="rounded-md max-h-48 overflow-y-scroll border bg-muted/30 p-3 text-sm space-y-2">
-      <p class="font-medium">Detected subtitle tracks</p>
-      {#each selectedSubtitleTracks as track (track.id)}
-        <div class="rounded-md border bg-background px-3 py-2">
-          <p>{track.codec.toUpperCase()} {track.language ? `· ${formatLanguage(track.language)}` : ''}</p>
-          <p class="text-xs text-muted-foreground">
-            {track.title ?? 'Untitled'} {track.default ? '· default' : ''} {track.forced ? '· forced' : ''}
-          </p>
-        </div>
-      {/each}
-    </div>
+    <Card.Root class="max-h-48 min-h-0 overflow-hidden">
+      <Card.Header class="shrink-0 pb-3">
+        <Card.Title>Detected subtitle tracks</Card.Title>
+      </Card.Header>
+      <Card.Content class="min-h-0 flex-1 overflow-y-auto">
+        <Item.Group class="gap-2">
+          {#each selectedSubtitleTracks as track (track.id)}
+            <Item.Root variant="outline" size="sm" role="listitem">
+              <Item.Content>
+                <Item.Title>{track.codec.toUpperCase()} {track.language ? `· ${formatLanguage(track.language)}` : ''}</Item.Title>
+                <Item.Description>
+                  {track.title ?? 'Untitled'} {track.default ? '· default' : ''} {track.forced ? '· forced' : ''}
+                </Item.Description>
+              </Item.Content>
+            </Item.Root>
+          {/each}
+        </Item.Group>
+      </Card.Content>
+    </Card.Root>
   </div>
 {/if}
 

@@ -12,6 +12,8 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import * as Select from '$lib/components/ui/select';
   import * as Tabs from '$lib/components/ui/tabs';
+  import * as Empty from '$lib/components/ui/empty';
+  import * as Item from '$lib/components/ui/item';
 
   interface MergeGroupEditorProps {
     open: boolean;
@@ -77,12 +79,6 @@
       activeTab = 'edit';
     }
   });
-
-  const typeIcons = {
-    video: Video,
-    audio: Volume2,
-    subtitle: Subtitles,
-  };
 
   const typeLabels: Record<string, string> = {
     video: 'Video',
@@ -161,13 +157,13 @@
 
       <div class="dialog-scroll-body py-1">
       <Tabs.Root value={activeTab} onValueChange={(v) => activeTab = v} class="mt-4">
-        <Tabs.List class="grid w-full grid-cols-2">
+        <Tabs.List class="w-full">
           <Tabs.Trigger value="edit">Edit</Tabs.Trigger>
           <Tabs.Trigger value="preset">Presets</Tabs.Trigger>
         </Tabs.List>
 
         <!-- Edit Tab -->
-        <Tabs.Content value="edit" class="space-y-4 mt-4">
+        <Tabs.Content value="edit" class="space-y-4 px-1 mt-4">
           <div class="space-y-2">
             <Label for="group-title">Title</Label>
             <Input
@@ -191,7 +187,7 @@
               </Select.Trigger>
               <Select.Content>
                 <Select.Group>
-                  {#each COMMON_LANGUAGES as lang}
+                  {#each COMMON_LANGUAGES as lang (lang.code)}
                     <Select.Item value={lang.code}>{lang.label}</Select.Item>
                   {/each}
                 </Select.Group>
@@ -284,23 +280,23 @@
             </Label>
             
             {#if mergeStore.presets.length === 0}
-              <p class="text-sm text-muted-foreground py-4 text-center">
-                No presets saved
-              </p>
+              <Empty.Root class="border-0 p-4">
+                <Empty.Description>No presets saved</Empty.Description>
+              </Empty.Root>
             {:else}
-              <div class="space-y-2">
-                {#each mergeStore.presets.filter(p => p.type === group?.type) as preset}
-                  <div class="flex items-center justify-between p-3 rounded-md border hover:bg-muted/50">
-                    <div class="flex-1 min-w-0">
-                      <p class="font-medium truncate">{preset.name}</p>
-                      <p class="text-xs text-muted-foreground">
+              <Item.Group class="gap-2">
+                {#each mergeStore.presets.filter(p => p.type === group?.type) as preset (preset.id)}
+                  <Item.Root size="sm" variant="outline" class="hover:bg-muted/50" role="listitem">
+                    <Item.Content class="min-w-0">
+                      <Item.Title class="truncate">{preset.name}</Item.Title>
+                      <Item.Description>
                         {preset.language ? formatLanguage(preset.language) : 'Language undefined'}
                         {#if preset.default}• Default{/if}
                         {#if preset.forced}• Forced{/if}
-                      </p>
-                    </div>
+                      </Item.Description>
+                    </Item.Content>
                     
-                    <div class="flex items-center gap-2">
+                    <Item.Actions>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -325,10 +321,10 @@
                       >
                         Delete
                       </Button>
-                    </div>
-                  </div>
+                    </Item.Actions>
+                  </Item.Root>
                 {/each}
-              </div>
+              </Item.Group>
             {/if}
           </div>
         </Tabs.Content>

@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { MoveConfig } from '$lib/types/rename';
+  import * as Field from '$lib/components/ui/field';
   import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
+  import * as Item from '$lib/components/ui/item';
 
   interface MoveRuleProps {
     config: MoveConfig;
@@ -41,52 +42,59 @@
     
     return { original, result, segment };
   });
+
+  const controlId = $props.id();
+  const fromInputId = `${controlId}-move-from`;
+  const lengthInputId = `${controlId}-move-length`;
+  const toInputId = `${controlId}-move-to`;
 </script>
 
 <div class="space-y-3">
   <div class="grid grid-cols-3 gap-3">
-    <div class="space-y-1.5">
-      <Label for="move-from">From position</Label>
+    <Field.Field>
+      <Field.FieldLabel for={fromInputId}>From position</Field.FieldLabel>
       <Input
-        id="move-from"
+        id={fromInputId}
         type="number"
         min="0"
         value={config.from}
         oninput={handleFromChange}
       />
-    </div>
-    <div class="space-y-1.5">
-      <Label for="move-length">Length</Label>
+    </Field.Field>
+    <Field.Field>
+      <Field.FieldLabel for={lengthInputId}>Length</Field.FieldLabel>
       <Input
-        id="move-length"
+        id={lengthInputId}
         type="number"
         min="1"
         value={config.length}
         oninput={handleLengthChange}
       />
-    </div>
-    <div class="space-y-1.5">
-      <Label for="move-to">To position</Label>
+    </Field.Field>
+    <Field.Field>
+      <Field.FieldLabel for={toInputId}>To position</Field.FieldLabel>
       <Input
-        id="move-to"
+        id={toInputId}
         type="number"
         min="0"
         value={config.to}
         oninput={handleToChange}
       />
-    </div>
+    </Field.Field>
   </div>
 
   <p class="text-xs text-muted-foreground">
     Position is 0-indexed. Move {config.length} character(s) from position {config.from} to position {config.to}.
   </p>
 
-  <div class="p-2 rounded-md bg-muted space-y-1">
-    <p class="text-xs text-muted-foreground">
+  <Item.Root variant="muted" size="xs" class="items-start">
+    <Item.Content>
+      <Item.Description class="text-xs">
       Original: <span class="font-mono">{example.original}</span>
-    </p>
-    <p class="text-xs text-muted-foreground">
+      </Item.Description>
+      <Item.Description class="text-xs">
       Result: <span class="font-mono">{example.result}</span>
-    </p>
-  </div>
+      </Item.Description>
+    </Item.Content>
+  </Item.Root>
 </div>

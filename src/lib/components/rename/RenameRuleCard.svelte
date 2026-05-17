@@ -4,9 +4,11 @@
   import type { RenameRule, RuleType } from '$lib/types/rename';
   import { RULE_TYPE_LABELS } from '$lib/types/rename';
   import { getRuleSummary } from '$lib/services/rename';
+  import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import { Switch } from '$lib/components/ui/switch';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+  import * as Item from '$lib/components/ui/item';
   
   // Rule type icons
 
@@ -50,52 +52,46 @@
   const summary = $derived(getRuleSummary(rule));
 </script>
 
-<div
+<Item.Root
+  variant="outline"
+  size="xs"
   class={cn(
-    'rounded-lg border transition-all',
-    rule.enabled 
-      ? 'bg-card border-border' 
-      : 'bg-muted/30 border-border/50 opacity-60',
+    'flex-nowrap',
+    !rule.enabled && 'opacity-60',
     isExpanded && 'ring-2 ring-primary/20',
     className
   )}
 >
-  <!-- Header -->
-  <div class="flex items-center gap-2 p-2">
-    <!-- Drag handle -->
-    <div class="cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground">
-      <GripVertical class="size-4" />
-    </div>
+  <Item.Media
+    class="cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing"
+    aria-hidden="true"
+  >
+    <GripVertical class="size-4" />
+  </Item.Media>
 
-    <!-- Index badge -->
-    <span class="flex items-center justify-center size-5 rounded-full bg-muted text-xs font-medium">
-      {index + 1}
-    </span>
+  <Badge variant="secondary" class="flex size-5 shrink-0 items-center justify-center rounded-full p-0 text-xs">
+    {index + 1}
+  </Badge>
 
-    <!-- Icon -->
+  <Item.Media>
     <Icon class={cn('size-4', rule.enabled ? 'text-primary' : 'text-muted-foreground')} />
+  </Item.Media>
 
-    <!-- Title and summary -->
-    <button
-      class="flex-1 text-left min-w-0"
-      onclick={onEdit}
-    >
-      <p class="text-sm font-medium truncate">
-        {RULE_TYPE_LABELS[rule.type]}
-      </p>
-      <p class="text-xs text-muted-foreground truncate">
-        {summary}
-      </p>
+  <Item.Content class="min-w-0">
+    <button class="min-w-0 text-left" onclick={onEdit}>
+      <Item.Title class="w-full truncate">{RULE_TYPE_LABELS[rule.type]}</Item.Title>
+      <Item.Description class="w-full truncate text-xs">{summary}</Item.Description>
     </button>
+  </Item.Content>
 
-    <!-- Enable/Disable switch -->
+  <Item.Actions class="shrink-0">
     <Switch
       checked={rule.enabled}
       onCheckedChange={onToggle}
       class="shrink-0"
+      aria-label={`${rule.enabled ? 'Disable' : 'Enable'} ${RULE_TYPE_LABELS[rule.type]} rule`}
     />
 
-    <!-- Menu -->
     <DropdownMenu.Root>
       <DropdownMenu.Trigger>
         {#snippet child({ props })}
@@ -121,5 +117,5 @@
         </DropdownMenu.Item>
       </DropdownMenu.Content>
     </DropdownMenu.Root>
-  </div>
-</div>
+  </Item.Actions>
+</Item.Root>

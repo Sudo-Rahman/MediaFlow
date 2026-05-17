@@ -7,6 +7,8 @@
   import { Button } from '$lib/components/ui/button';
   import { Label } from '$lib/components/ui/label';
   import * as Card from '$lib/components/ui/card';
+  import * as Empty from '$lib/components/ui/empty';
+  import * as Item from '$lib/components/ui/item';
   import * as Select from '$lib/components/ui/select';
   import { OutputFolderField } from '$lib/components/shared';
   import { resolveOutputFolderDisplay } from '$lib/utils';
@@ -51,6 +53,8 @@
       fallbackLabel: 'Use each source folder',
     }),
   );
+  const controlId = $props.id();
+  const containerId = `${controlId}-container`;
 </script>
 
 <div class="grid gap-4 lg:grid-cols-2">
@@ -61,7 +65,7 @@
     </Card.Header>
     <Card.Content class="space-y-4">
       <div class="space-y-2">
-        <Label>Container</Label>
+        <Label for={containerId}>Container</Label>
         <Select.Root
           type="single"
           value={file.profile.containerId}
@@ -69,7 +73,7 @@
             updateContainer(value);
           }}
           >
-          <Select.Trigger class="w-full">{selectedContainer?.label ?? file.profile.containerId.toUpperCase()}</Select.Trigger>
+          <Select.Trigger id={containerId} class="w-full">{selectedContainer?.label ?? file.profile.containerId.toUpperCase()}</Select.Trigger>
           <Select.Content>
             <Select.Group>
               {#each availableContainers as container (container.id)}
@@ -93,9 +97,9 @@
 
       <div class="space-y-2">
         <Label>Output preview</Label>
-        <div class="rounded-md border bg-muted/20 p-3">
-          <p class="text-sm break-all">{outputPreviewPath}</p>
-        </div>
+        <Item.Root variant="outline" size="sm">
+          <Item.Description class="break-all">{outputPreviewPath}</Item.Description>
+        </Item.Root>
       </div>
     </Card.Content>
   </Card.Root>
@@ -106,18 +110,18 @@
       <Card.Description>Open the integrated renaming workspace to edit output file names before transcoding.</Card.Description>
     </Card.Header>
     <Card.Content class="space-y-4">
-      <div class="rounded-md border bg-muted/20 p-3 space-y-2 text-sm">
-        <div class="flex items-center justify-between">
-          <span class="text-muted-foreground">Selected outputs</span>
+      <Item.Group class="gap-2">
+        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+          <Item.Title>Selected outputs</Item.Title>
           <Badge>{workspace.selectedCount}</Badge>
-        </div>
-        <div class="flex items-center justify-between">
-          <span class="text-muted-foreground">Conflicts</span>
+        </Item.Root>
+        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+          <Item.Title>Conflicts</Item.Title>
           <Badge variant={outputConflictCount > 0 ? 'destructive' : 'secondary'}>
             {outputConflictCount}
           </Badge>
-        </div>
-      </div>
+        </Item.Root>
+      </Item.Group>
 
       <Button class="w-full" variant="outline" onclick={onOpenRenameWorkspace}>
         <FileVideo class="size-4 mr-2" />
@@ -126,16 +130,22 @@
 
       <div class="space-y-2">
         <Label>Batch preview</Label>
-        <div class="rounded-md border bg-muted/20 p-3 space-y-2 max-h-56 overflow-auto">
-          {#each readyQueueFiles.slice(0, 6) as queuedFile (queuedFile.id)}
-            <div class="text-sm">
-              <p class="font-medium truncate">{queuedFile.name}</p>
-              <p class="text-xs text-muted-foreground break-all">{buildOutputPath(queuedFile)}</p>
-            </div>
-          {:else}
-            <p class="text-sm text-muted-foreground">No ready files selected for output.</p>
-          {/each}
-        </div>
+        {#if readyQueueFiles.length > 0}
+          <Item.Group class="max-h-56 gap-2 overflow-auto">
+            {#each readyQueueFiles.slice(0, 6) as queuedFile (queuedFile.id)}
+              <Item.Root variant="outline" size="sm" role="listitem">
+                <Item.Content class="min-w-0">
+                  <Item.Title class="truncate">{queuedFile.name}</Item.Title>
+                  <Item.Description class="break-all">{buildOutputPath(queuedFile)}</Item.Description>
+                </Item.Content>
+              </Item.Root>
+            {/each}
+          </Item.Group>
+        {:else}
+          <Empty.Root class="border p-4">
+            <Empty.Description>No ready files selected for output.</Empty.Description>
+          </Empty.Root>
+        {/if}
       </div>
     </Card.Content>
   </Card.Root>

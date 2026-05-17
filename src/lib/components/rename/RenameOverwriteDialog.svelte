@@ -1,5 +1,7 @@
 <script lang="ts">
   import * as AlertDialog from '$lib/components/ui/alert-dialog';
+  import * as Item from '$lib/components/ui/item';
+  import { ScrollArea } from '$lib/components/ui/scroll-area';
 
   interface RenameOverwriteDialogProps {
     open: boolean;
@@ -28,16 +30,22 @@
     </AlertDialog.Header>
 
     {#if targetSamples.length > 0}
-      <div class="max-h-36 space-y-1 overflow-auto rounded-md border bg-muted/40 p-3">
-        {#each targetSamples as targetPath (targetPath)}
-          <p class="truncate font-mono text-xs">{targetPath}</p>
-        {/each}
-        {#if existingTargetCount > targetSamples.length}
-          <p class="text-xs text-muted-foreground">
-            + {existingTargetCount - targetSamples.length} more
-          </p>
-        {/if}
-      </div>
+      <ScrollArea class="max-h-36 border p-2">
+        <div class="space-y-1">
+          {#each targetSamples as targetPath (targetPath)}
+            <Item.Root variant="muted" size="xs">
+              <Item.Description class="truncate font-mono text-xs">{targetPath}</Item.Description>
+            </Item.Root>
+          {/each}
+          {#if existingTargetCount > targetSamples.length}
+            <Item.Root size="xs">
+              <Item.Description class="text-xs">
+                + {existingTargetCount - targetSamples.length} more
+              </Item.Description>
+            </Item.Root>
+          {/if}
+        </div>
+      </ScrollArea>
     {/if}
 
     <AlertDialog.Footer>

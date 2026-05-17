@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import * as Item from '$lib/components/ui/item';
   import { cn } from '$lib/utils';
 
   interface FileItemCardProps {
@@ -27,40 +28,47 @@
   }: FileItemCardProps = $props();
 </script>
 
-<button
-  type="button"
+<Item.Root
+  variant={selected ? 'outline' : 'default'}
+  size={compact ? 'xs' : 'sm'}
   class={cn(
-    'w-full rounded-lg border text-left transition-colors hover:bg-accent',
-    compact ? 'p-2.5' : 'p-3',
-    selected &&
-      'border-primary bg-card ring-1 ring-primary/20 hover:bg-card',
+    'items-start text-left hover:bg-muted/70',
+    selected && 'border-primary bg-card ring-1 ring-primary/20 hover:bg-card',
     disabled && 'cursor-not-allowed opacity-60',
     className
   )}
-  onclick={onclick}
-  disabled={disabled}
 >
-  <div class={cn('flex items-start', compact ? 'gap-2' : 'gap-3')}>
+  <button
+    type="button"
+    class={cn(
+      'flex min-w-0 flex-1 flex-wrap items-start gap-3 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+      compact && 'gap-2',
+      disabled && 'cursor-not-allowed'
+    )}
+    onclick={onclick}
+    disabled={disabled}
+    aria-pressed={selected}
+  >
     {#if icon}
-      <div class="shrink-0 mt-0.5">
+      <Item.Media class="mt-0.5">
         {@render icon()}
-      </div>
+      </Item.Media>
     {/if}
 
-    <div class="flex-1 min-w-0">
+    <Item.Content class="min-w-0">
       {@render content()}
-    </div>
+    </Item.Content>
 
-    {#if actions}
-      <div class="shrink-0">
-        {@render actions()}
-      </div>
+    {#if footer}
+      <Item.Footer class="mt-2">
+        {@render footer()}
+      </Item.Footer>
     {/if}
-  </div>
+  </button>
 
-  {#if footer}
-    <div class="mt-2">
-      {@render footer()}
-    </div>
+  {#if actions}
+    <Item.Actions class="shrink-0">
+      {@render actions()}
+    </Item.Actions>
   {/if}
-</button>
+</Item.Root>

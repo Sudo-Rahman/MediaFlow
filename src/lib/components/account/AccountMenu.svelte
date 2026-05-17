@@ -11,6 +11,7 @@
   } from '@lucide/svelte';
   import { untrack } from 'svelte';
 
+  import * as Avatar from '$lib/components/ui/avatar';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { Progress } from '$lib/components/ui/progress';
   import * as Sidebar from '$lib/components/ui/sidebar';
@@ -87,13 +88,15 @@
   <DropdownMenu.Content side="right" align="end" class="w-56">
     <DropdownMenu.Label>
       <div class="flex items-center gap-2 py-1">
-        <div class={['flex size-8 shrink-0 items-center justify-center rounded-full border bg-background text-xs font-medium transition-colors', isAccountBusy && 'border-primary/40 bg-primary/10 text-primary']}>
-          {#if mediaflowUser}
-            {accountInitials}
-          {:else}
-            <UserRound class="size-4 text-muted-foreground" />
-          {/if}
-        </div>
+        <Avatar.Root class={['transition-colors', isAccountBusy && 'after:border-primary/40']}>
+          <Avatar.Fallback class={['bg-background text-xs font-medium transition-colors', isAccountBusy && 'bg-primary/10 text-primary']}>
+            {#if mediaflowUser}
+              {accountInitials}
+            {:else}
+              <UserRound class="size-4 text-muted-foreground" />
+            {/if}
+          </Avatar.Fallback>
+        </Avatar.Root>
         <div class="min-w-0 leading-tight">
           <p class="truncate text-sm font-medium">{accountDisplayName}</p>
           <p class="truncate text-xs font-normal text-muted-foreground">{accountEmail}</p>

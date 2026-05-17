@@ -7,8 +7,9 @@
     TranscodeAudioTrackOverride,
   } from '$lib/types';
   import type { TranscodeModeOption } from '$lib/services/transcode';
+  import * as Field from '$lib/components/ui/field';
   import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
+  import * as Item from '$lib/components/ui/item';
   import { Switch } from '$lib/components/ui/switch';
   import * as Select from '$lib/components/ui/select';
   import { formatChannels } from '$lib/utils/format';
@@ -66,18 +67,28 @@
   const sampleRateDefaultLabel = $derived(
     showSourceTrackDetails ? `Default: As source (${formatSampleRate(sourceTrack?.sampleRate)})` : 'Default: As source',
   );
+  const controlId = $props.id();
+  const audioModeId = `${controlId}-audio-mode`;
+  const audioEncoderId = `${controlId}-audio-encoder`;
+  const bitrateId = `${controlId}-bitrate`;
+  const channelsSwitchId = `${controlId}-channels-override`;
+  const channelsLabelId = `${controlId}-channels-label`;
+  const channelsInputId = `${controlId}-channels`;
+  const sampleRateSwitchId = `${controlId}-sample-rate-override`;
+  const sampleRateLabelId = `${controlId}-sample-rate-label`;
+  const sampleRateInputId = `${controlId}-sample-rate`;
 </script>
 
 <div class="grid gap-4 lg:grid-cols-2">
   <div class="space-y-4">
-    <div class="space-y-2">
-      <Label>Audio mode</Label>
+    <Field.Field class="gap-2">
+      <Field.Label for={audioModeId}>Audio mode</Field.Label>
       <Select.Root
         type="single"
         value={settings.mode}
         onValueChange={(value) => onModeChange(value as TranscodeAudioMode)}
         >
-        <Select.Trigger class="w-full">{settings.mode}</Select.Trigger>
+        <Select.Trigger id={audioModeId} class="w-full">{settings.mode}</Select.Trigger>
         <Select.Content>
           <Select.Group>
             {#each modeOptions as option (option.value)}
@@ -86,17 +97,17 @@
           </Select.Group>
         </Select.Content>
       </Select.Root>
-    </div>
+    </Field.Field>
 
     {#if settings.mode === 'transcode'}
-      <div class="space-y-2">
-        <Label>Audio encoder</Label>
+      <Field.Field class="gap-2">
+        <Field.Label for={audioEncoderId}>Audio encoder</Field.Label>
         <Select.Root
           type="single"
           value={settings.encoderId}
           onValueChange={(value) => onEncoderChange(value)}
         >
-          <Select.Trigger class="w-full">{selectedEncoder?.label ?? 'Select encoder'}</Select.Trigger>
+          <Select.Trigger id={audioEncoderId} class="w-full">{selectedEncoder?.label ?? 'Select encoder'}</Select.Trigger>
           <Select.Content>
             <Select.Group>
               {#each availableAudioEncoders as encoder (encoder.id)}
@@ -105,104 +116,125 @@
             </Select.Group>
           </Select.Content>
         </Select.Root>
-      </div>
+      </Field.Field>
     {:else}
-      <div class="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-        {settings.mode === 'copy' ? copyMessage : disableMessage}
-      </div>
+      <Item.Root variant="outline" size="sm">
+        <Item.Description>{settings.mode === 'copy' ? copyMessage : disableMessage}</Item.Description>
+      </Item.Root>
     {/if}
   </div>
 
   <div class="space-y-4">
     {#if settings.mode === 'transcode'}
-      <div class="space-y-2">
-        <Label>Bitrate (kbps)</Label>
+      <Field.Field class="gap-2">
+        <Field.Label for={bitrateId}>Bitrate (kbps)</Field.Label>
         <Input
+          id={bitrateId}
           type="number"
           value={settings.bitrateKbps?.toString() ?? ''}
           oninput={(event) => onBitrateChange(parseOptionalInt(event.currentTarget.value))}
           disabled={isBitrateDisabled}
         />
-      </div>
+      </Field.Field>
 
       <div class="grid gap-4 xl:grid-cols-2">
         {#if selectedEncoder?.supportsChannels}
-          <div class="space-y-2">
-            <div class="rounded-md border bg-muted/20 p-3 space-y-3 min-w-0">
-              <div class="space-y-1 min-w-0">
-                <Label>Channels</Label>
-                <p class="text-xs text-muted-foreground break-words">
+          <Field.Field class="gap-2">
+            <Field.Field class="min-w-0" orientation="horizontal">
+              <Field.Content>
+                <Field.Label id={channelsLabelId} for={channelsSwitchId}>Channels</Field.Label>
+                <Field.Description class="break-words text-xs">
                   {channelsDefaultLabel}
-                </p>
-              </div>
-              <div class="flex items-center justify-between gap-3">
+                </Field.Description>
+              </Field.Content>
+              <div class="flex items-center gap-3">
                 <span class="text-xs text-muted-foreground">Override</span>
                 <Switch
+                  id={channelsSwitchId}
                   checked={settings.channels !== undefined}
                   onCheckedChange={(checked) => onChannelsChange(
                     checked ? (settings.channels ?? (showSourceTrackDetails ? sourceTrack?.channels : undefined) ?? 2) : undefined,
                   )}
                 />
               </div>
-            </div>
+            </Field.Field>
 
             {#if settings.channels !== undefined}
               <Input
+                id={channelsInputId}
                 type="number"
+                aria-labelledby={channelsLabelId}
                 value={settings.channels?.toString() ?? ''}
                 oninput={(event) => onChannelsChange(parseOptionalInt(event.currentTarget.value))}
               />
             {/if}
-          </div>
+          </Field.Field>
         {/if}
 
         {#if selectedEncoder?.supportsSampleRate}
-          <div class="space-y-2">
-            <div class="rounded-md border bg-muted/20 p-3 space-y-3 min-w-0">
-              <div class="space-y-1 min-w-0">
-                <Label>Sample rate</Label>
-                <p class="text-xs text-muted-foreground break-words">
+          <Field.Field class="gap-2">
+            <Field.Field class="min-w-0" orientation="horizontal">
+              <Field.Content>
+                <Field.Label id={sampleRateLabelId} for={sampleRateSwitchId}>Sample rate</Field.Label>
+                <Field.Description class="break-words text-xs">
                   {sampleRateDefaultLabel}
-                </p>
-              </div>
-              <div class="flex items-center justify-between gap-3">
+                </Field.Description>
+              </Field.Content>
+              <div class="flex items-center gap-3">
                 <span class="text-xs text-muted-foreground">Override</span>
                 <Switch
+                  id={sampleRateSwitchId}
                   checked={settings.sampleRate !== undefined}
                   onCheckedChange={(checked) => onSampleRateChange(
                     checked ? (settings.sampleRate ?? (showSourceTrackDetails ? sourceTrack?.sampleRate : undefined) ?? 48000) : undefined,
                   )}
                 />
               </div>
-            </div>
+            </Field.Field>
 
             {#if settings.sampleRate !== undefined}
               <Input
+                id={sampleRateInputId}
                 type="number"
+                aria-labelledby={sampleRateLabelId}
                 value={settings.sampleRate?.toString() ?? ''}
                 oninput={(event) => onSampleRateChange(parseOptionalInt(event.currentTarget.value))}
               />
             {/if}
-          </div>
+          </Field.Field>
         {/if}
       </div>
     {:else}
-      <div class="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-        {inactiveMessage}
-      </div>
+      <Item.Root variant="outline" size="sm">
+        <Item.Description>{inactiveMessage}</Item.Description>
+      </Item.Root>
     {/if}
 
     {#if showSourceTrackDetails}
-      <div class="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
-        <p><span class="font-medium">Source codec:</span> {sourceTrack?.codec.toUpperCase() ?? 'N/A'}</p>
-        <p><span class="font-medium">Channels:</span> {formatChannels(sourceTrack?.channels)}</p>
-        <p><span class="font-medium">Sample rate:</span> {formatSampleRate(sourceTrack?.sampleRate)}</p>
-        <p><span class="font-medium">Layout:</span> {sourceTrack?.channelLayout ?? 'N/A'}</p>
-      </div>
+      <Item.Group class="gap-2">
+        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+          <Item.Title>Source codec</Item.Title>
+          <Item.Description>{sourceTrack?.codec.toUpperCase() ?? 'N/A'}</Item.Description>
+        </Item.Root>
+        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+          <Item.Title>Channels</Item.Title>
+          <Item.Description>{formatChannels(sourceTrack?.channels)}</Item.Description>
+        </Item.Root>
+        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+          <Item.Title>Sample rate</Item.Title>
+          <Item.Description>{formatSampleRate(sourceTrack?.sampleRate)}</Item.Description>
+        </Item.Root>
+        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+          <Item.Title>Layout</Item.Title>
+          <Item.Description>{sourceTrack?.channelLayout ?? 'N/A'}</Item.Description>
+        </Item.Root>
+      </Item.Group>
     {:else}
-      <div class="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-        Source codec, channels, sample rate, and layout vary across the detected audio tracks. Open Track Overrides to inspect per-track details.
-      </div>
+      <Item.Root variant="outline" size="sm">
+        <Item.Description>
+          Source codec, channels, sample rate, and layout vary across the detected audio tracks. Open Track Overrides to inspect per-track details.
+        </Item.Description>
+      </Item.Root>
     {/if}
   </div>
 </div>

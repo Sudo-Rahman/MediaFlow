@@ -1,12 +1,13 @@
 <script lang="ts">
-  import { Video, Volume2, Subtitles, Database } from '@lucide/svelte';
+  import { Check, Video, Volume2, Subtitles, Database } from '@lucide/svelte';
   import { cn } from '$lib/utils';
   import type { Track, VideoFile } from '$lib/types';
   import { formatBitrate, formatLanguage, formatChannels, formatResolution } from '$lib/utils/format';
-  import { Checkbox } from '$lib/components/ui/checkbox';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
+  import * as Empty from '$lib/components/ui/empty';
+  import * as Item from '$lib/components/ui/item';
 
   interface TrackDetailsProps {
     file: VideoFile;
@@ -64,6 +65,15 @@
     const tracks = groupedTracks[type];
     return tracks.every(t => !selectedTrackIds.includes(t.id));
   }
+
+  function handleTrackRowKeydown(event: KeyboardEvent, trackId: number): void {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+
+    event.preventDefault();
+    onToggleTrack?.(trackId);
+  }
 </script>
 
 <div class={cn('space-y-4', className)}>
@@ -76,7 +86,7 @@
     </Card.Header>
   </Card.Root>
 
-  {#each Object.entries(groupedTracks) as [type, tracks]}
+  {#each Object.entries(groupedTracks) as [type, tracks] (type)}
     {#if tracks.length > 0}
       {@const Icon = typeIcons[type]}
       {@const allSelected = areAllSelected(type as Track['type'])}
@@ -111,20 +121,35 @@
           </div>
         </Card.Header>
         <Card.Content class="pt-0">
-          <div class="space-y-1.5">
+          <div class="flex w-full flex-col gap-1.5">
             {#each tracks as track (track.id)}
-              <label
+              <Item.Root
+                size="sm"
+                variant={isSelected(track.id) ? 'outline' : 'default'}
                 class={cn(
-                  'flex items-center gap-3 rounded-md border p-3 cursor-pointer transition-colors hover:bg-accent',
-                  isSelected(track.id) && 'border-primary bg-primary/5'
+                  'items-start hover:bg-muted/70 cursor-pointer',
+                  isSelected(track.id) && 'border-primary bg-card ring-1 ring-primary/20 hover:bg-card'
                 )}
+                role="checkbox"
+                aria-checked={isSelected(track.id)}
+                aria-label={`Select track #${track.index} ${track.codec.toUpperCase()}`}
+                tabindex={0}
+                onclick={() => onToggleTrack?.(track.id)}
+                onkeydown={(event) => handleTrackRowKeydown(event, track.id)}
               >
-                <Checkbox
-                  checked={isSelected(track.id)}
-                  onCheckedChange={() => onToggleTrack?.(track.id)}
-                />
+                <span
+                  aria-hidden="true"
+                  class={cn(
+                    'mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-[5px] border border-input/90 transition-colors',
+                    isSelected(track.id) && 'border-primary bg-primary text-primary-foreground'
+                  )}
+                >
+                  {#if isSelected(track.id)}
+                    <Check class="size-3.5" />
+                  {/if}
+                </span>
 
-                <div class="flex-1 min-w-0">
+                <Item.Content class="min-w-0">
                   <div class="flex items-center gap-2 flex-wrap">
                     <Badge variant="outline" class="font-mono text-xs">
                       #{track.index}
@@ -170,8 +195,8 @@
                       <span>{formatBitrate(track.bitrate)}</span>
                     {/if}
                   </div>
-                </div>
-              </label>
+                </Item.Content>
+              </Item.Root>
             {/each}
           </div>
         </Card.Content>
@@ -180,10 +205,14 @@
   {/each}
 
   {#if file.tracks.length === 0}
-    <Card.Root>
-      <Card.Content class="py-8 text-center text-muted-foreground">
-        No tracks detected in this file
-      </Card.Content>
-    </Card.Root>
+    <Empty.Root class="border-0 py-8">
+      <Empty.Header>
+        <Empty.Media>
+          <Database class="size-8 text-muted-foreground/50" />
+        </Empty.Media>
+        <Empty.Title class="text-base">No tracks detected</Empty.Title>
+        <Empty.Description>No tracks detected in this file</Empty.Description>
+      </Empty.Header>
+    </Empty.Root>
   {/if}
 </div>

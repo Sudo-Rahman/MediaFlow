@@ -1,6 +1,7 @@
 <script lang="ts">
   import { AlertTriangle } from '@lucide/svelte';
   import type { ClearConfig } from '$lib/types/rename';
+  import * as Alert from '$lib/components/ui/alert';
 
   interface ClearRuleProps {
     config: ClearConfig;
@@ -11,13 +12,11 @@
 </script>
 
 <div class="space-y-3">
-  <div class="flex items-start gap-2 p-3 rounded-md bg-destructive/10 text-destructive">
+  <Alert.Root variant="destructive" role="note" aria-live="off">
     <AlertTriangle class="size-4 shrink-0 mt-0.5" />
-    <div class="text-sm">
-      <p class="font-medium">This rule removes the entire filename</p>
-      <p class="text-xs opacity-80 mt-1">
-        Use this with other rules (like Numbering or Timestamp) to build a completely new name.
-      </p>
-    </div>
-  </div>
+    <Alert.Title>This rule removes the entire filename</Alert.Title>
+    <Alert.Description>
+      Use this with other rules (like Numbering or Timestamp) to build a completely new name.
+    </Alert.Description>
+  </Alert.Root>
 </div>

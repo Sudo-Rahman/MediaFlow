@@ -5,6 +5,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import * as Card from '$lib/components/ui/card';
   import * as Dialog from '$lib/components/ui/dialog';
+  import * as Item from '$lib/components/ui/item';
   import { Textarea } from '$lib/components/ui/textarea';
   import {
     buildReadableProbeSummary,
@@ -101,28 +102,36 @@
             <Card.Header class="pb-3">
               <Card.Title>Track Summary</Card.Title>
             </Card.Header>
-            <Card.Content class="space-y-3 text-sm">
-              <div class="flex items-center justify-between rounded-md border px-3 py-2">
-                <div class="flex items-center gap-2">
-                  <FileVideo class="size-4 text-primary" />
-                  <span>Video</span>
-                </div>
-                <Badge>{getTracksByType(file, 'video').length}</Badge>
-              </div>
-              <div class="flex items-center justify-between rounded-md border px-3 py-2">
-                <div class="flex items-center gap-2">
-                  <Volume2 class="size-4 text-emerald-500" />
-                  <span>Audio</span>
-                </div>
-                <Badge>{getTracksByType(file, 'audio').length}</Badge>
-              </div>
-              <div class="flex items-center justify-between rounded-md border px-3 py-2">
-                <div class="flex items-center gap-2">
-                  <Subtitles class="size-4 text-amber-500" />
-                  <span>Subtitles</span>
-                </div>
-                <Badge>{getTracksByType(file, 'subtitle').length}</Badge>
-              </div>
+            <Card.Content>
+              <Item.Group class="gap-2">
+                <Item.Root variant="outline" size="sm" role="listitem">
+                  <Item.Media class="text-primary">
+                    <FileVideo class="size-4" />
+                  </Item.Media>
+                  <Item.Title>Video</Item.Title>
+                  <Item.Actions>
+                    <Badge>{getTracksByType(file, 'video').length}</Badge>
+                  </Item.Actions>
+                </Item.Root>
+                <Item.Root variant="outline" size="sm" role="listitem">
+                  <Item.Media class="text-emerald-500">
+                    <Volume2 class="size-4" />
+                  </Item.Media>
+                  <Item.Title>Audio</Item.Title>
+                  <Item.Actions>
+                    <Badge>{getTracksByType(file, 'audio').length}</Badge>
+                  </Item.Actions>
+                </Item.Root>
+                <Item.Root variant="outline" size="sm" role="listitem">
+                  <Item.Media class="text-amber-500">
+                    <Subtitles class="size-4" />
+                  </Item.Media>
+                  <Item.Title>Subtitles</Item.Title>
+                  <Item.Actions>
+                    <Badge>{getTracksByType(file, 'subtitle').length}</Badge>
+                  </Item.Actions>
+                </Item.Root>
+              </Item.Group>
             </Card.Content>
           </Card.Root>
         </div>
@@ -191,48 +200,50 @@
             <Card.Header class="pb-3">
               <Card.Title>Audio Tracks</Card.Title>
             </Card.Header>
-            <Card.Content class="space-y-2">
-              {#each getTracksByType(file, 'audio') as track, index (track.id)}
-                <div class="rounded-md border px-3 py-3 text-sm">
-                  <div class="flex items-center justify-between gap-3">
-                    <div class="min-w-0">
-                      <p class="font-medium">Track {index + 1} · {track.codec.toUpperCase()}</p>
-                      <p class="mt-1 text-xs text-muted-foreground">
-                        {track.title ?? 'Untitled'} {track.language ? `· ${formatLanguage(track.language)}` : ''}
-                      </p>
-                    </div>
+            <Card.Content>
+              <Item.Group class="gap-2">
+                {#each getTracksByType(file, 'audio') as track, index (track.id)}
+                  <Item.Root variant="outline" class="items-start" role="listitem">
+                    <Item.Content class="min-w-0">
+                      <div class="flex items-center justify-between gap-3">
+                        <div class="min-w-0">
+                          <Item.Title>Track {index + 1} · {track.codec.toUpperCase()}</Item.Title>
+                          <Item.Description>
+                            {track.title ?? 'Untitled'} {track.language ? `· ${formatLanguage(track.language)}` : ''}
+                          </Item.Description>
+                        </div>
 
-                    <div class="flex items-center gap-2">
-                      {#if track.default}
-                        <Badge variant="outline">default</Badge>
-                      {/if}
-                    </div>
-                  </div>
+                        {#if track.default}
+                          <Badge variant="outline">default</Badge>
+                        {/if}
+                      </div>
 
-                  <div class="mt-3 grid gap-3 md:grid-cols-3">
-                    <div>
-                      <p class="text-xs uppercase tracking-wide text-muted-foreground">Language</p>
-                      <p>{formatLanguage(track.language)}</p>
-                    </div>
-                    <div>
-                      <p class="text-xs uppercase tracking-wide text-muted-foreground">Bitrate</p>
-                      <p>{formatBitrate(track.bitrate)}</p>
-                    </div>
-                    <div>
-                      <p class="text-xs uppercase tracking-wide text-muted-foreground">Channels</p>
-                      <p>{formatChannels(track.channels)}</p>
-                    </div>
-                    <div>
-                      <p class="text-xs uppercase tracking-wide text-muted-foreground">Sample rate</p>
-                      <p>{formatSampleRate(track.sampleRate)}</p>
-                    </div>
-                    <div class="md:col-span-2">
-                      <p class="text-xs uppercase tracking-wide text-muted-foreground">Format / Layout</p>
-                      <p>{track.sampleFormat ?? 'N/A'} / {track.channelLayout ?? 'N/A'}</p>
-                    </div>
-                  </div>
-                </div>
-              {/each}
+                      <div class="mt-3 grid gap-3 md:grid-cols-3">
+                        <div>
+                          <p class="text-xs uppercase tracking-wide text-muted-foreground">Language</p>
+                          <p>{formatLanguage(track.language)}</p>
+                        </div>
+                        <div>
+                          <p class="text-xs uppercase tracking-wide text-muted-foreground">Bitrate</p>
+                          <p>{formatBitrate(track.bitrate)}</p>
+                        </div>
+                        <div>
+                          <p class="text-xs uppercase tracking-wide text-muted-foreground">Channels</p>
+                          <p>{formatChannels(track.channels)}</p>
+                        </div>
+                        <div>
+                          <p class="text-xs uppercase tracking-wide text-muted-foreground">Sample rate</p>
+                          <p>{formatSampleRate(track.sampleRate)}</p>
+                        </div>
+                        <div class="md:col-span-2">
+                          <p class="text-xs uppercase tracking-wide text-muted-foreground">Format / Layout</p>
+                          <p>{track.sampleFormat ?? 'N/A'} / {track.channelLayout ?? 'N/A'}</p>
+                        </div>
+                      </div>
+                    </Item.Content>
+                  </Item.Root>
+                {/each}
+              </Item.Group>
             </Card.Content>
           </Card.Root>
         {/if}
@@ -242,25 +253,29 @@
             <Card.Header class="pb-3">
               <Card.Title>Subtitles</Card.Title>
             </Card.Header>
-            <Card.Content class="space-y-2">
-              {#each getTracksByType(file, 'subtitle') as track (track.id)}
-                <div class="rounded-md border px-3 py-2 text-sm">
-                  <div class="flex items-center justify-between gap-3">
-                    <p class="font-medium">{track.codec.toUpperCase()}</p>
-                    <div class="flex items-center gap-2">
-                      {#if track.default}
-                        <Badge variant="outline">default</Badge>
-                      {/if}
-                      {#if track.forced}
-                        <Badge variant="outline">forced</Badge>
-                      {/if}
-                    </div>
-                  </div>
-                  <p class="text-xs text-muted-foreground mt-1">
-                    {track.title ?? 'Untitled'} {track.language ? `· ${formatLanguage(track.language)}` : ''}
-                  </p>
-                </div>
-              {/each}
+            <Card.Content>
+              <Item.Group class="gap-2">
+                {#each getTracksByType(file, 'subtitle') as track (track.id)}
+                  <Item.Root variant="outline" size="sm" role="listitem">
+                    <Item.Content class="min-w-0">
+                      <Item.Title>{track.codec.toUpperCase()}</Item.Title>
+                      <Item.Description>
+                        {track.title ?? 'Untitled'} {track.language ? `· ${formatLanguage(track.language)}` : ''}
+                      </Item.Description>
+                    </Item.Content>
+                    <Item.Actions>
+                      <div class="flex items-center gap-2">
+                        {#if track.default}
+                          <Badge variant="outline">default</Badge>
+                        {/if}
+                        {#if track.forced}
+                          <Badge variant="outline">forced</Badge>
+                        {/if}
+                      </div>
+                    </Item.Actions>
+                  </Item.Root>
+                {/each}
+              </Item.Group>
             </Card.Content>
           </Card.Root>
         {/if}

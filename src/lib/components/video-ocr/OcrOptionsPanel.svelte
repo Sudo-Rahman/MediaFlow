@@ -7,7 +7,8 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { Button } from '$lib/components/ui/button';
   import * as ButtonGroup from '$lib/components/ui/button-group';
-  import { Label } from '$lib/components/ui/label';
+  import * as Field from '$lib/components/ui/field';
+  import { Separator } from '$lib/components/ui/separator';
   import * as Select from '$lib/components/ui/select';
   import { Slider } from '$lib/components/ui/slider';
   import { Switch } from '$lib/components/ui/switch';
@@ -45,6 +46,18 @@
     onCancel,
     onNavigateToSettings,
   }: OcrOptionsPanelProps = $props();
+
+  const idPrefix = `ocr-options-${Math.random().toString(36).slice(2)}`;
+  const languageSelectId = `${idPrefix}-language`;
+  const frameRateSliderId = `${idPrefix}-frame-rate`;
+  const confidenceSliderId = `${idPrefix}-confidence`;
+  const gpuSwitchId = `${idPrefix}-gpu`;
+  const mergeSwitchId = `${idPrefix}-merge`;
+  const similaritySliderId = `${idPrefix}-similarity`;
+  const maxGapSliderId = `${idPrefix}-max-gap`;
+  const minCueDurationSliderId = `${idPrefix}-min-cue-duration`;
+  const filterUrlSwitchId = `${idPrefix}-filter-url`;
+  const aiCleanupSwitchId = `${idPrefix}-ai-cleanup`;
 
   // Filter languages to only show those with installed models
   // If no availableLanguages provided, show all (fallback)
@@ -120,7 +133,7 @@
   const primaryIsRetry = $derived(primaryAction === 'retry');
 </script>
 
-<div class="space-y-6">
+<Field.FieldGroup class="gap-6">
   <!-- Header -->
   <div class="flex items-center gap-2">
     <Settings class="size-5 text-muted-foreground" />
@@ -128,10 +141,10 @@
   </div>
 
   <!-- Language -->
-  <div class="space-y-2">
-    <Label>Language</Label>
+  <Field.Field>
+    <Field.FieldLabel for={languageSelectId}>Language</Field.FieldLabel>
     <Select.Root type="single" value={config.language} onValueChange={handleLanguageChange}>
-      <Select.Trigger class="w-full">
+      <Select.Trigger id={languageSelectId} class="w-full">
         {filteredLanguages.find(l => l.value === config.language)?.label ?? 'Select language'}
       </Select.Trigger>
       <Select.Content>
@@ -146,19 +159,21 @@
       </Select.Content>
     </Select.Root>
     {#if availableLanguages.length > 0 && availableLanguages.length < OCR_LANGUAGES.length}
-      <p class="text-xs text-muted-foreground">
+      <Field.FieldDescription>
         {availableLanguages.length} of {OCR_LANGUAGES.length} language models installed
-      </p>
+      </Field.FieldDescription>
     {/if}
-  </div>
+  </Field.Field>
 
   <!-- Frame Rate -->
-  <div class="space-y-2">
+  <Field.Field>
     <div class="flex justify-between">
-      <Label>Frame Rate</Label>
+      <Field.FieldLabel id={`${frameRateSliderId}-label`}>Frame Rate</Field.FieldLabel>
       <span class="text-sm text-muted-foreground">{config.frameRate} fps</span>
     </div>
     <Slider
+      id={frameRateSliderId}
+      aria-labelledby={`${frameRateSliderId}-label`}
       type="single"
       value={config.frameRate}
       onValueChange={handleFrameRateChange}
@@ -166,18 +181,20 @@
       max={30}
       step={1}
     />
-    <p class="text-xs text-muted-foreground">
+    <Field.FieldDescription>
       Higher = more accurate timing, slower processing
-    </p>
-  </div>
+    </Field.FieldDescription>
+  </Field.Field>
 
   <!-- Confidence Threshold -->
-  <div class="space-y-2">
+  <Field.Field>
     <div class="flex justify-between">
-      <Label>Min Confidence</Label>
+      <Field.FieldLabel id={`${confidenceSliderId}-label`}>Min Confidence</Field.FieldLabel>
       <span class="text-sm text-muted-foreground">{Math.round(config.confidenceThreshold * 100)}%</span>
     </div>
     <Slider
+      id={confidenceSliderId}
+      aria-labelledby={`${confidenceSliderId}-label`}
       type="single"
       value={config.confidenceThreshold * 100}
       onValueChange={handleConfidenceChange}
@@ -185,41 +202,49 @@
       max={100}
       step={5}
     />
-    <p class="text-xs text-muted-foreground">
+    <Field.FieldDescription>
       Ignore OCR results below this confidence level
-    </p>
-  </div>
+    </Field.FieldDescription>
+  </Field.Field>
 
   <!-- GPU Acceleration -->
-  <div class="space-y-3">
-    <div class="flex items-center justify-between">
-      <Label>Use GPU acceleration</Label>
+  <Field.Field orientation="horizontal">
+    <Field.FieldContent>
+      <Field.FieldLabel for={gpuSwitchId}>Use GPU acceleration</Field.FieldLabel>
+    </Field.FieldContent>
       <Switch
+        id={gpuSwitchId}
         checked={config.useGpu}
         onCheckedChange={(checked) => onConfigChange({ useGpu: checked })}
       />
-    </div>
-  </div>
+  </Field.Field>
 
   <!-- Advanced Cleanup -->
-  <div class="pt-4 border-t space-y-4">
-    <h4 class="text-sm font-medium">Advanced Cleanup</h4>
+  <Separator />
 
-    <div class="space-y-3">
-      <div class="flex items-center justify-between">
-        <Label>Merge similar subtitles</Label>
+  <Field.FieldSet>
+    <Field.FieldLegend variant="label">Advanced Cleanup</Field.FieldLegend>
+
+    <Field.FieldGroup class="gap-4">
+      <Field.Field orientation="horizontal">
+        <Field.FieldContent>
+          <Field.FieldLabel for={mergeSwitchId}>Merge similar subtitles</Field.FieldLabel>
+        </Field.FieldContent>
         <Switch
+          id={mergeSwitchId}
           checked={config.mergeSimilar}
           onCheckedChange={(checked) => onConfigChange({ mergeSimilar: checked })}
         />
-      </div>
+      </Field.Field>
 
-      <div class="space-y-2">
+      <Field.Field>
         <div class="flex justify-between">
-          <Label>Similarity threshold</Label>
+          <Field.FieldLabel id={`${similaritySliderId}-label`}>Similarity threshold</Field.FieldLabel>
           <span class="text-sm text-muted-foreground">{Math.round(config.similarityThreshold * 100)}%</span>
         </div>
         <Slider
+          id={similaritySliderId}
+          aria-labelledby={`${similaritySliderId}-label`}
           type="single"
           value={Math.round(config.similarityThreshold * 100)}
           onValueChange={handleSimilarityThresholdChange}
@@ -228,17 +253,19 @@
           step={1}
           disabled={!config.mergeSimilar}
         />
-        <p class="text-xs text-muted-foreground">
+        <Field.FieldDescription>
           Higher = stricter merging
-        </p>
-      </div>
+        </Field.FieldDescription>
+      </Field.Field>
 
-      <div class="space-y-2">
+      <Field.Field>
         <div class="flex justify-between">
-          <Label>Max gap to merge</Label>
+          <Field.FieldLabel id={`${maxGapSliderId}-label`}>Max gap to merge</Field.FieldLabel>
           <span class="text-sm text-muted-foreground">{config.maxGapMs} ms</span>
         </div>
         <Slider
+          id={maxGapSliderId}
+          aria-labelledby={`${maxGapSliderId}-label`}
           type="single"
           value={config.maxGapMs}
           onValueChange={handleMaxGapChange}
@@ -247,17 +274,19 @@
           step={50}
           disabled={!config.mergeSimilar}
         />
-        <p class="text-xs text-muted-foreground">
+        <Field.FieldDescription>
           Bridge brief OCR dropouts
-        </p>
-      </div>
+        </Field.FieldDescription>
+      </Field.Field>
 
-      <div class="space-y-2">
+      <Field.Field>
         <div class="flex justify-between">
-          <Label>Minimum cue duration</Label>
+          <Field.FieldLabel id={`${minCueDurationSliderId}-label`}>Minimum cue duration</Field.FieldLabel>
           <span class="text-sm text-muted-foreground">{config.minCueDurationMs} ms</span>
         </div>
         <Slider
+          id={minCueDurationSliderId}
+          aria-labelledby={`${minCueDurationSliderId}-label`}
           type="single"
           value={config.minCueDurationMs}
           onValueChange={handleMinCueDurationChange}
@@ -265,35 +294,41 @@
           max={2000}
           step={50}
         />
-        <p class="text-xs text-muted-foreground">
+        <Field.FieldDescription>
           Helps reduce micro-cues
-        </p>
-      </div>
+        </Field.FieldDescription>
+      </Field.Field>
 
-      <div class="flex items-center justify-between">
-        <Label>Filter URL-like watermarks</Label>
+      <Field.Field orientation="horizontal">
+        <Field.FieldContent>
+          <Field.FieldLabel for={filterUrlSwitchId}>Filter URL-like watermarks</Field.FieldLabel>
+        </Field.FieldContent>
         <Switch
+          id={filterUrlSwitchId}
           checked={config.filterUrlLike}
           onCheckedChange={(checked) => onConfigChange({ filterUrlLike: checked })}
         />
-      </div>
-    </div>
-  </div>
+      </Field.Field>
+    </Field.FieldGroup>
+  </Field.FieldSet>
 
   <!-- AI Cleanup -->
-  <div class="pt-4 border-t space-y-4">
-    <div class="flex items-start justify-between gap-3">
-      <div class="space-y-1">
-        <Label>AI subtitle cleanup</Label>
-        <p class="text-xs text-muted-foreground">
+  <Separator />
+
+  <Field.FieldSet>
+    <Field.Field orientation="horizontal">
+      <Field.FieldContent>
+        <Field.FieldLabel for={aiCleanupSwitchId}>AI subtitle cleanup</Field.FieldLabel>
+        <Field.FieldDescription>
           Correct OCR mistakes with AI and merge duplicate consecutive lines
-        </p>
-      </div>
+        </Field.FieldDescription>
+      </Field.FieldContent>
       <Switch
+        id={aiCleanupSwitchId}
         checked={config.aiCleanupEnabled}
         onCheckedChange={(checked) => onConfigChange({ aiCleanupEnabled: checked })}
       />
-    </div>
+    </Field.Field>
 
     {#if config.aiCleanupEnabled}
       <LlmProviderModelSelector
@@ -303,14 +338,16 @@
         onModelChange={(model) => onConfigChange({ aiCleanupModel: model })}
         onNavigateToSettings={onNavigateToSettings}
       />
-      <p class="text-xs text-muted-foreground">
+      <Field.FieldDescription>
         If cleanup fails, OCR subtitles from heuristic cleanup are kept automatically.
-      </p>
+      </Field.FieldDescription>
     {/if}
-  </div>
+  </Field.FieldSet>
 
   <!-- Action Buttons -->
-  <div class="pt-4 border-t space-y-2">
+  <Separator />
+
+  <div class="space-y-2">
     {#if isProcessing}
       <Button
         variant="destructive"
@@ -367,4 +404,4 @@
     {/if}
   </div>
 
-</div>
+</Field.FieldGroup>

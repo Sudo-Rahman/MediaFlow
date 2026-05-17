@@ -10,6 +10,8 @@
   } from '$lib/types';
   import type { TranscodeModeOption } from '$lib/services/transcode';
   import { Button } from '$lib/components/ui/button';
+  import * as Empty from '$lib/components/ui/empty';
+  import * as Item from '$lib/components/ui/item';
 
   import TranscodeAdditionalOverrides from './TranscodeAdditionalOverrides.svelte';
   import TranscodeAudioSettingsForm from './TranscodeAudioSettingsForm.svelte';
@@ -53,34 +55,27 @@
 </script>
 
 {#if !file.hasAudio}
-  <div class="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-    No audio stream was detected in this file.
-  </div>
+  <Empty.Root class="border p-4">
+    <Empty.Description>No audio stream was detected in this file.</Empty.Description>
+  </Empty.Root>
 {:else}
   <div class="space-y-4">
     {#if hasMultipleAudioTracks}
-      <div class="rounded-lg border bg-muted/20 p-3">
-        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div class="min-w-0 space-y-1.5">
-            <div class="flex items-start gap-2.5">
-              <div class="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                <Settings2 class="size-4" />
-              </div>
-
-              <div class="min-w-0">
-                <p class="text-sm font-medium">Per-track audio overrides</p>
-                <p class="text-sm text-muted-foreground">
-                  Adjust individual tracks without changing the global audio settings below.
-                </p>
-              </div>
-            </div>
-
-            <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-              <p>{audioTrackCountLabel}</p>
-              <p>{customOverrideLabel}</p>
-            </div>
-          </div>
-
+      <Item.Root variant="outline" class="items-start">
+        <Item.Media variant="icon" class="text-primary">
+          <Settings2 />
+        </Item.Media>
+        <Item.Content class="min-w-0">
+          <Item.Title>Per-track audio overrides</Item.Title>
+          <Item.Description>
+            Adjust individual tracks without changing the global audio settings below.
+          </Item.Description>
+          <Item.Footer class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <p>{audioTrackCountLabel}</p>
+            <p>{customOverrideLabel}</p>
+          </Item.Footer>
+        </Item.Content>
+        <Item.Actions class="w-full sm:w-auto">
           <Button
             variant="outline"
             size="sm"
@@ -88,10 +83,10 @@
             onclick={() => trackOverridesDialogOpen = true}
           >
             <Settings2 class="mr-2 size-4" />
-            Open 
+            Open
           </Button>
-        </div>
-      </div>
+        </Item.Actions>
+      </Item.Root>
     {/if}
 
     <TranscodeAudioSettingsForm

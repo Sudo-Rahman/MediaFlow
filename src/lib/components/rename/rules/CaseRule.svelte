@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { CaseConfig, CaseMode } from '$lib/types/rename';
-  import { Label } from '$lib/components/ui/label';
+  import * as Field from '$lib/components/ui/field';
   import * as RadioGroup from '$lib/components/ui/radio-group';
 
   interface CaseRuleProps {
@@ -21,20 +21,26 @@
   function handleChange(value: string) {
     onUpdate({ mode: value as CaseMode });
   }
+
+  const controlId = $props.id();
 </script>
 
-<div class="space-y-3">
-  <Label>Case Style</Label>
+<Field.FieldSet class="gap-3">
+  <Field.FieldLegend variant="label" class="mb-0">Case Style</Field.FieldLegend>
   
   <RadioGroup.Root value={config.mode} onValueChange={handleChange} class="space-y-2">
-    {#each caseOptions as option}
-      <label class="flex items-center gap-3 p-2 rounded-md border cursor-pointer hover:bg-accent/50 transition-colors">
-        <RadioGroup.Item value={option.value} />
-        <div class="flex-1">
-          <p class="text-sm font-medium">{option.label}</p>
-          <p class="text-xs text-muted-foreground font-mono">{option.example}</p>
-        </div>
-      </label>
+    {#each caseOptions as option (option.value)}
+      {@const optionId = `${controlId}-case-${option.value}`}
+      <Field.Field orientation="horizontal" class="relative border p-3 transition-colors hover:bg-accent/50">
+        <RadioGroup.Item id={optionId} value={option.value} />
+        <Field.FieldLabel for={optionId} class="absolute inset-0 z-10 cursor-pointer">
+          <span class="sr-only">{option.label}: {option.example}</span>
+        </Field.FieldLabel>
+        <Field.FieldContent class="pointer-events-none">
+          <Field.FieldTitle>{option.label}</Field.FieldTitle>
+          <Field.FieldDescription class="font-mono text-xs">{option.example}</Field.FieldDescription>
+        </Field.FieldContent>
+      </Field.Field>
     {/each}
   </RadioGroup.Root>
-</div>
+</Field.FieldSet>

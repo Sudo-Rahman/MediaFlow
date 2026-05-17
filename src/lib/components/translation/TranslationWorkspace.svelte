@@ -5,6 +5,7 @@
   import { Textarea } from '$lib/components/ui/textarea';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
+  import * as Empty from '$lib/components/ui/empty';
   import { VirtualizedTextPreview } from '$lib/components/shared';
   import * as HoverCard from '$lib/components/ui/hover-card';
   import * as Item from '$lib/components/ui/item';
@@ -156,7 +157,7 @@
                   </Button>
                 {/snippet}
               </HoverCard.Trigger>
-              <HoverCard.Content align="end" class="w-56 rounded-2xl p-3">
+              <HoverCard.Content align="end" class="w-56 p-3">
                 <div class="space-y-2">
                   <p class="text-xs font-medium text-muted-foreground">Original metrics</p>
                   <div class="space-y-1 text-xs">
@@ -214,7 +215,7 @@
                       </Button>
                     {/snippet}
                   </Popover.Trigger>
-                  <Popover.Content align="end" class="w-80 max-w-[calc(100vw-2rem)] rounded-2xl p-2">
+                  <Popover.Content align="end" class="w-80 max-w-[calc(100vw-2rem)] p-2">
                     <div class="px-2 py-1.5">
                       <p class="text-xs font-medium text-muted-foreground">Translation version</p>
                     </div>
@@ -296,7 +297,7 @@
                       </Button>
                     {/snippet}
                   </HoverCard.Trigger>
-                  <HoverCard.Content align="end" class="w-56 rounded-2xl p-3">
+                  <HoverCard.Content align="end" class="w-56 p-3">
                     <div class="space-y-2">
                       <p class="text-xs font-medium text-muted-foreground">Translation metrics</p>
                       <div class="space-y-1 text-xs">
@@ -477,6 +478,7 @@
                 class="w-full h-full p-4 resize-none font-mono text-sm border-0 focus-visible:ring-0 rounded-none bg-transparent overflow-auto whitespace-pre field-sizing-fixed [contain:layout_paint_style] [tab-size:2]"
                 wrap="off"
                 spellcheck="false"
+                aria-label="Translation text"
                 value={draftContent}
                 oninput={handleContentInput}
               />
@@ -513,20 +515,28 @@
                 <p class="font-medium text-orange-500">Translation cancelled</p>
               </div>
             {:else}
-              <div class="flex flex-col items-center justify-center h-full p-8 text-center text-muted-foreground">
-                <Languages class="size-8 mb-4" />
-                <p>Click "Translate" to start</p>
-              </div>
+              <Empty.Root class="h-full border-0">
+                <Empty.Header>
+                  <Empty.Media>
+                    <Languages class="size-8" />
+                  </Empty.Media>
+                  <Empty.Description>Click "Translate" to start</Empty.Description>
+                </Empty.Header>
+              </Empty.Root>
             {/if}
           </div>
         </div>
       </Resizable.Pane>
     </Resizable.PaneGroup>
   {:else}
-    <div class="flex-1 flex flex-col items-center justify-center text-center text-muted-foreground p-8">
-      <Languages class="size-12 mb-4" />
-      <p class="text-lg font-medium">No file selected</p>
-      <p class="text-sm">Import subtitle files to get started</p>
-    </div>
+    <Empty.Root class="flex-1 border-0">
+      <Empty.Header>
+        <Empty.Media>
+          <Languages class="size-12" />
+        </Empty.Media>
+        <Empty.Title class="text-lg">No file selected</Empty.Title>
+        <Empty.Description>Import subtitle files to get started</Empty.Description>
+      </Empty.Header>
+    </Empty.Root>
   {/if}
 </div>

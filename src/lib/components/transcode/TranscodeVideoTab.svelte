@@ -13,7 +13,9 @@
     type TranscodePresetOption,
   } from '$lib/services/transcode';
   import { formatResolution } from '$lib/utils/format';
+  import * as Empty from '$lib/components/ui/empty';
   import { Input } from '$lib/components/ui/input';
+  import * as Item from '$lib/components/ui/item';
   import { Label } from '$lib/components/ui/label';
   import * as Select from '$lib/components/ui/select';
 
@@ -69,17 +71,28 @@
     file.profile.video.preset ?? getDefaultVideoPresetValue(selectedVideoEncoder?.id) ?? '',
   );
   const hasManualQualityControls = $derived(hasManualVideoQualityControls(selectedVideoEncoder));
+  const controlId = $props.id();
+  const videoModeId = `${controlId}-video-mode`;
+  const videoEncoderId = `${controlId}-video-encoder`;
+  const videoProfileId = `${controlId}-video-profile`;
+  const videoLevelId = `${controlId}-video-level`;
+  const videoPixelFormatId = `${controlId}-video-pixel-format`;
+  const qualityModeId = `${controlId}-quality-mode`;
+  const crfId = `${controlId}-crf`;
+  const qpId = `${controlId}-qp`;
+  const videoBitrateId = `${controlId}-video-bitrate`;
+  const videoPresetId = `${controlId}-video-preset`;
 </script>
 
 {#if !file.hasVideo}
-  <div class="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-    This file is audio-only, so video transcoding is disabled.
-  </div>
+  <Empty.Root class="border p-4">
+    <Empty.Description>This file is audio-only, so video transcoding is disabled.</Empty.Description>
+  </Empty.Root>
 {:else}
   <div class="grid gap-4 lg:grid-cols-2">
     <div class="space-y-4">
       <div class="space-y-2">
-        <Label>Video mode</Label>
+        <Label for={videoModeId}>Video mode</Label>
         <Select.Root
           type="single"
           value={file.profile.video.mode}
@@ -89,7 +102,7 @@
             });
           }}
         >
-          <Select.Trigger class="w-full">{file.profile.video.mode}</Select.Trigger>
+          <Select.Trigger id={videoModeId} class="w-full">{file.profile.video.mode}</Select.Trigger>
           <Select.Content>
             <Select.Group>
               {#each availableVideoModeOptions as option (option.value)}
@@ -102,7 +115,7 @@
 
       {#if file.profile.video.mode === 'transcode'}
         <div class="space-y-2">
-          <Label>Video encoder</Label>
+          <Label for={videoEncoderId}>Video encoder</Label>
           <Select.Root
             type="single"
             value={file.profile.video.encoderId}
@@ -113,7 +126,7 @@
               });
             }}
           >
-            <Select.Trigger class="w-full">{selectedVideoEncoder?.label ?? 'Select encoder'}</Select.Trigger>
+            <Select.Trigger id={videoEncoderId} class="w-full">{selectedVideoEncoder?.label ?? 'Select encoder'}</Select.Trigger>
             <Select.Content>
               <Select.Group>
                 {#each availableVideoEncoders as encoder (encoder.id)}
@@ -128,7 +141,7 @@
           <div class="grid gap-4 md:grid-cols-2">
             {#if videoProfileOptions.length > 0}
               <div class="space-y-2">
-                <Label>Profile</Label>
+                <Label for={videoProfileId}>Profile</Label>
                 <Select.Root
                   type="single"
                   value={file.profile.video.profile}
@@ -138,7 +151,7 @@
                     });
                   }}
                 >
-                  <Select.Trigger class="w-full">{file.profile.video.profile ?? 'Auto'}</Select.Trigger>
+                  <Select.Trigger id={videoProfileId} class="w-full">{file.profile.video.profile ?? 'Auto'}</Select.Trigger>
                   <Select.Content>
                     <Select.Group>
                       {#each videoProfileOptions as profile (profile)}
@@ -152,7 +165,7 @@
 
             {#if videoLevelOptions.length > 0}
               <div class="space-y-2">
-                <Label>Level</Label>
+                <Label for={videoLevelId}>Level</Label>
                 <Select.Root
                   type="single"
                   value={file.profile.video.level}
@@ -162,7 +175,7 @@
                     });
                   }}
                 >
-                  <Select.Trigger class="w-full">{file.profile.video.level ?? 'Auto'}</Select.Trigger>
+                  <Select.Trigger id={videoLevelId} class="w-full">{file.profile.video.level ?? 'Auto'}</Select.Trigger>
                   <Select.Content>
                     <Select.Group>
                       {#each videoLevelOptions as level (level)}
@@ -178,7 +191,7 @@
 
         {#if videoPixelFormatOptions.length > 0}
           <div class="space-y-2">
-            <Label>Pixel format</Label>
+            <Label for={videoPixelFormatId}>Pixel format</Label>
             <Select.Root
               type="single"
               value={file.profile.video.pixelFormat}
@@ -188,7 +201,7 @@
                 });
               }}
             >
-              <Select.Trigger class="w-full">{file.profile.video.pixelFormat ?? 'Auto'}</Select.Trigger>
+              <Select.Trigger id={videoPixelFormatId} class="w-full">{file.profile.video.pixelFormat ?? 'Auto'}</Select.Trigger>
               <Select.Content>
                 <Select.Group>
                   {#each videoPixelFormatOptions as pixelFormat (pixelFormat)}
@@ -205,11 +218,13 @@
           </div>
         {/if}
       {:else}
-        <div class="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-          {file.profile.video.mode === 'copy'
-            ? 'Video streams will be copied without re-encoding.'
-            : 'Video streams are disabled for this output.'}
-        </div>
+        <Item.Root variant="outline" size="sm">
+          <Item.Description>
+            {file.profile.video.mode === 'copy'
+              ? 'Video streams will be copied without re-encoding.'
+              : 'Video streams are disabled for this output.'}
+          </Item.Description>
+        </Item.Root>
       {/if}
     </div>
 
@@ -217,7 +232,7 @@
       {#if file.profile.video.mode === 'transcode'}
         {#if hasManualQualityControls}
           <div class="space-y-2">
-            <Label>Quality mode</Label>
+            <Label for={qualityModeId}>Quality mode</Label>
             <Select.Root
               type="single"
               value={file.profile.video.qualityMode}
@@ -227,7 +242,7 @@
                 });
               }}
             >
-              <Select.Trigger class="w-full">{file.profile.video.qualityMode}</Select.Trigger>
+              <Select.Trigger id={qualityModeId} class="w-full">{file.profile.video.qualityMode}</Select.Trigger>
               <Select.Content>
                 <Select.Group>
                   {#if selectedVideoEncoder?.supportsCrf}
@@ -246,8 +261,9 @@
 
           {#if file.profile.video.qualityMode === 'crf'}
             <div class="space-y-2">
-              <Label>CRF</Label>
+              <Label for={crfId}>CRF</Label>
               <Input
+                id={crfId}
                 type="number"
                 value={file.profile.video.crf?.toString() ?? ''}
                 oninput={(event) => {
@@ -260,8 +276,9 @@
             </div>
           {:else if file.profile.video.qualityMode === 'qp'}
             <div class="space-y-2">
-              <Label>QP</Label>
+              <Label for={qpId}>QP</Label>
               <Input
+                id={qpId}
                 type="number"
                 value={file.profile.video.qp?.toString() ?? ''}
                 oninput={(event) => {
@@ -274,8 +291,9 @@
             </div>
           {:else}
             <div class="space-y-2">
-              <Label>Bitrate (kbps)</Label>
+              <Label for={videoBitrateId}>Bitrate (kbps)</Label>
               <Input
+                id={videoBitrateId}
                 type="number"
                 value={file.profile.video.bitrateKbps?.toString() ?? ''}
                 oninput={(event) => {
@@ -288,14 +306,14 @@
             </div>
           {/if}
         {:else}
-          <div class="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-            This encoder manages quality automatically.
-          </div>
+          <Item.Root variant="outline" size="sm">
+            <Item.Description>This encoder manages quality automatically.</Item.Description>
+          </Item.Root>
         {/if}
 
         {#if videoPresetOptions.length > 0}
           <div class="space-y-2">
-            <Label>Preset</Label>
+            <Label for={videoPresetId}>Preset</Label>
             <Select.Root
               type="single"
               value={selectedPresetValue}
@@ -305,7 +323,7 @@
                 });
               }}
             >
-              <Select.Trigger class="w-full">
+              <Select.Trigger id={videoPresetId} class="w-full">
                 {videoPresetOptions.find((option) => option.value === selectedPresetValue)?.label ?? 'Select preset'}
               </Select.Trigger>
               <Select.Content>
@@ -319,17 +337,33 @@
           </div>
         {/if}
       {:else}
-        <div class="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-          Encoder quality settings are not used while video mode is {file.profile.video.mode}.
-        </div>
+        <Item.Root variant="outline" size="sm">
+          <Item.Description>
+            Encoder quality settings are not used while video mode is {file.profile.video.mode}.
+          </Item.Description>
+        </Item.Root>
       {/if}
 
-      <div class="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
-        <p><span class="font-medium">Source codec:</span> {selectedVideoTrack?.codec.toUpperCase() ?? 'N/A'}</p>
-        <p><span class="font-medium">Source resolution:</span> {formatResolution(selectedVideoTrack?.width, selectedVideoTrack?.height)}</p>
-        <p><span class="font-medium">Source bit depth:</span> {formatBitDepth(selectedVideoTrack)}</p>
-        <p><span class="font-medium">Source color:</span> {selectedVideoTrack?.colorSpace ?? 'N/A'} / {selectedVideoTrack?.colorTransfer ?? 'N/A'} / {selectedVideoTrack?.colorPrimaries ?? 'N/A'}</p>
-      </div>
+      <Item.Group class="gap-2">
+        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+          <Item.Title>Source codec</Item.Title>
+          <Item.Description>{selectedVideoTrack?.codec.toUpperCase() ?? 'N/A'}</Item.Description>
+        </Item.Root>
+        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+          <Item.Title>Source resolution</Item.Title>
+          <Item.Description>{formatResolution(selectedVideoTrack?.width, selectedVideoTrack?.height)}</Item.Description>
+        </Item.Root>
+        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+          <Item.Title>Source bit depth</Item.Title>
+          <Item.Description>{formatBitDepth(selectedVideoTrack)}</Item.Description>
+        </Item.Root>
+        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+          <Item.Title>Source color</Item.Title>
+          <Item.Description>
+            {selectedVideoTrack?.colorSpace ?? 'N/A'} / {selectedVideoTrack?.colorTransfer ?? 'N/A'} / {selectedVideoTrack?.colorPrimaries ?? 'N/A'}
+          </Item.Description>
+        </Item.Root>
+      </Item.Group>
     </div>
   </div>
 {/if}

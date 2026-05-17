@@ -1,10 +1,13 @@
 <script lang="ts">
+  import { AlertTriangle, Info } from '@lucide/svelte';
+
   import type { OcrConfig, OcrRetryMode, OcrVideoFile } from '$lib/types/video-ocr';
   import { DEFAULT_OCR_CONFIG, OCR_LANGUAGES } from '$lib/types/video-ocr';
   import { LlmProviderModelSelector } from '$lib/components/llm';
   import { RetryVersionDialogShell } from '$lib/components/shared';
 
-  import { Label } from '$lib/components/ui/label';
+  import * as Field from '$lib/components/ui/field';
+  import * as Item from '$lib/components/ui/item';
   import { Separator } from '$lib/components/ui/separator';
   import * as Select from '$lib/components/ui/select';
   import { Slider } from '$lib/components/ui/slider';
@@ -29,6 +32,18 @@
   let versionName = $state('');
   let mode = $state<OcrRetryMode>('full_pipeline');
   let config = $state<OcrConfig>({ ...DEFAULT_OCR_CONFIG });
+  const idPrefix = `ocr-retry-${Math.random().toString(36).slice(2)}`;
+  const retryModeSelectId = `${idPrefix}-mode`;
+  const languageSelectId = `${idPrefix}-language`;
+  const frameRateSliderId = `${idPrefix}-frame-rate`;
+  const confidenceSliderId = `${idPrefix}-confidence`;
+  const gpuSwitchId = `${idPrefix}-gpu`;
+  const aiCleanupSwitchId = `${idPrefix}-ai-cleanup`;
+  const mergeSwitchId = `${idPrefix}-merge`;
+  const similaritySliderId = `${idPrefix}-similarity`;
+  const maxGapSliderId = `${idPrefix}-max-gap`;
+  const minCueDurationSliderId = `${idPrefix}-min-cue-duration`;
+  const filterUrlSwitchId = `${idPrefix}-filter-url`;
 
   const hasRawVersion = $derived((file?.ocrVersions ?? []).some((version) => version.rawOcr.length > 0));
   const showPipelineOptions = $derived(mode === 'full_pipeline');
@@ -92,14 +107,14 @@
   onConfirm={handleConfirm}
 >
   {#snippet optionsContent()}
-    <div class="space-y-2">
-      <Label>Retry mode</Label>
+    <Field.Field>
+      <Field.FieldLabel for={retryModeSelectId}>Retry mode</Field.FieldLabel>
       <Select.Root
         type="single"
         value={mode}
         onValueChange={(value) => value && (mode = value as OcrRetryMode)}
       >
-        <Select.Trigger class="w-full">
+        <Select.Trigger id={retryModeSelectId} class="w-full">
           {getModeLabel(mode)}
         </Select.Trigger>
         <Select.Content>
@@ -111,32 +126,50 @@
           </Select.Group>
         </Select.Content>
       </Select.Root>
-    </div>
+    </Field.Field>
 
     {#if mode !== 'full_pipeline' && !hasRawVersion}
-      <p class="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-md p-2">
-        No persisted raw OCR found for this file. The run will automatically fall back to full pipeline.
-      </p>
+      <Item.Root variant="outline" size="xs" class="border-amber-500/40 text-amber-700 dark:text-amber-300">
+        <Item.Media>
+          <AlertTriangle class="size-4" />
+        </Item.Media>
+        <Item.Content>
+          <Item.Title>Raw OCR is unavailable</Item.Title>
+          <Item.Description>
+            No persisted raw OCR found for this file. The run will automatically fall back to full pipeline.
+          </Item.Description>
+        </Item.Content>
+      </Item.Root>
     {/if}
 
     {#if mode !== 'full_pipeline'}
-      <p class="text-xs text-muted-foreground bg-muted/40 border rounded-md p-2">
-        Partial retry reuses the original raw OCR frame rate for timing.
-      </p>
+      <Item.Root variant="outline" size="xs">
+        <Item.Media>
+          <Info class="size-4" />
+        </Item.Media>
+        <Item.Content>
+          <Item.Title>Partial retry timing</Item.Title>
+          <Item.Description>
+            Partial retry reuses the original raw OCR frame rate for timing.
+          </Item.Description>
+        </Item.Content>
+      </Item.Root>
     {/if}
 
     {#if showPipelineOptions}
-      <div class="space-y-2">
-        <Separator />
-        <h4 class="text-sm font-medium">Pipeline options</h4>
+      <Separator />
+      <Field.FieldSet>
+        <Field.FieldLegend variant="label">Pipeline options</Field.FieldLegend>
 
-        <Label>Language</Label>
+        <Field.FieldGroup class="gap-4">
+        <Field.Field>
+          <Field.FieldLabel for={languageSelectId}>Language</Field.FieldLabel>
         <Select.Root
           type="single"
           value={config.language}
           onValueChange={(value) => value && (config = { ...config, language: value as OcrConfig['language'] })}
         >
-          <Select.Trigger class="w-full">
+          <Select.Trigger id={languageSelectId} class="w-full">
             {OCR_LANGUAGES.find((lang) => lang.value === config.language)?.label ?? 'Select language'}
           </Select.Trigger>
           <Select.Content>
@@ -147,14 +180,16 @@
             </Select.Group>
           </Select.Content>
         </Select.Root>
-      </div>
+        </Field.Field>
 
-      <div class="space-y-2">
+      <Field.Field>
         <div class="flex items-center justify-between">
-          <Label>Frame rate</Label>
+          <Field.FieldLabel id={`${frameRateSliderId}-label`}>Frame rate</Field.FieldLabel>
           <span class="text-xs text-muted-foreground">{config.frameRate} fps</span>
         </div>
         <Slider
+          id={frameRateSliderId}
+          aria-labelledby={`${frameRateSliderId}-label`}
           type="single"
           value={config.frameRate}
           min={1}
@@ -162,14 +197,16 @@
           step={1}
           onValueChange={(value) => config = { ...config, frameRate: value }}
         />
-      </div>
+      </Field.Field>
 
-      <div class="space-y-2">
+      <Field.Field>
         <div class="flex items-center justify-between">
-          <Label>Min confidence</Label>
+          <Field.FieldLabel id={`${confidenceSliderId}-label`}>Min confidence</Field.FieldLabel>
           <span class="text-xs text-muted-foreground">{Math.round(config.confidenceThreshold * 100)}%</span>
         </div>
         <Slider
+          id={confidenceSliderId}
+          aria-labelledby={`${confidenceSliderId}-label`}
           type="single"
           value={Math.round(config.confidenceThreshold * 100)}
           min={0}
@@ -177,44 +214,58 @@
           step={5}
           onValueChange={(value) => config = { ...config, confidenceThreshold: value / 100 }}
         />
-      </div>
+      </Field.Field>
 
-      <div class="flex items-center justify-between">
-        <Label>Use GPU acceleration</Label>
+      <Field.Field orientation="horizontal">
+        <Field.FieldContent>
+          <Field.FieldLabel for={gpuSwitchId}>Use GPU acceleration</Field.FieldLabel>
+        </Field.FieldContent>
         <Switch
+          id={gpuSwitchId}
           checked={config.useGpu}
           onCheckedChange={(checked) => config = { ...config, useGpu: checked }}
         />
-      </div>
+      </Field.Field>
 
-      <div class="flex items-center justify-between">
-        <Label>Enable AI cleanup</Label>
+      <Field.Field orientation="horizontal">
+        <Field.FieldContent>
+          <Field.FieldLabel for={aiCleanupSwitchId}>Enable AI cleanup</Field.FieldLabel>
+        </Field.FieldContent>
         <Switch
+          id={aiCleanupSwitchId}
           checked={config.aiCleanupEnabled}
           onCheckedChange={(checked) => config = { ...config, aiCleanupEnabled: checked }}
         />
-      </div>
+      </Field.Field>
+        </Field.FieldGroup>
+      </Field.FieldSet>
     {/if}
 
     {#if showCleanupOptions}
       <Separator />
-      <div class="space-y-4">
-        <h4 class="text-sm font-medium">Cleanup options</h4>
+      <Field.FieldSet>
+        <Field.FieldLegend variant="label">Cleanup options</Field.FieldLegend>
 
-        <div class="flex items-center justify-between">
-          <Label>Merge similar subtitles</Label>
+        <Field.FieldGroup class="gap-4">
+        <Field.Field orientation="horizontal">
+          <Field.FieldContent>
+            <Field.FieldLabel for={mergeSwitchId}>Merge similar subtitles</Field.FieldLabel>
+          </Field.FieldContent>
           <Switch
+            id={mergeSwitchId}
             checked={config.mergeSimilar}
             onCheckedChange={(checked) => config = { ...config, mergeSimilar: checked }}
           />
-        </div>
+        </Field.Field>
 
-        <div class="space-y-2">
+        <Field.Field>
           <div class="flex items-center justify-between">
-            <Label>Similarity threshold</Label>
+            <Field.FieldLabel id={`${similaritySliderId}-label`}>Similarity threshold</Field.FieldLabel>
             <span class="text-xs text-muted-foreground">{Math.round(config.similarityThreshold * 100)}%</span>
           </div>
           <Slider
+            id={similaritySliderId}
+            aria-labelledby={`${similaritySliderId}-label`}
             type="single"
             value={Math.round(config.similarityThreshold * 100)}
             min={80}
@@ -223,14 +274,16 @@
             disabled={!config.mergeSimilar}
             onValueChange={(value) => config = { ...config, similarityThreshold: value / 100 }}
           />
-        </div>
+        </Field.Field>
 
-        <div class="space-y-2">
+        <Field.Field>
           <div class="flex items-center justify-between">
-            <Label>Max gap to merge</Label>
+            <Field.FieldLabel id={`${maxGapSliderId}-label`}>Max gap to merge</Field.FieldLabel>
             <span class="text-xs text-muted-foreground">{config.maxGapMs} ms</span>
           </div>
           <Slider
+            id={maxGapSliderId}
+            aria-labelledby={`${maxGapSliderId}-label`}
             type="single"
             value={config.maxGapMs}
             min={0}
@@ -238,14 +291,16 @@
             step={50}
             onValueChange={(value) => config = { ...config, maxGapMs: value }}
           />
-        </div>
+        </Field.Field>
 
-        <div class="space-y-2">
+        <Field.Field>
           <div class="flex items-center justify-between">
-            <Label>Minimum cue duration</Label>
+            <Field.FieldLabel id={`${minCueDurationSliderId}-label`}>Minimum cue duration</Field.FieldLabel>
             <span class="text-xs text-muted-foreground">{config.minCueDurationMs} ms</span>
           </div>
           <Slider
+            id={minCueDurationSliderId}
+            aria-labelledby={`${minCueDurationSliderId}-label`}
             type="single"
             value={config.minCueDurationMs}
             min={0}
@@ -253,29 +308,33 @@
             step={50}
             onValueChange={(value) => config = { ...config, minCueDurationMs: value }}
           />
-        </div>
+        </Field.Field>
 
-        <div class="flex items-center justify-between">
-          <Label>Filter URL-like watermarks</Label>
+        <Field.Field orientation="horizontal">
+          <Field.FieldContent>
+            <Field.FieldLabel for={filterUrlSwitchId}>Filter URL-like watermarks</Field.FieldLabel>
+          </Field.FieldContent>
           <Switch
+            id={filterUrlSwitchId}
             checked={config.filterUrlLike}
             onCheckedChange={(checked) => config = { ...config, filterUrlLike: checked }}
           />
-        </div>
-      </div>
+        </Field.Field>
+        </Field.FieldGroup>
+      </Field.FieldSet>
     {/if}
 
     {#if showAiOptions}
       <Separator />
-      <div class="space-y-2">
-        <h4 class="text-sm font-medium">AI options</h4>
+      <Field.FieldSet>
+        <Field.FieldLegend variant="label">AI options</Field.FieldLegend>
         <LlmProviderModelSelector
           provider={config.aiCleanupProvider}
           model={config.aiCleanupModel}
           onProviderChange={(provider) => config = { ...config, aiCleanupProvider: provider }}
           onModelChange={(model) => config = { ...config, aiCleanupModel: model }}
         />
-      </div>
+      </Field.FieldSet>
     {/if}
   {/snippet}
 </RetryVersionDialogShell>

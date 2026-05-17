@@ -51,7 +51,7 @@
     selectedZone && selectedZone.fileId === file?.id ? selectedZone.zoneId : null,
   );
   const workspaceRowsClass = $derived(
-    file ? 'grid-rows-[minmax(0,1fr)_minmax(6rem,30vh)]' : 'grid-rows-[minmax(0,1fr)]',
+    file ? 'grid-rows-[minmax(0,1fr)_minmax(10rem,35vh)]' : 'grid-rows-[minmax(0,1fr)]',
   );
 
   function handleTimeChange(timeMs: number): void {

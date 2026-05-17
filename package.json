@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:updater-manifest": "node --test scripts/generate-updater-manifest.node-test.mjs",
+    "test:windows-store-msix": "node --test scripts/stage-windows-store-msix.node-test.mjs",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "tauri"

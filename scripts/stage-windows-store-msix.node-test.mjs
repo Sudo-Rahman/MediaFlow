@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -19,6 +19,15 @@ const manifestInputs = {
   packageDescription: 'Local-first multimedia toolkit.',
   packageExecutable: 'Mediaflow.exe',
 };
+
+async function exists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 test('toMsixVersion converts semver to a four-part MSIX version', () => {
   assert.equal(toMsixVersion('1.2.3'), '1.2.3.0');
@@ -42,6 +51,24 @@ test('renderPackageManifest uses the restricted capabilities namespace for full 
   assert.match(manifest, /IgnorableNamespaces="[^"]*\brescap\b[^"]*"/);
   assert.match(manifest, /<rescap:Capability Name="runFullTrust" \/>/);
   assert.doesNotMatch(manifest, /<uap:Capability Name="runFullTrust" \/>/);
+});
+
+test('renderPackageManifest declares package resources', () => {
+  const manifest = renderPackageManifest(manifestInputs);
+
+  assert.match(manifest, /<Resources>/);
+  assert.match(manifest, /<Resource Language="en-us" \/>/);
+  assert.match(manifest, /<\/Resources>/);
+});
+
+test('renderPackageManifest declares Windows desktop dependencies', () => {
+  const manifest = renderPackageManifest(manifestInputs);
+
+  assert.match(manifest, /<Dependencies>/);
+  assert.match(manifest, /<TargetDeviceFamily Name="Windows\.Desktop"/);
+  assert.match(manifest, /MinVersion="10\.0\.17763\.0"/);
+  assert.match(manifest, /MaxVersionTested="10\.0\.22621\.0"/);
+  assert.match(manifest, /<\/Dependencies>/);
 });
 
 test('renderPackageManifest escapes XML attribute values', () => {
@@ -79,6 +106,7 @@ test('stageWindowsStoreMsix copies release outputs, sidecars, OCR models, and ma
     'version = "2.3.4-beta.1"',
   ].join('\n'));
   await writeFile(join(targetDir, 'Mediaflow.exe'), 'app');
+  await writeFile(join(targetDir, 'unrelated.dll'), 'do not stage');
   await writeFile(join(binariesDir, 'ffmpeg-x86_64-pc-windows-msvc.exe'), 'ffmpeg');
   await writeFile(join(binariesDir, 'ffprobe-x86_64-pc-windows-msvc.exe'), 'ffprobe');
   await writeFile(join(iconsDir, 'StoreLogo.png'), 'store logo');
@@ -106,5 +134,39 @@ test('stageWindowsStoreMsix copies release outputs, sidecars, OCR models, and ma
   assert.equal(await readFile(join(stageDir, 'Assets', 'Square44x44Logo.png'), 'utf8'), '44 logo');
   assert.equal(await readFile(join(stageDir, 'ocr-models', 'model.bin'), 'utf8'), 'model');
   assert.match(await readFile(join(stageDir, 'Package.appxmanifest'), 'utf8'), /Version="2.3.4.0"/);
+  assert.equal(await exists(join(stageDir, 'unrelated.dll')), false);
   assert.equal((await stat(result.stageDir)).isDirectory(), true);
+});
+
+test('stageWindowsStoreMsix rejects stage dir equal to root without deleting root files', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'mediaflow-msix-'));
+  const targetDir = join(rootDir, 'src-tauri', 'target', 'release');
+  const iconsDir = join(rootDir, 'src-tauri', 'icons');
+  const sentinelPath = join(rootDir, 'sentinel.txt');
+
+  await mkdir(targetDir, { recursive: true });
+  await mkdir(iconsDir, { recursive: true });
+  await writeFile(join(rootDir, 'src-tauri', 'Cargo.toml'), [
+    '[package]',
+    'name = "Mediaflow"',
+    'version = "2.3.4"',
+  ].join('\n'));
+  await writeFile(join(targetDir, 'Mediaflow.exe'), 'app');
+  await writeFile(sentinelPath, 'must remain');
+
+  await assert.rejects(
+    () => stageWindowsStoreMsix({
+      rootDir,
+      env: {
+        MICROSOFT_STORE_PACKAGE_IDENTITY_NAME: 'Publisher.PackageName',
+        MICROSOFT_STORE_PACKAGE_IDENTITY_PUBLISHER: 'CN=Publisher',
+        MICROSOFT_STORE_PUBLISHER_DISPLAY_NAME: 'Publisher',
+        MICROSOFT_STORE_MSIX_STAGE_DIR: rootDir,
+        MICROSOFT_STORE_TARGET_DIR: targetDir,
+      },
+    }),
+    /Unsafe MSIX stage directory/,
+  );
+
+  assert.equal(await readFile(sentinelPath, 'utf8'), 'must remain');
 });

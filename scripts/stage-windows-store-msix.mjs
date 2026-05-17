@@ -1,6 +1,6 @@
 import { constants as fsConstants } from 'node:fs';
 import { access, cp, copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, parse, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_STAGE_DIR = 'dist/windows-store-msix';
@@ -46,6 +46,35 @@ function resolveFromRoot(rootDir, path) {
   }
 
   return resolve(rootDir, path);
+}
+
+function isPathInside(parentDir, childPath) {
+  const relativePath = relative(parentDir, childPath);
+  return relativePath.length > 0 && !relativePath.startsWith('..') && !isAbsolute(relativePath);
+}
+
+function assertSafeStageDir({ rootDir, targetDir, stageDir }) {
+  if (stageDir === parse(stageDir).root) {
+    throw new Error(`Unsafe MSIX stage directory: ${stageDir} is the filesystem root`);
+  }
+
+  if (stageDir === rootDir) {
+    throw new Error(`Unsafe MSIX stage directory: ${stageDir} equals the repository root`);
+  }
+
+  if (stageDir === targetDir) {
+    throw new Error(`Unsafe MSIX stage directory: ${stageDir} equals the Cargo target directory`);
+  }
+
+  if (isPathInside(stageDir, targetDir)) {
+    throw new Error(
+      `Unsafe MSIX stage directory: ${stageDir} is an ancestor of the Cargo target directory`,
+    );
+  }
+
+  if (!isPathInside(rootDir, stageDir)) {
+    throw new Error(`Unsafe MSIX stage directory: ${stageDir} must be inside ${rootDir}`);
+  }
 }
 
 export function toMsixVersion(version) {
@@ -112,6 +141,14 @@ export function renderPackageManifest({
     <Description>${escaped.packageDescription}</Description>
     <Logo>Assets\\StoreLogo.png</Logo>
   </Properties>
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop"
+      MinVersion="10.0.17763.0"
+      MaxVersionTested="10.0.22621.0" />
+  </Dependencies>
   <Applications>
     <Application
       Id="MediaFlow"
@@ -222,6 +259,7 @@ export async function stageWindowsStoreMsix({ rootDir = process.cwd(), env = pro
     absoluteRootDir,
     optionalValue(env.MICROSOFT_STORE_MSIX_STAGE_DIR, DEFAULT_STAGE_DIR),
   );
+  assertSafeStageDir({ rootDir: absoluteRootDir, targetDir, stageDir });
   const executablePath = await firstExisting(
     [join(targetDir, manifestInputs.packageExecutable)],
     manifestInputs.packageExecutable,
@@ -229,7 +267,6 @@ export async function stageWindowsStoreMsix({ rootDir = process.cwd(), env = pro
 
   await rm(stageDir, { recursive: true, force: true });
   await mkdir(stageDir, { recursive: true });
-  await cp(targetDir, stageDir, { recursive: true });
   await copyFile(executablePath, join(stageDir, manifestInputs.packageExecutable));
   await copySidecar({
     targetDir,

@@ -15,6 +15,7 @@
     ],
     "security": {
       "csp": null,
+      "capabilities": ["default", "updater"],
       "assetProtocol": {
         "enable": true,
         "scope": ["$TEMP/**", "$HOME/**", "**"]

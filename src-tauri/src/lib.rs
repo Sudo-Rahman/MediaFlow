@@ -11,11 +11,13 @@ pub use tools::ocr::OcrModelPaths;
 pub fn run() {
     let builder = tauri::Builder::default();
 
+    #[cfg(not(feature = "microsoft-store"))]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
     builder
         .plugin(tauri_plugin_deep_link::init())
         .setup(app::setup)
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())

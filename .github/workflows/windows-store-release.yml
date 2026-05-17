@@ -276,4 +276,4 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $PSNativeCommandUseErrorActionPreference = $true
-          msstore flights poll "$env:MICROSOFT_STORE_PRODUCT_ID" "$env:FLIGHT_ID"
+          msstore flights submission poll "$env:MICROSOFT_STORE_PRODUCT_ID" "$env:FLIGHT_ID"

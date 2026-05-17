@@ -246,9 +246,9 @@ export function renderPackageManifest({
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
-  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap desktop6 rescap">
+  IgnorableNamespaces="uap desktop rescap">
   <Identity
     Name="${escaped.identityName}"
     Publisher="${escaped.publisher}"
@@ -280,7 +280,7 @@ export function renderPackageManifest({
         Square44x44Logo="Assets\\Square44x44Logo.png"
         BackgroundColor="transparent" />
       <Extensions>
-        <desktop6:Extension Category="windows.fullTrustProcess" Executable="${escaped.packageExecutable}" />
+        <desktop:Extension Category="windows.fullTrustProcess" Executable="${escaped.packageExecutable}" />
       </Extensions>
     </Application>
   </Applications>

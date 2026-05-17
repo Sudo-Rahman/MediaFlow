@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const isTauriMock = vi.hoisted(() => vi.fn(() => true));
 const updaterCheckMock = vi.hoisted(() => vi.fn(async () => null));
@@ -28,8 +28,13 @@ describe('updater store', () => {
     vi.resetModules();
     vi.unstubAllEnvs();
     vi.clearAllMocks();
+    vi.useRealTimers();
     isTauriMock.mockReturnValue(true);
     updaterCheckMock.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('treats Microsoft Store builds as store-managed without calling the updater plugin', async () => {
@@ -51,5 +56,24 @@ describe('updater store', () => {
       details: 'Install updates from Microsoft Store.',
       showToast: true,
     });
+  });
+
+  it('initializes Microsoft Store builds without starting updater polling', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('VITE_MEDIAFLOW_DISTRIBUTION', 'microsoft-store');
+    const { updaterStore } = await import('./updater.svelte');
+
+    updaterStore.initialize();
+
+    expect(updaterStore.status).toBe('managed-by-store');
+    expect(updaterStore.isManagedByStore).toBe(true);
+    expect(updaterStore.lastCheckAt).toBeInstanceOf(Date);
+    expect(updaterStore.lastError).toBeNull();
+    expect(updaterStore.progress).toBeNull();
+    expect(updaterStore.hasUpdate).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(isTauriMock).not.toHaveBeenCalled();
+    expect(updaterCheckMock).not.toHaveBeenCalled();
+    expect(updaterInfoMock).not.toHaveBeenCalled();
   });
 });

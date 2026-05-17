@@ -14,9 +14,7 @@ In scope:
 - Microsoft Store MSIX distribution only.
 - A dedicated GitHub Actions workflow for Windows Store releases.
 - Private flight publication for validation.
-- Production submission behind a GitHub Environment approval gate.
 - Minimal Partner Center listing for the first Store release.
-- A Microsoft Store link or badge for the website once the public listing exists.
 - Tauri configuration split into base and overlays.
 - Disable Tauri Updater only for the Microsoft Store distribution flavor.
 - Preserve the existing macOS release and updater behavior.
@@ -28,6 +26,8 @@ Out of scope:
 - Direct `.msix` download from the website.
 - Azure Trusted Signing or another non-Store signing channel.
 - Implementation of a future direct Windows distribution channel with Tauri Updater.
+- Production Store submission and public listing publication.
+- Website Microsoft Store badge or listing link implementation.
 - Linux distribution changes.
 
 ## Current Project Context
@@ -50,7 +50,7 @@ Use a dedicated Windows Store workflow instead of folding Store publication into
 This keeps the two release channels clear:
 
 - macOS release: GitHub Release assets, Apple signing/notarization, Tauri updater manifest.
-- Windows Store release: x64 MSIX package, Partner Center flight, production submission.
+- Windows Store release: x64 MSIX package and Partner Center private flight.
 
 The workflows can share version metadata from `src-tauri/Cargo.toml`, but they should not share publication steps. Microsoft Store publication has separate identity, flight, certification, and update semantics.
 
@@ -135,7 +135,7 @@ Initial trigger:
 workflow_dispatch
 ```
 
-The first implementation does not add automatic tag-driven production publication. That can be added after several successful Store releases.
+The first implementation publishes only to a Partner Center private flight. Production submission can be added after several successful Store validation releases.
 
 Recommended flow:
 
@@ -155,10 +155,9 @@ build Tauri x64 with Microsoft Store overlay
 package MSIX using WinApp/MSIX tooling
 upload package to Partner Center private flight using Microsoft Store tooling
 wait for test validation outside CI
-promote/submit to production behind GitHub Environment approval
 ```
 
-The production step uses a GitHub Environment approval. Fully automatic production on tag is a future enhancement, not part of this first implementation.
+Production submission is intentionally out of scope for this PR and first implementation. A later workflow can add a GitHub Environment approval gate for promotion after the private-flight process is proven.
 
 The workflow must not upload Windows assets to GitHub Releases in this scope. Windows distribution is Store-only.
 
@@ -183,7 +182,7 @@ Minimal listing contents:
 - Privacy URL.
 - Certification notes explaining local FFmpeg/OCR/media-file processing behavior.
 
-The public website should link to the Store listing or official Microsoft Store badge once the app is public. It should not link to a raw `.msix` file in this scope.
+After the app has a public Store listing, the public website can link to the Store listing or official Microsoft Store badge. The first implementation does not add that website link or badge, and the website should not link to a raw `.msix` file in this scope.
 
 ## Validation Strategy
 
@@ -210,9 +209,9 @@ Private flight validation:
 - Validate `mediaflow://` deep links if supported by the Store package.
 - Validate Store update behavior across two flight versions.
 
-Production validation:
+Production follow-up:
 
-- Production submission requires manual approval at first.
+- Production submission should require manual approval at first.
 - After approval, Partner Center handles certification and Store signing.
 - After public availability, the website can expose the Microsoft Store link or badge.
 

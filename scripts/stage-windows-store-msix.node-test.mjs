@@ -87,6 +87,22 @@ test('renderPackageManifest uses the restricted capabilities namespace for full 
   assert.doesNotMatch(manifest, /<uap:Capability Name="runFullTrust" \/>/);
 });
 
+test('renderPackageManifest uses the desktop namespace for the full trust extension', () => {
+  const manifest = renderPackageManifest(manifestInputs);
+
+  assert.match(
+    manifest,
+    /xmlns:desktop="http:\/\/schemas\.microsoft\.com\/appx\/manifest\/desktop\/windows10"/,
+  );
+  assert.match(manifest, /IgnorableNamespaces="[^"]*\bdesktop\b[^"]*"/);
+  assert.match(
+    manifest,
+    /<desktop:Extension Category="windows\.fullTrustProcess" Executable="Mediaflow\.exe" \/>/,
+  );
+  assert.doesNotMatch(manifest, /desktop6/);
+  assert.doesNotMatch(manifest, /<desktop6:Extension/);
+});
+
 test('renderPackageManifest declares package resources', () => {
   const manifest = renderPackageManifest(manifestInputs);
 

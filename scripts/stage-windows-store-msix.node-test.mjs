@@ -29,6 +29,40 @@ async function exists(path) {
   }
 }
 
+async function createMinimalMsixFixture() {
+  const rootDir = await mkdtemp(join(tmpdir(), 'mediaflow-msix-'));
+  const targetDir = join(rootDir, 'src-tauri', 'target', 'release');
+  const binariesDir = join(rootDir, 'src-tauri', 'binaries');
+  const iconsDir = join(rootDir, 'src-tauri', 'icons');
+
+  await mkdir(targetDir, { recursive: true });
+  await mkdir(binariesDir, { recursive: true });
+  await mkdir(iconsDir, { recursive: true });
+  await writeFile(join(rootDir, 'src-tauri', 'Cargo.toml'), [
+    '[package]',
+    'name = "Mediaflow"',
+    'version = "2.3.4"',
+  ].join('\n'));
+  await writeFile(join(targetDir, 'Mediaflow.exe'), 'app');
+  await writeFile(join(binariesDir, 'ffmpeg-x86_64-pc-windows-msvc.exe'), 'ffmpeg');
+  await writeFile(join(binariesDir, 'ffprobe-x86_64-pc-windows-msvc.exe'), 'ffprobe');
+  await writeFile(join(iconsDir, 'StoreLogo.png'), 'store logo');
+  await writeFile(join(iconsDir, 'Square150x150Logo.png'), '150 logo');
+  await writeFile(join(iconsDir, 'Square44x44Logo.png'), '44 logo');
+
+  return { rootDir, targetDir };
+}
+
+function createRequiredEnv(targetDir, overrides = {}) {
+  return {
+    MICROSOFT_STORE_PACKAGE_IDENTITY_NAME: 'Publisher.PackageName',
+    MICROSOFT_STORE_PACKAGE_IDENTITY_PUBLISHER: 'CN=Publisher',
+    MICROSOFT_STORE_PUBLISHER_DISPLAY_NAME: 'Publisher',
+    MICROSOFT_STORE_TARGET_DIR: targetDir,
+    ...overrides,
+  };
+}
+
 test('toMsixVersion converts semver to a four-part MSIX version', () => {
   assert.equal(toMsixVersion('1.2.3'), '1.2.3.0');
   assert.equal(toMsixVersion('1.2.3-beta.1'), '1.2.3.0');
@@ -164,6 +198,87 @@ test('stageWindowsStoreMsix rejects stage dir equal to root without deleting roo
         MICROSOFT_STORE_MSIX_STAGE_DIR: rootDir,
         MICROSOFT_STORE_TARGET_DIR: targetDir,
       },
+    }),
+    /Unsafe MSIX stage directory/,
+  );
+
+  assert.equal(await readFile(sentinelPath, 'utf8'), 'must remain');
+});
+
+test('stageWindowsStoreMsix rejects executable path traversal', async () => {
+  const { rootDir, targetDir } = await createMinimalMsixFixture();
+  await writeFile(join(rootDir, 'src-tauri', 'target', 'leak.exe'), 'leak');
+
+  await assert.rejects(
+    () => stageWindowsStoreMsix({
+      rootDir,
+      env: createRequiredEnv(targetDir, {
+        MICROSOFT_STORE_PACKAGE_EXECUTABLE: '../leak.exe',
+      }),
+    }),
+    /Unsafe MSIX package executable/,
+  );
+});
+
+test('stageWindowsStoreMsix rejects executable without exe extension', async () => {
+  const { rootDir, targetDir } = await createMinimalMsixFixture();
+
+  await assert.rejects(
+    () => stageWindowsStoreMsix({
+      rootDir,
+      env: createRequiredEnv(targetDir, {
+        MICROSOFT_STORE_PACKAGE_EXECUTABLE: 'Mediaflow',
+      }),
+    }),
+    /Unsafe MSIX package executable/,
+  );
+});
+
+test('stageWindowsStoreMsix rejects executable with invalid Windows filename characters', async () => {
+  const { rootDir, targetDir } = await createMinimalMsixFixture();
+
+  await assert.rejects(
+    () => stageWindowsStoreMsix({
+      rootDir,
+      env: createRequiredEnv(targetDir, {
+        MICROSOFT_STORE_PACKAGE_EXECUTABLE: 'Bad:Name.exe',
+      }),
+    }),
+    /Unsafe MSIX package executable/,
+  );
+});
+
+test('stageWindowsStoreMsix rejects src-tauri stage dir without deleting sentinel files', async () => {
+  const { rootDir, targetDir } = await createMinimalMsixFixture();
+  const sentinelPath = join(rootDir, 'src-tauri', 'sentinel.txt');
+  await writeFile(sentinelPath, 'must remain');
+
+  await assert.rejects(
+    () => stageWindowsStoreMsix({
+      rootDir,
+      env: createRequiredEnv(targetDir, {
+        MICROSOFT_STORE_MSIX_STAGE_DIR: join(rootDir, 'src-tauri'),
+      }),
+    }),
+    /Unsafe MSIX stage directory/,
+  );
+
+  assert.equal(await readFile(sentinelPath, 'utf8'), 'must remain');
+});
+
+test('stageWindowsStoreMsix rejects scripts stage dir without deleting sentinel files', async () => {
+  const { rootDir, targetDir } = await createMinimalMsixFixture();
+  const scriptsDir = join(rootDir, 'scripts');
+  const sentinelPath = join(scriptsDir, 'sentinel.txt');
+  await mkdir(scriptsDir, { recursive: true });
+  await writeFile(sentinelPath, 'must remain');
+
+  await assert.rejects(
+    () => stageWindowsStoreMsix({
+      rootDir,
+      env: createRequiredEnv(targetDir, {
+        MICROSOFT_STORE_MSIX_STAGE_DIR: scriptsDir,
+      }),
     }),
     /Unsafe MSIX stage directory/,
   );

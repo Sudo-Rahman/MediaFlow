@@ -1,6 +1,6 @@
 import { constants as fsConstants } from 'node:fs';
 import { access, cp, copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, parse, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, parse, relative, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DEFAULT_STAGE_DIR = 'dist/windows-store-msix';
@@ -54,6 +54,8 @@ function isPathInside(parentDir, childPath) {
 }
 
 function assertSafeStageDir({ rootDir, targetDir, stageDir }) {
+  const distDir = resolve(rootDir, 'dist');
+
   if (stageDir === parse(stageDir).root) {
     throw new Error(`Unsafe MSIX stage directory: ${stageDir} is the filesystem root`);
   }
@@ -74,6 +76,33 @@ function assertSafeStageDir({ rootDir, targetDir, stageDir }) {
 
   if (!isPathInside(rootDir, stageDir)) {
     throw new Error(`Unsafe MSIX stage directory: ${stageDir} must be inside ${rootDir}`);
+  }
+
+  if (stageDir === distDir) {
+    throw new Error(`Unsafe MSIX stage directory: ${stageDir} equals the dist directory`);
+  }
+
+  if (!isPathInside(distDir, stageDir)) {
+    throw new Error(`Unsafe MSIX stage directory: ${stageDir} must be inside ${distDir}`);
+  }
+}
+
+function assertSafePackageExecutable(packageExecutable) {
+  const invalidWindowsFilenameChars = /[<>:"/\\|?*\x00-\x1f]/;
+
+  if (
+    packageExecutable === '.' ||
+    packageExecutable === '..' ||
+    isAbsolute(packageExecutable) ||
+    win32.isAbsolute(packageExecutable) ||
+    packageExecutable.includes('/') ||
+    packageExecutable.includes('\\') ||
+    invalidWindowsFilenameChars.test(packageExecutable) ||
+    !packageExecutable.toLowerCase().endsWith('.exe')
+  ) {
+    throw new Error(
+      `Unsafe MSIX package executable: ${packageExecutable} must be a plain .exe filename`,
+    );
   }
 }
 
@@ -173,6 +202,12 @@ export function renderPackageManifest({
 }
 
 function readManifestInputs(env) {
+  const packageExecutable = optionalValue(
+    env.MICROSOFT_STORE_PACKAGE_EXECUTABLE,
+    DEFAULT_PACKAGE_EXECUTABLE,
+  );
+  assertSafePackageExecutable(packageExecutable);
+
   return {
     identityName: requireValue(
       env.MICROSOFT_STORE_PACKAGE_IDENTITY_NAME,
@@ -194,10 +229,7 @@ function readManifestInputs(env) {
       env.MICROSOFT_STORE_PACKAGE_DESCRIPTION,
       DEFAULT_PACKAGE_DESCRIPTION,
     ),
-    packageExecutable: optionalValue(
-      env.MICROSOFT_STORE_PACKAGE_EXECUTABLE,
-      DEFAULT_PACKAGE_EXECUTABLE,
-    ),
+    packageExecutable,
   };
 }
 

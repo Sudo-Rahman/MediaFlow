@@ -48,6 +48,9 @@ jobs:
       - name: Run updater manifest tests
         run: pnpm test:updater-manifest
 
+      - name: Run Windows Store MSIX tests
+        run: pnpm test:windows-store-msix
+
   linux:
     uses: ./.github/workflows/ci-linux.yml
 

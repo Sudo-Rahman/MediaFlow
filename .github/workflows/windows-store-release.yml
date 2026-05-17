@@ -13,6 +13,17 @@
 name: Windows Store Release
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/windows-store-release.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "svelte.config.js"
+      - "vite.config.js"
+      - "scripts/stage-windows-store-msix.mjs"
+      - "scripts/stage-windows-store-msix.node-test.mjs"
+      - "src/**"
+      - "src-tauri/**"
   workflow_dispatch:
     inputs:
       flight_id:
@@ -35,7 +46,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.flight_id }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.flight_id || 'PrivateWindowsX64' }}
   cancel-in-progress: false
 
 jobs:
@@ -44,7 +55,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 120
     env:
-      FLIGHT_ID: ${{ inputs.flight_id }}
+      FLIGHT_ID: ${{ inputs.flight_id || 'PrivateWindowsX64' }}
       MICROSOFT_STORE_PRODUCT_ID: ${{ vars.MICROSOFT_STORE_PRODUCT_ID }}
       MICROSOFT_STORE_PACKAGE_IDENTITY_NAME: ${{ vars.MICROSOFT_STORE_PACKAGE_IDENTITY_NAME }}
       MICROSOFT_STORE_PACKAGE_IDENTITY_PUBLISHER: ${{ vars.MICROSOFT_STORE_PACKAGE_IDENTITY_PUBLISHER }}
@@ -220,11 +231,11 @@ jobs:
     name: Publish MSIX to Microsoft Store flight
     runs-on: windows-latest
     needs: build-stage-pack
-    if: ${{ inputs.publish_flight == true && github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_flight == true && github.ref == 'refs/heads/main' }}
     environment: windows-store-release
     timeout-minutes: 60
     env:
-      FLIGHT_ID: ${{ inputs.flight_id }}
+      FLIGHT_ID: ${{ inputs.flight_id || 'PrivateWindowsX64' }}
       MICROSOFT_STORE_PRODUCT_ID: ${{ vars.MICROSOFT_STORE_PRODUCT_ID }}
 
     steps:

@@ -53,6 +53,7 @@ jobs:
   build-stage-pack:
     name: Build, stage, and pack Windows Store MSIX
     runs-on: windows-latest
+    environment: windows-store-release
     timeout-minutes: 120
     env:
       FLIGHT_ID: ${{ inputs.flight_id || 'PrivateWindowsX64' }}

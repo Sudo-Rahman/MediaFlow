@@ -2,7 +2,7 @@ import { isTauri } from '@tauri-apps/api/core';
 import { relaunch } from '@tauri-apps/plugin-process';
 import type { DownloadEvent, Update } from '@tauri-apps/plugin-updater';
 
-import { getUpdateManagementLabel, isMicrosoftStoreDistribution } from '$lib/services';
+import { getUpdateManagementLabel, isMicrosoftStoreDistribution } from '$lib/services/distribution';
 import { logAndToast } from '$lib/utils/log-toast';
 
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;

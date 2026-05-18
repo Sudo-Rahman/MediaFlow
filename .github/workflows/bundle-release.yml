@@ -526,8 +526,7 @@ jobs:
           }
 
           $msixPath = $msixFiles[0].FullName
-          msstore publish "$env:GITHUB_WORKSPACE" `
-            --inputDirectory "$($msixFiles[0].DirectoryName)" `
+          msstore publish "$msixPath" `
             --appId "$env:MICROSOFT_STORE_PRODUCT_ID" `
             --flightId "$env:FLIGHT_ID"
 

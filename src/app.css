@@ -126,10 +126,13 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+    min-height: 100vh;
+    background: transparent;
   }
-	html {
-		@apply font-sans;
+  html {
+    @apply font-sans;
+    background: transparent;
   }
 }
 

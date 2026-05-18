@@ -39,6 +39,7 @@ dependencies = [
  "tiktoken-rs",
  "tokio",
  "walkdir",
+ "windows",
  "xz2",
  "zbus 5.14.0",
  "zip 8.5.1",

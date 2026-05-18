@@ -13,3 +13,4 @@ pub(crate) mod tokens;
 pub(crate) mod transcode;
 pub(crate) mod transcription;
 pub(crate) mod translation;
+pub(crate) mod window_chrome;

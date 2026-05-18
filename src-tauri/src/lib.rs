@@ -87,7 +87,8 @@ pub fn run() {
             commands::transcode_analysis::extract_transcode_analysis_frames,
             commands::auth::store_refresh_token,
             commands::auth::get_refresh_token,
-            commands::auth::delete_refresh_token
+            commands::auth::delete_refresh_token,
+            commands::window_chrome::update_windows_maximize_button_rect
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

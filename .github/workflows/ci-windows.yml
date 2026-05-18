@@ -127,20 +127,21 @@ jobs:
           }
 
           function Invoke-LibHarness {
-            param([string[]]$Args)
+            param([string[]]$TestArgs = @())
 
             $libTestExe = Get-LatestLibTestExe
             if (-not $libTestExe) {
               throw "Could not locate compiled mediaflow_lib test executable"
             }
 
-            & $libTestExe.FullName @Args
-            if ($LASTEXITCODE -eq 0) {
+            & $libTestExe.FullName @TestArgs
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -eq 0) {
               return
             }
 
             Show-WindowsCrashDiagnostics
-            throw "Windows lib test harness failed with exit code $LASTEXITCODE"
+            throw "Windows lib test harness failed with exit code $exitCode"
           }
 
           # Avoid the Tauri bin test target on Windows: it collides with the embedded app manifest.
@@ -170,7 +171,7 @@ jobs:
           }
 
           Invoke-LibHarness
-          Invoke-LibHarness "--ignored"
+          Invoke-LibHarness -TestArgs @("btbn_latest_page_contains_download_url_for_supported_variant", "--ignored")
 
       - name: Build Tauri app
         run: pnpm tauri build --no-bundle

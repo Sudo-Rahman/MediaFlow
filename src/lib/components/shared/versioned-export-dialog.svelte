@@ -3,14 +3,16 @@
   import { Download, Loader2 } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
 
-  import type {
-    RunBatchExportResult,
-    VersionedExportFailure,
-    VersionedExportFormatOption,
-    VersionedExportGroup,
-    VersionedExportMode,
-    VersionedExportRequest,
-    VersionedExportTarget,
+  import {
+    getAllowedExportFormatOptions,
+    type RunBatchExportResult,
+    type VersionedExportFailure,
+    type VersionedExportFormatOption,
+    type VersionedExportGroup,
+    type VersionedExportMode,
+    type VersionedExportRequest,
+    type VersionedExportTarget,
+    type VersionedExportVersion,
   } from '$lib/services/versioned-export';
   import { pickOutputDirectory } from '$lib/services/output-folder';
   import { Badge } from '$lib/components/ui/badge';
@@ -123,6 +125,17 @@
     return group.versions[0] ?? null;
   }
 
+  function toExportTarget(group: VersionedExportGroup, version: VersionedExportVersion): VersionedExportTarget {
+    return {
+      fileId: group.fileId,
+      fileName: group.fileName,
+      versionKey: version.key,
+      versionId: version.versionId,
+      versionName: version.versionName,
+      allowedFormats: version.allowedFormats,
+    };
+  }
+
   const exportTargets = $derived.by(() => {
     if (selectedGroups.length === 0) {
       return [] as VersionedExportTarget[];
@@ -136,46 +149,34 @@
             return null;
           }
 
-          return {
-            fileId: group.fileId,
-            fileName: group.fileName,
-            versionKey: latest.key,
-            versionId: latest.versionId,
-            versionName: latest.versionName,
-          };
+          return toExportTarget(group, latest);
         })
         .filter((target): target is VersionedExportTarget => target !== null);
     }
 
     if (mode === 'all_versions') {
       return selectedGroups.flatMap((group) =>
-        group.versions.map((version) => ({
-          fileId: group.fileId,
-          fileName: group.fileName,
-          versionKey: version.key,
-          versionId: version.versionId,
-          versionName: version.versionName,
-        })),
+        group.versions.map((version) => toExportTarget(group, version)),
       );
     }
 
     return selectedGroups.flatMap((group) =>
       group.versions
         .filter((version) => selectedVersionKeys.has(version.key))
-        .map((version) => ({
-          fileId: group.fileId,
-          fileName: group.fileName,
-          versionKey: version.key,
-          versionId: version.versionId,
-          versionName: version.versionName,
-        })),
+        .map((version) => toExportTarget(group, version)),
     );
   });
 
   const hasExportableData = $derived(sortedGroups.length > 0);
   const selectedFileCount = $derived(selectedGroups.length);
   const selectedVersionCount = $derived(exportTargets.length);
-  const canExport = $derived(outputDir.trim().length > 0 && selectedVersionCount > 0 && !isExporting);
+  const selectedFormatOptions = $derived(getAllowedExportFormatOptions(formatOptions, exportTargets));
+  const selectedFormatIsAllowed = $derived(selectedFormatOptions.some((option) => option.value === selectedFormat));
+  const formatOptionsWereFiltered = $derived(selectedFormatOptions.length < formatOptions.length);
+  const hasAvailableFormat = $derived(selectedFormatOptions.length > 0);
+  const canExport = $derived(
+    outputDir.trim().length > 0 && selectedVersionCount > 0 && selectedFormatIsAllowed && !isExporting,
+  );
   const displayedFailures = $derived(exportFailures.slice(0, 5));
   const hiddenFailureCount = $derived(Math.max(0, exportFailures.length - displayedFailures.length));
   const outputFolderDisplay = $derived.by(() =>
@@ -184,6 +185,16 @@
       allowSourceFallback: false,
     }),
   );
+
+  $effect(() => {
+    if (!open || selectedFormatIsAllowed) {
+      return;
+    }
+
+    selectedFormat = selectedFormatOptions.find((option) => option.value === defaultFormat)?.value
+      ?? selectedFormatOptions[0]?.value
+      ?? '';
+  });
 
   function setMode(nextMode: VersionedExportMode): void {
     mode = nextMode;
@@ -241,7 +252,7 @@
       targets: exportTargets,
     };
 
-    if (request.outputDir.length === 0 || request.targets.length === 0 || isExporting) {
+    if (request.outputDir.length === 0 || request.targets.length === 0 || !selectedFormatIsAllowed || isExporting) {
       return;
     }
 
@@ -338,19 +349,30 @@
                 selectedFormat = value;
               }
             }}
-            disabled={isExporting}
+            disabled={isExporting || !hasAvailableFormat}
           >
             <Select.Trigger class="w-full">
-              {formatOptions.find((option) => option.value === selectedFormat)?.label ?? selectedFormat.toUpperCase()}
+              {selectedFormatOptions.find((option) => option.value === selectedFormat)?.label
+                ?? formatOptions.find((option) => option.value === selectedFormat)?.label
+                ?? selectedFormat.toUpperCase()}
             </Select.Trigger>
             <Select.Content>
               <Select.Group>
-                {#each formatOptions as formatOption (formatOption.value)}
+                {#each selectedFormatOptions as formatOption (formatOption.value)}
                   <Select.Item value={formatOption.value}>{formatOption.label}</Select.Item>
                 {/each}
               </Select.Group>
             </Select.Content>
           </Select.Root>
+          {#if !hasAvailableFormat && selectedVersionCount > 0}
+            <p class="text-xs text-destructive">
+              No common export format is available for the selected versions.
+            </p>
+          {:else if formatOptionsWereFiltered}
+            <p class="text-xs text-muted-foreground">
+              Selected versions require positioned subtitles, so incompatible formats are hidden.
+            </p>
+          {/if}
         </div>
 
         <div class="rounded-md border">

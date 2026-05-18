@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::mem;
 use std::path::Path;
 use std::process::Stdio;
@@ -5,16 +6,19 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use image::{DynamicImage, RgbImage};
+use image::{DynamicImage, RgbImage, imageops::FilterType};
+use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::time::timeout;
 
 use crate::shared::ffmpeg_progress::FfmpegProgressTracker;
 use crate::shared::process::terminate_process;
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
-use crate::shared::store::resolve_ffmpeg_path;
+use crate::shared::store::{resolve_ffmpeg_path, resolve_ffprobe_path};
 use crate::shared::validation::validate_media_path;
-use crate::tools::ffprobe::get_media_duration_us;
+use crate::tools::ffprobe::{
+    get_media_duration_us, probe::get_primary_video_dimensions_with_ffprobe,
+};
 use crate::tools::ocr::engine::{
     create_ocr_engine, get_ocr_models_dir, resolve_ocr_engine_threads,
     resolve_ocr_worker_count_for_backend,
@@ -22,8 +26,9 @@ use crate::tools::ocr::engine::{
 use crate::tools::ocr::progress::OcrProgressEmitter;
 use crate::tools::ocr::subtitles::generate_subtitles_core;
 use crate::tools::ocr::{
-    OcrFrameResult, OcrPipelineResult, OcrPipelineTelemetry, OcrPipelineTimings, OcrRegion,
-    OcrSubtitleCleanupOptions,
+    OcrFrameResult, OcrLiveDetectionEvent, OcrPipelineResult, OcrPipelineTelemetry,
+    OcrPipelineTimings, OcrRegion, OcrSelection, OcrSubtitleCleanupOptions, OcrZone,
+    validate_ocr_selection,
 };
 
 const OCR_PIPELINE_TIMEOUT: Duration = Duration::from_secs(1800);
@@ -81,6 +86,26 @@ impl OcrFrameOutputSpec {
             .saturating_mul(self.height as usize)
             .saturating_mul(3)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SourceVideoDimensions {
+    width: u32,
+    height: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ContentRect {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SelectionInterval {
+    start_time_ms: u64,
+    end_time_ms: u64,
 }
 
 struct OcrTelemetryCounters {
@@ -308,12 +333,17 @@ fn can_clone_previous_frame_result(
         && is_visually_unchanged(fingerprint, previous_fingerprint)
 }
 
+#[cfg(test)]
 fn empty_frame_result(frame: &StreamedFrame) -> OcrFrameResult {
     OcrFrameResult {
         frame_index: frame.frame_index,
         time_ms: frame.time_ms,
         text: String::new(),
         confidence: 0.0,
+        segment_id: None,
+        zone_id: None,
+        role: None,
+        region: None,
     }
 }
 
@@ -326,6 +356,10 @@ fn clone_frame_result_for_frame(
         time_ms: frame.time_ms,
         text: previous.text.clone(),
         confidence: previous.confidence,
+        segment_id: previous.segment_id.clone(),
+        zone_id: previous.zone_id.clone(),
+        role: previous.role.clone(),
+        region: previous.region.clone(),
     }
 }
 
@@ -390,6 +424,144 @@ fn summarize_ocr_results(
         time_ms,
         text: combined_text,
         confidence: avg_confidence,
+        segment_id: None,
+        zone_id: None,
+        role: None,
+        region: None,
+    }
+}
+
+struct ActiveZone<'a> {
+    segment_id: &'a str,
+    zone: &'a OcrZone,
+}
+
+#[derive(Clone)]
+struct LiveDetectionContext {
+    app: tauri::AppHandle,
+    file_id: String,
+    operation_id: String,
+}
+
+fn active_zones_for_time(selection: &OcrSelection, time_ms: u64) -> Vec<ActiveZone<'_>> {
+    selection
+        .segments
+        .iter()
+        .filter(|segment| time_ms >= segment.start_time_ms && time_ms < segment.end_time_ms)
+        .flat_map(|segment| {
+            segment.zones.iter().map(move |zone| ActiveZone {
+                segment_id: &segment.id,
+                zone,
+            })
+        })
+        .collect()
+}
+
+fn crop_rect_for_region(region: &OcrRegion, width: u32, height: u32) -> (u32, u32, u32, u32) {
+    let x = (region.x * width as f64).round() as u32;
+    let y = (region.y * height as f64).round() as u32;
+    let w = (region.width * width as f64).round().max(1.0) as u32;
+    let h = (region.height * height as f64).round().max(1.0) as u32;
+    (
+        x,
+        y,
+        w.min(width.saturating_sub(x)),
+        h.min(height.saturating_sub(y)),
+    )
+}
+
+fn content_rect_for_source_dimensions(
+    source: SourceVideoDimensions,
+    output_spec: OcrFrameOutputSpec,
+) -> ContentRect {
+    let source_width = source.width as f64;
+    let source_height = source.height as f64;
+    let output_width = output_spec.width as f64;
+    let output_height = output_spec.height as f64;
+    let scale = (output_width / source_width).min(output_height / source_height);
+    let content_width = (source_width * scale).round().clamp(1.0, output_width) as u32;
+    let content_height = (source_height * scale).round().clamp(1.0, output_height) as u32;
+
+    ContentRect {
+        x: output_spec.width.saturating_sub(content_width) / 2,
+        y: output_spec.height.saturating_sub(content_height) / 2,
+        width: content_width,
+        height: content_height,
+    }
+}
+
+fn crop_rect_for_region_in_content_rect(
+    region: &OcrRegion,
+    content_rect: ContentRect,
+) -> (u32, u32, u32, u32) {
+    let (relative_x, relative_y, width, height) =
+        crop_rect_for_region(region, content_rect.width, content_rect.height);
+    (
+        content_rect.x.saturating_add(relative_x),
+        content_rect.y.saturating_add(relative_y),
+        width,
+        height,
+    )
+}
+
+fn target_spec_for_zone(region: &OcrRegion) -> OcrFrameOutputSpec {
+    if region.width >= 0.95 && region.height >= 0.95 {
+        OcrFrameOutputSpec {
+            width: FULL_OCR_FRAME_WIDTH,
+            height: FULL_OCR_FRAME_HEIGHT,
+        }
+    } else {
+        OcrFrameOutputSpec {
+            width: REGION_OCR_FRAME_WIDTH,
+            height: REGION_OCR_FRAME_HEIGHT,
+        }
+    }
+}
+
+fn zone_result_key(segment_id: &str, zone_id: &str) -> String {
+    format!("{}::{}", segment_id, zone_id)
+}
+
+fn summarize_zone_ocr_results(
+    frame: &StreamedFrame,
+    active_zone: &ActiveZone<'_>,
+    ocr_results: &[ocr_rs::OcrResult_],
+) -> OcrFrameResult {
+    let mut frame_result = summarize_ocr_results(frame.frame_index, frame.time_ms, ocr_results);
+    frame_result.segment_id = Some(active_zone.segment_id.to_string());
+    frame_result.zone_id = Some(active_zone.zone.id.clone());
+    frame_result.role = Some(active_zone.zone.role.clone());
+    frame_result.region = Some(active_zone.zone.region.clone());
+    frame_result
+}
+
+fn empty_zone_frame_result(frame: &StreamedFrame, active_zone: &ActiveZone<'_>) -> OcrFrameResult {
+    OcrFrameResult {
+        frame_index: frame.frame_index,
+        time_ms: frame.time_ms,
+        text: String::new(),
+        confidence: 0.0,
+        segment_id: Some(active_zone.segment_id.to_string()),
+        zone_id: Some(active_zone.zone.id.clone()),
+        role: Some(active_zone.zone.role.clone()),
+        region: Some(active_zone.zone.region.clone()),
+    }
+}
+
+fn emit_live_detection(ctx: Option<&LiveDetectionContext>, detection: &OcrFrameResult) {
+    if detection.text.trim().is_empty() {
+        return;
+    }
+
+    if let Some(ctx) = ctx {
+        let _ = ctx.app.emit(
+            "ocr-live-detection",
+            OcrLiveDetectionEvent {
+                file_id: ctx.file_id.clone(),
+                operation_id: Some(ctx.operation_id.clone()),
+                detection: detection.clone(),
+            },
+        );
     }
 }
 
@@ -466,7 +638,28 @@ impl PipelineProgressContext {
 struct StreamedFrame {
     frame_index: u32,
     time_ms: u64,
+    source_interval_index: u32,
     rgb_bytes: Vec<u8>,
+}
+
+struct PreviousZoneResult {
+    source_interval_index: u32,
+    fingerprint: FrameFingerprint,
+    result: OcrFrameResult,
+}
+
+fn can_clone_previous_zone_result(
+    frame: &StreamedFrame,
+    fingerprint: &FrameFingerprint,
+    previous: &PreviousZoneResult,
+) -> bool {
+    previous.source_interval_index == frame.source_interval_index
+        && can_clone_previous_frame_result(
+            frame,
+            fingerprint,
+            &previous.result,
+            &previous.fingerprint,
+        )
 }
 
 enum WorkerMessage {
@@ -487,6 +680,20 @@ fn set_operation_pid(file_id: &str, pid: u32) {
     }
 }
 
+fn update_operation_pid_if_active(file_id: &str, pid: u32) -> bool {
+    super::state::OCR_PROCESS_IDS
+        .lock()
+        .map(|mut guard| {
+            if let Some(active_pid) = guard.get_mut(file_id) {
+                *active_pid = pid;
+                true
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false)
+}
+
 fn clear_operation_pid(file_id: &str) -> Option<u32> {
     super::state::OCR_PROCESS_IDS
         .lock()
@@ -494,32 +701,16 @@ fn clear_operation_pid(file_id: &str) -> Option<u32> {
         .and_then(|mut guard| guard.remove(file_id))
 }
 
-fn output_spec_for_region(region: Option<&OcrRegion>) -> OcrFrameOutputSpec {
-    if region.is_some() {
-        OcrFrameOutputSpec {
-            width: REGION_OCR_FRAME_WIDTH,
-            height: REGION_OCR_FRAME_HEIGHT,
-        }
-    } else {
-        OcrFrameOutputSpec {
-            width: FULL_OCR_FRAME_WIDTH,
-            height: FULL_OCR_FRAME_HEIGHT,
-        }
+fn full_frame_output_spec() -> OcrFrameOutputSpec {
+    OcrFrameOutputSpec {
+        width: FULL_OCR_FRAME_WIDTH,
+        height: FULL_OCR_FRAME_HEIGHT,
     }
 }
 
-fn build_ocr_filter_string(
-    fps: f64,
-    region: Option<&OcrRegion>,
-    spec: OcrFrameOutputSpec,
-) -> String {
-    let mut filters = vec![format!("fps={}", fps)];
-    if let Some(region) = region {
-        filters.push(format!(
-            "crop=iw*{}:ih*{}:iw*{}:ih*{}",
-            region.width, region.height, region.x, region.y
-        ));
-    }
+fn build_ocr_filter_string(fps: f64, spec: OcrFrameOutputSpec) -> String {
+    let mut filters = Vec::new();
+    filters.push(format!("fps={}", fps));
     filters.push(format!(
         "scale={}:{}:force_original_aspect_ratio=decrease",
         spec.width, spec.height
@@ -530,6 +721,87 @@ fn build_ocr_filter_string(
     ));
     filters.push("format=rgb24".to_string());
     filters.join(",")
+}
+
+fn build_ocr_interval_ffmpeg_args(
+    video_path: &str,
+    fps: f64,
+    output_spec: OcrFrameOutputSpec,
+    interval: SelectionInterval,
+) -> Vec<String> {
+    let mut ffmpeg_args = vec![
+        "-y".to_string(),
+        "-v".to_string(),
+        "error".to_string(),
+        "-nostats".to_string(),
+    ];
+
+    ffmpeg_args.push("-ss".to_string());
+    ffmpeg_args.push(format_ffmpeg_seconds(interval.start_time_ms));
+    ffmpeg_args.push("-t".to_string());
+    ffmpeg_args.push(format_ffmpeg_seconds(
+        interval.end_time_ms.saturating_sub(interval.start_time_ms),
+    ));
+    ffmpeg_args.push("-i".to_string());
+    ffmpeg_args.push(video_path.to_string());
+    ffmpeg_args.extend([
+        "-vf".to_string(),
+        build_ocr_filter_string(fps, output_spec),
+        "-pix_fmt".to_string(),
+        "rgb24".to_string(),
+        "-f".to_string(),
+        "rawvideo".to_string(),
+        "-progress".to_string(),
+        "pipe:2".to_string(),
+        "pipe:1".to_string(),
+    ]);
+
+    ffmpeg_args
+}
+
+fn selection_intervals_ms(selection: &OcrSelection) -> Vec<SelectionInterval> {
+    let mut intervals = selection
+        .segments
+        .iter()
+        .filter(|segment| segment.start_time_ms < segment.end_time_ms)
+        .map(|segment| SelectionInterval {
+            start_time_ms: segment.start_time_ms,
+            end_time_ms: segment.end_time_ms,
+        })
+        .collect::<Vec<_>>();
+    intervals.sort_by_key(|interval| (interval.start_time_ms, interval.end_time_ms));
+
+    let mut merged: Vec<SelectionInterval> = Vec::with_capacity(intervals.len());
+    for interval in intervals {
+        if let Some(previous) = merged.last_mut() {
+            if interval.start_time_ms <= previous.end_time_ms {
+                previous.end_time_ms = previous.end_time_ms.max(interval.end_time_ms);
+                continue;
+            }
+        }
+        merged.push(interval);
+    }
+    merged
+}
+
+fn selection_duration_ms(selection: &OcrSelection) -> u64 {
+    selection_intervals_ms(selection)
+        .iter()
+        .map(|interval| interval.end_time_ms.saturating_sub(interval.start_time_ms))
+        .sum()
+}
+
+fn interval_frame_time_ms(interval: SelectionInterval, frame_index: u32, fps: f64) -> u64 {
+    let frame_duration_ms = 1000.0 / fps;
+    let offset_ms = ((frame_index as f64) * frame_duration_ms).round() as u64;
+    interval
+        .start_time_ms
+        .saturating_add(offset_ms)
+        .min(interval.end_time_ms.saturating_sub(1))
+}
+
+fn format_ffmpeg_seconds(time_ms: u64) -> String {
+    format!("{:.3}", time_ms as f64 / 1000.0)
 }
 
 fn set_fatal_error(target: &Arc<Mutex<Option<String>>>, message: String) {
@@ -560,13 +832,15 @@ async fn read_ffmpeg_rgb_stream(
     stdout: tokio::process::ChildStdout,
     fps: f64,
     output_spec: OcrFrameOutputSpec,
+    interval: SelectionInterval,
+    interval_index: u32,
+    frame_index_offset: u32,
     frame_tx: tokio::sync::mpsc::Sender<StreamedFrame>,
 ) -> Result<u32, String> {
     let mut stdout = stdout;
     let mut read_buffer = vec![0_u8; 64 * 1024];
     let mut raw_buffer = Vec::with_capacity(output_spec.byte_len() * 2);
     let mut frame_index = 0_u32;
-    let frame_duration_ms = 1000.0 / fps;
     let frame_byte_len = output_spec.byte_len();
 
     loop {
@@ -580,11 +854,13 @@ async fn read_ffmpeg_rgb_stream(
 
         raw_buffer.extend_from_slice(&read_buffer[..read_bytes]);
         while let Some(frame_bytes) = take_next_raw_frame(&mut raw_buffer, frame_byte_len) {
-            let time_ms = ((frame_index as f64) * frame_duration_ms).round() as u64;
+            let time_ms = interval_frame_time_ms(interval, frame_index, fps);
+            let global_frame_index = frame_index_offset.saturating_add(frame_index);
             frame_tx
                 .send(StreamedFrame {
-                    frame_index,
+                    frame_index: global_frame_index,
                     time_ms,
+                    source_interval_index: interval_index,
                     rgb_bytes: frame_bytes,
                 })
                 .await
@@ -606,6 +882,7 @@ async fn read_ffmpeg_progress(
     stderr: tokio::process::ChildStderr,
     duration_us: Option<u64>,
     estimated_frames: u32,
+    frame_offset: u32,
     progress: Option<PipelineProgressContext>,
 ) -> Result<String, String> {
     let mut tracker = FfmpegProgressTracker::new(duration_us);
@@ -626,9 +903,11 @@ async fn read_ffmpeg_progress(
         if let Some(update) = tracker.handle_line(trimmed) {
             if let (Some(progress_ctx), Some(percent)) = (progress.as_ref(), update.progress) {
                 let current = if estimated_frames > 0 {
-                    (((percent as f64) / 100.0) * estimated_frames as f64).round() as u32
+                    frame_offset.saturating_add(
+                        (((percent as f64) / 100.0) * estimated_frames as f64).round() as u32,
+                    )
                 } else {
-                    0
+                    frame_offset
                 };
                 let message = if update.is_end {
                     "Finishing frame extraction...".to_string()
@@ -650,16 +929,133 @@ async fn read_ffmpeg_progress(
     Ok(error_lines.join("\n"))
 }
 
+struct ExtractionResult {
+    frame_count: u32,
+}
+
+async fn extract_selected_intervals_with_ffmpeg(
+    ffmpeg_path: &str,
+    video_path: &str,
+    file_id: &str,
+    fps: f64,
+    output_spec: OcrFrameOutputSpec,
+    intervals: &[SelectionInterval],
+    progress: Option<PipelineProgressContext>,
+    frame_tx: tokio::sync::mpsc::Sender<StreamedFrame>,
+) -> Result<ExtractionResult, String> {
+    let mut total_frame_count = 0_u32;
+
+    for (interval_index, interval) in intervals.iter().enumerate() {
+        if is_operation_cancelled(file_id) {
+            return Err("OCR cancelled".to_string());
+        }
+
+        let ffmpeg_args = build_ocr_interval_ffmpeg_args(video_path, fps, output_spec, *interval);
+        let mut child = tokio::process::Command::new(ffmpeg_path)
+            .args(ffmpeg_args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("Failed to start ffmpeg: {}", error))?;
+
+        let child_pid = child.id().unwrap_or(0);
+        if !update_operation_pid_if_active(file_id, child_pid) {
+            terminate_process(child_pid);
+            let _ = child.wait().await;
+            return Err("OCR cancelled".to_string());
+        }
+
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "Failed to capture ffmpeg stdout".to_string())?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| "Failed to capture ffmpeg stderr".to_string())?;
+
+        let interval_duration_ms = interval.end_time_ms.saturating_sub(interval.start_time_ms);
+        let interval_frame_estimate =
+            (((interval_duration_ms as f64 / 1000.0) * fps).ceil() as u32).saturating_add(1);
+        let stderr_task = tokio::spawn(read_ffmpeg_progress(
+            stderr,
+            Some(interval_duration_ms.saturating_mul(1000)),
+            interval_frame_estimate,
+            total_frame_count,
+            progress.clone(),
+        ));
+        let stream_reader_task = tokio::spawn(read_ffmpeg_rgb_stream(
+            stdout,
+            fps,
+            output_spec,
+            *interval,
+            u32::try_from(interval_index).unwrap_or(u32::MAX),
+            total_frame_count,
+            frame_tx.clone(),
+        ));
+
+        let wait_status = timeout(OCR_PIPELINE_TIMEOUT, child.wait())
+            .await
+            .map_err(|_| {
+                terminate_process(child_pid);
+                format!(
+                    "OCR pipeline timeout after {} seconds",
+                    OCR_PIPELINE_TIMEOUT.as_secs()
+                )
+            })?
+            .map_err(|error| format!("Failed to wait for ffmpeg: {}", error))?;
+
+        let was_cancelled = !update_operation_pid_if_active(file_id, 0);
+        let stderr_output = match stderr_task.await {
+            Ok(Ok(output)) => output,
+            Ok(Err(_)) | Err(_) if was_cancelled => String::new(),
+            Ok(Err(error)) => return Err(error),
+            Err(error) => return Err(format!("FFmpeg progress task failed: {}", error)),
+        };
+        let interval_frame_count = match stream_reader_task.await {
+            Ok(Ok(frame_count)) => frame_count,
+            Ok(Err(_)) | Err(_) if was_cancelled => 0,
+            Ok(Err(error)) => return Err(error),
+            Err(error) => return Err(format!("Stream reader task failed: {}", error)),
+        };
+
+        if was_cancelled {
+            return Err("OCR cancelled".to_string());
+        }
+
+        if !wait_status.success() {
+            if stderr_output.trim().is_empty() {
+                return Err(format!(
+                    "Frame extraction failed with status {}",
+                    wait_status
+                ));
+            }
+            return Err(format!("Frame extraction failed: {}", stderr_output));
+        }
+
+        total_frame_count = total_frame_count.saturating_add(interval_frame_count);
+    }
+
+    drop(frame_tx);
+
+    Ok(ExtractionResult {
+        frame_count: total_frame_count,
+    })
+}
+
 fn process_streamed_frames(
     frame_rx: tokio::sync::mpsc::Receiver<StreamedFrame>,
     models_dir: &Path,
     language: &str,
     use_gpu: bool,
     output_spec: OcrFrameOutputSpec,
+    content_rect: ContentRect,
+    selection: OcrSelection,
     requested_workers: u32,
     progress: Option<OcrProgressEmitter>,
     total_frames_hint: u32,
     file_id: &str,
+    live_detection: Option<LiveDetectionContext>,
 ) -> Result<(Vec<OcrFrameResult>, OcrPipelineTelemetry), String> {
     let worker_count = resolve_ocr_worker_count_for_backend(requested_workers, use_gpu);
     let engine_threads = resolve_ocr_engine_threads(worker_count);
@@ -680,11 +1076,13 @@ fn process_streamed_frames(
         let models_dir = models_dir.to_path_buf();
         let language = language.to_string();
         let file_id = file_id.to_string();
+        let selection = selection.clone();
         let processed_frames = Arc::clone(&processed_frames);
         let telemetry = Arc::clone(&telemetry);
         let fatal_error = Arc::clone(&fatal_error);
         let results = Arc::clone(&results);
         let progress = progress.clone();
+        let live_detection = live_detection.clone();
 
         worker_handles.push(std::thread::spawn(move || {
             let engine = match create_ocr_engine(
@@ -700,8 +1098,7 @@ fn process_streamed_frames(
                     return;
                 }
             };
-            let mut previous_fingerprint: Option<FrameFingerprint> = None;
-            let mut previous_result: Option<OcrFrameResult> = None;
+            let mut previous_by_zone: HashMap<String, PreviousZoneResult> = HashMap::new();
 
             while let Ok(message) = worker_rx.recv() {
                 match message {
@@ -728,18 +1125,8 @@ fn process_streamed_frames(
                             }
                         };
 
-                        let fingerprint = create_frame_fingerprint(&image);
-                        if is_low_detail_no_text(&fingerprint) {
-                            let frame_result = empty_frame_result(&frame);
-                            if let Err(error) = push_ocr_result(&results, frame_result.clone()) {
-                                set_fatal_error(&fatal_error, error);
-                                break;
-                            }
-                            previous_fingerprint = Some(fingerprint);
-                            previous_result = Some(frame_result);
-                            telemetry
-                                .no_text_skipped_frames
-                                .fetch_add(1, Ordering::Relaxed);
+                        let active_zones = active_zones_for_time(&selection, frame.time_ms);
+                        if active_zones.is_empty() {
                             emit_processed_frame_progress(
                                 &processed_frames,
                                 progress.as_ref(),
@@ -748,53 +1135,93 @@ fn process_streamed_frames(
                             continue;
                         }
 
-                        if let (Some(prev_fingerprint), Some(prev_result)) =
-                            (previous_fingerprint.as_ref(), previous_result.as_ref())
-                        {
-                            if can_clone_previous_frame_result(
-                                &frame,
-                                &fingerprint,
-                                prev_result,
-                                prev_fingerprint,
-                            ) {
-                                let frame_result =
-                                    clone_frame_result_for_frame(prev_result, &frame);
+                        for active_zone in active_zones {
+                            let zone_key =
+                                zone_result_key(active_zone.segment_id, &active_zone.zone.id);
+                            let (x, y, width, height) = crop_rect_for_region_in_content_rect(
+                                &active_zone.zone.region,
+                                content_rect,
+                            );
+                            if width == 0 || height == 0 {
+                                continue;
+                            }
+
+                            let target_spec = target_spec_for_zone(&active_zone.zone.region);
+                            let crop = image.crop_imm(x, y, width, height).resize_exact(
+                                target_spec.width,
+                                target_spec.height,
+                                FilterType::Triangle,
+                            );
+                            let fingerprint = create_frame_fingerprint(&crop);
+                            if is_low_detail_no_text(&fingerprint) {
+                                let frame_result = empty_zone_frame_result(&frame, &active_zone);
                                 if let Err(error) = push_ocr_result(&results, frame_result.clone())
                                 {
                                     set_fatal_error(&fatal_error, error);
                                     break;
                                 }
-                                previous_fingerprint = Some(fingerprint);
-                                previous_result = Some(frame_result);
-                                telemetry
-                                    .unchanged_skipped_frames
-                                    .fetch_add(1, Ordering::Relaxed);
-                                emit_processed_frame_progress(
-                                    &processed_frames,
-                                    progress.as_ref(),
-                                    total_frames_hint,
+                                previous_by_zone.insert(
+                                    zone_key,
+                                    PreviousZoneResult {
+                                        source_interval_index: frame.source_interval_index,
+                                        fingerprint,
+                                        result: frame_result,
+                                    },
                                 );
+                                telemetry
+                                    .no_text_skipped_frames
+                                    .fetch_add(1, Ordering::Relaxed);
                                 continue;
                             }
-                        }
 
-                        telemetry
-                            .ocr_attempted_frames
-                            .fetch_add(1, Ordering::Relaxed);
-                        if let Ok(ocr_results) = engine.recognize(&image) {
-                            let frame_result = summarize_ocr_results(
-                                frame.frame_index,
-                                frame.time_ms,
-                                &ocr_results,
-                            );
-                            if !frame_result.text.trim().is_empty() {
-                                telemetry.text_frames.fetch_add(1, Ordering::Relaxed);
+                            if let Some(previous) = previous_by_zone.get(&zone_key) {
+                                if can_clone_previous_zone_result(&frame, &fingerprint, previous) {
+                                    let frame_result =
+                                        clone_frame_result_for_frame(&previous.result, &frame);
+                                    emit_live_detection(live_detection.as_ref(), &frame_result);
+                                    if let Err(error) =
+                                        push_ocr_result(&results, frame_result.clone())
+                                    {
+                                        set_fatal_error(&fatal_error, error);
+                                        break;
+                                    }
+                                    previous_by_zone.insert(
+                                        zone_key,
+                                        PreviousZoneResult {
+                                            source_interval_index: frame.source_interval_index,
+                                            fingerprint,
+                                            result: frame_result,
+                                        },
+                                    );
+                                    telemetry
+                                        .unchanged_skipped_frames
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    continue;
+                                }
                             }
-                            previous_fingerprint = Some(fingerprint);
-                            previous_result = Some(frame_result.clone());
-                            if let Err(error) = push_ocr_result(&results, frame_result) {
-                                set_fatal_error(&fatal_error, error);
-                                break;
+
+                            telemetry
+                                .ocr_attempted_frames
+                                .fetch_add(1, Ordering::Relaxed);
+                            if let Ok(ocr_results) = engine.recognize(&crop) {
+                                let frame_result =
+                                    summarize_zone_ocr_results(&frame, &active_zone, &ocr_results);
+                                if !frame_result.text.trim().is_empty() {
+                                    telemetry.text_frames.fetch_add(1, Ordering::Relaxed);
+                                }
+                                previous_by_zone.insert(
+                                    zone_key,
+                                    PreviousZoneResult {
+                                        source_interval_index: frame.source_interval_index,
+                                        fingerprint,
+                                        result: frame_result.clone(),
+                                    },
+                                );
+                                emit_live_detection(live_detection.as_ref(), &frame_result);
+                                if let Err(error) = push_ocr_result(&results, frame_result) {
+                                    set_fatal_error(&fatal_error, error);
+                                    break;
+                                }
                             }
                         }
 
@@ -871,15 +1298,16 @@ async fn run_ocr_pipeline_with_bins(
     video_path: &str,
     file_id: &str,
     models_dir: &Path,
+    source_dimensions: SourceVideoDimensions,
     language: &str,
     fps: f64,
     use_gpu: bool,
     requested_workers: u32,
     min_confidence: f64,
     cleanup: OcrSubtitleCleanupOptions,
-    region: Option<OcrRegion>,
-    duration_us: Option<u64>,
-    estimated_frames: u32,
+    selection: OcrSelection,
+    _duration_us: Option<u64>,
+    _estimated_frames: u32,
     progress: Option<PipelineProgressContext>,
 ) -> Result<OcrPipelineResult, String> {
     validate_media_path(video_path)?;
@@ -890,58 +1318,24 @@ async fn run_ocr_pipeline_with_bins(
 
     let result = async {
         let total_timer = Instant::now();
-        let output_spec = output_spec_for_region(region.as_ref());
-        let filter_str = build_ocr_filter_string(fps, region.as_ref(), output_spec);
-
-        let mut child = tokio::process::Command::new(ffmpeg_path)
-            .args([
-                "-y",
-                "-v",
-                "error",
-                "-nostats",
-                "-i",
-                video_path,
-                "-vf",
-                &filter_str,
-                "-pix_fmt",
-                "rgb24",
-                "-f",
-                "rawvideo",
-                "-progress",
-                "pipe:2",
-                "pipe:1",
-            ])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|error| format!("Failed to start ffmpeg: {}", error))?;
-
-        let child_pid = child.id().unwrap_or(0);
-        set_operation_pid(file_id, child_pid);
-
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| "Failed to capture ffmpeg stdout".to_string())?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| "Failed to capture ffmpeg stderr".to_string())?;
+        let output_spec = full_frame_output_spec();
+        let content_rect = content_rect_for_source_dimensions(source_dimensions, output_spec);
+        let selection_intervals = selection_intervals_ms(&selection);
+        let selected_duration_ms = selection_duration_ms(&selection);
+        let selected_frame_estimate =
+            (((selected_duration_ms as f64 / 1000.0) * fps).ceil() as u32).saturating_add(1);
 
         let extraction_start = Instant::now();
         let (frame_tx, frame_rx) = tokio::sync::mpsc::channel(FRAME_CHANNEL_CAPACITY);
-        let stderr_progress = progress.clone();
-        let stderr_task = tokio::spawn(read_ffmpeg_progress(
-            stderr,
-            duration_us,
-            estimated_frames,
-            stderr_progress,
-        ));
-        let stream_reader_task =
-            tokio::spawn(read_ffmpeg_rgb_stream(stdout, fps, output_spec, frame_tx));
+        set_operation_pid(file_id, 0);
 
         let ocr_start = Instant::now();
         let ocr_progress = progress.as_ref().map(|progress| progress.ocr.clone());
+        let live_detection = progress.as_ref().map(|progress| LiveDetectionContext {
+            app: progress.app.clone(),
+            file_id: progress.file_id.clone(),
+            operation_id: progress.operation_id.clone(),
+        });
         let models_dir = models_dir.to_path_buf();
         let language = language.to_string();
         let file_id_owned = file_id.to_string();
@@ -952,61 +1346,44 @@ async fn run_ocr_pipeline_with_bins(
                 &language,
                 use_gpu,
                 output_spec,
+                content_rect,
+                selection,
                 requested_workers,
                 ocr_progress,
-                estimated_frames,
+                selected_frame_estimate,
                 &file_id_owned,
+                live_detection,
             )
         });
 
-        let wait_status = timeout(OCR_PIPELINE_TIMEOUT, child.wait())
-            .await
-            .map_err(|_| {
-                terminate_process(child_pid);
-                format!(
-                    "OCR pipeline timeout after {} seconds",
-                    OCR_PIPELINE_TIMEOUT.as_secs()
-                )
-            })?
-            .map_err(|error| format!("Failed to wait for ffmpeg: {}", error))?;
-
-        if !is_operation_cancelled(file_id) {
-            set_operation_pid(file_id, 0);
-        }
-
-        let was_cancelled = is_operation_cancelled(file_id);
-
-        let stderr_output = match stderr_task.await {
-            Ok(Ok(output)) => output,
-            Ok(Err(_)) | Err(_) if was_cancelled => String::new(),
-            Ok(Err(error)) => return Err(error),
-            Err(error) => return Err(format!("FFmpeg progress task failed: {}", error)),
-        };
-        let frame_count = match stream_reader_task.await {
-            Ok(Ok(frame_count)) => frame_count,
-            Ok(Err(_)) | Err(_) if was_cancelled => 0,
-            Ok(Err(error)) => return Err(error),
-            Err(error) => return Err(format!("Stream reader task failed: {}", error)),
-        };
+        let extraction = extract_selected_intervals_with_ffmpeg(
+            ffmpeg_path,
+            video_path,
+            file_id,
+            fps,
+            output_spec,
+            &selection_intervals,
+            progress.clone(),
+            frame_tx,
+        )
+        .await;
         let extract_ms = extraction_start.elapsed().as_millis() as u64;
+        let ExtractionResult { frame_count } = match extraction {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = ocr_task.await;
+                return Err(error);
+            }
+        };
 
         if let Some(progress) = progress.as_ref() {
             progress.emit_extraction_complete(frame_count);
         }
 
+        let was_cancelled = is_operation_cancelled(file_id);
         if was_cancelled {
             let _ = ocr_task.await;
             return Err("OCR cancelled".to_string());
-        }
-
-        if !wait_status.success() {
-            if stderr_output.trim().is_empty() {
-                return Err(format!(
-                    "Frame extraction failed with status {}",
-                    wait_status
-                ));
-            }
-            return Err(format!("Frame extraction failed: {}", stderr_output));
         }
 
         let (raw_ocr, mut telemetry) = ocr_task
@@ -1087,7 +1464,7 @@ pub(crate) async fn run_ocr_pipeline(
     num_workers: u32,
     min_confidence: f64,
     cleanup: Option<OcrSubtitleCleanupOptions>,
-    region: Option<OcrRegion>,
+    selection: OcrSelection,
 ) -> Result<OcrPipelineResult, String> {
     validate_media_path(&video_path)?;
 
@@ -1097,13 +1474,30 @@ pub(crate) async fn run_ocr_pipeline(
 
     let _sleep_guard = SleepInhibitGuard::try_acquire("Running OCR pipeline").ok();
     let ffmpeg_path = resolve_ffmpeg_path(&app)?;
+    let ffprobe_path = resolve_ffprobe_path(&app)?;
     let models_dir = get_ocr_models_dir(&app)?;
-    let duration_us = get_media_duration_us(&app, &video_path).await.ok();
-    let estimated_frames = duration_us
-        .map(|duration_us| {
-            (((duration_us as f64 / 1_000_000.0) * fps).ceil() as u32).saturating_add(1)
+    let source_dimensions = get_primary_video_dimensions_with_ffprobe(&ffprobe_path, &video_path)
+        .await
+        .map(|dimensions| SourceVideoDimensions {
+            width: dimensions.width,
+            height: dimensions.height,
         })
-        .unwrap_or(1000);
+        .map_err(|error| format!("Failed to get source video dimensions for OCR: {}", error))?;
+    let duration_us = get_media_duration_us(&app, &video_path).await.ok();
+    let duration_ms = duration_us
+        .map(|duration_us| duration_us / 1000)
+        .unwrap_or_else(|| {
+            selection
+                .segments
+                .iter()
+                .map(|segment| segment.end_time_ms)
+                .max()
+                .unwrap_or(1)
+        });
+    validate_ocr_selection(&selection, duration_ms)?;
+    let selected_duration_ms = selection_duration_ms(&selection).max(1).min(duration_ms);
+    let estimated_frames =
+        (((selected_duration_ms as f64 / 1000.0) * fps).ceil() as u32).saturating_add(1);
 
     let progress =
         PipelineProgressContext::new(app, file_id.clone(), operation_id, estimated_frames);
@@ -1116,13 +1510,14 @@ pub(crate) async fn run_ocr_pipeline(
         &video_path,
         &file_id,
         &models_dir,
+        source_dimensions,
         &language,
         fps,
         use_gpu,
         num_workers,
         min_confidence,
         cleanup.unwrap_or_default(),
-        region,
+        selection,
         duration_us,
         estimated_frames,
         Some(progress),
@@ -1139,12 +1534,17 @@ mod tests {
 
     use image::{DynamicImage, ImageBuffer, Rgba};
 
-    use crate::tools::ocr::{OcrFrameResult, OcrSubtitleCleanupOptions};
+    use crate::tools::ocr::{
+        OcrFrameResult, OcrRegion, OcrSegment, OcrSelection, OcrSubtitleCleanupOptions, OcrZone,
+        OcrZoneRole,
+    };
 
     use super::{
-        build_ocr_filter_string, can_clone_previous_frame_result, clone_frame_result_for_frame,
-        create_frame_fingerprint, empty_frame_result, is_low_detail_no_text, is_visually_unchanged,
-        output_spec_for_region, run_ocr_pipeline_with_bins, take_next_raw_frame,
+        SourceVideoDimensions, build_ocr_filter_string, can_clone_previous_frame_result,
+        can_clone_previous_zone_result, clone_frame_result_for_frame, create_frame_fingerprint,
+        empty_frame_result, full_frame_output_spec, get_primary_video_dimensions_with_ffprobe,
+        is_low_detail_no_text, is_visually_unchanged, run_ocr_pipeline_with_bins,
+        take_next_raw_frame,
     };
 
     async fn ensure_models_dir() -> Result<std::path::PathBuf, String> {
@@ -1164,6 +1564,94 @@ mod tests {
 
     fn default_cleanup() -> OcrSubtitleCleanupOptions {
         OcrSubtitleCleanupOptions::default()
+    }
+
+    fn default_source_dimensions() -> SourceVideoDimensions {
+        SourceVideoDimensions {
+            width: 160,
+            height: 90,
+        }
+    }
+
+    fn default_selection() -> OcrSelection {
+        OcrSelection {
+            segments: vec![OcrSegment {
+                id: "default-segment".to_string(),
+                start_time_ms: 0,
+                end_time_ms: 60_000,
+                zones: vec![OcrZone {
+                    id: "default-zone".to_string(),
+                    role: OcrZoneRole::MainSubtitle,
+                    region: OcrRegion {
+                        x: 0.0,
+                        y: 0.75,
+                        width: 1.0,
+                        height: 0.25,
+                    },
+                    label: None,
+                }],
+            }],
+        }
+    }
+
+    fn full_frame_selection() -> OcrSelection {
+        OcrSelection {
+            segments: vec![OcrSegment {
+                id: "full-frame-segment".to_string(),
+                start_time_ms: 0,
+                end_time_ms: 60_000,
+                zones: vec![OcrZone {
+                    id: "full-frame-zone".to_string(),
+                    role: OcrZoneRole::MainSubtitle,
+                    region: OcrRegion {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 1.0,
+                        height: 1.0,
+                    },
+                    label: None,
+                }],
+            }],
+        }
+    }
+
+    fn selection_with_overlap() -> OcrSelection {
+        OcrSelection {
+            segments: vec![
+                OcrSegment {
+                    id: "dialogue-segment".to_string(),
+                    start_time_ms: 0,
+                    end_time_ms: 5_000,
+                    zones: vec![OcrZone {
+                        id: "dialogue-zone".to_string(),
+                        role: OcrZoneRole::MainSubtitle,
+                        region: OcrRegion {
+                            x: 0.0,
+                            y: 0.75,
+                            width: 1.0,
+                            height: 0.25,
+                        },
+                        label: None,
+                    }],
+                },
+                OcrSegment {
+                    id: "sign-segment".to_string(),
+                    start_time_ms: 1_000,
+                    end_time_ms: 4_000,
+                    zones: vec![OcrZone {
+                        id: "sign-zone".to_string(),
+                        role: OcrZoneRole::OnScreenText,
+                        region: OcrRegion {
+                            x: 0.25,
+                            y: 0.2,
+                            width: 0.3,
+                            height: 0.2,
+                        },
+                        label: Some("Sign".to_string()),
+                    }],
+                },
+            ],
+        }
     }
 
     fn normalized_words(text: &str) -> Vec<String> {
@@ -1307,10 +1795,15 @@ mod tests {
             time_ms: 1400,
             text: "hello".to_string(),
             confidence: 0.82,
+            segment_id: None,
+            zone_id: None,
+            role: None,
+            region: None,
         };
         let frame = super::StreamedFrame {
             frame_index: 8,
             time_ms: 1600,
+            source_interval_index: 0,
             rgb_bytes: Vec::new(),
         };
 
@@ -1327,6 +1820,7 @@ mod tests {
         let frame = super::StreamedFrame {
             frame_index: 12,
             time_ms: 2400,
+            source_interval_index: 0,
             rgb_bytes: Vec::new(),
         };
 
@@ -1347,15 +1841,21 @@ mod tests {
             time_ms: 600,
             text: "old text".to_string(),
             confidence: 0.9,
+            segment_id: None,
+            zone_id: None,
+            role: None,
+            region: None,
         };
         let consecutive = super::StreamedFrame {
             frame_index: 4,
             time_ms: 800,
+            source_interval_index: 0,
             rgb_bytes: Vec::new(),
         };
         let non_consecutive = super::StreamedFrame {
             frame_index: 8,
             time_ms: 1600,
+            source_interval_index: 0,
             rgb_bytes: Vec::new(),
         };
 
@@ -1374,6 +1874,43 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_skip_does_not_cross_sparse_interval_boundaries() {
+        let previous_fingerprint = create_frame_fingerprint(&solid_image(320, 96, 24));
+        let current_fingerprint = create_frame_fingerprint(&solid_image(320, 96, 24));
+        let previous = OcrFrameResult {
+            frame_index: 3,
+            time_ms: 1_000,
+            text: "old text".to_string(),
+            confidence: 0.9,
+            segment_id: Some("segment-a".to_string()),
+            zone_id: Some("zone-a".to_string()),
+            role: None,
+            region: None,
+        };
+        let next_interval_first_frame = super::StreamedFrame {
+            frame_index: 4,
+            time_ms: 1_500,
+            source_interval_index: 1,
+            rgb_bytes: Vec::new(),
+        };
+        let previous_zone_result = super::PreviousZoneResult {
+            source_interval_index: 0,
+            fingerprint: previous_fingerprint,
+            result: previous,
+        };
+
+        assert_ne!(
+            previous_zone_result.source_interval_index,
+            next_interval_first_frame.source_interval_index
+        );
+        assert!(!can_clone_previous_zone_result(
+            &next_interval_first_frame,
+            &current_fingerprint,
+            &previous_zone_result,
+        ));
+    }
+
+    #[test]
     fn duplicate_skip_does_not_reuse_changed_subtitle_text() {
         let previous_fingerprint = create_frame_fingerprint(&text_variant_image(0));
         let current_fingerprint = create_frame_fingerprint(&text_variant_image(1));
@@ -1382,10 +1919,15 @@ mod tests {
             time_ms: 600,
             text: "old text".to_string(),
             confidence: 0.9,
+            segment_id: None,
+            zone_id: None,
+            role: None,
+            region: None,
         };
         let next = super::StreamedFrame {
             frame_index: 4,
             time_ms: 800,
+            source_interval_index: 0,
             rgb_bytes: Vec::new(),
         };
 
@@ -1428,19 +1970,200 @@ mod tests {
     }
 
     #[test]
-    fn region_filter_scales_to_fixed_rgb_frame() {
-        let region = super::OcrRegion {
-            x: 0.0,
-            y: 0.7,
-            width: 1.0,
-            height: 0.3,
-        };
-        let spec = output_spec_for_region(Some(&region));
-        let filter = build_ocr_filter_string(5.0, Some(&region), spec);
+    fn active_zones_for_time_returns_union_from_overlapping_segments() {
+        let selection = selection_with_overlap();
+        let active = super::active_zones_for_time(&selection, 2500);
 
-        assert!(filter.contains("crop=iw*1:ih*0.3:iw*0:ih*0.7"));
-        assert!(filter.contains("scale=960:180:force_original_aspect_ratio=decrease"));
-        assert!(filter.contains("pad=960:180:(ow-iw)/2:(oh-ih)/2"));
+        assert_eq!(active.len(), 2);
+        assert_eq!(active[0].zone.id, "dialogue-zone");
+        assert_eq!(active[1].zone.id, "sign-zone");
+    }
+
+    #[test]
+    fn selection_intervals_merge_overlapping_segments_without_gaps() {
+        let selection = selection_with_overlap();
+
+        assert_eq!(
+            super::selection_intervals_ms(&selection),
+            vec![super::SelectionInterval {
+                start_time_ms: 0,
+                end_time_ms: 5_000,
+            }]
+        );
+    }
+
+    #[test]
+    fn selection_intervals_preserve_sparse_active_windows() {
+        let mut selection = selection_with_overlap();
+        selection.segments[0].start_time_ms = 0;
+        selection.segments[0].end_time_ms = 10_000;
+        selection.segments[1].start_time_ms = 50_000;
+        selection.segments[1].end_time_ms = 60_000;
+
+        assert_eq!(
+            super::selection_intervals_ms(&selection),
+            vec![
+                super::SelectionInterval {
+                    start_time_ms: 0,
+                    end_time_ms: 10_000,
+                },
+                super::SelectionInterval {
+                    start_time_ms: 50_000,
+                    end_time_ms: 60_000,
+                },
+            ]
+        );
+        assert_eq!(super::selection_duration_ms(&selection), 20_000);
+    }
+
+    #[test]
+    fn interval_extraction_args_seek_one_active_window() {
+        let args = super::build_ocr_interval_ffmpeg_args(
+            "/tmp/source.mp4",
+            5.0,
+            full_frame_output_spec(),
+            super::SelectionInterval {
+                start_time_ms: 50_000,
+                end_time_ms: 60_000,
+            },
+        );
+
+        assert_eq!(args.iter().filter(|arg| arg.as_str() == "-ss").count(), 1);
+        assert!(args.windows(2).any(|window| window == ["-ss", "50.000"]));
+        assert!(args.windows(2).any(|window| window == ["-t", "10.000"]));
+        assert!(args.windows(2).any(|window| {
+            window == [
+                "-vf",
+                "fps=5,scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2,format=rgb24",
+            ]
+        }));
+    }
+
+    #[test]
+    fn interval_frame_timestamps_remain_source_time_for_each_window() {
+        let interval = super::SelectionInterval {
+            start_time_ms: 50_000,
+            end_time_ms: 60_000,
+        };
+
+        assert_eq!(super::interval_frame_time_ms(interval, 0, 1.0), 50_000);
+        assert_eq!(super::interval_frame_time_ms(interval, 9, 1.0), 59_000);
+        assert_eq!(super::interval_frame_time_ms(interval, 10, 1.0), 59_999);
+    }
+
+    #[test]
+    fn ffmpeg_seconds_are_millisecond_precise() {
+        assert_eq!(super::format_ffmpeg_seconds(12_345), "12.345");
+    }
+
+    #[test]
+    fn crop_region_to_image_bounds_scales_relative_region() {
+        let rect = super::crop_rect_for_region(
+            &OcrRegion {
+                x: 0.25,
+                y: 0.5,
+                width: 0.5,
+                height: 0.25,
+            },
+            1920,
+            1080,
+        );
+
+        assert_eq!(rect, (480, 540, 960, 270));
+    }
+
+    #[test]
+    fn content_rect_for_16_9_source_uses_full_ocr_frame() {
+        let rect = super::content_rect_for_source_dimensions(
+            super::SourceVideoDimensions {
+                width: 1920,
+                height: 1080,
+            },
+            super::full_frame_output_spec(),
+        );
+
+        assert_eq!(
+            rect,
+            super::ContentRect {
+                x: 0,
+                y: 0,
+                width: 960,
+                height: 540,
+            }
+        );
+    }
+
+    #[test]
+    fn content_rect_for_4_3_source_excludes_pillarbox_bars() {
+        let rect = super::content_rect_for_source_dimensions(
+            super::SourceVideoDimensions {
+                width: 1440,
+                height: 1080,
+            },
+            super::full_frame_output_spec(),
+        );
+
+        assert_eq!(
+            rect,
+            super::ContentRect {
+                x: 120,
+                y: 0,
+                width: 720,
+                height: 540,
+            }
+        );
+    }
+
+    #[test]
+    fn content_rect_for_portrait_source_excludes_pillarbox_bars() {
+        let rect = super::content_rect_for_source_dimensions(
+            super::SourceVideoDimensions {
+                width: 1080,
+                height: 1920,
+            },
+            super::full_frame_output_spec(),
+        );
+
+        assert_eq!(
+            rect,
+            super::ContentRect {
+                x: 328,
+                y: 0,
+                width: 304,
+                height: 540,
+            }
+        );
+    }
+
+    #[test]
+    fn crop_region_maps_into_active_content_rect() {
+        let content_rect = super::ContentRect {
+            x: 120,
+            y: 0,
+            width: 720,
+            height: 540,
+        };
+
+        let crop = super::crop_rect_for_region_in_content_rect(
+            &OcrRegion {
+                x: 0.25,
+                y: 0.5,
+                width: 0.5,
+                height: 0.25,
+            },
+            content_rect,
+        );
+
+        assert_eq!(crop, (300, 270, 360, 135));
+    }
+
+    #[test]
+    fn full_frame_filter_scales_to_fixed_rgb_frame() {
+        let spec = full_frame_output_spec();
+        let filter = build_ocr_filter_string(5.0, spec);
+
+        assert!(filter.contains("scale=960:540:force_original_aspect_ratio=decrease"));
+        assert!(filter.contains("pad=960:540:(ow-iw)/2:(oh-ih)/2"));
         assert!(filter.ends_with("format=rgb24"));
     }
 
@@ -1455,13 +2178,14 @@ mod tests {
             video.to_string_lossy().as_ref(),
             "sample-pipeline",
             &models_dir,
+            default_source_dimensions(),
             "multi",
             1.0,
             false,
             1,
             0.5,
             default_cleanup(),
-            None,
+            full_frame_selection(),
             None,
             100,
             None,
@@ -1493,13 +2217,14 @@ mod tests {
                     &video_path,
                     &file_id,
                     &models_dir,
+                    default_source_dimensions(),
                     "multi",
                     30.0,
                     false,
                     1,
                     0.5,
                     default_cleanup(),
-                    None,
+                    default_selection(),
                     None,
                     1000,
                     None,
@@ -1540,13 +2265,17 @@ mod tests {
         let use_gpu = std::env::var("MEDIAFLOW_OCR_BENCH_GPU")
             .map(|value| value != "0")
             .unwrap_or(true);
-        let region = Some(super::OcrRegion {
-            x: 0.0,
-            y: 0.70,
-            width: 1.0,
-            height: 0.30,
-        });
         let models_dir = ensure_models_dir().await.expect("models should exist");
+        let source_dimensions = get_primary_video_dimensions_with_ffprobe(
+            crate::test_support::ffmpeg::ffprobe_path(),
+            &video_path,
+        )
+        .await
+        .map(|dimensions| SourceVideoDimensions {
+            width: dimensions.width,
+            height: dimensions.height,
+        })
+        .expect("benchmark video dimensions should be available");
         let started_at = std::time::Instant::now();
 
         let result = run_ocr_pipeline_with_bins(
@@ -1554,13 +2283,14 @@ mod tests {
             &video_path,
             "bench-pipeline",
             &models_dir,
+            source_dimensions,
             "multi",
             fps,
             use_gpu,
             workers,
             0.5,
             default_cleanup(),
-            region,
+            default_selection(),
             None,
             (60.0 * fps).ceil() as u32,
             None,

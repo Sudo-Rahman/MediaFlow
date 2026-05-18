@@ -8,15 +8,20 @@ import type {
   OcrFileStatus,
   OcrConfig,
   OcrRegion,
-  OcrRegionMode,
+  OcrSegment,
+  OcrZoneRole,
   OcrVersion,
   OcrProgress,
   OcrPhase,
   OcrLogEntry,
   OcrModelsStatus,
   OcrPreviewSourceIdentity,
+  OcrZoneFrame,
+  VideoOcrSelection,
 } from '$lib/types';
-import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_REGION, DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
+import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
+import { clampRegion, createDefaultVideoOcrSelection, normalizeOcrZoneLabels } from '$lib/utils';
+import { logStore } from './logs.svelte';
 
 // ============================================================================
 // STATE
@@ -28,7 +33,6 @@ let selectedFileId = $state<string | null>(null);
 
 // OCR configuration
 let config = $state<OcrConfig>({ ...DEFAULT_OCR_CONFIG });
-let globalRegion = $state<OcrRegion>({ ...DEFAULT_OCR_REGION });
 
 // Processing state
 let isProcessing = $state(false);
@@ -39,6 +43,8 @@ let cancelledFileIds = $state<Set<string>>(new Set());
 // Operation tracking for cancellation
 let currentOperationId = $state<string | null>(null);
 let activeOperationIdsByFileId = $state.raw<Map<string, string>>(new Map());
+let liveDetectionsByFileId = $state.raw<Map<string, OcrZoneFrame[]>>(new Map());
+let liveDetectionCountsByFileId = $state.raw<Map<string, number>>(new Map());
 
 // Scoped run targets (for precise global progress aggregation)
 let processingScopeFileIds = $state<Set<string>>(new Set());
@@ -67,20 +73,46 @@ function getFileName(path: string): string {
 }
 
 function createEmptyVideoFile(path: string, id?: string): OcrVideoFile {
+  const defaultDurationMs = 1;
+
   return {
     id: id ?? generateId(),
     path,
     name: getFileName(path),
     size: 0,
     status: 'pending',
-    ocrRegion: { ...globalRegion },
-    ocrRegionMode: 'global',
+    ocrSelection: createDefaultVideoOcrSelection(defaultDurationMs),
     ocrVersions: [],
   };
 }
 
 function isOcrReadyFile(file: OcrVideoFile): boolean {
   return file.status === 'ready' || file.status === 'completed';
+}
+
+function cloneSegment(segment: OcrSegment): OcrSegment {
+  return {
+    ...segment,
+    zones: segment.zones.map((zone) => ({ ...zone, region: { ...zone.region } })),
+  };
+}
+
+function cloneSelection(selection: VideoOcrSelection): VideoOcrSelection {
+  return normalizeOcrZoneLabels({ segments: selection.segments.map(cloneSegment) });
+}
+
+function cloneVideoFile(file: OcrVideoFile): OcrVideoFile {
+  return {
+    ...file,
+    ocrSelection: cloneSelection(file.ocrSelection),
+  };
+}
+
+function cloneLiveDetection(detection: OcrZoneFrame): OcrZoneFrame {
+  return {
+    ...detection,
+    region: { ...detection.region },
+  };
 }
 
 // ============================================================================
@@ -120,10 +152,6 @@ export const videoOcrStore = {
   // -------------------------------------------------------------------------
   get config() {
     return config;
-  },
-
-  get globalRegion() {
-    return { ...globalRegion };
   },
 
   // -------------------------------------------------------------------------
@@ -207,8 +235,9 @@ export const videoOcrStore = {
       })
       .map((file) => ({
         ...file,
-        ocrRegionMode: file.ocrRegionMode ?? 'global',
-        ocrRegion: file.ocrRegion ?? { ...globalRegion },
+        ocrSelection: file.ocrSelection
+          ? cloneSelection(file.ocrSelection)
+          : createDefaultVideoOcrSelection(file.duration ? Math.round(file.duration * 1000) : 1),
       }));
     videoFiles = [...videoFiles, ...newFiles];
 
@@ -216,7 +245,7 @@ export const videoOcrStore = {
       selectedFileId = newFiles[0].id;
     }
 
-    return newFiles;
+    return newFiles.map(cloneVideoFile);
   },
 
   addFilesFromPaths(paths: string[]): OcrVideoFile[] {
@@ -226,6 +255,7 @@ export const videoOcrStore = {
 
   removeFile(id: string) {
     videoFiles = videoFiles.filter(f => f.id !== id);
+    this.clearLiveDetections(id);
     if (processingScopeFileIds.has(id)) {
       processingScopeFileIds = new Set(
         [...processingScopeFileIds].filter((fileId) => fileId !== id)
@@ -243,9 +273,28 @@ export const videoOcrStore = {
   },
 
   updateFile(id: string, updates: Partial<OcrVideoFile>) {
-    videoFiles = videoFiles.map(f =>
-      f.id === id ? { ...f, ...updates } : f
-    );
+    videoFiles = videoFiles.map(f => {
+      if (f.id !== id) {
+        return f;
+      }
+
+      const { ocrSelection, ...updatesWithoutSelection } = updates;
+      const durationMs = updates.duration ? Math.round(updates.duration * 1000) : undefined;
+      const nextUpdates = ocrSelection === undefined
+        ? { ...updatesWithoutSelection, ocrSelection: cloneSelection(f.ocrSelection) }
+        : { ...updatesWithoutSelection, ocrSelection: cloneSelection(ocrSelection) };
+      const nextFile = { ...f, ...nextUpdates };
+      if (
+        ocrSelection === undefined
+        && durationMs
+        && f.ocrSelection.segments.length === 1
+        && f.ocrSelection.segments[0].endTimeMs === 1
+      ) {
+        return { ...nextFile, ocrSelection: createDefaultVideoOcrSelection(durationMs) };
+      }
+
+      return nextFile;
+    });
   },
 
   setFileStatus(id: string, status: OcrFileStatus, error?: string) {
@@ -361,57 +410,150 @@ export const videoOcrStore = {
   },
 
   // -------------------------------------------------------------------------
-  // Actions - OCR Region
+  // Actions - OCR Selection
   // -------------------------------------------------------------------------
-  setGlobalRegion(region: OcrRegion) {
-    globalRegion = { ...region };
-    this.applyGlobalRegionToGlobalFiles();
+  setOcrSelection(fileId: string, selection: VideoOcrSelection) {
+    videoFiles = videoFiles.map(f =>
+      f.id === fileId
+        ? { ...f, ocrSelection: cloneSelection(selection) }
+        : f
+    );
   },
 
-  setFileRegionMode(fileId: string, mode: OcrRegionMode) {
+  addOcrSegment(fileId: string, segment: OcrSegment) {
     videoFiles = videoFiles.map(f => {
       if (f.id !== fileId) {
         return f;
       }
 
-      if (mode === 'global') {
-        return {
-          ...f,
-          ocrRegionMode: 'global',
-          ocrRegion: { ...globalRegion },
-        };
-      }
-
       return {
         ...f,
-        ocrRegionMode: 'custom',
-        ocrRegion: f.ocrRegion ? { ...f.ocrRegion } : { ...globalRegion },
+        ocrSelection: normalizeOcrZoneLabels({
+          segments: [
+            ...f.ocrSelection.segments.map(cloneSegment),
+            cloneSegment(segment),
+          ],
+        }),
       };
     });
   },
 
-  setFileRegionCustom(fileId: string, region: OcrRegion | undefined) {
-    videoFiles = videoFiles.map(f =>
-      f.id === fileId
-        ? { ...f, ocrRegionMode: 'custom', ocrRegion: region }
-        : f
-    );
+  setOcrZoneRole(fileId: string, segmentId: string, zoneId: string, role: OcrZoneRole) {
+    videoFiles = videoFiles.map(f => {
+      if (f.id !== fileId) {
+        return f;
+      }
+
+      return {
+        ...f,
+        ocrSelection: {
+          segments: f.ocrSelection.segments.map((segment) => {
+            if (segment.id !== segmentId) {
+              return cloneSegment(segment);
+            }
+
+            return {
+              ...segment,
+              zones: segment.zones.map((zone) => ({
+                ...zone,
+                role: zone.id === zoneId ? role : zone.role,
+                region: { ...zone.region },
+              })),
+            };
+          }),
+        },
+      };
+    });
   },
 
-  applyGlobalRegionToGlobalFiles() {
-    videoFiles = videoFiles.map(f =>
-      f.ocrRegionMode === 'global'
-        ? { ...f, ocrRegion: { ...globalRegion } }
-        : f
-    );
+  setOcrZoneRegion(fileId: string, segmentId: string, zoneId: string, region: OcrRegion) {
+    const nextRegion = clampRegion(region);
+    videoFiles = videoFiles.map(f => {
+      if (f.id !== fileId) {
+        return f;
+      }
+
+      return {
+        ...f,
+        ocrSelection: {
+          segments: f.ocrSelection.segments.map((segment) => {
+            if (segment.id !== segmentId) {
+              return cloneSegment(segment);
+            }
+
+            return {
+              ...segment,
+              zones: segment.zones.map((zone) => ({
+                ...zone,
+                region: zone.id === zoneId ? { ...nextRegion } : { ...zone.region },
+              })),
+            };
+          }),
+        },
+      };
+    });
   },
 
-  setOcrRegion(fileId: string, region: OcrRegion | undefined) {
-    this.setFileRegionCustom(fileId, region);
+  setOcrZoneLabel(fileId: string, segmentId: string, zoneId: string, label: string) {
+    const nextLabel = label.trim();
+
+    videoFiles = videoFiles.map(f => {
+      if (f.id !== fileId) {
+        return f;
+      }
+
+      return {
+        ...f,
+        ocrSelection: normalizeOcrZoneLabels({
+          segments: f.ocrSelection.segments.map((segment) => {
+            if (segment.id !== segmentId) {
+              return cloneSegment(segment);
+            }
+
+            return {
+              ...segment,
+              zones: segment.zones.map((zone) => ({
+                ...zone,
+                label: zone.id === zoneId ? nextLabel || undefined : zone.label,
+                region: { ...zone.region },
+              })),
+            };
+          }),
+        }),
+      };
+    });
   },
 
-  clearOcrRegion(fileId: string) {
-    this.setFileRegionCustom(fileId, undefined);
+  trimOcrSegment(fileId: string, segmentId: string, startTimeMs: number, endTimeMs: number, durationMs: number) {
+    const safeDurationMs = Number.isFinite(durationMs) && durationMs > 0 ? Math.round(durationMs) : 1;
+    const safeStartTimeMs = Number.isFinite(startTimeMs)
+      ? Math.max(0, Math.min(Math.round(startTimeMs), safeDurationMs - 1))
+      : 0;
+    const safeEndTimeMs = Number.isFinite(endTimeMs)
+      ? Math.max(safeStartTimeMs + 1, Math.min(Math.round(endTimeMs), safeDurationMs))
+      : safeStartTimeMs + 1;
+
+    videoFiles = videoFiles.map(f => {
+      if (f.id !== fileId) {
+        return f;
+      }
+
+      return {
+        ...f,
+        ocrSelection: {
+          segments: f.ocrSelection.segments.map((segment) => (
+            segment.id === segmentId
+              ? {
+                  ...segment,
+                  startTimeMs: safeStartTimeMs,
+                  endTimeMs: safeEndTimeMs,
+                  zones: segment.zones.map((zone) => ({ ...zone, region: { ...zone.region } })),
+                }
+              : cloneSegment(segment)
+          )),
+        },
+      };
+    });
   },
 
   // -------------------------------------------------------------------------
@@ -455,9 +597,55 @@ export const videoOcrStore = {
   },
 
   // -------------------------------------------------------------------------
+  // Actions - Live OCR Detections
+  // -------------------------------------------------------------------------
+  addLiveDetection(fileId: string, operationId: string | null | undefined, detection: OcrZoneFrame) {
+    if (cancelledFileIds.has(fileId)) {
+      return;
+    }
+
+    const activeOperationId = activeOperationIdsByFileId.get(fileId);
+
+    if (!activeOperationId || operationId !== activeOperationId) {
+      return;
+    }
+
+    const existing = liveDetectionsByFileId.get(fileId) ?? [];
+    const next = [...existing, cloneLiveDetection(detection)].slice(-100);
+    liveDetectionsByFileId = new Map(liveDetectionsByFileId).set(fileId, next);
+    liveDetectionCountsByFileId = new Map(liveDetectionCountsByFileId).set(
+      fileId,
+      (liveDetectionCountsByFileId.get(fileId) ?? 0) + 1,
+    );
+  },
+
+  getLiveDetections(fileId: string): OcrZoneFrame[] {
+    return (liveDetectionsByFileId.get(fileId) ?? []).map(cloneLiveDetection);
+  },
+
+  getLiveDetectionCount(fileId: string): number {
+    return liveDetectionCountsByFileId.get(fileId) ?? 0;
+  },
+
+  clearLiveDetections(fileId: string) {
+    if (!liveDetectionsByFileId.has(fileId) && !liveDetectionCountsByFileId.has(fileId)) {
+      return;
+    }
+
+    const next = new Map(liveDetectionsByFileId);
+    next.delete(fileId);
+    liveDetectionsByFileId = next;
+
+    const nextCounts = new Map(liveDetectionCountsByFileId);
+    nextCounts.delete(fileId);
+    liveDetectionCountsByFileId = nextCounts;
+  },
+
+  // -------------------------------------------------------------------------
   // Actions - Subtitles
   // -------------------------------------------------------------------------
   setOcrVersions(fileId: string, versions: OcrVersion[]) {
+    this.clearLiveDetections(fileId);
     videoFiles = videoFiles.map(f =>
       f.id === fileId ? {
         ...f,
@@ -470,6 +658,7 @@ export const videoOcrStore = {
   },
 
   addOcrVersion(fileId: string, version: OcrVersion) {
+    this.clearLiveDetections(fileId);
     videoFiles = videoFiles.map(f => {
       if (f.id !== fileId) {
         return f;
@@ -525,6 +714,7 @@ export const videoOcrStore = {
     currentProcessingId = fileId;
     currentOperationId = nextOperationId;
     activeOperationIdsByFileId = new Map(activeOperationIdsByFileId).set(fileId, nextOperationId);
+    this.clearLiveDetections(fileId);
     this.addLog('info', 'Starting OCR processing...', fileId);
   },
 
@@ -533,6 +723,8 @@ export const videoOcrStore = {
     currentProcessingId = null;
     currentOperationId = null;
     activeOperationIdsByFileId = new Map();
+    liveDetectionsByFileId = new Map();
+    liveDetectionCountsByFileId = new Map();
     cancelledFileIds = new Set();
     isCancelling = false;
     processingScopeFileIds = new Set();
@@ -540,7 +732,10 @@ export const videoOcrStore = {
 
   cancelProcessing(fileId: string) {
     cancelledFileIds = new Set([...cancelledFileIds, fileId]);
-    isCancelling = true;
+    const nextActiveOperationIds = new Map(activeOperationIdsByFileId);
+    nextActiveOperationIds.delete(fileId);
+    activeOperationIdsByFileId = nextActiveOperationIds;
+    this.clearLiveDetections(fileId);
 
     // Reset file status
     videoFiles = videoFiles.map(f => {
@@ -560,6 +755,8 @@ export const videoOcrStore = {
 
   cancelAll() {
     isCancelling = true;
+    liveDetectionsByFileId = new Map();
+    liveDetectionCountsByFileId = new Map();
 
     // Cancel all processing files
     videoFiles = videoFiles.map(f => {
@@ -594,8 +791,16 @@ export const videoOcrStore = {
   // Actions - Logs
   // -------------------------------------------------------------------------
   addLog(level: OcrLogEntry['level'], message: string, fileId?: string) {
-    const fileName = fileId ? videoFiles.find(f => f.id === fileId)?.name : undefined;
-    const logMessage = fileName ? `[${fileName}] ${message}` : message;
+    const file = fileId ? videoFiles.find(f => f.id === fileId) : undefined;
+    const logMessage = file ? `[${file.name}] ${message}` : message;
+
+    logStore.addLog({
+      level,
+      source: 'video-ocr',
+      title: message,
+      details: logMessage,
+      context: file ? { filePath: file.path } : undefined,
+    });
 
     logs = [
       ...logs,
@@ -640,6 +845,8 @@ export const videoOcrStore = {
     currentProcessingId = null;
     currentOperationId = null;
     activeOperationIdsByFileId = new Map();
+    liveDetectionsByFileId = new Map();
+    liveDetectionCountsByFileId = new Map();
     cancelledFileIds = new Set();
     isCancelling = false;
     processingScopeFileIds = new Set();

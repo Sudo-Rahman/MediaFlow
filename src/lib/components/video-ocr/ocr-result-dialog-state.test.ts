@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { OcrConfig, OcrVersion, OcrVideoFile } from '$lib/types/video-ocr';
+import { createDefaultVideoOcrSelection } from '$lib/utils';
 import {
   buildOcrResultVersionLoadKey,
   createOcrResultVersionSnapshot,
@@ -56,7 +57,7 @@ function createFile(overrides: Partial<OcrVideoFile> = {}): OcrVideoFile {
     name: 'sample.mp4',
     size: 123,
     status: 'completed',
-    ocrRegionMode: 'global',
+    ocrSelection: createDefaultVideoOcrSelection(60_000),
     ocrVersions: [createVersion('ocr-v-1', '2026-05-12T17:00:00.000Z')],
     ...overrides,
   };

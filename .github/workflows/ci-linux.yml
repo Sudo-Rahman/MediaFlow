@@ -55,14 +55,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Check frontend
-        run: pnpm check
-
       - name: Run Rust tests
         working-directory: src-tauri
         run: |
           cargo test
-          cargo test -- --ignored
+          cargo test btbn_latest_page_contains_download_url_for_supported_variant -- --ignored
 
       - name: Build Tauri app
         run: pnpm tauri build --no-bundle

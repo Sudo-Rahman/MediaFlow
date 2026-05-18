@@ -30,9 +30,8 @@ export interface OcrVideoFile {
   transcodingProgress?: number;
   transcodingCodec?: string;   // Active transcoding codec label (e.g. H.264 VideoToolbox)
   
-  // OCR region (relative coordinates 0-1)
-  ocrRegion?: OcrRegion;
-  ocrRegionMode: OcrRegionMode;
+  // OCR selection segments and zones (relative coordinates 0-1)
+  ocrSelection: VideoOcrSelection;
   
   // OCR results
   ocrVersions: OcrVersion[];
@@ -63,7 +62,42 @@ export interface OcrRegion {
   height: number;      // Height (0-1 relative to video height)
 }
 
-export type OcrRegionMode = 'global' | 'custom';
+export type OcrZoneRole = 'main_subtitle' | 'on_screen_text';
+
+export interface OcrZone {
+  id: string;
+  region: OcrRegion;
+  role: OcrZoneRole;
+  label?: string;
+}
+
+export interface OcrSegment {
+  id: string;
+  startTimeMs: number;
+  endTimeMs: number;
+  zones: OcrZone[];
+}
+
+export interface VideoOcrSelection {
+  segments: OcrSegment[];
+}
+
+export interface OcrZoneFrame {
+  frameIndex: number;
+  timeMs: number;
+  segmentId: string;
+  zoneId: string;
+  role: OcrZoneRole;
+  region: OcrRegion;
+  text: string;
+  confidence: number;
+}
+
+export interface OcrLiveDetectionEvent {
+  fileId: string;
+  operationId?: string | null;
+  detection: OcrZoneFrame;
+}
 
 // Default region: bottom 25% of the video (typical subtitle area)
 export const DEFAULT_OCR_REGION: OcrRegion = {
@@ -83,6 +117,10 @@ export interface OcrSubtitle {
   startTime: number;   // Start time in milliseconds
   endTime: number;     // End time in milliseconds
   confidence: number;  // OCR confidence (0-1)
+  segmentId?: string;
+  zoneId?: string;
+  role?: OcrZoneRole;
+  region?: OcrRegion;
 }
 
 export interface OcrRawFrame {
@@ -90,6 +128,10 @@ export interface OcrRawFrame {
   timeMs: number;
   text: string;
   confidence: number;
+  segmentId?: string;
+  zoneId?: string;
+  role?: OcrZoneRole;
+  region?: OcrRegion;
 }
 
 export interface OcrPipelineTimings {
@@ -184,12 +226,12 @@ export interface OcrConfig {
   aiCleanupModel: string;         // LLM model for OCR cleanup
 }
 
-export type OcrOutputFormat = 'srt' | 'vtt' | 'txt';
+export type OcrOutputFormat = 'srt' | 'vtt' | 'ass';
 
 export const OCR_OUTPUT_FORMATS: { value: OcrOutputFormat; label: string }[] = [
   { value: 'srt', label: 'SubRip (.srt)' },
   { value: 'vtt', label: 'WebVTT (.vtt)' },
-  { value: 'txt', label: 'Plain Text (.txt)' },
+  { value: 'ass', label: 'Advanced SubStation Alpha (.ass)' },
 ];
 
 const DEFAULT_AI_CLEANUP_PROVIDER = getDefaultLLMProvider();
@@ -295,13 +337,12 @@ export function isVideoExtension(ext: string): ext is VideoExtension {
 // ============================================================================
 
 export interface VideoOcrPersistenceData {
-  version: 1;
+  version: 2;
   videoPath: string;
   previewPath?: string;
   previewSourceIdentity?: OcrPreviewSourceIdentity;
   previewVersion?: string;
-  ocrRegion?: OcrRegion;
-  ocrRegionMode?: OcrRegionMode;
+  ocrSelection: VideoOcrSelection;
   ocrVersions: OcrVersion[];
   createdAt: string;
   updatedAt: string;

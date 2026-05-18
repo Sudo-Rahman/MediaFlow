@@ -5,7 +5,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { toast } from 'svelte-sonner';
 
-  import type { OcrOutputFormat, OcrSubtitle, OcrVideoFile, OcrVersion } from '$lib/types/video-ocr';
+  import type { OcrOutputFormat, OcrVideoFile, OcrVersion } from '$lib/types/video-ocr';
   import { OCR_OUTPUT_FORMATS } from '$lib/types/video-ocr';
   import { normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils/ocr-subtitle-adapter';
   import { Badge } from '$lib/components/ui/badge';
@@ -14,6 +14,8 @@
     buildOcrResultVersionLoadKey,
     createOcrResultVersionSnapshot,
   } from './ocr-result-dialog-state';
+  import { buildFormattedOcrPreview } from './ocr-preview-format';
+  import { getOcrResultVersionAllowedFormats } from './ocr-versioned-export';
 
   interface OcrResultDialogProps {
     open: boolean;
@@ -108,6 +110,7 @@
   onDestroy(clearDeferredVersionLoad);
 
   const currentVersion = $derived(loadedVersions[currentVersionIndex] ?? null);
+  const currentAllowedFormats = $derived(getOcrResultVersionAllowedFormats(currentVersion));
   const normalizedSubtitles = $derived.by(() => {
     if (!open || versionsLoading || !currentVersion) {
       return [];
@@ -119,6 +122,12 @@
     file && currentVersion ? `${file.path}:${currentVersion.id}:${selectedFormat}` : null
   );
 
+  $effect(() => {
+    if (!currentAllowedFormats.includes(selectedFormat)) {
+      selectedFormat = currentAllowedFormats[0] ?? 'srt';
+    }
+  });
+
   function formatDate(isoDate: string): string {
     const date = new Date(isoDate);
     return date.toLocaleDateString('en-US', {
@@ -128,47 +137,6 @@
       hour: '2-digit',
       minute: '2-digit',
     });
-  }
-
-  function formatSrtTime(ms: number): string {
-    const hours = Math.floor(ms / 3_600_000);
-    const minutes = Math.floor((ms % 3_600_000) / 60_000);
-    const seconds = Math.floor((ms % 60_000) / 1000);
-    const millis = ms % 1000;
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(millis).padStart(3, '0')}`;
-  }
-
-  function formatVttTime(ms: number): string {
-    const hours = Math.floor(ms / 3_600_000);
-    const minutes = Math.floor((ms % 3_600_000) / 60_000);
-    const seconds = Math.floor((ms % 60_000) / 1000);
-    const millis = ms % 1000;
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
-  }
-
-  function buildFormattedPreview(format: OcrOutputFormat, subtitles: OcrSubtitle[]): string {
-    if (subtitles.length === 0) {
-      return '';
-    }
-
-    if (format === 'txt') {
-      return subtitles.map((sub) => sub.text).join('\n');
-    }
-
-    if (format === 'vtt') {
-      const body = subtitles
-        .map((sub) =>
-          `${formatVttTime(sub.startTime)} --> ${formatVttTime(sub.endTime)}\n${sub.text}\n`
-        )
-        .join('\n');
-      return `WEBVTT\n\n${body}`;
-    }
-
-    return subtitles
-      .map((sub, i) =>
-        `${i + 1}\n${formatSrtTime(sub.startTime)} --> ${formatSrtTime(sub.endTime)}\n${sub.text}\n`
-      )
-      .join('\n');
   }
 
   function getModeLabel(mode: OcrVersion['mode']): string {
@@ -211,7 +179,7 @@
         return;
       }
 
-      const generatedPreview = buildFormattedPreview(format, subtitles);
+      const generatedPreview = buildFormattedOcrPreview(format, subtitles);
       previewCache.set(cacheKey, generatedPreview);
       previewText = generatedPreview;
       isPreviewPending = false;
@@ -278,9 +246,14 @@
   currentIndex={currentVersionIndex}
   onIndexChange={(i) => { currentVersionIndex = i; }}
   isLoading={versionsLoading || !file}
-  formats={['srt', 'vtt', 'txt']}
+  formats={currentAllowedFormats}
   selectedFormat={selectedFormat}
-  onFormatChange={(f) => { selectedFormat = f as OcrOutputFormat; }}
+  onFormatChange={(f) => {
+    const nextFormat = f as OcrOutputFormat;
+    if (currentAllowedFormats.includes(nextFormat)) {
+      selectedFormat = nextFormat;
+    }
+  }}
   previewContent={previewText}
   isPreviewLoading={isPreviewPending}
   onExport={handleExport}

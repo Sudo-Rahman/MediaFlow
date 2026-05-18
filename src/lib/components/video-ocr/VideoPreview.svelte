@@ -1,45 +1,73 @@
 <script lang="ts">
-  import type { OcrVideoFile, OcrRegion, OcrSubtitle } from '$lib/types';
-  import { DEFAULT_OCR_REGION } from '$lib/types';
-  import { cn } from '$lib/utils';
   import { convertFileSrc } from '@tauri-apps/api/core';
+
+  import type { OcrRegion, OcrSubtitle, OcrVideoFile, OcrZoneFrame, OcrZoneRole } from '$lib/types';
+  import { cn } from '$lib/utils';
   import { Button } from '$lib/components/ui/button';
-  import { Maximize2, Minimize2, RotateCcw, Frame } from '@lucide/svelte';
+  import * as ContextMenu from '$lib/components/ui/context-menu';
   import SubtitleOverlay from './SubtitleOverlay.svelte';
   import RegionSelector from './RegionSelector.svelte';
-  import { Tooltip, TooltipContent, TooltipTrigger } from '$lib/components/ui/tooltip';
+  import LiveOcrHoverCard from './LiveOcrHoverCard.svelte';
+
+  interface VideoSeekRequest {
+    fileId: string;
+    timeMs: number;
+    requestId: number;
+  }
 
   interface VideoPreviewProps {
     file?: OcrVideoFile;
-    globalRegion?: OcrRegion;
+    liveDetections?: OcrZoneFrame[];
+    liveDetectionCount?: number;
     showSubtitles?: boolean;
     suspendPlayback?: boolean;
-    onGlobalRegionChange?: (region: OcrRegion | undefined) => void | Promise<void>;
-    onFileRegionChange?: (region: OcrRegion | undefined) => void | Promise<void>;
-    onUseGlobalRegion?: () => void;
+    seekRequest?: VideoSeekRequest | null;
+    onTimeChange?: (timeMs: number) => void;
+    onAddSegmentFromRegion?: (region: OcrRegion, startTimeMs: number, endTimeMs: number) => void | Promise<void>;
+    onUpdateZoneRegion?: (segmentId: string, zoneId: string, region: OcrRegion) => void | Promise<void>;
+    onSetZoneRole?: (segmentId: string, zoneId: string, role: OcrZoneRole) => void | Promise<void>;
+    onDeleteZone?: (segmentId: string, zoneId: string) => void | Promise<void>;
     onPlaybackError?: (fileId: string, reason: string) => void | Promise<void>;
     class?: string;
   }
 
+  interface VisibleZoneEntry {
+    segmentId: string;
+    zoneId: string;
+    role: OcrZoneRole;
+    region: OcrRegion;
+    label: string;
+  }
+
   let {
     file,
-    globalRegion,
+    liveDetections = [],
+    liveDetectionCount = 0,
     showSubtitles = true,
     suspendPlayback = false,
-    onGlobalRegionChange,
-    onFileRegionChange,
-    onUseGlobalRegion,
+    seekRequest = null,
+    onTimeChange,
+    onAddSegmentFromRegion,
+    onUpdateZoneRegion,
+    onSetZoneRole,
+    onDeleteZone,
     onPlaybackError,
     class: className = '',
   }: VideoPreviewProps = $props();
 
-  let videoEl: HTMLVideoElement | undefined = $state();
-  let containerEl: HTMLDivElement | undefined = $state();
-  let currentTime = $state(0);
-  let isRegionMode = $state(false);
-  let editScope = $state<'all' | 'file'>('all');
-  let region = $state<OcrRegion | undefined>(undefined);
+  let videoEl = $state<HTMLVideoElement | null>(null);
+  let containerEl = $state<HTMLElement | null>(null);
+  let currentTimesByFileId = $state.raw<Record<string, number>>({});
+  let isDrawingZone = $state(false);
+  let drawingStartTimeMs = $state(0);
+  let drawingRegion = $state<OcrRegion | undefined>();
+  let editingZone = $state<{ segmentId: string; zoneId: string } | null>(null);
+  let editingRegion = $state<OcrRegion | undefined>();
+  let contextZone = $state<VisibleZoneEntry | undefined>();
   let resumePlayback = $state(false);
+  let lastAppliedSeekRequestId = $state<number | null>(null);
+  let isPointerInsidePreview = $state(false);
+  let liveDetectionsHoverOpen = $state(false);
   
   // Video bounds within container (for letterboxed videos)
   // These are relative values (0-1) within the container
@@ -89,32 +117,60 @@
     });
   });
 
-  // Sync editable region with active editing scope
-  $effect(() => {
-    if (editScope === 'all') {
-      region = globalRegion ? { ...globalRegion } : { ...DEFAULT_OCR_REGION };
-      return;
-    }
-
-    if (file?.ocrRegion) {
-      region = { ...file.ocrRegion };
-    } else {
-      region = undefined;
-    }
-  });
-
-  const displayedRegion = $derived.by(() => {
-    if (file?.ocrRegionMode === 'global') {
-      return file.ocrRegion ?? globalRegion ?? DEFAULT_OCR_REGION;
-    }
-    return file?.ocrRegion;
-  });
+  const currentTime = $derived(file ? currentTimesByFileId[file.id] ?? 0 : 0);
+  const isEditingZone = $derived(editingZone !== null);
+  const activeRegion = $derived(isEditingZone ? editingRegion : drawingRegion);
 
   // Get video source URL
   const videoSrc = $derived(
     file?.previewPath ? convertFileSrc(file.previewPath) : undefined
   );
   const latestSubtitles = $derived(file?.ocrVersions.at(-1)?.finalSubtitles ?? []);
+  const visibleZoneEntries = $derived.by(() => {
+    if (!file) {
+      return [];
+    }
+
+    const timeMs = Math.round(currentTime * 1000);
+    return file.ocrSelection.segments.flatMap((segment) => {
+      if (timeMs < segment.startTimeMs || timeMs >= segment.endTimeMs) {
+        return [];
+      }
+
+      return segment.zones.map((zone, zoneIndex) => ({
+        segmentId: segment.id,
+        zoneId: zone.id,
+        role: zone.role,
+        region: zone.region,
+        label: zone.label ?? `Zone ${zoneIndex + 1}`,
+      }));
+    });
+  });
+  const hasLiveDetections = $derived(liveDetections.length > 0);
+  const shouldShowZoneHint = $derived(
+    !!file
+      && !isDrawingZone
+      && !isEditingZone
+      && visibleZoneEntries.length === 0
+      && !isPointerInsidePreview
+      && (!hasLiveDetections || !liveDetectionsHoverOpen),
+  );
+
+  $effect(() => {
+    if (!videoEl || !file || !seekRequest || seekRequest.fileId !== file.id) {
+      return;
+    }
+
+    if (seekRequest.requestId === lastAppliedSeekRequestId) {
+      return;
+    }
+
+    lastAppliedSeekRequestId = seekRequest.requestId;
+    const nextTimeSeconds = Math.max(0, seekRequest.timeMs / 1000);
+    videoEl.currentTime = nextTimeSeconds;
+    currentTimesByFileId = { ...currentTimesByFileId, [file.id]: nextTimeSeconds };
+    onTimeChange?.(Math.round(seekRequest.timeMs));
+  });
 
   function findSubtitleAtTime(subtitles: OcrSubtitle[], timeMs: number): OcrSubtitle | undefined {
     let left = 0;
@@ -144,12 +200,12 @@
   });
 
   function handleTimeUpdate() {
-    if (!showSubtitles) {
-      return;
-    }
-
     if (videoEl) {
-      currentTime = videoEl.currentTime;
+      const nextTime = videoEl.currentTime;
+      if (file) {
+        currentTimesByFileId = { ...currentTimesByFileId, [file.id]: nextTime };
+      }
+      onTimeChange?.(Math.round(nextTime * 1000));
     }
   }
 
@@ -179,6 +235,80 @@
 
     const reason = describeVideoPlaybackError(videoEl?.error ?? null);
     void onPlaybackError(file.id, reason);
+  }
+
+  function getVideoDurationMs(): number {
+    const durationSeconds = Number.isFinite(videoEl?.duration) && videoEl?.duration
+      ? videoEl.duration
+      : file?.duration;
+
+    return Math.max(1, Math.round((durationSeconds ?? 0) * 1000));
+  }
+
+  function beginZoneDrawing(): void {
+    if (!file || !videoEl) {
+      return;
+    }
+
+    drawingStartTimeMs = Math.round(videoEl.currentTime * 1000);
+    drawingRegion = undefined;
+    editingZone = null;
+    editingRegion = undefined;
+    isDrawingZone = true;
+
+    if (!videoEl.paused) {
+      videoEl.pause();
+    }
+  }
+
+  function beginZoneEditing(entry: VisibleZoneEntry): void {
+    if (!file || !videoEl) {
+      return;
+    }
+
+    isDrawingZone = false;
+    drawingRegion = undefined;
+    editingZone = { segmentId: entry.segmentId, zoneId: entry.zoneId };
+    editingRegion = { ...entry.region };
+
+    if (!videoEl.paused) {
+      videoEl.pause();
+    }
+  }
+
+  function handleRegionCommit(region: OcrRegion): void {
+    if (editingZone) {
+      editingRegion = region;
+      return;
+    }
+
+    if (!file || !onAddSegmentFromRegion) {
+      isDrawingZone = false;
+      drawingRegion = undefined;
+      return;
+    }
+
+    const endTimeMs = getVideoDurationMs();
+    void onAddSegmentFromRegion(region, drawingStartTimeMs, endTimeMs);
+    isDrawingZone = false;
+    drawingRegion = undefined;
+  }
+
+  function saveZoneEditing(): void {
+    if (!editingZone || !editingRegion) {
+      return;
+    }
+
+    void onUpdateZoneRegion?.(editingZone.segmentId, editingZone.zoneId, editingRegion);
+    editingZone = null;
+    editingRegion = undefined;
+  }
+
+  function cancelRegionSelection(): void {
+    isDrawingZone = false;
+    drawingRegion = undefined;
+    editingZone = null;
+    editingRegion = undefined;
   }
   
   function updateVideoBounds() {
@@ -221,52 +351,107 @@
     };
   }
 
-  function toggleRegionMode() {
-    isRegionMode = !isRegionMode;
+  function handleZoneRole(segmentId: string, zoneId: string, role: OcrZoneRole): void {
+    void onSetZoneRole?.(segmentId, zoneId, role);
   }
 
-  function handleRegionChange(newRegion: OcrRegion | undefined) {
-    if (editScope === 'all') {
-      const nextRegion = newRegion ?? { ...DEFAULT_OCR_REGION };
-      region = nextRegion;
-      onGlobalRegionChange?.(nextRegion);
-      return;
+  function handleDeleteZone(segmentId: string, zoneId: string): void {
+    void onDeleteZone?.(segmentId, zoneId);
+    if (editingZone?.segmentId === segmentId && editingZone.zoneId === zoneId) {
+      editingZone = null;
+      editingRegion = undefined;
+    }
+  }
+
+  function videoPointFromEvent(event: MouseEvent): { x: number; y: number } | null {
+    if (!containerEl) {
+      return null;
     }
 
-    region = newRegion;
-    onFileRegionChange?.(newRegion);
-  }
-
-  function setDefaultRegion() {
-    const defaultRegion = { ...DEFAULT_OCR_REGION };
-    handleRegionChange(defaultRegion);
-  }
-
-  function clearRegion() {
-    if (editScope === 'all') {
-      setDefaultRegion();
-      return;
+    const rect = containerEl.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0 || videoBounds.width <= 0 || videoBounds.height <= 0) {
+      return null;
     }
 
-    handleRegionChange(undefined);
+    const containerX = (event.clientX - rect.left) / rect.width;
+    const containerY = (event.clientY - rect.top) / rect.height;
+    if (
+      containerX < videoBounds.x
+      || containerX > videoBounds.x + videoBounds.width
+      || containerY < videoBounds.y
+      || containerY > videoBounds.y + videoBounds.height
+    ) {
+      return null;
+    }
+
+    return {
+      x: (containerX - videoBounds.x) / videoBounds.width,
+      y: (containerY - videoBounds.y) / videoBounds.height,
+    };
   }
 
-  function useGlobalRegion() {
-    onUseGlobalRegion?.();
-    editScope = 'all';
+  function findZoneAtEvent(event: MouseEvent): VisibleZoneEntry | undefined {
+    const point = videoPointFromEvent(event);
+    if (!point) {
+      return undefined;
+    }
+
+    return [...visibleZoneEntries].reverse().find((entry) => (
+      point.x >= entry.region.x
+      && point.x <= entry.region.x + entry.region.width
+      && point.y >= entry.region.y
+      && point.y <= entry.region.y + entry.region.height
+    ));
+  }
+
+  function handlePreviewContextMenu(event: MouseEvent): void {
+    contextZone = findZoneAtEvent(event);
+  }
+
+  function regionToContainerStyle(region: OcrRegion): string {
+    const left = videoBounds.x * 100 + region.x * videoBounds.width * 100;
+    const top = videoBounds.y * 100 + region.y * videoBounds.height * 100;
+    const width = region.width * videoBounds.width * 100;
+    const height = region.height * videoBounds.height * 100;
+
+    return `left: ${left}%; top: ${top}%; width: ${width}%; height: ${height}%;`;
+  }
+
+  function zoneClass(role: OcrZoneRole): string {
+    return cn(
+      'pointer-events-none absolute rounded-sm border-2 text-left shadow-sm outline-none transition-colors',
+      role === 'main_subtitle'
+        ? 'border-sky-400/80 bg-sky-500/15 hover:bg-sky-500/20'
+        : 'border-amber-400/80 bg-amber-500/15 hover:bg-amber-500/20',
+    );
+  }
+
+  function roleLabel(role: OcrZoneRole): string {
+    return role === 'main_subtitle' ? 'Main subtitle' : 'On-screen text';
   }
 </script>
 
 <div class={cn("relative flex flex-col min-h-0 h-full", className)}>
   <!-- Video container - scales to available space -->
-  <div bind:this={containerEl} class="relative bg-black rounded-lg overflow-hidden flex-1 min-h-0">
-    {#if videoSrc}
+  {#if videoSrc}
+    <ContextMenu.Root>
+      <ContextMenu.Trigger
+        bind:ref={containerEl}
+        class="relative bg-black rounded-lg overflow-hidden flex-1 min-h-0"
+        oncontextmenu={handlePreviewContextMenu}
+        onpointerenter={() => {
+          isPointerInsidePreview = true;
+        }}
+        onpointerleave={() => {
+          isPointerInsidePreview = false;
+        }}
+      >
       <!-- svelte-ignore a11y_media_has_caption -->
       <video
         bind:this={videoEl}
         src={videoSrc}
         class="w-full h-full object-contain"
-        controls={!isRegionMode}
+        controls={!isDrawingZone && !isEditingZone}
         ontimeupdate={handleTimeUpdate}
         onloadedmetadata={updateVideoBounds}
         onresize={updateVideoBounds}
@@ -274,33 +459,114 @@
       >
       </video>
 
-      <!-- Subtitle overlay - hidden in region mode -->
-      {#if showSubtitles && currentSubtitle && !isRegionMode}
+      <!-- Subtitle overlay - hidden while drawing a zone -->
+      {#if showSubtitles && currentSubtitle && !isDrawingZone}
         <SubtitleOverlay subtitle={currentSubtitle} />
       {/if}
 
-      <!-- Region selector overlay -->
-      {#if isRegionMode}
-        <RegionSelector
-          {region}
-          {videoBounds}
-          onchange={handleRegionChange}
-        />
+      {#if !isDrawingZone && !isEditingZone}
+        {#each visibleZoneEntries as entry (`${entry.segmentId}:${entry.zoneId}`)}
+          <div
+            class={zoneClass(entry.role)}
+            style={regionToContainerStyle(entry.region)}
+            aria-hidden="true"
+          >
+            <span class="absolute left-1 top-1 rounded-sm bg-background/85 px-1.5 py-0.5 text-[10px] font-medium text-foreground shadow-sm">
+              {roleLabel(entry.role)}
+            </span>
+          </div>
+        {/each}
       {/if}
 
-      <!-- Region indicator when not in edit mode -->
-      {#if !isRegionMode && displayedRegion}
-        <div
-          class="absolute border-2 border-primary/50 bg-primary/10 pointer-events-none"
-          style="
-            left: {videoBounds.x * 100 + displayedRegion.x * videoBounds.width * 100}%;
-            top: {videoBounds.y * 100 + displayedRegion.y * videoBounds.height * 100}%;
-            width: {displayedRegion.width * videoBounds.width * 100}%;
-            height: {displayedRegion.height * videoBounds.height * 100}%;
-          "
-        ></div>
+      <div class="absolute left-3 top-3 flex flex-col items-start gap-2">
+        {#if file && hasLiveDetections && !isDrawingZone}
+          <LiveOcrHoverCard
+            detections={liveDetections}
+            detectionCount={liveDetectionCount}
+            selection={file.ocrSelection}
+            onOpenChange={(open) => {
+              liveDetectionsHoverOpen = open;
+            }}
+          />
+        {/if}
+
+        {#if shouldShowZoneHint}
+          <span class="pointer-events-none rounded bg-black/70 px-2 py-1 text-xs text-white shadow-sm">
+            Right-click to add OCR zones
+          </span>
+        {/if}
+      </div>
+
+      <!-- Region selector overlay -->
+      {#if isDrawingZone || isEditingZone}
+        <RegionSelector
+          region={activeRegion}
+          {videoBounds}
+          allowCreate={isDrawingZone}
+          onchange={(region) => {
+            if (isEditingZone) {
+              editingRegion = region;
+            } else {
+              drawingRegion = region;
+            }
+          }}
+          oncommit={handleRegionCommit}
+          oncancel={cancelRegionSelection}
+        />
+        <div class="absolute right-3 top-3 flex items-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onclick={cancelRegionSelection}
+          >
+            Cancel
+          </Button>
+          {#if isEditingZone}
+            <Button
+              type="button"
+              size="sm"
+              disabled={!editingRegion}
+              onclick={saveZoneEditing}
+            >
+              Save
+            </Button>
+          {/if}
+        </div>
       {/if}
-    {:else if file}
+      </ContextMenu.Trigger>
+      <ContextMenu.Content class="w-64">
+        {#if contextZone}
+          {@const menuZone = contextZone}
+          <ContextMenu.Item onclick={() => beginZoneEditing(menuZone)}>
+            Modify zone
+          </ContextMenu.Item>
+          {#if menuZone.role !== 'main_subtitle'}
+            <ContextMenu.Item onclick={() => handleZoneRole(menuZone.segmentId, menuZone.zoneId, 'main_subtitle')}>
+              Set as Main subtitle
+            </ContextMenu.Item>
+          {/if}
+          {#if menuZone.role !== 'on_screen_text'}
+            <ContextMenu.Item onclick={() => handleZoneRole(menuZone.segmentId, menuZone.zoneId, 'on_screen_text')}>
+              Set as On-screen text
+            </ContextMenu.Item>
+          {/if}
+          <ContextMenu.Separator />
+          <ContextMenu.Item
+            variant="destructive"
+            onclick={() => handleDeleteZone(menuZone.segmentId, menuZone.zoneId)}
+          >
+            Delete zone
+          </ContextMenu.Item>
+        {:else}
+          <ContextMenu.Item onclick={beginZoneDrawing}>
+            Add OCR zone from current time
+          </ContextMenu.Item>
+        {/if}
+      </ContextMenu.Content>
+    </ContextMenu.Root>
+  {:else if file}
+    <div class="relative bg-black rounded-lg overflow-hidden flex-1 min-h-0">
       <div class="w-full h-full flex items-center justify-center">
         <div class="text-center text-muted-foreground">
           {#if file.status === 'transcoding'}
@@ -316,85 +582,12 @@
           {/if}
         </div>
       </div>
-    {:else}
+    </div>
+  {:else}
+    <div class="relative bg-black rounded-lg overflow-hidden flex-1 min-h-0">
       <div class="w-full h-full flex items-center justify-center">
         <p class="text-muted-foreground text-sm">Select a video to preview</p>
       </div>
-    {/if}
-  </div>
-
-  <!-- Region controls -->
-  {#if file?.previewPath}
-    <div class="flex flex-wrap items-center gap-2 mt-2 px-2">
-      <Button
-        variant={isRegionMode ? "default" : "outline"}
-        size="sm"
-        onclick={toggleRegionMode}
-      >
-        {#if isRegionMode}
-          <Minimize2 class="size-4 mr-2" />
-          Done
-        {:else}
-          <Maximize2 class="size-4 mr-2" />
-          Set OCR Region
-        {/if}
-      </Button>
-
-      <div class="flex items-center gap-1 rounded-md border p-1">
-        <Button
-          variant={editScope === 'all' ? 'secondary' : 'ghost'}
-          size="sm"
-          class="h-7 px-2 text-xs"
-          onclick={() => editScope = 'all'}
-        >
-          All files
-        </Button>
-        <Button
-          variant={editScope === 'file' ? 'secondary' : 'ghost'}
-          size="sm"
-          class="h-7 px-2 text-xs"
-          onclick={() => editScope = 'file'}
-          disabled={!file}
-        >
-          This file
-        </Button>
-      </div>
-
-      {#if file?.ocrRegionMode === 'custom'}
-        <Button variant="ghost" size="sm" class="text-xs" onclick={useGlobalRegion}>
-          Use global region
-        </Button>
-      {/if}
-
-      {#if region}
-        <Button
-          variant="ghost"
-          size="sm"
-          onclick={clearRegion}
-        >
-          <RotateCcw class="size-4 mr-2" />
-          Clear Region
-        </Button>
-      {:else}
-        <Tooltip>
-          <TooltipTrigger>
-            <Button
-              variant="ghost"
-              size="sm"
-              onclick={setDefaultRegion}
-            >
-              <Frame class="size-4 mr-2" />
-              Default
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>Use default region (bottom 25%)</p>
-          </TooltipContent>
-        </Tooltip>
-      {/if}
     </div>
-    <p class="text-xs text-muted-foreground mt-2 px-2">
-      Tip: Use All files for a shared default region, or This file for an override.
-    </p>
   {/if}
 </div>

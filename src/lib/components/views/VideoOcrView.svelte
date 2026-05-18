@@ -13,12 +13,15 @@
 
   import type {
     OcrConfig,
+    OcrLiveDetectionEvent,
     OcrModelsStatus,
     OcrProgressEvent,
     OcrRegion,
     OcrRetryMode,
     OcrVideoFile,
     OcrVersion,
+    OcrZoneRole,
+    VideoOcrSelection,
     VideoOcrPersistenceData,
   } from '$lib/types';
   import { VIDEO_EXTENSIONS } from '$lib/types';
@@ -31,7 +34,6 @@
     invalidateOcrPreview,
     prepareOcrPreview,
   } from '$lib/services/ocr-preview';
-  import { ocrVersionToSubtitleFile } from '$lib/services/subtitle-interop';
   import { settingsStore, toolImportStore, videoOcrStore } from '$lib/stores';
   import {
     OcrOptionsPanel,
@@ -44,7 +46,12 @@
     processVideoOcrFile,
     summarizeOcrFiles,
   } from '$lib/components/video-ocr/video-ocr-processing';
+  import {
+    buildOcrVersionKey,
+    createOcrVersionedImportItems,
+  } from '$lib/components/video-ocr/ocr-versioned-export';
   import type { ProcessVideoOcrFileResult } from '$lib/components/video-ocr/video-ocr-processing';
+  import { createOcrSegmentFromZone } from '$lib/utils';
   import { logAndToast } from '$lib/utils/log-toast';
 
   const VIDEO_FORMATS = VIDEO_EXTENSIONS.map((ext) => ext.toUpperCase()).join(', ');
@@ -67,6 +74,7 @@
   let removeTarget = $state.raw<RemoveTarget>(null);
   let persistedOcrVersionKeys = $state<Set<string>>(new Set());
   let unlistenOcrProgress: UnlistenFn | null = null;
+  let unlistenOcrLiveDetection: UnlistenFn | null = null;
   let isDestroyed = false;
 
   const aiCleanupControllers = new Map<string, AbortController>();
@@ -77,6 +85,12 @@
   const persistenceQueues = new Map<string, Promise<void>>();
 
   const selectedFile = $derived(videoOcrStore.selectedFile ?? null);
+  const selectedLiveDetections = $derived(
+    selectedFile ? videoOcrStore.getLiveDetections(selectedFile.id) : [],
+  );
+  const selectedLiveDetectionCount = $derived(
+    selectedFile ? videoOcrStore.getLiveDetectionCount(selectedFile.id) : 0,
+  );
   const resultDialogFile = $derived(
     resultDialogFileId
       ? videoOcrStore.videoFiles.find((file) => file.id === resultDialogFileId) ?? null
@@ -119,10 +133,6 @@
 
     return 'No files ready for OCR';
   });
-
-  function buildOcrVersionKey(videoPath: string, versionId: string): string {
-    return `${videoPath}::${versionId}`;
-  }
 
   function getFreshFile(fileId: string): OcrVideoFile | undefined {
     return videoOcrStore.videoFiles.find((file) => file.id === fileId);
@@ -208,8 +218,6 @@
       return;
     }
 
-    videoOcrStore.setGlobalRegion(settingsStore.getVideoOcrGlobalRegion());
-
     if (!videoOcrStore.modelsChecked) {
       try {
         const status = await invoke<OcrModelsStatus>('check_ocr_models');
@@ -234,7 +242,7 @@
       return;
     }
 
-    const unlisten = await listen<OcrProgressEvent>('ocr-progress', (event) => {
+    const unlistenProgress = await listen<OcrProgressEvent>('ocr-progress', (event) => {
       const {
         fileId,
         operationId,
@@ -265,11 +273,23 @@
     });
 
     if (isDestroyed) {
-      unlisten();
+      unlistenProgress();
       return;
     }
 
-    unlistenOcrProgress = unlisten;
+    const unlistenLiveDetection = await listen<OcrLiveDetectionEvent>('ocr-live-detection', (event) => {
+      const { fileId, operationId, detection } = event.payload;
+      videoOcrStore.addLiveDetection(fileId, operationId, detection);
+    });
+
+    if (isDestroyed) {
+      unlistenProgress();
+      unlistenLiveDetection();
+      return;
+    }
+
+    unlistenOcrProgress = unlistenProgress;
+    unlistenOcrLiveDetection = unlistenLiveDetection;
   }
 
   onMount(() => {
@@ -300,6 +320,7 @@
     }
     aiCleanupControllers.clear();
     unlistenOcrProgress?.();
+    unlistenOcrLiveDetection?.();
   });
 
   async function persistFileData(fileId: string): Promise<boolean> {
@@ -321,13 +342,12 @@
 
       const now = new Date().toISOString();
       const payload: VideoOcrPersistenceData = {
-        version: 1,
+        version: 2,
         videoPath,
         previewPath: latestFile.previewPath,
         previewSourceIdentity: latestFile.previewSourceIdentity,
         previewVersion: latestFile.previewVersion,
-        ocrRegion: latestFile.ocrRegion,
-        ocrRegionMode: latestFile.ocrRegionMode,
+        ocrSelection: latestFile.ocrSelection,
         ocrVersions: latestFile.ocrVersions,
         createdAt: existingData?.createdAt ?? now,
         updatedAt: now,
@@ -347,14 +367,6 @@
     }
   }
 
-  async function persistGlobalRegionForLinkedFiles(): Promise<void> {
-    await Promise.all(
-      videoOcrStore.videoFiles
-        .filter((file) => file.ocrRegionMode === 'global')
-        .map((file) => persistFileData(file.id)),
-    );
-  }
-
   function applyPersistedFileState(
     file: OcrVideoFile,
     persisted: VideoOcrPersistenceData | null,
@@ -363,13 +375,7 @@
       return;
     }
 
-    const persistedRegionMode = persisted.ocrRegionMode ?? 'custom';
-    videoOcrStore.updateFile(file.id, {
-      ocrRegionMode: persistedRegionMode,
-      ocrRegion: persistedRegionMode === 'global'
-        ? videoOcrStore.globalRegion
-        : persisted.ocrRegion ?? file.ocrRegion,
-    });
+    videoOcrStore.setOcrSelection(file.id, persisted.ocrSelection);
 
     if (persisted.ocrVersions.length > 0) {
       videoOcrStore.setOcrVersions(file.id, persisted.ocrVersions);
@@ -407,6 +413,9 @@
       previewSourceIdentity: cachedPreview.sourceIdentity,
       previewVersion: cachedPreview.previewVersion,
       previewError: undefined,
+      isTranscoding: false,
+      transcodingProgress: 100,
+      transcodingCodec: undefined,
       status: (persisted?.ocrVersions.length ?? 0) > 0 ? 'completed' : 'ready',
     });
     videoOcrStore.addLog('info', 'Loaded cached preview video', file.id);
@@ -978,57 +987,92 @@
     retryDialogOpen = true;
   }
 
-  function handleFileRegionChange(region: OcrRegion | undefined): void {
-    if (!videoOcrStore.selectedFileId) {
+  function handleAddSegmentFromRegion(
+    fileId: string,
+    region: OcrRegion,
+    startTimeMs: number,
+    endTimeMs: number,
+  ): void {
+    const file = getFreshFile(fileId) ?? selectedFile;
+    if (!file) {
       return;
     }
 
-    videoOcrStore.setFileRegionCustom(videoOcrStore.selectedFileId, region);
-    void persistFileData(videoOcrStore.selectedFileId);
+    const durationMs = Math.max(1, Math.round((file.duration ?? 0) * 1000));
+    const requestedEndTimeMs = endTimeMs > startTimeMs ? endTimeMs : durationMs;
+    const segmentEndTimeMs = Math.max(1, Math.min(durationMs, requestedEndTimeMs));
+    const segmentStartTimeMs = Math.min(
+      Math.max(0, startTimeMs),
+      Math.max(0, segmentEndTimeMs - 1),
+    );
+    const segment = createOcrSegmentFromZone(
+      segmentStartTimeMs,
+      segmentEndTimeMs,
+      region,
+      'main_subtitle',
+    );
+
+    videoOcrStore.addOcrSegment(file.id, segment);
+    void persistFileData(file.id);
   }
 
-  function handleUseGlobalRegion(): void {
-    if (!videoOcrStore.selectedFileId) {
-      return;
-    }
-
-    videoOcrStore.setFileRegionMode(videoOcrStore.selectedFileId, 'global');
-    void persistFileData(videoOcrStore.selectedFileId);
+  function handleSetZoneRole(fileId: string, segmentId: string, zoneId: string, role: OcrZoneRole): void {
+    videoOcrStore.setOcrZoneRole(fileId, segmentId, zoneId, role);
+    void persistFileData(fileId);
   }
 
-  async function handleGlobalRegionChange(region: OcrRegion | undefined): Promise<void> {
-    if (!region) {
+  function handleRenameZone(fileId: string, segmentId: string, zoneId: string, label: string): void {
+    videoOcrStore.setOcrZoneLabel(fileId, segmentId, zoneId, label);
+    void persistFileData(fileId);
+  }
+
+  function handleUpdateZoneRegion(fileId: string, segmentId: string, zoneId: string, region: OcrRegion): void {
+    videoOcrStore.setOcrZoneRegion(fileId, segmentId, zoneId, region);
+    void persistFileData(fileId);
+  }
+
+  function handleTrimSegment(fileId: string, segmentId: string, startTimeMs: number, endTimeMs: number): void {
+    const file = getFreshFile(fileId);
+    if (!file) {
       return;
     }
 
-    try {
-      videoOcrStore.setGlobalRegion(region);
-      await settingsStore.setVideoOcrGlobalRegion(region);
-      await persistGlobalRegionForLinkedFiles();
-    } catch (error) {
-      console.error('Failed to update global OCR region:', error);
-      toast.error('Failed to save global OCR region');
+    videoOcrStore.trimOcrSegment(fileId, segmentId, startTimeMs, endTimeMs, Math.round((file.duration ?? 0) * 1000));
+    void persistFileData(fileId);
+  }
+
+  function handleDeleteZone(fileId: string, segmentId: string, zoneId: string): void {
+    const file = getFreshFile(fileId);
+    if (!file) {
+      return;
     }
+
+    const totalZones = file.ocrSelection.segments.reduce(
+      (count, segment) => count + segment.zones.length,
+      0,
+    );
+    if (totalZones <= 1) {
+      toast.warning('At least one OCR zone is required.');
+      return;
+    }
+
+    const nextSelection: VideoOcrSelection = {
+      segments: file.ocrSelection.segments
+        .map((segment) => ({
+          ...segment,
+          zones: segment.id === segmentId
+            ? segment.zones.filter((zone) => zone.id !== zoneId)
+            : segment.zones.map((zone) => ({ ...zone, region: { ...zone.region } })),
+        }))
+        .filter((segment) => segment.zones.length > 0),
+    };
+
+    videoOcrStore.setOcrSelection(fileId, nextSelection);
+    void persistFileData(fileId);
   }
 
   $effect(() => {
-    const versionedItems = videoOcrStore.videoFiles.flatMap((file) =>
-      file.ocrVersions.map((version) => ({
-        key: `video-ocr:${file.path}:${version.id}`,
-        name: `${file.name} - ${version.name}`,
-        kind: 'subtitle' as const,
-        createdAt: Date.parse(version.createdAt) || Date.now(),
-        mediaPath: file.path,
-        mediaName: file.name,
-        versionId: version.id,
-        versionName: version.name,
-        versionCreatedAt: version.createdAt,
-        persisted: persistedOcrVersionKeys.has(buildOcrVersionKey(file.path, version.id))
-          ? 'mediaflow' as const
-          : 'memory' as const,
-        subtitleFile: ocrVersionToSubtitleFile(file.path, file.name, version),
-      })),
-    );
+    const versionedItems = createOcrVersionedImportItems(videoOcrStore.videoFiles, persistedOcrVersionKeys);
 
     toolImportStore.publishVersionedSource('ocr_versions', 'video-ocr', 'OCR', versionedItems);
   });
@@ -1052,14 +1096,16 @@
 
   <VideoOcrWorkspace
     file={selectedFile}
-    globalRegion={videoOcrStore.globalRegion}
-    logs={videoOcrStore.logs}
+    liveDetections={selectedLiveDetections}
+    liveDetectionCount={selectedLiveDetectionCount}
     {dialogsOpen}
-    onGlobalRegionChange={handleGlobalRegionChange}
-    onFileRegionChange={handleFileRegionChange}
-    onUseGlobalRegion={handleUseGlobalRegion}
+    onAddSegmentFromRegion={handleAddSegmentFromRegion}
+    onUpdateZoneRegion={handleUpdateZoneRegion}
+    onSetZoneRole={handleSetZoneRole}
+    onRenameZone={handleRenameZone}
+    onDeleteZone={handleDeleteZone}
+    onTrimSegment={handleTrimSegment}
     onPlaybackError={handlePreviewPlaybackError}
-    onClearLogs={() => videoOcrStore.clearLogs()}
   />
 
   <div class="w-80 border-l overflow-auto flex flex-col p-4">

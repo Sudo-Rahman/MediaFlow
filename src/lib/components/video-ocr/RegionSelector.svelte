@@ -13,19 +13,26 @@
   interface RegionSelectorProps {
     region?: OcrRegion;
     videoBounds?: VideoBounds;
+    allowCreate?: boolean;
     onchange?: (region: OcrRegion | undefined) => void;
+    oncommit?: (region: OcrRegion) => void;
+    oncancel?: () => void;
   }
 
   let {
     region,
     videoBounds = { x: 0, y: 0, width: 1, height: 1 },
+    allowCreate = true,
     onchange,
+    oncommit,
+    oncancel,
   }: RegionSelectorProps = $props();
 
-  let containerEl: HTMLButtonElement | undefined = $state();
+  let containerEl = $state<HTMLButtonElement | null>(null);
   let dragMode = $state<DragMode>('none');
   let startPos = $state({ x: 0, y: 0 });
   let startRegion = $state<OcrRegion>({ x: 0, y: 0, width: 0, height: 0 });
+  let latestRegion = $state<OcrRegion | undefined>();
 
   const MIN_SIZE = 0.02; // Minimum region size (2%)
 
@@ -65,6 +72,7 @@
     
     // Check if click is within video bounds
     if (!isInsideVideoBounds(containerX, containerY)) {
+      oncancel?.();
       return;
     }
 
@@ -89,10 +97,15 @@
       }
     }
 
+    if (!allowCreate) {
+      return;
+    }
+
     // Start creating new region
     dragMode = 'create';
     startPos = { x: videoX, y: videoY };
     startRegion = { x: videoX, y: videoY, width: 0, height: 0 };
+    latestRegion = undefined;
   }
 
   function getHandleAtPosition(x: number, y: number): DragMode {
@@ -139,7 +152,7 @@
       const height = Math.abs(clampedY - startPos.y);
       
       if (width > MIN_SIZE && height > MIN_SIZE) {
-        onchange?.({ x, y, width, height });
+        emitRegion({ x, y, width, height });
       }
     } else if (dragMode === 'move') {
       // Moving region
@@ -153,7 +166,7 @@
       newX = Math.max(0, Math.min(1 - startRegion.width, newX));
       newY = Math.max(0, Math.min(1 - startRegion.height, newY));
       
-      onchange?.({ 
+      emitRegion({
         x: newX, 
         y: newY, 
         width: startRegion.width, 
@@ -213,11 +226,28 @@
     width = Math.min(1 - x, width);
     height = Math.min(1 - y, height);
 
-    onchange?.({ x, y, width, height });
+    emitRegion({ x, y, width, height });
   }
 
   function handleMouseUp() {
+    const committedRegion = latestRegion ?? region;
+    if (
+      dragMode !== 'none'
+      && committedRegion
+      && committedRegion.width >= MIN_SIZE
+      && committedRegion.height >= MIN_SIZE
+    ) {
+      oncommit?.(committedRegion);
+    } else if (dragMode !== 'none') {
+      oncancel?.();
+    }
+    latestRegion = undefined;
     dragMode = 'none';
+  }
+
+  function emitRegion(nextRegion: OcrRegion) {
+    latestRegion = nextRegion;
+    onchange?.(nextRegion);
   }
 
   function getCursor(): string {
@@ -291,6 +321,8 @@
   <div class="absolute top-4 left-1/2 -translate-x-1/2 bg-black/70 text-white px-3 py-1.5 rounded text-sm pointer-events-none">
     {#if region && region.width > 0}
       Drag region to move, use handles to resize
+    {:else if !allowCreate}
+      Select an existing zone to edit
     {:else}
       Click and drag to select OCR region
     {/if}

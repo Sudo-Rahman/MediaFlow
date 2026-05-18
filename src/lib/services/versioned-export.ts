@@ -5,6 +5,7 @@ export interface VersionedExportVersion {
   versionId: string;
   versionName: string;
   createdAt: string;
+  allowedFormats?: readonly string[];
 }
 
 export interface VersionedExportGroup {
@@ -20,11 +21,16 @@ export interface VersionedExportTarget {
   versionKey: string;
   versionId: string;
   versionName: string;
+  allowedFormats?: readonly string[];
 }
 
 export interface VersionedExportFormatOption {
   value: string;
   label: string;
+}
+
+interface ExportTargetFormatConstraint {
+  allowedFormats?: readonly string[];
 }
 
 export interface VersionedExportRequest {
@@ -92,6 +98,23 @@ export function buildUniqueExportFileName(
 
   usedNames.add(candidate.toLowerCase());
   return candidate;
+}
+
+export function getAllowedExportFormatOptions(
+  formatOptions: readonly VersionedExportFormatOption[],
+  targets: readonly ExportTargetFormatConstraint[],
+): VersionedExportFormatOption[] {
+  const constrainedFormats = targets
+    .map((target) => target.allowedFormats)
+    .filter((formats): formats is readonly string[] => Array.isArray(formats) && formats.length > 0);
+
+  if (constrainedFormats.length === 0) {
+    return [...formatOptions];
+  }
+
+  return formatOptions.filter((option) =>
+    constrainedFormats.every((formats) => formats.includes(option.value)),
+  );
 }
 
 function getErrorMessage(error: unknown): string {

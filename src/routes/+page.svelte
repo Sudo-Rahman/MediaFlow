@@ -32,7 +32,7 @@
   import { OCR_OUTPUT_FORMATS } from '$lib/types';
   import type { ToolId } from '$lib/types/tool-import';
   import { formatFileSize } from '$lib/utils/format';
-  import { OS, formatTransferRate, normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils';
+  import { OS, formatTransferRate, getAllowedOcrVersionExportFormats, normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils';
   import { logStore } from '$lib/stores/logs.svelte';
   import { audioToSubsStore, videoOcrStore, translationStore, extractionStore, mergeStore, renameStore, transcodeStore, updaterStore } from '$lib/stores';
   import { logAndToast } from '$lib/utils/log-toast';
@@ -393,6 +393,7 @@
           versionId: version.id,
           versionName: version.name,
           createdAt: version.createdAt,
+          allowedFormats: getAllowedOcrVersionExportFormats(version),
         }));
 
         if (versionEntries.length === 0) {
@@ -510,6 +511,11 @@
       const version = file.ocrVersions.find((entry) => entry.id === target.versionId);
       if (!version) {
         throw new Error(`OCR version not found: ${target.versionId}`);
+      }
+
+      const allowedFormats = getAllowedOcrVersionExportFormats(version);
+      if (!allowedFormats.includes(targetFormat)) {
+        throw new Error('Selected OCR version requires ASS export');
       }
 
       const normalizedSubtitles = normalizeOcrSubtitles(version.finalSubtitles);

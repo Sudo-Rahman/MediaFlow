@@ -1,0 +1,79 @@
+<h2>Live OCR preview</h2>
+<p class="subtitle">Show detected text while the pipeline runs, but mark it as provisional until subtitle stabilization finishes.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Processing state: live detections appear before final export</div>
+  <div class="mockup-body">
+    <div style="display:grid;grid-template-columns:minmax(0,1.6fr) 320px;gap:14px;align-items:stretch">
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div style="height:300px;background:#0b1220;border-radius:8px;position:relative;overflow:hidden;border:1px solid #263244">
+          <div style="position:absolute;inset:24px 48px;background:linear-gradient(135deg,#202b3d,#101827);border:1px solid #334155;border-radius:6px"></div>
+          <div style="position:absolute;left:70px;right:70px;bottom:58px;height:58px;border:2px solid #60a5fa;background:rgba(96,165,250,.16);border-radius:4px"></div>
+          <div style="position:absolute;right:82px;top:60px;width:168px;height:68px;border:2px solid #f59e0b;background:rgba(245,158,11,.14);border-radius:4px"></div>
+
+          <div style="position:absolute;left:50%;top:18px;transform:translateX(-50%);background:rgba(15,23,42,.86);color:white;border:1px solid rgba(148,163,184,.28);border-radius:999px;padding:5px 10px;font-size:12px">OCR running · 38%</div>
+
+          <div style="position:absolute;left:50%;bottom:20px;transform:translateX(-50%);background:#111827;color:white;border:1px solid #334155;border-radius:6px;padding:8px 16px;font-size:15px;min-width:300px;text-align:center">
+            <span style="opacity:.62">Provisional</span> · I need to get out of here.
+          </div>
+          <div style="position:absolute;right:84px;top:134px;background:#fef3c7;color:#92400e;border:1px solid #fbbf24;border-radius:6px;padding:6px 10px;font-size:13px">Exit</div>
+        </div>
+
+        <div style="border:1px solid #d7dde8;border-radius:8px;padding:12px;background:white">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <strong>OCR timeline</strong>
+            <span style="font-size:12px;color:#64748b">Detected text fills in as frames complete</span>
+          </div>
+          <div style="display:grid;grid-template-columns:112px minmax(0,1fr);gap:10px;align-items:start">
+            <div style="font-size:13px;color:#1e3a8a;font-weight:600;padding-top:10px">Main subtitle</div>
+            <div style="position:relative;height:38px;border-radius:6px;background:#f8fafc;border:1px solid #e2e8f0">
+              <div style="position:absolute;left:0;right:0;top:17px;height:3px;background:#cbd5e1"></div>
+              <div style="position:absolute;left:10%;right:52%;top:7px;height:24px;background:#bfdbfe;border:1px solid #60a5fa;border-radius:5px;font-size:12px;color:#1e3a8a;padding:3px 8px">live detections</div>
+              <div style="position:absolute;left:48%;right:10%;top:7px;height:24px;background:#e2e8f0;border:1px dashed #94a3b8;border-radius:5px;font-size:12px;color:#64748b;padding:3px 8px">pending</div>
+            </div>
+
+            <div style="font-size:13px;color:#92400e;font-weight:600;padding-top:10px">On-screen text</div>
+            <div style="position:relative;height:38px;border-radius:6px;background:#f8fafc;border:1px solid #e2e8f0">
+              <div style="position:absolute;left:0;right:0;top:17px;height:3px;background:#cbd5e1"></div>
+              <div style="position:absolute;left:34%;right:50%;top:7px;height:24px;background:#fef3c7;border:1px solid #f59e0b;border-radius:5px;font-size:12px;color:#92400e;padding:3px 8px">Sign</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="border:1px solid #d7dde8;border-radius:8px;background:white;display:flex;flex-direction:column;min-height:0">
+        <div style="padding:12px 14px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between">
+          <strong>Live OCR</strong>
+          <span style="font-size:12px;color:#64748b">Provisional</span>
+        </div>
+        <div style="padding:10px 14px;display:flex;gap:8px;border-bottom:1px solid #e2e8f0">
+          <button class="mock-button">All</button>
+          <button class="mock-button">Main</button>
+          <button class="mock-button">On-screen</button>
+        </div>
+        <div style="padding:12px 14px;display:flex;flex-direction:column;gap:10px;overflow:hidden">
+          <div style="border-left:3px solid #60a5fa;padding:8px 10px;background:#eff6ff;border-radius:6px">
+            <div style="font-size:12px;color:#64748b">02:31 · Main subtitle · 0.93</div>
+            <div style="font-size:14px;color:#0f172a;margin-top:3px">I need to get out of here.</div>
+          </div>
+          <div style="border-left:3px solid #f59e0b;padding:8px 10px;background:#fffbeb;border-radius:6px">
+            <div style="font-size:12px;color:#64748b">02:35 · On-screen text · 0.88</div>
+            <div style="font-size:14px;color:#0f172a;margin-top:3px">出口 / Exit</div>
+          </div>
+          <div style="border-left:3px solid #60a5fa;padding:8px 10px;background:#eff6ff;border-radius:6px;opacity:.72">
+            <div style="font-size:12px;color:#64748b">02:38 · Main subtitle · 0.79</div>
+            <div style="font-size:14px;color:#0f172a;margin-top:3px">Hurry!</div>
+          </div>
+        </div>
+        <div style="margin-top:auto;padding:12px 14px;border-top:1px solid #e2e8f0;font-size:12px;color:#64748b">
+          Final subtitles may merge, extend, or remove duplicate detections after stabilization.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Recommended behavior</h3>
+  <p>During processing, MediaFlow streams OCR detections in batches. The preview can show detections for the current playback time, and the Live OCR panel shows recent detections. Once processing finishes, the final stabilized subtitle set replaces provisional results.</p>
+</div>

@@ -15,6 +15,7 @@
   import { AppUpdateDialog, HeaderUpdateButton, VersionedExportDialog } from '$lib/components/shared';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
   import AppHeader from '$lib/components/layout/app-header.svelte';
+  import { getPlatformChrome } from '$lib/components/layout/platform-chrome';
   import { setToolHeader } from '$lib/components/layout/tool-header-context.svelte';
   import { ExtractView, MergeView, SettingsView, InfoView, TranslationView, RenameView, AudioToSubsView, VideoOcrView, TranscodeView } from '$lib/components/views';
   import { TranslationExportDialog } from '$lib/components/translation';
@@ -71,7 +72,8 @@
   let audioToSubsViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let videoOcrViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
 
-  const isMacOS = OS() === 'MacOS';
+  const platformChrome = getPlatformChrome(OS());
+  const isMacOS = platformChrome === 'macos-overlay';
   const toolHeader = setToolHeader();
 
   interface ToolProgressMetric {
@@ -667,7 +669,7 @@
       title={activeHeaderTitle}
       description={activeHeaderDescription}
       showTitle={!sidebarOpen}
-      {isMacOS}
+      {platformChrome}
     >
       {#snippet leading()}
         <Sidebar.Trigger class="{!sidebarOpen && isMacOS ? 'ml-20' : '-ml-1'} transition-all duration-300" />

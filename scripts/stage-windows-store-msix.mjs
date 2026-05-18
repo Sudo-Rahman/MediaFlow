@@ -19,7 +19,7 @@ const FALLBACK_TARGET_DIR = 'src-tauri/target/release';
 const DEFAULT_PACKAGE_DISPLAY_NAME = 'MediaFlow';
 const DEFAULT_PACKAGE_DESCRIPTION = 'Local-first multimedia toolkit.';
 const DEFAULT_PACKAGE_EXECUTABLE = 'Mediaflow.exe';
-// Keep the staged MSIX layout deterministic across PR and release workflows.
+// Keep the staged MSIX layout deterministic for CI publish workflows.
 const PACKAGE_ASSETS = [
   'StoreLogo.png',
   'Square150x150Logo.png',

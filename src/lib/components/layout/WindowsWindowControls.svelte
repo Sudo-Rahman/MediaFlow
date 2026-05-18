@@ -14,8 +14,16 @@
 
   const appWindow = getCurrentWindow();
 
+  function warnWindowControlFailure(action: string, error: unknown): void {
+    console.warn(`Failed to ${action}`, error);
+  }
+
   async function refreshMaximizedState(): Promise<void> {
-    isMaximized = await appWindow.isMaximized();
+    try {
+      isMaximized = await appWindow.isMaximized();
+    } catch (error) {
+      warnWindowControlFailure('refresh Windows maximized state', error);
+    }
   }
 
   async function reportMaximizeButtonRect(): Promise<void> {
@@ -30,20 +38,34 @@
   }
 
   async function handleMinimize(): Promise<void> {
-    await appWindow.minimize();
+    try {
+      await appWindow.minimize();
+    } catch (error) {
+      warnWindowControlFailure('minimize window', error);
+    }
   }
 
   async function handleToggleMaximize(): Promise<void> {
-    await appWindow.toggleMaximize();
-    await refreshMaximizedState();
-    await reportMaximizeButtonRect();
+    try {
+      await appWindow.toggleMaximize();
+      await refreshMaximizedState();
+      await reportMaximizeButtonRect();
+    } catch (error) {
+      warnWindowControlFailure('toggle window maximized state', error);
+    }
   }
 
   async function handleClose(): Promise<void> {
-    await appWindow.close();
+    try {
+      await appWindow.close();
+    } catch (error) {
+      warnWindowControlFailure('close window', error);
+    }
   }
 
   onMount(() => {
+    let disposed = false;
+
     void refreshMaximizedState();
     void reportMaximizeButtonRect();
 
@@ -57,16 +79,29 @@
       void refreshMaximizedState();
       void reportMaximizeButtonRect();
     }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+        return;
+      }
       unlistenResize = unlisten;
+    }).catch((error) => {
+      warnWindowControlFailure('register Windows resize listener', error);
     });
 
     void appWindow.onScaleChanged(() => {
       void reportMaximizeButtonRect();
     }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+        return;
+      }
       unlistenScale = unlisten;
+    }).catch((error) => {
+      warnWindowControlFailure('register Windows scale listener', error);
     });
 
     return () => {
+      disposed = true;
       resizeObserver?.disconnect();
       unlistenResize?.();
       unlistenScale?.();
@@ -74,7 +109,7 @@
   });
 </script>
 
-<div class="windows-window-controls" aria-label="Window controls">
+<div class="windows-window-controls" role="group" aria-label="Window controls">
   <button class="windows-window-control" type="button" aria-label="Minimize" onclick={handleMinimize}>
     <Minus class="size-4" strokeWidth={1.5} />
   </button>

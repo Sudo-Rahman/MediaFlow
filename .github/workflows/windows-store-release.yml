@@ -46,7 +46,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.flight_id || 'PrivateWindowsX64' }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.flight_id || vars.MICROSOFT_STORE_FLIGHT_ID || 'PrivateWindowsX64' }}
   cancel-in-progress: false
 
 jobs:
@@ -55,7 +55,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 120
     env:
-      FLIGHT_ID: ${{ inputs.flight_id || 'PrivateWindowsX64' }}
+      FLIGHT_ID: ${{ inputs.flight_id || vars.MICROSOFT_STORE_FLIGHT_ID || 'PrivateWindowsX64' }}
       MICROSOFT_STORE_PRODUCT_ID: ${{ vars.MICROSOFT_STORE_PRODUCT_ID || secrets.MICROSOFT_STORE_PRODUCT_ID }}
       MICROSOFT_STORE_PACKAGE_IDENTITY_NAME: ${{ vars.MICROSOFT_STORE_PACKAGE_IDENTITY_NAME || secrets.MICROSOFT_STORE_PACKAGE_IDENTITY_NAME }}
       MICROSOFT_STORE_PACKAGE_IDENTITY_PUBLISHER: ${{ vars.MICROSOFT_STORE_PACKAGE_IDENTITY_PUBLISHER || secrets.MICROSOFT_STORE_PACKAGE_IDENTITY_PUBLISHER }}
@@ -231,11 +231,23 @@ jobs:
     name: Publish MSIX to Microsoft Store flight
     runs-on: windows-latest
     needs: build-stage-pack
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_flight == true && github.ref == 'refs/heads/main' }}
+    if: >-
+      ${{
+        (
+          github.event_name == 'workflow_dispatch' &&
+          inputs.publish_flight == true &&
+          github.ref == 'refs/heads/main'
+        ) ||
+        (
+          github.event_name == 'pull_request' &&
+          github.head_ref == 'codex/windows-store-msix-release' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        )
+      }}
     environment: windows-store-release
     timeout-minutes: 60
     env:
-      FLIGHT_ID: ${{ inputs.flight_id || 'PrivateWindowsX64' }}
+      FLIGHT_ID: ${{ inputs.flight_id || vars.MICROSOFT_STORE_FLIGHT_ID || 'PrivateWindowsX64' }}
       MICROSOFT_STORE_PRODUCT_ID: ${{ vars.MICROSOFT_STORE_PRODUCT_ID || secrets.MICROSOFT_STORE_PRODUCT_ID }}
 
     steps:
@@ -282,7 +294,7 @@ jobs:
             --flightId "$env:FLIGHT_ID"
 
       - name: Poll Microsoft Store flight publishing
-        if: ${{ inputs.poll_flight == true }}
+        if: ${{ inputs.poll_flight == true || github.event_name == 'pull_request' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"

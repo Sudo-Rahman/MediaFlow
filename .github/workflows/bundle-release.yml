@@ -515,6 +515,34 @@ jobs:
             --clientId "$env:AZURE_AD_APPLICATION_CLIENT_ID" `
             --clientSecret "$env:AZURE_AD_APPLICATION_SECRET"
 
+      - name: Diagnose Microsoft Store application access
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $PSNativeCommandUseErrorActionPreference = $false
+          $productId = "$env:MICROSOFT_STORE_PRODUCT_ID"
+
+          Write-Host "Configured MICROSOFT_STORE_PRODUCT_ID length: $($productId.Length)"
+          if ($productId -notmatch "^[A-Za-z0-9]{12}$") {
+            Write-Warning "MICROSOFT_STORE_PRODUCT_ID does not look like a 12-character Store product ID."
+          }
+
+          Write-Host "::group::Microsoft Store apps visible to configured credentials"
+          msstore apps list
+          $listExitCode = $LASTEXITCODE
+          Write-Host "::endgroup::"
+          if ($listExitCode -ne 0) {
+            throw "Could not list Microsoft Store apps with the configured Partner Center credentials."
+          }
+
+          Write-Host "::group::Configured Microsoft Store app lookup"
+          msstore apps get "$productId" --verbose
+          $getExitCode = $LASTEXITCODE
+          Write-Host "::endgroup::"
+          if ($getExitCode -ne 0) {
+            throw "MICROSOFT_STORE_PRODUCT_ID is not retrievable by the configured Partner Center credentials. Check that it is the Store product ID for this app and that the Entra service principal has access to the app in this seller account."
+          }
+
       - name: Publish MSIX to Microsoft Store flight
         shell: pwsh
         run: |

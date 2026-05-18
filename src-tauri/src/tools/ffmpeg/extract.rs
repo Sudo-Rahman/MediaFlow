@@ -1,11 +1,11 @@
 use crate::shared::ffmpeg_progress::FfmpegProgressTracker;
 use crate::shared::process::terminate_process;
+use crate::shared::process::tokio_command;
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::validation::{validate_media_path, validate_output_path};
 use std::process::Stdio;
 use tauri::Emitter;
-use tokio::process::Command;
 use tokio::time::{Duration, timeout};
 
 /// Timeout for FFmpeg extraction operations (5 minutes)
@@ -186,7 +186,7 @@ async fn extract_track_with_ffmpeg_and_progress(
 
     let args = build_extract_args(input_path, output_path, track_index, track_type, codec);
 
-    let mut child = Command::new(ffmpeg_path)
+    let mut child = tokio_command(ffmpeg_path)
         .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

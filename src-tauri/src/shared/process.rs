@@ -1,6 +1,41 @@
 use std::process::Output;
 use std::time::Duration;
 
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+pub(crate) fn tokio_command<S: AsRef<std::ffi::OsStr>>(program: S) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(program);
+    configure_tokio_command(&mut command);
+    command
+}
+
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+pub(crate) fn std_command<S: AsRef<std::ffi::OsStr>>(program: S) -> std::process::Command {
+    let mut command = std::process::Command::new(program);
+    configure_std_command(&mut command);
+    command
+}
+
+#[cfg(windows)]
+fn configure_tokio_command(command: &mut tokio::process::Command) {
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn configure_tokio_command(_: &mut tokio::process::Command) {}
+
+#[cfg(windows)]
+fn configure_std_command(command: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg(not(windows))]
+fn configure_std_command(_: &mut std::process::Command) {}
+
 pub(crate) fn terminate_process(pid: u32) {
     if pid == 0 {
         return;
@@ -16,7 +51,7 @@ pub(crate) fn terminate_process(pid: u32) {
 
     #[cfg(windows)]
     {
-        let _ = std::process::Command::new("taskkill")
+        let _ = std_command("taskkill")
             .args(["/PID", &pid.to_string(), "/F"])
             .output();
     }
@@ -37,7 +72,7 @@ pub(crate) fn force_terminate_process(pid: u32) {
 
     #[cfg(windows)]
     {
-        let _ = std::process::Command::new("taskkill")
+        let _ = std_command("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .output();
     }
@@ -110,11 +145,11 @@ pub(crate) async fn wait_with_output_timeout(
 
 #[cfg(test)]
 mod tests {
-    use std::process::{Child, Command, ExitStatus, Stdio};
+    use std::process::{Child, ExitStatus, Stdio};
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use super::{force_terminate_process, wait_with_output_timeout};
+    use super::{force_terminate_process, std_command, tokio_command, wait_with_output_timeout};
 
     #[test]
     fn force_terminate_process_ignores_zero_pid() {
@@ -162,7 +197,7 @@ mod tests {
 
     #[cfg(unix)]
     fn spawn_sleeping_child() -> Child {
-        Command::new("sleep")
+        std_command("sleep")
             .arg("30")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -173,7 +208,7 @@ mod tests {
 
     #[cfg(windows)]
     fn spawn_sleeping_child() -> Child {
-        Command::new("cmd")
+        std_command("cmd")
             .args(["/C", "ping -n 30 127.0.0.1 >NUL"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -184,7 +219,7 @@ mod tests {
 
     #[cfg(unix)]
     fn spawn_async_output_child() -> tokio::process::Child {
-        tokio::process::Command::new("sh")
+        tokio_command("sh")
             .args(["-c", "printf hello"])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -194,7 +229,7 @@ mod tests {
 
     #[cfg(windows)]
     fn spawn_async_output_child() -> tokio::process::Child {
-        tokio::process::Command::new("cmd")
+        tokio_command("cmd")
             .args(["/C", "echo hello"])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -204,7 +239,7 @@ mod tests {
 
     #[cfg(unix)]
     fn spawn_async_sleeping_child() -> tokio::process::Child {
-        tokio::process::Command::new("sh")
+        tokio_command("sh")
             .args(["-c", "sleep 30"])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -214,7 +249,7 @@ mod tests {
 
     #[cfg(windows)]
     fn spawn_async_sleeping_child() -> tokio::process::Child {
-        tokio::process::Command::new("cmd")
+        tokio_command("cmd")
             .args(["/C", "ping -n 30 127.0.0.1 >NUL"])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

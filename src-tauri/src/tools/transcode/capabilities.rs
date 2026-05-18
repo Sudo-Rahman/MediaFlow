@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashSet};
 
+use crate::shared::process::tokio_command;
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
 
 use crate::shared::store::resolve_ffmpeg_path;
 use crate::tools::media_metadata::{ContainerMetadataSchema, metadata_schema_for_container};
@@ -435,7 +435,7 @@ pub(crate) fn container_extension_for_id(container_id: &str) -> Option<&'static 
 }
 
 async fn run_ffmpeg_command(ffmpeg_path: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(ffmpeg_path)
+    let output = tokio_command(ffmpeg_path)
         .args(args)
         .output()
         .await

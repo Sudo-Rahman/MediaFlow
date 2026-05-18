@@ -1,11 +1,11 @@
 use std::process::Stdio;
 
+use crate::shared::process::tokio_command;
 use crate::shared::process::wait_with_output_timeout;
 use crate::shared::store::resolve_ffprobe_path;
 use crate::shared::validation::validate_media_path;
 use crate::tools::ffprobe::FFPROBE_TIMEOUT;
 use serde_json::Value;
-use tokio::process::Command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct VideoDimensions {
@@ -27,7 +27,7 @@ pub(crate) async fn probe_file_with_ffprobe(
     ffprobe_path: &str,
     path: &str,
 ) -> Result<String, String> {
-    let child = Command::new(ffprobe_path)
+    let child = tokio_command(ffprobe_path)
         .args([
             "-v",
             "quiet",

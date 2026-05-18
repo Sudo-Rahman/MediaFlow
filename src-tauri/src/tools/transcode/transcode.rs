@@ -2,11 +2,11 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
+use crate::shared::process::tokio_command;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::shared::ffmpeg_progress::FfmpegProgressTracker;
@@ -824,7 +824,7 @@ pub(crate) async fn transcode_media_with_bins(
 
     let output = timeout(
         TRANSCODE_TIMEOUT,
-        Command::new(ffmpeg_path).args(&args).output(),
+        tokio_command(ffmpeg_path).args(&args).output(),
     )
     .await
     .map_err(|_| {
@@ -873,7 +873,7 @@ pub(crate) async fn transcode_media(
         .ok();
     let args = build_transcode_args(&request, &streams, duration_us)?;
 
-    let mut child = Command::new(&ffmpeg_path)
+    let mut child = tokio_command(&ffmpeg_path)
         .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

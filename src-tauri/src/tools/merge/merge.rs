@@ -1,4 +1,5 @@
 use crate::shared::ffmpeg_progress::FfmpegProgressTracker;
+use crate::shared::process::tokio_command;
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::store::{resolve_ffmpeg_path, resolve_ffprobe_path};
 use crate::shared::validation::{validate_media_path, validate_output_path};
@@ -10,7 +11,6 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::process::Stdio;
 use tauri::Emitter;
-use tokio::process::Command;
 use tokio::time::{Duration, timeout};
 
 /// Timeout for FFmpeg merge operations (10 minutes)
@@ -248,7 +248,7 @@ pub(super) async fn merge_tracks_with_bins(
     }
 
     let probe_future = async move {
-        Command::new(ffprobe_path)
+        tokio_command(ffprobe_path)
             .args([
                 "-v",
                 "quiet",
@@ -291,7 +291,7 @@ pub(super) async fn merge_tracks_with_bins(
     );
 
     let wait_future = async move {
-        Command::new(ffmpeg_path)
+        tokio_command(ffmpeg_path)
             .args(&args)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -345,7 +345,7 @@ pub(crate) async fn merge_tracks(
     let ffprobe_path = resolve_ffprobe_path(&app)?;
     let video_path_for_probe = video_path.clone();
     let probe_future = async move {
-        Command::new(ffprobe_path)
+        tokio_command(ffprobe_path)
             .args([
                 "-v",
                 "quiet",
@@ -390,7 +390,7 @@ pub(crate) async fn merge_tracks(
     );
 
     let ffmpeg_path = resolve_ffmpeg_path(&app)?;
-    let mut child = Command::new(ffmpeg_path)
+    let mut child = tokio_command(ffmpeg_path)
         .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

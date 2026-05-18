@@ -2,8 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::shared::process::tokio_command;
 use serde_json::Value;
-use tokio::process::Command;
 
 use crate::test_support::paths::new_temp_dir;
 use crate::tools::ffprobe::probe::probe_file_with_ffprobe;
@@ -46,7 +46,7 @@ pub(crate) async fn generate_test_pattern_video(
     let path = temp_dir.path().join("testsrc.mkv");
     let filter = format!("testsrc2=size={}x{}:rate=12:duration=0.24", width, height);
 
-    let output = Command::new(crate::test_support::ffmpeg::ffmpeg_path())
+    let output = tokio_command(crate::test_support::ffmpeg::ffmpeg_path())
         .args([
             "-hide_banner",
             "-loglevel",
@@ -89,7 +89,7 @@ pub(crate) async fn generate_test_pattern_av_mp4() -> Result<GeneratedAvFixture,
     let temp_dir = new_temp_dir("av-fixture-");
     let path = temp_dir.path().join("test_av.mp4");
 
-    let output = Command::new(crate::test_support::ffmpeg::ffmpeg_path())
+    let output = tokio_command(crate::test_support::ffmpeg::ffmpeg_path())
         .args([
             "-hide_banner",
             "-loglevel",

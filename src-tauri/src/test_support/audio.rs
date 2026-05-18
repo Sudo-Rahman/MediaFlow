@@ -2,8 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::shared::process::tokio_command;
 use serde_json::Value;
-use tokio::process::Command;
 
 use crate::test_support::paths::new_temp_dir;
 use crate::tools::ffprobe::probe::probe_file_with_ffprobe;
@@ -36,7 +36,7 @@ pub(crate) async fn generate_silence_wav(
     let temp_dir = new_temp_dir(&format!("audio-fixture-{}-", layout_id));
     let path = temp_dir.path().join(format!("{}.wav", layout_id));
 
-    let output = Command::new(crate::test_support::ffmpeg::ffmpeg_path())
+    let output = tokio_command(crate::test_support::ffmpeg::ffmpeg_path())
         .args([
             "-hide_banner",
             "-loglevel",
@@ -136,7 +136,7 @@ pub(crate) async fn probe_audio_encoder_runtime_info(
     ffmpeg_path: &str,
     encoder_id: &str,
 ) -> Result<AudioEncoderRuntimeInfo, String> {
-    let output = Command::new(ffmpeg_path)
+    let output = tokio_command(ffmpeg_path)
         .args(["-hide_banner", "-h", &format!("encoder={}", encoder_id)])
         .output()
         .await

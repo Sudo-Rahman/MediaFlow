@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 
-use std::process::Command;
 use std::sync::OnceLock;
+
+use crate::shared::process::std_command;
 
 static SUITE_PREFLIGHT_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
 
@@ -76,7 +77,7 @@ where
 }
 
 fn ensure_binary_available(binary: &str, path: &str) -> Result<(), String> {
-    let output = Command::new(path).arg("-version").output().map_err(|e| {
+    let output = std_command(path).arg("-version").output().map_err(|e| {
         format!(
             "Missing bundled dependency: `{}` could not be executed at `{}`.\n\
              CI must use the FFmpeg binaries downloaded by src-tauri/build.rs.\n\

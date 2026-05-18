@@ -1,9 +1,9 @@
 use std::process::Stdio;
 
+use crate::shared::process::tokio_command;
 use crate::shared::process::wait_with_output_timeout;
 use crate::shared::store::resolve_ffprobe_path;
 use crate::tools::ffprobe::FFPROBE_TIMEOUT;
-use tokio::process::Command;
 
 /// Get media duration in microseconds using ffprobe
 /// This is used to calculate progress percentage during transcoding
@@ -19,7 +19,7 @@ pub(crate) async fn get_media_duration_us_with_ffprobe(
     ffprobe_path: &str,
     path: &str,
 ) -> Result<u64, String> {
-    let child = Command::new(ffprobe_path)
+    let child = tokio_command(ffprobe_path)
         .args([
             "-v",
             "error",

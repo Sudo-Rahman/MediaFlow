@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::shared::process::tokio_command;
 use serde::Serialize;
 use tauri::Emitter;
-use tokio::process::Command;
 use tokio::time::{Duration, Instant, interval, timeout};
 
 use crate::shared::hash::stable_hash64;
@@ -637,7 +637,7 @@ async fn run_preview_transcode_attempt(
 ) -> Result<(), String> {
     let args =
         build_preview_transcode_args(input_path, output_path, strategy, downscale_preview_height);
-    let mut child = Command::new(ffmpeg_path)
+    let mut child = tokio_command(ffmpeg_path)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -750,7 +750,7 @@ async fn run_preview_transcode_attempt_without_progress(
     let args =
         build_preview_transcode_args(input_path, output_path, strategy, downscale_preview_height);
     let output_path_owned = output_path.to_string();
-    let child = Command::new(ffmpeg_path)
+    let child = tokio_command(ffmpeg_path)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1160,6 +1160,8 @@ pub(crate) async fn get_ocr_preview_cache_entry(
 
 #[cfg(test)]
 mod tests {
+    use crate::shared::process::std_command;
+
     use serial_test::serial;
     use tokio::time::Duration;
 
@@ -1277,39 +1279,37 @@ mod tests {
         .expect("preview transcode should succeed");
 
         let output = result.path;
-        let ffprobe_output =
-            std::process::Command::new(crate::test_support::ffmpeg::ffprobe_path())
-                .args([
-                    "-v",
-                    "error",
-                    "-select_streams",
-                    "v:0",
-                    "-show_entries",
-                    "stream=codec_name,codec_tag_string,width,height",
-                    "-of",
-                    "default=noprint_wrappers=1",
-                    &output,
-                ])
-                .output()
-                .expect("failed to run ffprobe");
+        let ffprobe_output = std_command(crate::test_support::ffmpeg::ffprobe_path())
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_name,codec_tag_string,width,height",
+                "-of",
+                "default=noprint_wrappers=1",
+                &output,
+            ])
+            .output()
+            .expect("failed to run ffprobe");
 
-        let source_video_probe =
-            std::process::Command::new(crate::test_support::ffmpeg::ffprobe_path())
-                .args([
-                    "-v",
-                    "error",
-                    "-select_streams",
-                    "v:0",
-                    "-show_entries",
-                    "stream=width,height",
-                    "-of",
-                    "default=noprint_wrappers=1",
-                    unique_input.to_string_lossy().as_ref(),
-                ])
-                .output()
-                .expect("failed to probe source video");
+        let source_video_probe = std_command(crate::test_support::ffmpeg::ffprobe_path())
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "default=noprint_wrappers=1",
+                unique_input.to_string_lossy().as_ref(),
+            ])
+            .output()
+            .expect("failed to probe source video");
 
-        let audio_probe = std::process::Command::new(crate::test_support::ffmpeg::ffprobe_path())
+        let audio_probe = std_command(crate::test_support::ffmpeg::ffprobe_path())
             .args([
                 "-v",
                 "error",

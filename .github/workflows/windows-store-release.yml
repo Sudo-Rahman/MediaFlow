@@ -1,14 +1,7 @@
 # Required repository variables or secrets:
-# - MICROSOFT_STORE_PRODUCT_ID
 # - MICROSOFT_STORE_PACKAGE_IDENTITY_NAME
 # - MICROSOFT_STORE_PACKAGE_IDENTITY_PUBLISHER
 # - MICROSOFT_STORE_PUBLISHER_DISPLAY_NAME
-#
-# Required repository secrets for publishing:
-# - AZURE_AD_APPLICATION_CLIENT_ID
-# - AZURE_AD_APPLICATION_SECRET
-# - AZURE_AD_TENANT_ID
-# - SELLER_ID
 
 name: Windows Store Release
 
@@ -25,28 +18,12 @@ on:
       - "src/**"
       - "src-tauri/**"
   workflow_dispatch:
-    inputs:
-      flight_id:
-        description: Microsoft Store package flight ID.
-        required: true
-        default: PrivateWindowsX64
-        type: string
-      publish_flight:
-        description: Publish the generated MSIX to the selected Partner Center flight.
-        required: true
-        default: false
-        type: boolean
-      poll_flight:
-        description: Wait for the selected flight publishing operation to finish.
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.flight_id || vars.MICROSOFT_STORE_FLIGHT_ID || 'PrivateWindowsX64' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -55,8 +32,6 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 120
     env:
-      FLIGHT_ID: ${{ inputs.flight_id || vars.MICROSOFT_STORE_FLIGHT_ID || 'PrivateWindowsX64' }}
-      MICROSOFT_STORE_PRODUCT_ID: ${{ vars.MICROSOFT_STORE_PRODUCT_ID || secrets.MICROSOFT_STORE_PRODUCT_ID }}
       MICROSOFT_STORE_PACKAGE_IDENTITY_NAME: ${{ vars.MICROSOFT_STORE_PACKAGE_IDENTITY_NAME || secrets.MICROSOFT_STORE_PACKAGE_IDENTITY_NAME }}
       MICROSOFT_STORE_PACKAGE_IDENTITY_PUBLISHER: ${{ vars.MICROSOFT_STORE_PACKAGE_IDENTITY_PUBLISHER || secrets.MICROSOFT_STORE_PACKAGE_IDENTITY_PUBLISHER }}
       MICROSOFT_STORE_PUBLISHER_DISPLAY_NAME: ${{ vars.MICROSOFT_STORE_PUBLISHER_DISPLAY_NAME || secrets.MICROSOFT_STORE_PUBLISHER_DISPLAY_NAME }}
@@ -129,11 +104,9 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $requiredVariables = @(
-            "MICROSOFT_STORE_PRODUCT_ID",
             "MICROSOFT_STORE_PACKAGE_IDENTITY_NAME",
             "MICROSOFT_STORE_PACKAGE_IDENTITY_PUBLISHER",
-            "MICROSOFT_STORE_PUBLISHER_DISPLAY_NAME",
-            "FLIGHT_ID"
+            "MICROSOFT_STORE_PUBLISHER_DISPLAY_NAME"
           )
           $missingVariables = @()
 
@@ -203,7 +176,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           $PSNativeCommandUseErrorActionPreference = $true
           $outputDir = Join-Path $env:GITHUB_WORKSPACE "dist\windows-store-release"
-          $outputName = "MediaFlow_${{ github.run_number }}_x64.msix"
+          $outputName = "MediaFlow_${{ github.run_number }}_windows_store_x64.msix"
           $outputPath = Join-Path $outputDir $outputName
 
           New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
@@ -226,104 +199,3 @@ jobs:
           name: mediaflow-windows-store-msix
           path: ${{ steps.pack.outputs.msix_path }}
           if-no-files-found: error
-
-  publish-flight:
-    name: Publish MSIX to Microsoft Store flight
-    runs-on: windows-latest
-    needs: build-stage-pack
-    if: >-
-      ${{
-        (
-          github.event_name == 'workflow_dispatch' &&
-          inputs.publish_flight == true &&
-          github.ref == 'refs/heads/main'
-        ) ||
-        (
-          github.event_name == 'pull_request' &&
-          github.head_ref == 'codex/windows-store-msix-release' &&
-          github.event.pull_request.head.repo.full_name == github.repository
-        )
-      }}
-    environment: windows-store-release
-    timeout-minutes: 60
-    env:
-      FLIGHT_ID: ${{ inputs.flight_id || vars.MICROSOFT_STORE_FLIGHT_ID || 'PrivateWindowsX64' }}
-      MICROSOFT_STORE_PRODUCT_ID: ${{ vars.MICROSOFT_STORE_PRODUCT_ID || secrets.MICROSOFT_STORE_PRODUCT_ID }}
-
-    steps:
-      - name: Download MSIX artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: mediaflow-windows-store-msix
-          path: dist/windows-store-release
-
-      - name: Configure Microsoft Store CLI
-        uses: microsoft/microsoft-store-apppublisher@v1.1
-
-      - name: Reconfigure Microsoft Store credentials
-        shell: pwsh
-        env:
-          AZURE_AD_TENANT_ID: ${{ secrets.AZURE_AD_TENANT_ID }}
-          SELLER_ID: ${{ secrets.SELLER_ID }}
-          AZURE_AD_APPLICATION_CLIENT_ID: ${{ secrets.AZURE_AD_APPLICATION_CLIENT_ID }}
-          AZURE_AD_APPLICATION_SECRET: ${{ secrets.AZURE_AD_APPLICATION_SECRET }}
-        run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-          msstore reconfigure `
-            --tenantId "$env:AZURE_AD_TENANT_ID" `
-            --sellerId "$env:SELLER_ID" `
-            --clientId "$env:AZURE_AD_APPLICATION_CLIENT_ID" `
-            --clientSecret "$env:AZURE_AD_APPLICATION_SECRET"
-
-      - name: Diagnose Microsoft Store application access
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-          $PSNativeCommandUseErrorActionPreference = $false
-          $productId = "$env:MICROSOFT_STORE_PRODUCT_ID"
-
-          Write-Host "Configured MICROSOFT_STORE_PRODUCT_ID length: $($productId.Length)"
-          if ($productId -notmatch "^[A-Za-z0-9]{12}$") {
-            Write-Warning "MICROSOFT_STORE_PRODUCT_ID does not look like a 12-character Store product ID."
-          }
-
-          Write-Host "::group::Microsoft Store apps visible to configured credentials"
-          msstore apps list
-          $listExitCode = $LASTEXITCODE
-          Write-Host "::endgroup::"
-          if ($listExitCode -ne 0) {
-            throw "Could not list Microsoft Store apps with the configured Partner Center credentials."
-          }
-
-          Write-Host "::group::Configured Microsoft Store app lookup"
-          msstore apps get "$productId" --verbose
-          $getExitCode = $LASTEXITCODE
-          Write-Host "::endgroup::"
-          if ($getExitCode -ne 0) {
-            throw "MICROSOFT_STORE_PRODUCT_ID is not retrievable by the configured Partner Center credentials. Check that it is the Store product ID for this app and that the Entra service principal has access to the app in this seller account."
-          }
-
-      - name: Publish MSIX to Microsoft Store flight
-        id: publish
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-          $msixFiles = Get-ChildItem -Path "dist/windows-store-release" -Filter "*.msix" -File
-          if ($msixFiles.Count -ne 1) {
-            throw "Expected exactly one MSIX artifact, found $($msixFiles.Count)."
-          }
-
-          $msixPath = $msixFiles[0].FullName
-          msstore publish "$msixPath" `
-            --appId "$env:MICROSOFT_STORE_PRODUCT_ID" `
-            --flightId "$env:FLIGHT_ID"
-
-      - name: Poll Microsoft Store flight publishing
-        if: ${{ inputs.poll_flight == true || github.event_name == 'pull_request' }}
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-          msstore flights submission poll "$env:MICROSOFT_STORE_PRODUCT_ID" "$env:FLIGHT_ID"

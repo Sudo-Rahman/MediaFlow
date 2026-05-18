@@ -35,19 +35,19 @@
 </script>
 
 <header
-  class="flex min-h-14 shrink-0 items-center gap-2 border-b px-4 py-2"
-  data-tauri-drag-region={usesHeaderDragRegion}
+  class="flex min-h-14 shrink-0 items-center gap-2 border-b {usesWindowsControls ? 'py-0 pr-0 pl-4' : 'px-4 py-2'}"
+  data-tauri-drag-region={usesHeaderDragRegion ? true : undefined}
 >
   {#if leading}
-    <div class="shrink-0">{@render leading()}</div>
+    {@render leading()}
   {/if}
 
-  <div class="flex min-w-0 flex-1 items-center gap-2" data-tauri-drag-region={usesHeaderDragRegion}>
+  <div class="flex min-w-0 flex-1 items-center gap-2" data-tauri-drag-region={usesHeaderDragRegion ? true : undefined}>
     {#if showTitle}
-      <div class="min-w-0" data-tauri-drag-region={usesHeaderDragRegion}>
-        <h1 data-tauri-drag-region={usesHeaderDragRegion} class="truncate text-lg font-semibold">{title}</h1>
+      <div class="min-w-0" data-tauri-drag-region={usesHeaderDragRegion ? true : undefined}>
+        <h1 data-tauri-drag-region={usesHeaderDragRegion ? true : undefined} class="truncate text-lg font-semibold">{title}</h1>
         {#if description}
-          <p data-tauri-drag-region={usesHeaderDragRegion} class="truncate text-sm text-muted-foreground">{description}</p>
+          <p data-tauri-drag-region={usesHeaderDragRegion ? true : undefined} class="truncate text-sm text-muted-foreground">{description}</p>
         {/if}
       </div>
     {/if}
@@ -58,15 +58,15 @@
   </div>
 
   {#if status}
-    <div class="shrink-0">{@render status()}</div>
+    {@render status()}
   {/if}
 
   {#if actions}
-    <div class="shrink-0">{@render actions()}</div>
+    {@render actions()}
   {/if}
 
   {#if trailing}
-    <div class="shrink-0">{@render trailing()}</div>
+    {@render trailing()}
   {/if}
 
   {#if usesWindowsControls}

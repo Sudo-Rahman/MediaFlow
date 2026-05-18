@@ -2,8 +2,10 @@ use std::sync::Mutex;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DWMWA_WINDOW_CORNER_PREFERENCE, DwmSetWindowAttribute};
-use windows::Win32::UI::Controls::{DefSubclassProc, SetWindowSubclass};
-use windows::Win32::UI::WindowsAndMessaging::{HTMAXBUTTON, ScreenToClient, WM_NCHITTEST};
+use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
+use windows::Win32::UI::WindowsAndMessaging::{
+    HTMAXBUTTON, ScreenToClient, WM_NCDESTROY, WM_NCHITTEST,
+};
 
 use super::PhysicalRect;
 
@@ -71,6 +73,16 @@ unsafe extern "system" fn window_chrome_subclass_proc(
                     }
                 }
             }
+        }
+    }
+
+    if msg == WM_NCDESTROY {
+        unsafe {
+            let _ = RemoveWindowSubclass(
+                hwnd,
+                Some(window_chrome_subclass_proc),
+                MEDIAFLOW_CHROME_SUBCLASS_ID,
+            );
         }
     }
 

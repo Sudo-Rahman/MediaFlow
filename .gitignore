@@ -13,7 +13,7 @@ vite.config.ts.timestamp-*
 /llms/
 /.opencode/
 /.agents/
-/.superpowers/
+.superpowers/
 /AGENTS.md
 /.specify
 /src-tauri/binaries

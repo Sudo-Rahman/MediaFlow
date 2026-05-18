@@ -21,7 +21,11 @@ export function getElementWindowControlRect(element: HTMLElement): WindowControl
 }
 
 export async function updateWindowsMaximizeButtonRect(element: HTMLElement): Promise<void> {
-  await invoke('update_windows_maximize_button_rect', {
+  await invoke<void>('update_windows_maximize_button_rect', {
     rect: getElementWindowControlRect(element),
   });
+}
+
+export async function showWindowsSnapOverlay(): Promise<void> {
+  await invoke<void>('show_windows_snap_overlay');
 }

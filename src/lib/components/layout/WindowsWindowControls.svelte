@@ -4,13 +4,19 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { Copy, Minus, Square, X } from '@lucide/svelte';
 
-  import { updateWindowsMaximizeButtonRect } from '$lib/services/window-chrome';
+  import {
+    showWindowsSnapOverlay,
+    updateWindowsMaximizeButtonRect,
+  } from '$lib/services/window-chrome';
+
+  const SNAP_OVERLAY_DELAY_MS = 450;
 
   let maximizeButton: HTMLButtonElement | undefined = $state();
   let isMaximized = $state(false);
   let resizeObserver: ResizeObserver | undefined;
   let unlistenResize: UnlistenFn | undefined;
   let unlistenScale: UnlistenFn | undefined;
+  let snapOverlayTimer: ReturnType<typeof setTimeout> | undefined;
 
   const appWindow = getCurrentWindow();
 
@@ -37,6 +43,31 @@
     }
   }
 
+  function clearSnapOverlayTimer(): void {
+    if (!snapOverlayTimer) return;
+
+    clearTimeout(snapOverlayTimer);
+    snapOverlayTimer = undefined;
+  }
+
+  async function showSnapOverlay(): Promise<void> {
+    try {
+      await showWindowsSnapOverlay();
+    } catch (error) {
+      warnWindowControlFailure('show Windows Snap Layout overlay', error);
+    }
+  }
+
+  function scheduleSnapOverlay(): void {
+    clearSnapOverlayTimer();
+    void reportMaximizeButtonRect();
+
+    snapOverlayTimer = setTimeout(() => {
+      snapOverlayTimer = undefined;
+      void showSnapOverlay();
+    }, SNAP_OVERLAY_DELAY_MS);
+  }
+
   async function handleMinimize(): Promise<void> {
     try {
       await appWindow.minimize();
@@ -46,6 +77,8 @@
   }
 
   async function handleToggleMaximize(): Promise<void> {
+    clearSnapOverlayTimer();
+
     try {
       await appWindow.toggleMaximize();
       await refreshMaximizedState();
@@ -102,6 +135,7 @@
 
     return () => {
       disposed = true;
+      clearSnapOverlayTimer();
       resizeObserver?.disconnect();
       unlistenResize?.();
       unlistenScale?.();
@@ -121,7 +155,9 @@
     aria-label={isMaximized ? 'Restore' : 'Maximize'}
     title={isMaximized ? 'Restore' : 'Maximize'}
     onclick={handleToggleMaximize}
-    onmouseenter={reportMaximizeButtonRect}
+    onmouseenter={scheduleSnapOverlay}
+    onmouseleave={clearSnapOverlayTimer}
+    onblur={clearSnapOverlayTimer}
     onfocus={reportMaximizeButtonRect}
   >
     {#if isMaximized}
@@ -139,9 +175,9 @@
 <style>
   .windows-window-controls {
     display: flex;
-    height: 100%;
-    min-height: 2.25rem;
-    align-self: stretch;
+    height: 40px;
+    min-height: 0;
+    align-self: flex-start;
     -webkit-app-region: no-drag;
   }
 
@@ -149,8 +185,8 @@
     display: grid;
     width: 46px;
     min-width: 46px;
-    height: 100%;
-    min-height: 2.25rem;
+    height: 40px;
+    min-height: 0;
     place-items: center;
     border: 0;
     border-radius: 0;

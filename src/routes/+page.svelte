@@ -658,10 +658,7 @@
   }
 </script>
 
-<div class={platformChrome === 'windows-custom'
-  ? 'h-screen overflow-hidden rounded-[18px] bg-background'
-  : 'h-screen overflow-hidden bg-background'}
->
+<div class="h-screen overflow-hidden bg-background">
   <Sidebar.Provider bind:open={sidebarOpen}>
     <AppSidebar
       currentView={currentView}

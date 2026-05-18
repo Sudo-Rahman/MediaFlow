@@ -74,6 +74,11 @@ pub fn update_windows_maximize_button_rect(rect: WindowControlRect) -> Result<()
     platform::update_maximize_button_rect(to_physical_rect(rect)?)
 }
 
+#[tauri::command]
+pub fn show_windows_snap_overlay() -> Result<(), String> {
+    platform::show_snap_overlay()
+}
+
 #[cfg(target_os = "windows")]
 pub(crate) fn install_windows_chrome(window: &tauri::WebviewWindow) -> Result<(), String> {
     platform::install_windows_chrome(window)

@@ -102,7 +102,7 @@
 </script>
 
 <Dialog.Root bind:open onOpenChange={onOpenChange}>
-  <Dialog.Content class="max-w-3xl max-h-[80vh] flex flex-col">
+  <Dialog.Content class="max-w-3xl h-[80vh] flex flex-col">
     <Dialog.Header class="shrink-0">
       <Dialog.Title>Import from {sourceLabel}</Dialog.Title>
       <Dialog.Description>Select how you want to import versions.</Dialog.Description>

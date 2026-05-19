@@ -117,7 +117,7 @@
 </script>
 
 <Dialog.Root bind:open onOpenChange={onOpenChange}>
-  <Dialog.Content class="max-w-lg max-h-[80vh] flex flex-col">
+  <Dialog.Content class="max-w-lg h-[80vh] flex flex-col">
     <Dialog.Header class="shrink-0">
       <Dialog.Title class="flex items-center gap-2">
         <AudioLines class="size-5" />

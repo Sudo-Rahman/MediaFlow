@@ -77,14 +77,14 @@
 </script>
 
 <div class={cn('space-y-4', className)}>
-  <Card.Root>
-    <Card.Header class="pb-3">
-      <Card.Title class="text-base truncate">{file.name}</Card.Title>
-      <Card.Description>
+  <header class="flex min-w-0 items-center justify-between gap-3 px-1">
+    <div class="min-w-0">
+      <h2 class="truncate text-sm font-semibold">{file.name}</h2>
+      <p class="text-xs text-muted-foreground">
         {file.tracks.length} track{file.tracks.length > 1 ? 's' : ''} available
-      </Card.Description>
-    </Card.Header>
-  </Card.Root>
+      </p>
+    </div>
+  </header>
 
   {#each Object.entries(groupedTracks) as [type, tracks] (type)}
     {#if tracks.length > 0}

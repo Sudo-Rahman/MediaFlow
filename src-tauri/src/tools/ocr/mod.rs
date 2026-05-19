@@ -10,6 +10,8 @@ pub(crate) mod subtitles;
 
 use serde::{Deserialize, Serialize};
 
+const OCR_SELECTION_END_TOLERANCE_MS: u64 = 1;
+
 /// OCR model paths configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrModelPaths {
@@ -229,6 +231,21 @@ mod selection_validation_tests {
     }
 
     #[test]
+    fn selection_validation_allows_one_millisecond_end_rounding_drift() {
+        let selection = OcrSelection {
+            segments: vec![OcrSegment {
+                id: "rounded-full-duration".to_string(),
+                start_time_ms: 0,
+                end_time_ms: 12_346,
+                zones: vec![valid_zone()],
+            }],
+        };
+
+        validate_ocr_selection(&selection, 12_345)
+            .expect("frontend-rounded full-duration selection should be allowed");
+    }
+
+    #[test]
     fn selection_validation_rejects_empty_segments_and_zones() {
         let empty_selection = OcrSelection {
             segments: Vec::new(),
@@ -352,7 +369,7 @@ pub(crate) fn validate_ocr_selection(
             return Err(format!("Segment {} must start before it ends", segment.id));
         }
 
-        if segment.end_time_ms > duration_ms {
+        if segment.end_time_ms > duration_ms.saturating_add(OCR_SELECTION_END_TOLERANCE_MS) {
             return Err(format!(
                 "Segment {} must stay within the video duration",
                 segment.id

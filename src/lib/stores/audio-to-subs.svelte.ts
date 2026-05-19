@@ -4,6 +4,7 @@
  */
 
 import type WaveSurfer from 'wavesurfer.js';
+import { getFileName } from '$lib/utils/format';
 import type { 
   AudioFile, 
   TranscriptionConfig,
@@ -60,10 +61,6 @@ const waveformInstances = new Map<string, WaveformInstance>();
 
 function generateId(): string {
   return `audio-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-}
-
-function getFileName(path: string): string {
-  return path.split('/').pop() || path.split('\\').pop() || path;
 }
 
 function createEmptyAudioFile(path: string, id?: string): AudioFile {

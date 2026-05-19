@@ -23,6 +23,7 @@
   import { transcriptionVersionToSubtitleFile } from '$lib/services/subtitle-interop';
   import { loadTranscriptionData, saveTranscriptionData } from '$lib/services/transcription-storage';
   import { audioToSubsStore, settingsStore, toolImportStore } from '$lib/stores';
+  import { getFileName } from '$lib/utils/format';
   import { resolveDeepgramTrackLanguage } from '$lib/utils/audio-language';
   import { logAndToast } from '$lib/utils/log-toast';
   import {
@@ -165,7 +166,7 @@
   // Uses a stable hash of the source path + track index for cache reuse
   async function getOpusOutputPath(file: AudioFile, trackIndex: number = 0): Promise<string> {
     const temp = await tempDir();
-    const baseName = file.name.replace(/\.[^/.]+$/, ''); // Remove extension
+    const baseName = getFileName(file.path).replace(/\.[^.]+$/, '');
     const pathHash = hashString(file.path);
     return `${temp}mediaflow_opus/${baseName}_track${trackIndex}_${pathHash}.opus`;
   }

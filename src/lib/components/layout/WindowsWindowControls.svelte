@@ -1,22 +1,11 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount } from 'svelte';
   import type { UnlistenFn } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { Copy, Minus, Square, X } from '@lucide/svelte';
 
-  import {
-    showWindowsSnapOverlay,
-    updateWindowsMaximizeButtonRect,
-  } from '$lib/services/window-chrome';
-
-  const SNAP_OVERLAY_DELAY_MS = 450;
-
-  let maximizeButton: HTMLButtonElement | undefined = $state();
   let isMaximized = $state(false);
-  let resizeObserver: ResizeObserver | undefined;
   let unlistenResize: UnlistenFn | undefined;
-  let unlistenScale: UnlistenFn | undefined;
-  let snapOverlayTimer: ReturnType<typeof setTimeout> | undefined;
 
   const appWindow = getCurrentWindow();
 
@@ -32,42 +21,6 @@
     }
   }
 
-  async function reportMaximizeButtonRect(): Promise<void> {
-    await tick();
-    if (!maximizeButton) return;
-
-    try {
-      await updateWindowsMaximizeButtonRect(maximizeButton);
-    } catch (error) {
-      console.warn('Failed to update Windows maximize button rectangle', error);
-    }
-  }
-
-  function clearSnapOverlayTimer(): void {
-    if (!snapOverlayTimer) return;
-
-    clearTimeout(snapOverlayTimer);
-    snapOverlayTimer = undefined;
-  }
-
-  async function showSnapOverlay(): Promise<void> {
-    try {
-      await showWindowsSnapOverlay();
-    } catch (error) {
-      warnWindowControlFailure('show Windows Snap Layout overlay', error);
-    }
-  }
-
-  function scheduleSnapOverlay(): void {
-    clearSnapOverlayTimer();
-    void reportMaximizeButtonRect();
-
-    snapOverlayTimer = setTimeout(() => {
-      snapOverlayTimer = undefined;
-      void showSnapOverlay();
-    }, SNAP_OVERLAY_DELAY_MS);
-  }
-
   async function handleMinimize(): Promise<void> {
     try {
       await appWindow.minimize();
@@ -77,12 +30,9 @@
   }
 
   async function handleToggleMaximize(): Promise<void> {
-    clearSnapOverlayTimer();
-
     try {
       await appWindow.toggleMaximize();
       await refreshMaximizedState();
-      await reportMaximizeButtonRect();
     } catch (error) {
       warnWindowControlFailure('toggle window maximized state', error);
     }
@@ -100,17 +50,9 @@
     let disposed = false;
 
     void refreshMaximizedState();
-    void reportMaximizeButtonRect();
-
-    resizeObserver = new ResizeObserver(() => {
-      void reportMaximizeButtonRect();
-    });
-
-    if (maximizeButton) resizeObserver.observe(maximizeButton);
 
     void appWindow.onResized(() => {
       void refreshMaximizedState();
-      void reportMaximizeButtonRect();
     }).then((unlisten) => {
       if (disposed) {
         unlisten();
@@ -121,24 +63,9 @@
       warnWindowControlFailure('register Windows resize listener', error);
     });
 
-    void appWindow.onScaleChanged(() => {
-      void reportMaximizeButtonRect();
-    }).then((unlisten) => {
-      if (disposed) {
-        unlisten();
-        return;
-      }
-      unlistenScale = unlisten;
-    }).catch((error) => {
-      warnWindowControlFailure('register Windows scale listener', error);
-    });
-
     return () => {
       disposed = true;
-      clearSnapOverlayTimer();
-      resizeObserver?.disconnect();
       unlistenResize?.();
-      unlistenScale?.();
     };
   });
 </script>
@@ -149,16 +76,11 @@
   </button>
 
   <button
-    bind:this={maximizeButton}
     class="windows-window-control"
     type="button"
     aria-label={isMaximized ? 'Restore' : 'Maximize'}
     title={isMaximized ? 'Restore' : 'Maximize'}
     onclick={handleToggleMaximize}
-    onmouseenter={scheduleSnapOverlay}
-    onmouseleave={clearSnapOverlayTimer}
-    onblur={clearSnapOverlayTimer}
-    onfocus={reportMaximizeButtonRect}
   >
     {#if isMaximized}
       <Copy class="size-3.5" strokeWidth={1.5} />

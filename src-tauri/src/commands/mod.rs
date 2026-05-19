@@ -30,4 +30,3 @@ pub(crate) use crate::tools::transcription::transcode_opus as transcription_tran
 pub(crate) use crate::tools::transcription::upload as transcription_upload;
 pub(crate) use crate::tools::transcription::waveform as transcription_waveform;
 pub(crate) use crate::tools::translation;
-pub(crate) use crate::tools::window_chrome;

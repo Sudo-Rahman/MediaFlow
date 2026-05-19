@@ -17,7 +17,7 @@
   import AccountMenu from '$lib/components/account/AccountMenu.svelte';
   import * as Sidebar from '$lib/components/ui/sidebar';
   import { formatAppVersion, loadAppVersion } from '$lib/services/app-metadata';
-  import { OS } from '$lib/utils';
+  import { cn, OS } from '$lib/utils';
 
   interface NavItem {
     id: string;
@@ -77,10 +77,12 @@
   let {
     currentView = 'extract',
     onNavigate,
+    class: className,
     ...restProps
   }: AppSidebarProps = $props();
 
   const isMacOS = OS() === 'MacOS';
+  const isWindows = OS() === 'Windows';
   let appVersionLabel = $state('Loading version...');
 
   onMount(() => {
@@ -95,7 +97,11 @@
 
 </script>
 
-<Sidebar.Root variant="floating"  {...restProps}>
+<Sidebar.Root
+  variant="floating"
+  class={cn(isWindows && '[&_[data-slot=sidebar-inner]]:rounded-lg', className)}
+  {...restProps}
+>
   <Sidebar.Header>
     <Sidebar.Menu>
       <Sidebar.MenuItem>

@@ -72,11 +72,7 @@ ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git", branch = "n
 keyring = { version = "^3", features = ["windows-native"] }
 windows = { version = "0.61", features = [
   "Win32_Foundation",
-  "Win32_Graphics_Dwm",
-  "Win32_Graphics_Gdi",
-  "Win32_UI_Input_KeyboardAndMouse",
-  "Win32_UI_Shell",
-  "Win32_UI_WindowsAndMessaging"
+  "Win32_Graphics_Dwm"
 ] }
 
 [target.'cfg(unix)'.dependencies]

@@ -13,6 +13,7 @@
   import type { FileInfo } from '$lib/stores/info.svelte';
   import type { ImportSourceId } from '$lib/types/tool-import';
   import { scanFiles } from '$lib/services/ffprobe';
+  import { getFileName } from '$lib/utils/format';
   import { log } from '$lib/utils/log-toast';
 
   import { SUPPORTED_EXTENSIONS, SUPPORTED_FORMATS } from '$lib/components/info/info-utils';
@@ -37,10 +38,6 @@
     const normalized = path.toLowerCase();
     const lastDot = normalized.lastIndexOf('.');
     return lastDot >= 0 ? normalized.slice(lastDot) : '';
-  }
-
-  function getFileName(path: string): string {
-    return path.split('/').pop() || path.split('\\').pop() || path;
   }
 
   async function handleAddFiles() {

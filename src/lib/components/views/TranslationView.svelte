@@ -21,6 +21,7 @@
     loadTranslationData,
     saveTranslationData,
   } from '$lib/services/translation-storage';
+  import { getFileName } from '$lib/utils/format';
   import { logAndToast, log } from '$lib/utils/log-toast';
   import type {
     LanguageCode,
@@ -224,7 +225,7 @@
         return;
       }
 
-      const name = path.split('/').pop() || path.split('\\').pop() || path;
+      const name = getFileName(path);
 
       const subtitleFile: SubtitleFile = {
         path,

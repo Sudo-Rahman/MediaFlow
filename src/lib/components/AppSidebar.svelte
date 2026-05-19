@@ -10,13 +10,11 @@
     AudioLines,
     ScanText,
   } from '@lucide/svelte';
-  import { onMount } from 'svelte';
   import type { ComponentProps } from 'svelte';
 
   import { Badge } from '$lib/components/ui/badge';
   import AccountMenu from '$lib/components/account/AccountMenu.svelte';
   import * as Sidebar from '$lib/components/ui/sidebar';
-  import { formatAppVersion, loadAppVersion } from '$lib/services/app-metadata';
   import { cn, OS } from '$lib/utils';
 
   interface NavItem {
@@ -83,18 +81,6 @@
 
   const isMacOS = OS() === 'MacOS';
   const isWindows = OS() === 'Windows';
-  let appVersionLabel = $state('Loading version...');
-
-  onMount(() => {
-    void loadAppVersion()
-      .then((version) => {
-        appVersionLabel = formatAppVersion(version);
-      })
-      .catch(() => {
-        appVersionLabel = 'Version unavailable';
-      });
-  });
-
 </script>
 
 <Sidebar.Root
@@ -116,7 +102,6 @@
               />
               <div class="flex flex-col gap-0.5 leading-none">
                 <span class="font-semibold">MediaFlow</span>
-                <span class="text-xs text-muted-foreground">{appVersionLabel}</span>
               </div>
             </div>
           {/snippet}

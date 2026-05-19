@@ -28,6 +28,10 @@ fn frame_end_time_ms(frame_index: u32, fps: f64) -> u64 {
     (((frame_index as f64) + 1.0) * (1000.0 / fps)).round() as u64
 }
 
+fn frame_duration_ms(fps: f64) -> u64 {
+    ((1000.0 / fps).round() as u64).max(1)
+}
+
 fn infer_frame_step_ms(frame_results: &[OcrFrameResult]) -> Option<u64> {
     if frame_results.len() < 2 {
         return None;
@@ -58,7 +62,10 @@ fn segment_end_time_ms(
 ) -> u64 {
     let mut end_time = frame_step_ms
         .and_then(|step| last_seen_time.checked_add(step))
-        .unwrap_or_else(|| frame_end_time_ms(last_seen_frame_index, fps));
+        .unwrap_or_else(|| {
+            frame_end_time_ms(last_seen_frame_index, fps)
+                .max(last_seen_time.saturating_add(frame_duration_ms(fps)))
+        });
 
     if end_time <= start_time {
         end_time = start_time.saturating_add(1);
@@ -866,6 +873,33 @@ mod tests {
         assert_eq!(subtitles.len(), 1);
         assert_eq!(subtitles[0].text, "Single frame");
         assert!(subtitles[0].end_time > subtitles[0].start_time);
+    }
+
+    #[test]
+    fn generate_subtitles_uses_absolute_time_for_single_frame_sparse_selection() {
+        let frames = vec![OcrFrameResult {
+            frame_index: 0,
+            time_ms: 50_000,
+            text: "Sparse frame".to_string(),
+            confidence: 0.99,
+            segment_id: None,
+            zone_id: None,
+            role: None,
+            region: None,
+        }];
+
+        let subtitles = super::generate_subtitles_core(
+            &frames,
+            1.0,
+            0.5,
+            OcrSubtitleCleanupOptions::default(),
+            |_current, _total| {},
+        )
+        .expect("subtitle generation should succeed");
+
+        assert_eq!(subtitles.len(), 1);
+        assert_eq!(subtitles[0].start_time, 50_000);
+        assert_eq!(subtitles[0].end_time, 51_000);
     }
 
     #[test]

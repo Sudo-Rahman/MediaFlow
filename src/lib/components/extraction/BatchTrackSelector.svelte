@@ -4,6 +4,8 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Separator } from '$lib/components/ui/separator';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+  import * as Card from '$lib/components/ui/card';
+  import * as ToggleGroup from '$lib/components/ui/toggle-group';
   import { formatLanguage } from '$lib/utils/format';
   import { ChevronDown, Subtitles, Volume2, Video, Check, X } from '@lucide/svelte';
 
@@ -55,6 +57,24 @@
       count += tracks.length;
     }
     return count;
+  });
+
+  const selectedLanguageTokens = $derived.by(() => {
+    const tokens: string[] = [];
+
+    for (const lang of trackStats.subtitleLanguages) {
+      if (isLanguageFullySelected('subtitle', lang)) {
+        tokens.push(`subtitle:${lang}`);
+      }
+    }
+
+    for (const lang of trackStats.audioLanguages) {
+      if (isLanguageFullySelected('audio', lang)) {
+        tokens.push(`audio:${lang}`);
+      }
+    }
+
+    return tokens;
   });
 
   // Preset selections
@@ -173,17 +193,18 @@
   }
 </script>
 
-<div class="flex flex-col gap-3 p-4 rounded-lg border bg-card {className}">
-  <div class="flex items-center justify-between">
-    <h3 class="text-sm font-semibold">Quick Selection</h3>
+<Card.Root size="sm" class={className}>
+  <Card.Header class="flex-row items-center justify-between gap-3">
+    <Card.Title class="text-sm">Quick Selection</Card.Title>
     {#if totalSelectedCount > 0}
       <Badge variant="secondary">
         {totalSelectedCount} track{totalSelectedCount > 1 ? 's' : ''}
       </Badge>
     {/if}
-  </div>
+  </Card.Header>
 
   <!-- Quick presets -->
+  <Card.Content class="space-y-3">
   <div class="flex flex-wrap gap-2">
     <DropdownMenu.Root>
       <DropdownMenu.Trigger>
@@ -201,7 +222,7 @@
         </DropdownMenu.Item>
         <DropdownMenu.Separator />
         <DropdownMenu.Label>By language</DropdownMenu.Label>
-        {#each Array.from(trackStats.subtitleLanguages) as lang}
+        {#each Array.from(trackStats.subtitleLanguages) as lang (lang)}
           {@const isSelected = isLanguageFullySelected('subtitle', lang)}
           <DropdownMenu.Item onclick={() => toggleLanguage('subtitle', lang)}>
             <div class="flex items-center gap-2 w-full">
@@ -233,7 +254,7 @@
         </DropdownMenu.Item>
         <DropdownMenu.Separator />
         <DropdownMenu.Label>By language</DropdownMenu.Label>
-        {#each Array.from(trackStats.audioLanguages) as lang}
+        {#each Array.from(trackStats.audioLanguages) as lang (lang)}
           {@const isSelected = isLanguageFullySelected('audio', lang)}
           <DropdownMenu.Item onclick={() => toggleLanguage('audio', lang)}>
             <div class="flex items-center gap-2 w-full">
@@ -265,33 +286,36 @@
   <!-- Quick language chips for common selections -->
   {#if trackStats.subtitleLanguages.size > 0 || trackStats.audioLanguages.size > 0}
     <Separator />
-    <div class="flex flex-wrap gap-1.5">
-      {#each Array.from(trackStats.subtitleLanguages) as lang}
-        {@const isSelected = isLanguageFullySelected('subtitle', lang)}
-        <button
-          class="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full transition-colors
-            {isSelected
-              ? 'bg-primary text-primary-foreground'
-              : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}"
+    <ToggleGroup.Root
+      type="multiple"
+      value={selectedLanguageTokens}
+      variant="outline"
+      size="sm"
+      spacing={1}
+      class="flex-wrap"
+      aria-label="Quick language selection"
+    >
+      {#each Array.from(trackStats.subtitleLanguages) as lang (lang)}
+        <ToggleGroup.Item
+          value={`subtitle:${lang}`}
+          class="gap-1"
           onclick={() => toggleLanguage('subtitle', lang)}
         >
           <Subtitles class="size-3" />
           {formatLanguage(lang)}
-        </button>
+        </ToggleGroup.Item>
       {/each}
-      {#each Array.from(trackStats.audioLanguages) as lang}
-        {@const isSelected = isLanguageFullySelected('audio', lang)}
-        <button
-          class="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full transition-colors
-            {isSelected
-              ? 'bg-primary text-primary-foreground'
-              : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}"
+      {#each Array.from(trackStats.audioLanguages) as lang (lang)}
+        <ToggleGroup.Item
+          value={`audio:${lang}`}
+          class="gap-1"
           onclick={() => toggleLanguage('audio', lang)}
         >
           <Volume2 class="size-3" />
           {formatLanguage(lang)}
-        </button>
+        </ToggleGroup.Item>
       {/each}
-    </div>
+    </ToggleGroup.Root>
   {/if}
-</div>
+  </Card.Content>
+</Card.Root>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte';
   import { Download, Loader2 } from '@lucide/svelte';
+  import { useId } from 'bits-ui';
   import { toast } from 'svelte-sonner';
 
   import {
@@ -15,11 +16,14 @@
     type VersionedExportVersion,
   } from '$lib/services/versioned-export';
   import { pickOutputDirectory } from '$lib/services/output-folder';
+  import * as Alert from '$lib/components/ui/alert';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import * as Dialog from '$lib/components/ui/dialog';
-  import { Label } from '$lib/components/ui/label';
+  import * as Empty from '$lib/components/ui/empty';
+  import * as Field from '$lib/components/ui/field';
+  import * as Item from '$lib/components/ui/item';
   import * as RadioGroup from '$lib/components/ui/radio-group';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import * as Select from '$lib/components/ui/select';
@@ -58,6 +62,20 @@
   let isExporting = $state(false);
   let exportFailures = $state<VersionedExportFailure[]>([]);
   let isDestroyed = false;
+  const baseId = useId();
+  const exportModeLabelId = `${baseId}-versioned-export-mode-label`;
+  const latestPerFileId = `${baseId}-versioned-export-latest-per-file`;
+  const latestPerFileTitleId = `${latestPerFileId}-title`;
+  const latestPerFileDescriptionId = `${latestPerFileId}-description`;
+  const allVersionsId = `${baseId}-versioned-export-all-versions`;
+  const allVersionsTitleId = `${allVersionsId}-title`;
+  const allVersionsDescriptionId = `${allVersionsId}-description`;
+  const customSelectionId = `${baseId}-versioned-export-custom-selection`;
+  const customSelectionTitleId = `${customSelectionId}-title`;
+  const customSelectionDescriptionId = `${customSelectionId}-description`;
+  const exportFormatLabelId = `${baseId}-versioned-export-format-label`;
+  const exportIssuesTitleId = `${baseId}-versioned-export-issues-title`;
+  const exportIssuesDescriptionId = `${baseId}-versioned-export-issues-description`;
 
   onDestroy(() => {
     isDestroyed = true;
@@ -236,6 +254,14 @@
     selectedVersionKeys = nextVersions;
   }
 
+  function toggleVersionIfFileSelected(fileId: string, versionKey: string): void {
+    if (!selectedFileIds.has(fileId)) {
+      return;
+    }
+
+    toggleVersion(versionKey);
+  }
+
   async function handleBrowseOutput(): Promise<void> {
     const selected = await pickOutputDirectory();
 
@@ -302,175 +328,262 @@
     </Dialog.Header>
 
     <div class="dialog-scroll-body py-1">
-    {#if !hasExportableData}
-      <div class="rounded-md border p-4 text-sm text-muted-foreground">
-        No exportable versions are available yet.
-      </div>
-    {:else}
-      <div class="space-y-4">
-        <div class="space-y-2">
-          <Label>Export mode</Label>
-          <RadioGroup.Root value={mode} onValueChange={(value) => value && setMode(value as VersionedExportMode)}>
-            <div class="space-y-2">
-              <label class="flex items-center gap-2 rounded-md border p-3">
-                <RadioGroup.Item value="latest_per_file" id="versioned-export-latest-per-file" />
-                <div class="text-sm">
-                  <p class="font-medium">Latest per file</p>
-                  <p class="text-muted-foreground">Export the newest version from each selected file.</p>
-                </div>
-              </label>
-
-              <label class="flex items-center gap-2 rounded-md border p-3">
-                <RadioGroup.Item value="all_versions" id="versioned-export-all-versions" />
-                <div class="text-sm">
-                  <p class="font-medium">All versions</p>
-                  <p class="text-muted-foreground">Export every version from each selected file.</p>
-                </div>
-              </label>
-
-              <label class="flex items-center gap-2 rounded-md border p-3">
-                <RadioGroup.Item value="custom" id="versioned-export-custom-selection" />
-                <div class="text-sm">
-                  <p class="font-medium">Custom selection</p>
-                  <p class="text-muted-foreground">Choose specific versions to export.</p>
-                </div>
-              </label>
-            </div>
-          </RadioGroup.Root>
-        </div>
-
-        <div class="space-y-2">
-          <Label>Export format</Label>
-          <Select.Root
-            type="single"
-            value={selectedFormat}
-            onValueChange={(value) => {
-              if (value) {
-                selectedFormat = value;
-              }
-            }}
-            disabled={isExporting || !hasAvailableFormat}
-          >
-            <Select.Trigger class="w-full">
-              {selectedFormatOptions.find((option) => option.value === selectedFormat)?.label
-                ?? formatOptions.find((option) => option.value === selectedFormat)?.label
-                ?? selectedFormat.toUpperCase()}
-            </Select.Trigger>
-            <Select.Content>
-              <Select.Group>
-                {#each selectedFormatOptions as formatOption (formatOption.value)}
-                  <Select.Item value={formatOption.value}>{formatOption.label}</Select.Item>
-                {/each}
-              </Select.Group>
-            </Select.Content>
-          </Select.Root>
-          {#if !hasAvailableFormat && selectedVersionCount > 0}
-            <p class="text-xs text-destructive">
-              No common export format is available for the selected versions.
-            </p>
-          {:else if formatOptionsWereFiltered}
-            <p class="text-xs text-muted-foreground">
-              Selected versions require positioned subtitles, so incompatible formats are hidden.
-            </p>
-          {/if}
-        </div>
-
-        <div class="rounded-md border">
-          <div class="border-b p-3">
-            <p class="text-sm font-medium">File filter</p>
-            <p class="text-xs text-muted-foreground">Select which files to include.</p>
-          </div>
-
-          <ScrollArea class="h-40">
-            <div class="space-y-2 p-3">
-              {#each sortedGroups as group (group.fileId)}
-                <label class="flex items-center justify-between gap-2 rounded-md border p-2">
-                  <div class="flex items-center gap-2 min-w-0">
-                    <Checkbox
-                      checked={selectedFileIds.has(group.fileId)}
-                      onCheckedChange={() => toggleFile(group.fileId)}
-                    />
-                    <div class="min-w-0">
-                      <p class="text-sm truncate">{group.fileName}</p>
-                      <p class="text-xs text-muted-foreground">{group.versions.length} version(s)</p>
+      {#if !hasExportableData}
+        <Empty.Root class="min-h-24 flex-none p-6">
+          <Empty.Header>
+            <Empty.Title>No exportable versions are available yet.</Empty.Title>
+          </Empty.Header>
+        </Empty.Root>
+      {:else}
+        <Field.Group class="gap-4">
+          <Field.Set class="gap-3">
+            <Field.Legend id={exportModeLabelId} variant="label" class="mb-0">Export mode</Field.Legend>
+            <RadioGroup.Root
+              value={mode}
+              aria-labelledby={exportModeLabelId}
+              onValueChange={(value) => value && setMode(value as VersionedExportMode)}
+            >
+              <div class="flex flex-col gap-2">
+                <Item.Root variant="outline" size="sm" class="cursor-pointer">
+                  {#snippet child({ props })}
+                    <div
+                      {...props}
+                      onclick={() => setMode('latest_per_file')}
+                    >
+                      <Item.Media>
+                        <RadioGroup.Item
+                          value="latest_per_file"
+                          id={latestPerFileId}
+                          aria-labelledby={latestPerFileTitleId}
+                          aria-describedby={latestPerFileDescriptionId}
+                        />
+                      </Item.Media>
+                      <Item.Content>
+                        <Item.Title id={latestPerFileTitleId}>Latest per file</Item.Title>
+                        <Item.Description id={latestPerFileDescriptionId}>Export the newest version from each selected file.</Item.Description>
+                      </Item.Content>
                     </div>
-                  </div>
-                  {#if group.fileBadge}
-                    <Badge variant="outline" class="shrink-0 uppercase">{group.fileBadge}</Badge>
-                  {/if}
-                </label>
-              {/each}
-            </div>
-          </ScrollArea>
-        </div>
+                  {/snippet}
+                </Item.Root>
 
-        {#if mode === 'custom'}
-          <div class="rounded-md border">
-            <div class="border-b p-3">
-              <p class="text-sm font-medium">Version filter</p>
-              <p class="text-xs text-muted-foreground">Choose exact versions to export.</p>
-            </div>
-
-            <ScrollArea class="h-56">
-              <div class="space-y-4 p-3">
-                {#each sortedGroups as group (group.fileId)}
-                  <section class="space-y-2">
-                    <p class="text-sm font-medium truncate">{group.fileName}</p>
-                    <div class="space-y-1.5">
-                      {#each group.versions as version (version.key)}
-                        <label class="flex items-center justify-between gap-2 rounded-md border p-2">
-                          <div class="flex items-center gap-2 min-w-0">
-                            <Checkbox
-                              checked={selectedVersionKeys.has(version.key)}
-                              onCheckedChange={() => toggleVersion(version.key)}
-                              disabled={!selectedFileIds.has(group.fileId)}
-                            />
-                            <div class="min-w-0">
-                              <p class="text-sm truncate">{version.versionName}</p>
-                              <p class="text-xs text-muted-foreground">{formatCreatedAt(version.createdAt)}</p>
-                            </div>
-                          </div>
-                        </label>
-                      {/each}
+                <Item.Root variant="outline" size="sm" class="cursor-pointer">
+                  {#snippet child({ props })}
+                    <div
+                      {...props}
+                      onclick={() => setMode('all_versions')}
+                    >
+                      <Item.Media>
+                        <RadioGroup.Item
+                          value="all_versions"
+                          id={allVersionsId}
+                          aria-labelledby={allVersionsTitleId}
+                          aria-describedby={allVersionsDescriptionId}
+                        />
+                      </Item.Media>
+                      <Item.Content>
+                        <Item.Title id={allVersionsTitleId}>All versions</Item.Title>
+                        <Item.Description id={allVersionsDescriptionId}>Export every version from each selected file.</Item.Description>
+                      </Item.Content>
                     </div>
-                  </section>
+                  {/snippet}
+                </Item.Root>
+
+                <Item.Root variant="outline" size="sm" class="cursor-pointer">
+                  {#snippet child({ props })}
+                    <div
+                      {...props}
+                      onclick={() => setMode('custom')}
+                    >
+                      <Item.Media>
+                        <RadioGroup.Item
+                          value="custom"
+                          id={customSelectionId}
+                          aria-labelledby={customSelectionTitleId}
+                          aria-describedby={customSelectionDescriptionId}
+                        />
+                      </Item.Media>
+                      <Item.Content>
+                        <Item.Title id={customSelectionTitleId}>Custom selection</Item.Title>
+                        <Item.Description id={customSelectionDescriptionId}>Choose specific versions to export.</Item.Description>
+                      </Item.Content>
+                    </div>
+                  {/snippet}
+                </Item.Root>
+              </div>
+            </RadioGroup.Root>
+          </Field.Set>
+
+          <Field.Field>
+            <Field.Label id={exportFormatLabelId}>Export format</Field.Label>
+            <Select.Root
+              type="single"
+              value={selectedFormat}
+              onValueChange={(value) => {
+                if (value) {
+                  selectedFormat = value;
+                }
+              }}
+              disabled={isExporting || !hasAvailableFormat}
+            >
+              <Select.Trigger class="w-full" aria-labelledby={exportFormatLabelId}>
+                {selectedFormatOptions.find((option) => option.value === selectedFormat)?.label
+                  ?? formatOptions.find((option) => option.value === selectedFormat)?.label
+                  ?? selectedFormat.toUpperCase()}
+              </Select.Trigger>
+              <Select.Content>
+                <Select.Group>
+                  {#each selectedFormatOptions as formatOption (formatOption.value)}
+                    <Select.Item value={formatOption.value}>{formatOption.label}</Select.Item>
+                  {/each}
+                </Select.Group>
+              </Select.Content>
+            </Select.Root>
+            {#if !hasAvailableFormat && selectedVersionCount > 0}
+              <Field.Description class="text-xs text-destructive">
+                No common export format is available for the selected versions.
+              </Field.Description>
+            {:else if formatOptionsWereFiltered}
+              <Field.Description class="text-xs">
+                Selected versions require positioned subtitles, so incompatible formats are hidden.
+              </Field.Description>
+            {/if}
+          </Field.Field>
+
+          <Field.Set class="gap-3">
+            <Field.Legend variant="label" class="mb-0">File filter</Field.Legend>
+            <Field.Description class="text-xs">Select which files to include.</Field.Description>
+
+            <ScrollArea class="h-40">
+              <div class="flex flex-col gap-2 pr-3">
+                {#each sortedGroups as group, groupIndex (group.fileId)}
+                  {@const fileId = `${baseId}-export-file-${groupIndex}`}
+                  {@const fileTitleId = `${fileId}-title`}
+                  {@const fileDescriptionId = `${fileId}-description`}
+                  <Item.Root variant="outline" size="xs" class="cursor-pointer">
+                    {#snippet child({ props })}
+                      <div
+                        {...props}
+                        onclick={() => toggleFile(group.fileId)}
+                      >
+                        <Item.Media>
+                          <Checkbox
+                            checked={selectedFileIds.has(group.fileId)}
+                            onCheckedChange={() => toggleFile(group.fileId)}
+                            onclick={(event) => event.stopPropagation()}
+                            aria-labelledby={fileTitleId}
+                            aria-describedby={fileDescriptionId}
+                          />
+                        </Item.Media>
+                        <Item.Content class="min-w-0">
+                          <Item.Title id={fileTitleId} class="truncate">{group.fileName}</Item.Title>
+                          <Item.Description id={fileDescriptionId} class="text-xs">{group.versions.length} version(s)</Item.Description>
+                        </Item.Content>
+                        {#if group.fileBadge}
+                          <Item.Actions>
+                            <Badge variant="outline" class="shrink-0 uppercase">{group.fileBadge}</Badge>
+                          </Item.Actions>
+                        {/if}
+                      </div>
+                    {/snippet}
+                  </Item.Root>
                 {/each}
               </div>
             </ScrollArea>
-          </div>
-        {/if}
+          </Field.Set>
 
-        <OutputFolderField
-          label={outputFolderLabel}
-          displayText={outputFolderDisplay.displayText}
-          state={outputFolderDisplay.state}
-          disabled={isExporting}
-          onBrowse={handleBrowseOutput}
-        />
+          {#if mode === 'custom'}
+            <Field.Set class="gap-3">
+              <Field.Legend variant="label" class="mb-0">Version filter</Field.Legend>
+              <Field.Description class="text-xs">Choose exact versions to export.</Field.Description>
 
-        <div class="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
-          {selectedFileCount} file(s) selected · {selectedVersionCount} version(s) to export
-        </div>
+              <ScrollArea class="h-56">
+                <div class="flex flex-col gap-4 pr-3">
+                  {#each sortedGroups as group, groupIndex (group.fileId)}
+                    <section class="flex flex-col gap-2">
+                      <p class="text-sm font-medium truncate">{group.fileName}</p>
+                      <div class="flex flex-col gap-1.5">
+                        {#each group.versions as version, versionIndex (version.key)}
+                          {@const versionId = `${baseId}-export-version-${groupIndex}-${versionIndex}`}
+                          {@const versionTitleId = `${versionId}-title`}
+                          {@const versionDescriptionId = `${versionId}-description`}
+                          <Item.Root
+                            variant="outline"
+                            size="xs"
+                            class={['cursor-pointer', !selectedFileIds.has(group.fileId) && 'opacity-60']}
+                          >
+                            {#snippet child({ props })}
+                              <div
+                                {...props}
+                                onclick={() => toggleVersionIfFileSelected(group.fileId, version.key)}
+                              >
+                                <Item.Media>
+                                  <Checkbox
+                                    checked={selectedVersionKeys.has(version.key)}
+                                    onCheckedChange={() => toggleVersion(version.key)}
+                                    onclick={(event) => event.stopPropagation()}
+                                    disabled={!selectedFileIds.has(group.fileId)}
+                                    aria-labelledby={versionTitleId}
+                                    aria-describedby={versionDescriptionId}
+                                  />
+                                </Item.Media>
+                                <Item.Content class="min-w-0">
+                                  <Item.Title id={versionTitleId} class="truncate">{version.versionName}</Item.Title>
+                                  <Item.Description id={versionDescriptionId} class="text-xs">{formatCreatedAt(version.createdAt)}</Item.Description>
+                                </Item.Content>
+                              </div>
+                            {/snippet}
+                          </Item.Root>
+                        {/each}
+                      </div>
+                    </section>
+                  {/each}
+                </div>
+              </ScrollArea>
+            </Field.Set>
+          {/if}
 
-        {#if exportFailures.length > 0}
-          <div class="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
-            <p class="text-sm font-medium text-destructive">Export issues</p>
-            <ul class="space-y-1 text-xs text-destructive/90">
-              {#each displayedFailures as failure (`${failure.fileId}:${failure.versionId}:${failure.message}`)}
-                <li class="break-words">
-                  {failure.fileName}/{formatFailureVersionLabel(failure)}: {failure.message}
-                </li>
-              {/each}
-            </ul>
-            {#if hiddenFailureCount > 0}
-              <p class="text-xs text-destructive/80">
-                +{hiddenFailureCount} more issue(s)
-              </p>
-            {/if}
-          </div>
-        {/if}
-      </div>
-    {/if}
+          <OutputFolderField
+            label={outputFolderLabel}
+            displayText={outputFolderDisplay.displayText}
+            state={outputFolderDisplay.state}
+            disabled={isExporting}
+            onBrowse={handleBrowseOutput}
+          />
+
+          <Item.Root variant="muted" size="xs">
+            <Item.Content>
+              <Item.Description>
+                {selectedFileCount} file(s) selected · {selectedVersionCount} version(s) to export
+              </Item.Description>
+            </Item.Content>
+          </Item.Root>
+
+          {#if exportFailures.length > 0}
+            <Alert.Root
+              variant="destructive"
+              role="region"
+              aria-labelledby={exportIssuesTitleId}
+              aria-describedby={exportIssuesDescriptionId}
+            >
+              <Alert.Title id={exportIssuesTitleId}>Export issues</Alert.Title>
+              <Alert.Description id={exportIssuesDescriptionId} class="flex flex-col gap-2">
+                <ul class="flex flex-col gap-1 text-xs">
+                  {#each displayedFailures as failure (`${failure.fileId}:${failure.versionId}:${failure.message}`)}
+                    <li class="break-words">
+                      {failure.fileName}/{formatFailureVersionLabel(failure)}: {failure.message}
+                    </li>
+                  {/each}
+                </ul>
+                {#if hiddenFailureCount > 0}
+                  <p class="text-xs">
+                    +{hiddenFailureCount} more issue(s)
+                  </p>
+                {/if}
+              </Alert.Description>
+            </Alert.Root>
+          {/if}
+        </Field.Group>
+      {/if}
     </div>
 
     <Dialog.Footer class="shrink-0">
@@ -479,10 +592,10 @@
       </Button>
       <Button onclick={handleExport} disabled={!canExport}>
         {#if isExporting}
-          <Loader2 class="size-4 mr-2 animate-spin" />
+          <Loader2 data-icon="inline-start" class="animate-spin" />
           Exporting...
         {:else}
-          <Download class="size-4 mr-2" />
+          <Download data-icon="inline-start" />
           Export ({selectedVersionCount})
         {/if}
       </Button>

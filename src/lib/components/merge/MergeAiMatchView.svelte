@@ -12,11 +12,14 @@
 
   import { LlmProviderModelSelector } from '$lib/components/llm';
   import * as Accordion from '$lib/components/ui/accordion';
+  import * as Alert from '$lib/components/ui/alert';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import * as Card from '$lib/components/ui/card';
+  import * as Empty from '$lib/components/ui/empty';
+  import * as Item from '$lib/components/ui/item';
   import type {
     ImportedTrack,
     LLMProvider,
@@ -148,7 +151,8 @@
   <div class="grid h-full grid-cols-[minmax(19rem,22rem)_minmax(0,1fr)]">
     <aside class="border-r bg-background/85 p-4 overflow-auto">
       <div class="space-y-4">
-        <div class="rounded-2xl border bg-card p-4 shadow-sm">
+        <Card.Root size="sm">
+          <Card.Content>
           <div class="flex items-start gap-3">
             <div class="rounded-xl bg-primary/10 p-2 text-primary">
               <Sparkles class="size-5" />
@@ -160,7 +164,8 @@
               </p>
             </div>
           </div>
-        </div>
+          </Card.Content>
+        </Card.Root>
 
         <Card.Root>
           <Card.Header class="pb-3">
@@ -205,48 +210,61 @@
             {/if}
 
             {#if status === 'error' && error}
-              <div class="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
-                <p class="font-medium text-destructive">AI match failed</p>
-                <p class="mt-1 text-muted-foreground">{error}</p>
-              </div>
+              <Alert.Root variant="destructive">
+                <AlertTriangle class="size-4" />
+                <Alert.Title>AI match failed</Alert.Title>
+                <Alert.Description>{error}</Alert.Description>
+              </Alert.Root>
             {/if}
 
             {#if status === 'preview' && warnings.length > 0}
-              <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
-                <div class="flex items-center gap-2 font-medium text-amber-700">
-                  <AlertTriangle class="size-4" />
-                  <span>Some AI suggestions were ignored</span>
-                </div>
+              <Alert.Root
+                role="status"
+                aria-live="polite"
+                class="border-amber-500/30 bg-amber-500/10"
+              >
+                <AlertTriangle class="size-4 text-amber-700" />
+                <Alert.Title class="text-amber-700">Some AI suggestions were ignored</Alert.Title>
+                <Alert.Description>
                 <ul class="mt-2 space-y-1 text-muted-foreground">
-                  {#each visibleWarnings as warning}
+                  {#each visibleWarnings as warning (warning)}
                     <li>{warning}</li>
                   {/each}
                 </ul>
                 {#if remainingWarningCount > 0}
                   <p class="mt-2 text-muted-foreground">{remainingWarningCount} more warning(s).</p>
                 {/if}
-              </div>
+                </Alert.Description>
+              </Alert.Root>
             {/if}
           </Card.Content>
         </Card.Root>
 
         <div class="grid grid-cols-2 gap-2 text-sm">
-          <div class="rounded-xl border bg-card p-3">
-            <p class="text-muted-foreground">Ready videos</p>
-            <p class="text-2xl font-semibold">{videos.length}</p>
-          </div>
-          <div class="rounded-xl border bg-card p-3">
-            <p class="text-muted-foreground">Unassigned</p>
-            <p class="text-2xl font-semibold">{unassignedTracks.length}</p>
-          </div>
-          <div class="rounded-xl border bg-card p-3">
-            <p class="text-muted-foreground">Matched</p>
-            <p class="text-2xl font-semibold">{matchedSuggestionCount}</p>
-          </div>
-          <div class="rounded-xl border bg-card p-3">
-            <p class="text-muted-foreground">Selected</p>
-            <p class="text-2xl font-semibold">{selectedSuggestionCount}</p>
-          </div>
+          <Card.Root size="sm">
+            <Card.Content>
+              <p class="text-muted-foreground">Ready videos</p>
+              <p class="text-2xl font-semibold">{videos.length}</p>
+            </Card.Content>
+          </Card.Root>
+          <Card.Root size="sm">
+            <Card.Content>
+              <p class="text-muted-foreground">Unassigned</p>
+              <p class="text-2xl font-semibold">{unassignedTracks.length}</p>
+            </Card.Content>
+          </Card.Root>
+          <Card.Root size="sm">
+            <Card.Content>
+              <p class="text-muted-foreground">Matched</p>
+              <p class="text-2xl font-semibold">{matchedSuggestionCount}</p>
+            </Card.Content>
+          </Card.Root>
+          <Card.Root size="sm">
+            <Card.Content>
+              <p class="text-muted-foreground">Selected</p>
+              <p class="text-2xl font-semibold">{selectedSuggestionCount}</p>
+            </Card.Content>
+          </Card.Root>
         </div>
       </div>
     </aside>
@@ -275,9 +293,15 @@
         <ScrollArea class="min-h-0 flex-1">
           <div class="space-y-3 px-6 py-4">
             {#if videos.length === 0}
-              <div class="rounded-2xl border border-dashed p-10 text-center text-muted-foreground">
-                Add ready video files to build an AI match board.
-              </div>
+              <Empty.Root>
+                <Empty.Header>
+                  <Empty.Media>
+                    <FileVideo class="size-10 text-muted-foreground/50" />
+                  </Empty.Media>
+                  <Empty.Title class="text-base">No ready videos</Empty.Title>
+                  <Empty.Description>Add ready video files to build an AI match board.</Empty.Description>
+                </Empty.Header>
+              </Empty.Root>
             {:else}
               <Accordion.Root
                 type="multiple"
@@ -288,7 +312,7 @@
               {#each videos as video (video.id)}
                 {@const attachedTracks = attachedTracksForVideo(video)}
                 {@const suggestedTracks = suggestedTracksForVideo(video.id)}
-                <Accordion.Item value={video.id} class="min-w-0 overflow-hidden rounded-2xl border border-border bg-card last:border-b">
+                <Accordion.Item value={video.id} class="min-w-0 overflow-hidden last:border-b">
                   <Accordion.Trigger class="min-w-0 items-center overflow-hidden py-0 pr-4 text-left hover:no-underline [&>svg]:translate-y-0">
                     <div class="flex min-w-0 flex-1 items-center gap-3 overflow-hidden p-4 pr-0">
                       <div class="shrink-0 rounded-xl bg-primary/10 p-2 text-primary">
@@ -323,23 +347,29 @@
                           <Badge variant="outline">{attachedTracks.length}</Badge>
                         </div>
                         {#if attachedTracks.length > 0}
-                          <div class="grid min-w-0 gap-2">
+                          <Item.Group class="min-w-0 gap-2">
                             {#each attachedTracks as track (track.id)}
                               {@const TrackIcon = getTrackIcon(track.type)}
-                              <div class="flex min-w-0 items-center gap-2 overflow-hidden rounded-lg border bg-background px-3 py-2">
-                                <TrackIcon class="size-4 shrink-0 text-muted-foreground" />
-                                <span class="min-w-0 flex-1 truncate text-sm" title={track.name}>{track.name}</span>
-                                <Badge variant="secondary" class="shrink-0 uppercase">{track.type}</Badge>
-                                {#if effectiveLanguage(track)}
-                                  <Badge variant="outline" class="shrink-0">{formatLanguage(effectiveLanguage(track) ?? undefined)}</Badge>
-                                {/if}
-                              </div>
+                              <Item.Root size="xs" variant="outline" class="min-w-0 flex-nowrap" role="listitem">
+                                <Item.Media>
+                                  <TrackIcon class="size-4 shrink-0 text-muted-foreground" />
+                                </Item.Media>
+                                <Item.Content class="min-w-0">
+                                  <Item.Title class="truncate text-sm" title={track.name}>{track.name}</Item.Title>
+                                </Item.Content>
+                                <Item.Actions class="shrink-0">
+                                  <Badge variant="secondary" class="uppercase">{track.type}</Badge>
+                                  {#if effectiveLanguage(track)}
+                                    <Badge variant="outline">{formatLanguage(effectiveLanguage(track) ?? undefined)}</Badge>
+                                  {/if}
+                                </Item.Actions>
+                              </Item.Root>
                             {/each}
-                          </div>
+                          </Item.Group>
                         {:else}
-                          <p class="rounded-lg border border-dashed bg-background/60 px-3 py-2 text-sm text-muted-foreground">
-                            No imported tracks attached yet.
-                          </p>
+                          <Empty.Root class="border-0 p-2">
+                            <Empty.Description>No imported tracks attached yet.</Empty.Description>
+                          </Empty.Root>
                         {/if}
                       </div>
 
@@ -349,44 +379,45 @@
                           <Badge variant="outline">{suggestedTracks.length}</Badge>
                         </div>
                         {#if suggestedTracks.length > 0}
-                          <div class="grid min-w-0 gap-2">
+                          <Item.Group class="min-w-0 gap-2">
                             {#each suggestedTracks as suggestion (suggestion.trackId)}
                               {@const track = trackMap.get(suggestion.trackId)}
                               {@const TrackIcon = track ? getTrackIcon(track.type) : FileAudio}
-                              <div class="min-w-0 overflow-hidden rounded-xl border bg-background p-3">
-                                <div class="flex min-w-0 items-start gap-3">
-                                  <Checkbox
-                                    checked={suggestion.selected}
-                                    aria-label={`Select ${track?.name ?? suggestion.trackId}`}
-                                    onCheckedChange={(checked) => onToggleSuggestion(suggestion.trackId, !!checked)}
-                                  />
+                              <Item.Root size="sm" variant="outline" class="min-w-0 items-start" role="listitem">
+                                <Checkbox
+                                  class="mt-0.5"
+                                  checked={suggestion.selected}
+                                  aria-label={`Select ${track?.name ?? suggestion.trackId}`}
+                                  onCheckedChange={(checked) => onToggleSuggestion(suggestion.trackId, !!checked)}
+                                />
+                                <Item.Media>
                                   <TrackIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                                  <div class="min-w-0 flex-1 space-y-2">
-                                    <div class="flex min-w-0 flex-wrap items-center gap-2">
-                                      <p class="min-w-0 flex-1 truncate font-medium text-sm" title={track?.name ?? suggestion.trackId}>
-                                        {track?.name ?? suggestion.trackId}
-                                      </p>
-                                      {#if track}
-                                        <Badge variant="outline" class="shrink-0 uppercase">{track.type}</Badge>
-                                      {/if}
-                                      <Badge class={cn('shrink-0', getConfidenceClass(suggestion.confidence))}>
-                                        {suggestion.confidence.charAt(0).toUpperCase() + suggestion.confidence.slice(1)}
-                                      </Badge>
-                                    </div>
-                                    <p class="text-sm text-muted-foreground break-words">{suggestion.reason}</p>
+                                </Item.Media>
+                                <Item.Content class="min-w-0">
+                                  <div class="flex min-w-0 flex-wrap items-center gap-2">
+                                    <Item.Title class="min-w-0 flex-1 truncate text-sm" title={track?.name ?? suggestion.trackId}>
+                                      {track?.name ?? suggestion.trackId}
+                                    </Item.Title>
+                                    {#if track}
+                                      <Badge variant="outline" class="shrink-0 uppercase">{track.type}</Badge>
+                                    {/if}
+                                    <Badge class={cn('shrink-0', getConfidenceClass(suggestion.confidence))}>
+                                      {suggestion.confidence.charAt(0).toUpperCase() + suggestion.confidence.slice(1)}
+                                    </Badge>
                                   </div>
-                                </div>
-                              </div>
+                                  <Item.Description class="break-words">{suggestion.reason}</Item.Description>
+                                </Item.Content>
+                              </Item.Root>
                             {/each}
-                          </div>
+                          </Item.Group>
                         {:else if status === 'preview'}
-                          <p class="rounded-lg border border-dashed bg-background/60 px-3 py-2 text-sm text-muted-foreground">
-                            The AI did not propose tracks for this video.
-                          </p>
+                          <Empty.Root class="border-0 p-2">
+                            <Empty.Description>The AI did not propose tracks for this video.</Empty.Description>
+                          </Empty.Root>
                         {:else}
-                          <p class="rounded-lg border border-dashed bg-background/60 px-3 py-2 text-sm text-muted-foreground">
-                            Run AI Match to generate proposals.
-                          </p>
+                          <Empty.Root class="border-0 p-2">
+                            <Empty.Description>Run AI Match to generate proposals.</Empty.Description>
+                          </Empty.Root>
                         {/if}
                       </div>
                     </div>
@@ -396,29 +427,35 @@
               </Accordion.Root>
 
               {#if unmatchedSuggestions.length > 0}
-                <div class="min-w-0 overflow-hidden rounded-2xl border border-dashed bg-muted/20 p-4">
-                  <div class="mb-3 flex items-center gap-2">
+                <Card.Root class="border-dashed">
+                  <Card.Header class="flex-row items-center gap-2">
                     <Unlink class="size-4 text-muted-foreground" />
-                    <p class="font-medium">Unmatched suggestions</p>
-                    <Badge variant="secondary">{unmatchedSuggestions.length}</Badge>
-                  </div>
-                  <div class="grid min-w-0 gap-2">
+                    <Card.Title class="text-base">Unmatched suggestions</Card.Title>
+                    <Card.Action>
+                      <Badge variant="secondary">{unmatchedSuggestions.length}</Badge>
+                    </Card.Action>
+                  </Card.Header>
+                  <Card.Content>
+                  <Item.Group class="min-w-0 gap-2">
                     {#each unmatchedSuggestions as suggestion (suggestion.trackId)}
                       {@const track = trackMap.get(suggestion.trackId)}
-                      <div class="min-w-0 overflow-hidden rounded-lg border bg-background px-3 py-2 text-sm">
+                      <Item.Root size="sm" variant="outline" class="min-w-0" role="listitem">
+                        <Item.Content class="min-w-0">
                         <div class="flex min-w-0 flex-wrap items-center gap-2">
-                          <span class="min-w-0 flex-1 truncate font-medium" title={track?.name ?? suggestion.trackId}>
+                          <Item.Title class="min-w-0 flex-1 truncate" title={track?.name ?? suggestion.trackId}>
                             {track?.name ?? suggestion.trackId}
-                          </span>
+                          </Item.Title>
                           <Badge class={cn('shrink-0', getConfidenceClass(suggestion.confidence))}>
                             {suggestion.confidence.charAt(0).toUpperCase() + suggestion.confidence.slice(1)}
                           </Badge>
                         </div>
-                        <p class="mt-1 text-muted-foreground break-words">{suggestion.reason}</p>
-                      </div>
+                        <Item.Description class="break-words">{suggestion.reason}</Item.Description>
+                        </Item.Content>
+                      </Item.Root>
                     {/each}
-                  </div>
-                </div>
+                  </Item.Group>
+                  </Card.Content>
+                </Card.Root>
               {/if}
             {/if}
           </div>

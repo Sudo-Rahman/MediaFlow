@@ -6,7 +6,8 @@
   import { getAudioTrackLanguageLabel } from '$lib/utils/audio-language';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
-  import * as Card from '$lib/components/ui/card';
+  import * as Empty from '$lib/components/ui/empty';
+  import * as Item from '$lib/components/ui/item';
   import Waveform from './Waveform.svelte';
   import { audioToSubsStore } from '$lib/stores/audio-to-subs.svelte';
 
@@ -85,122 +86,122 @@
     <div class="p-4 space-y-4">
       <div class="grid grid-cols-2 gap-4">
         <!-- Duration -->
-        <Card.Root class="p-3">
-          <div class="flex items-center gap-2 text-muted-foreground mb-1">
+        <Item.Root variant="outline" size="xs" class="items-start">
+          <Item.Media class="text-muted-foreground">
             <Clock class="size-4" />
-            <span class="text-xs font-medium">Duration</span>
-          </div>
-          <p class="text-lg font-semibold">
-            {file.duration ? formatDuration(file.duration) : 'N/A'}
-          </p>
-        </Card.Root>
+          </Item.Media>
+          <Item.Content>
+            <Item.Description class="text-xs font-medium">Duration</Item.Description>
+            <Item.Title class="text-lg">{file.duration ? formatDuration(file.duration) : 'N/A'}</Item.Title>
+          </Item.Content>
+        </Item.Root>
 
         <!-- Format -->
-        <Card.Root class="p-3">
-          <div class="flex items-center gap-2 text-muted-foreground mb-1">
+        <Item.Root variant="outline" size="xs" class="items-start">
+          <Item.Media class="text-muted-foreground">
             <AudioLines class="size-4" />
-            <span class="text-xs font-medium">Format</span>
-          </div>
-          <p class="text-lg font-semibold">
-            {file.format?.toUpperCase() || 'N/A'}
-          </p>
-        </Card.Root>
+          </Item.Media>
+          <Item.Content>
+            <Item.Description class="text-xs font-medium">Format</Item.Description>
+            <Item.Title class="text-lg">{file.format?.toUpperCase() || 'N/A'}</Item.Title>
+          </Item.Content>
+        </Item.Root>
 
         <!-- Sample Rate -->
-        <Card.Root class="p-3">
-          <div class="flex items-center gap-2 text-muted-foreground mb-1">
+        <Item.Root variant="outline" size="xs" class="items-start">
+          <Item.Media class="text-muted-foreground">
             <Radio class="size-4" />
-            <span class="text-xs font-medium">Sample Rate</span>
-          </div>
-          <p class="text-lg font-semibold">
-            {file.sampleRate ? `${(file.sampleRate / 1000).toFixed(1)} kHz` : 'N/A'}
-          </p>
-        </Card.Root>
+          </Item.Media>
+          <Item.Content>
+            <Item.Description class="text-xs font-medium">Sample Rate</Item.Description>
+            <Item.Title class="text-lg">{file.sampleRate ? `${(file.sampleRate / 1000).toFixed(1)} kHz` : 'N/A'}</Item.Title>
+          </Item.Content>
+        </Item.Root>
 
         <!-- Channels -->
-        <Card.Root class="p-3">
-          <div class="flex items-center gap-2 text-muted-foreground mb-1">
+        <Item.Root variant="outline" size="xs" class="items-start">
+          <Item.Media class="text-muted-foreground">
             <Volume2 class="size-4" />
-            <span class="text-xs font-medium">Channels</span>
-          </div>
-          <p class="text-lg font-semibold">
-            {file.channels ? formatChannels(file.channels) : 'N/A'}
-          </p>
-        </Card.Root>
+          </Item.Media>
+          <Item.Content>
+            <Item.Description class="text-xs font-medium">Channels</Item.Description>
+            <Item.Title class="text-lg">{file.channels ? formatChannels(file.channels) : 'N/A'}</Item.Title>
+          </Item.Content>
+        </Item.Root>
 
         <!-- Bitrate -->
-        <Card.Root class="p-3">
-          <div class="flex items-center gap-2 text-muted-foreground mb-1">
+        <Item.Root variant="outline" size="xs" class="items-start">
+          <Item.Media class="text-muted-foreground">
             <Radio class="size-4" />
-            <span class="text-xs font-medium">Bitrate</span>
-          </div>
-          <p class="text-lg font-semibold">
-            {file.bitrate ? formatBitrate(file.bitrate) : 'N/A'}
-          </p>
-        </Card.Root>
+          </Item.Media>
+          <Item.Content>
+            <Item.Description class="text-xs font-medium">Bitrate</Item.Description>
+            <Item.Title class="text-lg">{file.bitrate ? formatBitrate(file.bitrate) : 'N/A'}</Item.Title>
+          </Item.Content>
+        </Item.Root>
 
         <!-- File Size -->
-        <Card.Root class="p-3">
-          <div class="flex items-center gap-2 text-muted-foreground mb-1">
+        <Item.Root variant="outline" size="xs" class="items-start">
+          <Item.Media class="text-muted-foreground">
             <HardDrive class="size-4" />
-            <span class="text-xs font-medium">Size</span>
-          </div>
-          <p class="text-lg font-semibold">
-            {file.size ? formatFileSize(file.size) : 'N/A'}
-          </p>
-        </Card.Root>
+          </Item.Media>
+          <Item.Content>
+            <Item.Description class="text-xs font-medium">Size</Item.Description>
+            <Item.Title class="text-lg">{file.size ? formatFileSize(file.size) : 'N/A'}</Item.Title>
+          </Item.Content>
+        </Item.Root>
       </div>
 
 
-        <Card.Root class="p-3">
-          <div class="flex items-center justify-between gap-3 flex-wrap">
-            <div class="flex items-center gap-3">
-              <div class="flex items-center gap-2 text-muted-foreground">
-                <Disc3 class="size-4" />
-                <span class="text-xs font-medium">Audio Track</span>
-              </div>
-              <div class="flex items-center gap-2">
-                <span class="text-sm font-medium">
-                  Track {(file.selectedTrackIndex ?? 0) + 1} of {file.audioTrackCount}
-                </span>
-                {#if trackLanguageLabel}
-                  <Badge variant="secondary" class="text-xs">
-                    {trackLanguageLabel}
-                  </Badge>
-                {:else}
-                  <span class="text-xs text-muted-foreground">No language tag</span>
-                {/if}
-              </div>
-            </div>
-            <div class="flex items-center gap-3 flex-wrap">
-              <!-- Audio Track Info (for multi-track files) -->
-              {#if canChangeTrack}
-                <Button
-                        variant="outline"
-                        size="sm"
-                        onclick={() => file && onChangeTrack?.(file)}
-                >
-                  Change track
-                </Button>
+        <Item.Root variant="outline" size="sm" class="items-start justify-between">
+          <Item.Media class="text-muted-foreground">
+            <Disc3 class="size-4" />
+          </Item.Media>
+          <Item.Content class="min-w-0">
+            <Item.Description class="text-xs font-medium">Audio Track</Item.Description>
+            <Item.Title class="max-w-full flex-wrap">
+              <span>
+                Track {(file.selectedTrackIndex ?? 0) + 1} of {file.audioTrackCount}
+              </span>
+              {#if trackLanguageLabel}
+                <Badge variant="secondary" class="text-xs">
+                  {trackLanguageLabel}
+                </Badge>
+              {:else}
+                <span class="text-xs font-normal text-muted-foreground">No language tag</span>
               {/if}
-              {#if file.audioTrackTitle}
-                  <span class="text-sm text-muted-foreground truncate max-w-[200px]" title={file.audioTrackTitle}>
-                    {file.audioTrackTitle}
-                  </span>
-              {/if}
-            </div>
-          </div>
-        </Card.Root>
+            </Item.Title>
+            {#if file.audioTrackTitle}
+              <Item.Description class="truncate" title={file.audioTrackTitle}>
+                {file.audioTrackTitle}
+              </Item.Description>
+            {/if}
+          </Item.Content>
+          <Item.Actions class="ml-auto">
+            <!-- Audio Track Info (for multi-track files) -->
+            {#if canChangeTrack}
+              <Button
+                variant="outline"
+                size="sm"
+                onclick={() => file && onChangeTrack?.(file)}
+              >
+                Change track
+              </Button>
+            {/if}
+          </Item.Actions>
+        </Item.Root>
 
     </div>
   {:else}
     <!-- Empty state -->
-    <div class="flex-1 flex items-center justify-center">
-      <div class="text-center text-muted-foreground">
-        <AudioLines class="size-12 mx-auto mb-4 opacity-50" />
-        <p class="text-lg font-medium">No file selected</p>
-        <p class="text-sm">Select an audio file to see details</p>
-      </div>
-    </div>
+    <Empty.Root class="border-0">
+      <Empty.Header>
+        <Empty.Media>
+          <AudioLines class="size-12 text-muted-foreground/50" />
+        </Empty.Media>
+        <Empty.Title>No file selected</Empty.Title>
+        <Empty.Description>Select an audio file to see details</Empty.Description>
+      </Empty.Header>
+    </Empty.Root>
   {/if}
 </div>

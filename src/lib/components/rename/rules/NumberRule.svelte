@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { NumberConfig } from '$lib/types/rename';
+  import * as Field from '$lib/components/ui/field';
   import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
+  import * as Item from '$lib/components/ui/item';
   import * as Select from '$lib/components/ui/select';
 
   interface NumberRuleProps {
@@ -50,73 +51,80 @@
     const target = e.target as HTMLInputElement;
     onUpdate({ ...config, separator: target.value });
   }
+
+  const controlId = $props.id();
+  const positionSelectId = `${controlId}-number-position`;
+  const startInputId = `${controlId}-number-start`;
+  const stepInputId = `${controlId}-number-step`;
+  const paddingInputId = `${controlId}-number-padding`;
+  const separatorInputId = `${controlId}-number-separator`;
 </script>
 
 <div class="space-y-3">
-  <div class="space-y-1.5">
-    <Label>Position</Label>
+  <Field.Field>
+    <Field.FieldLabel for={positionSelectId}>Position</Field.FieldLabel>
     <Select.Root type="single" value={config.position} onValueChange={handlePositionChange}>
-      <Select.Trigger class="w-full">
+      <Select.Trigger id={positionSelectId} class="w-full">
         {positionOptions.find(o => o.value === config.position)?.label || 'Select position...'}
       </Select.Trigger>
       <Select.Content>
         <Select.Group>
-          {#each positionOptions as option}
+          {#each positionOptions as option (option.value)}
             <Select.Item value={option.value}>{option.label}</Select.Item>
           {/each}
         </Select.Group>
       </Select.Content>
     </Select.Root>
-  </div>
+  </Field.Field>
 
   <div class="grid grid-cols-3 gap-3">
-    <div class="space-y-1.5">
-      <Label for="number-start">Start</Label>
+    <Field.Field>
+      <Field.FieldLabel for={startInputId}>Start</Field.FieldLabel>
       <Input
-        id="number-start"
+        id={startInputId}
         type="number"
         min="0"
         value={config.start}
         oninput={handleStartChange}
       />
-    </div>
-    <div class="space-y-1.5">
-      <Label for="number-step">Step</Label>
+    </Field.Field>
+    <Field.Field>
+      <Field.FieldLabel for={stepInputId}>Step</Field.FieldLabel>
       <Input
-        id="number-step"
+        id={stepInputId}
         type="number"
         min="1"
         value={config.step}
         oninput={handleStepChange}
       />
-    </div>
-    <div class="space-y-1.5">
-      <Label for="number-padding">Padding</Label>
+    </Field.Field>
+    <Field.Field>
+      <Field.FieldLabel for={paddingInputId}>Padding</Field.FieldLabel>
       <Input
-        id="number-padding"
+        id={paddingInputId}
         type="number"
         min="1"
         max="10"
         value={config.padding}
         oninput={handlePaddingChange}
       />
-    </div>
+    </Field.Field>
   </div>
 
   {#if config.position !== 'replace'}
-    <div class="space-y-1.5">
-      <Label for="number-separator">Separator</Label>
+    <Field.Field>
+      <Field.FieldLabel for={separatorInputId}>Separator</Field.FieldLabel>
       <Input
-        id="number-separator"
+        id={separatorInputId}
         value={config.separator}
         oninput={handleSeparatorChange}
         placeholder="_"
         maxlength={5}
       />
-    </div>
+    </Field.Field>
   {/if}
 
-  <div class="p-2 rounded-md bg-muted">
-    <p class="text-xs text-muted-foreground">Preview: <span class="font-mono">{preview}</span></p>
-  </div>
+  <Item.Root variant="muted" size="xs">
+    <Item.Description class="text-xs">Preview: <span class="font-mono">{preview}</span></Item.Description>
+  </Item.Root>
 </div>

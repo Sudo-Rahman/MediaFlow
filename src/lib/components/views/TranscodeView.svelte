@@ -60,6 +60,7 @@
 
   import { useToolHeader } from '$lib/components/layout/tool-header-context.svelte';
   import { Button } from '$lib/components/ui/button';
+  import * as Item from '$lib/components/ui/item';
   import * as ToggleGroup from '$lib/components/ui/toggle-group';
   import * as Tabs from '$lib/components/ui/tabs';
   import {
@@ -928,7 +929,7 @@
       variant="outline"
       size="sm"
       spacing={0}
-      class="border border-border/50 bg-muted/20 p-0.5 shadow-none"
+      class="shadow-none"
       onValueChange={handleModeChange}
     >
       <ToggleGroup.Item
@@ -1023,15 +1024,19 @@
             </Tabs.List>
 
             {#if transcodeStore.activeTab !== 'output' && transcodeStore.activeTab !== 'metadata'}
-              <div class="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 px-3 py-2">
-                <p class="min-w-0 flex-1 text-sm text-muted-foreground">
-                  Saved presets for the current <span class="font-medium text-foreground">{activePresetTab}</span> tab.
-                </p>
-                <Button variant="outline" size="sm" class="shrink-0" onclick={() => presetManagerOpen = true}>
-                  <Save class="size-4 mr-2" />
-                  {getPresetTriggerLabel(activePresetTab)}
-                </Button>
-              </div>
+              <Item.Root variant="outline" size="sm">
+                <Item.Content class="min-w-0">
+                  <Item.Description class="line-clamp-none">
+                    Saved presets for the current <span class="font-medium text-foreground">{activePresetTab}</span> tab.
+                  </Item.Description>
+                </Item.Content>
+                <Item.Actions>
+                  <Button variant="outline" size="sm" class="shrink-0" onclick={() => presetManagerOpen = true}>
+                    <Save class="size-4 mr-2" />
+                    {getPresetTriggerLabel(activePresetTab)}
+                  </Button>
+                </Item.Actions>
+              </Item.Root>
             {/if}
 
             <Tabs.Content value="video" class="space-y-4">

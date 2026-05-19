@@ -2,9 +2,10 @@
   import { AlertTriangle, Key, Loader2, Play, Settings2, Users } from '@lucide/svelte';
   import { DEEPGRAM_MODELS, type TranscriptionConfig, type DeepgramConfig, type TranscriptionProvider } from '$lib/types';
   import { cn } from '$lib/utils';
+  import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
-  import { Label } from '$lib/components/ui/label';
+  import * as Field from '$lib/components/ui/field';
   import * as Select from '$lib/components/ui/select';
   import { Switch } from '$lib/components/ui/switch';
   import { Slider } from '$lib/components/ui/slider';
@@ -79,6 +80,14 @@
   const mediaFlowModels = [DEEPGRAM_MODELS[0]] as const;
   const modelOptions = $derived(isMediaFlow ? mediaFlowModels : DEEPGRAM_MODELS);
   const showProviderSelector = import.meta.env.DEV;
+  const idPrefix = `transcription-panel-${Math.random().toString(36).slice(2)}`;
+  const providerSelectId = `${idPrefix}-provider`;
+  const punctuationSwitchId = `${idPrefix}-punctuation`;
+  const smartFormatSwitchId = `${idPrefix}-smart-format`;
+  const paragraphsSwitchId = `${idPrefix}-paragraphs`;
+  const diarizeSwitchId = `${idPrefix}-diarize`;
+  const uttSplitSliderId = `${idPrefix}-utt-split`;
+  const maxConcurrentInputId = `${idPrefix}-max-concurrent`;
 </script>
 
 <div class={cn("h-full flex flex-col overflow-auto", className)}>
@@ -110,15 +119,15 @@
     <Card.Root>
       <Card.Content class="space-y-4">
         {#if showProviderSelector}
-          <div class="space-y-2">
-            <Label class="text-sm font-medium">Provider</Label>
+          <Field.Field>
+            <Field.FieldLabel for={providerSelectId}>Provider</Field.FieldLabel>
             <Select.Root
               type="single"
               value={config.provider}
               onValueChange={(value) => onProviderChange(value as TranscriptionProvider)}
               disabled={isTranscribing}
             >
-              <Select.Trigger class="w-full">
+              <Select.Trigger id={providerSelectId} class="w-full">
                 {config.provider === 'mediaflow' ? 'MediaFlow' : 'Deepgram'}
               </Select.Trigger>
               <Select.Content>
@@ -128,7 +137,7 @@
                 </Select.Group>
               </Select.Content>
             </Select.Root>
-          </div>
+          </Field.Field>
 
           <Separator />
         {/if}
@@ -152,16 +161,20 @@
         />
 
         {#if hasInvalidAutoLanguageFiles}
-          <Alert.Root class="mt-3 rounded-xl border-amber-200/70 bg-amber-50/45 px-3 py-2 text-amber-950 shadow-none *:[svg]:text-amber-600 [&>[data-slot=alert-title]]:min-w-0 [&>[data-slot=alert-description]]:min-w-0">
+          <Alert.Root
+            role="note"
+            aria-live="off"
+            class="mt-3 border-amber-500/40 text-amber-700 dark:text-amber-300"
+          >
             <AlertTriangle class="size-3.5" />
             <Alert.Title class="min-w-0 text-sm leading-snug break-words">Select a source language</Alert.Title>
-            <Alert.Description class="min-w-0 text-xs leading-snug text-amber-900/80">
+            <Alert.Description class="min-w-0 text-xs leading-snug">
               Auto-detection is unavailable.
 
-              <div class="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-amber-900/75">
-                <span class="rounded-full border border-amber-300/70 bg-white/70 px-2 py-0.5 font-medium text-amber-800">
+              <div class="mt-1.5 flex flex-wrap items-center gap-2 text-[11px]">
+                <Badge variant="secondary" class="text-[11px]">
                   {invalidFileCountLabel}
-                </span>
+                </Badge>
               </div>
             </Alert.Description>
           </Alert.Root>
@@ -179,81 +192,85 @@
       </Card.Header>
       <Card.Content class="space-y-4">
         <!-- Punctuation -->
-        <div class="flex items-center justify-between">
-          <div class="space-y-0.5">
-            <Label class="text-sm">Auto Punctuation</Label>
-            <p class="text-xs text-muted-foreground">
+        <Field.Field orientation="horizontal">
+          <Field.FieldContent>
+            <Field.FieldLabel for={punctuationSwitchId}>Auto Punctuation</Field.FieldLabel>
+            <Field.FieldDescription>
               Add punctuation to text
-            </p>
-          </div>
+            </Field.FieldDescription>
+          </Field.FieldContent>
           <Switch
+            id={punctuationSwitchId}
             checked={config.deepgramConfig.punctuate}
             onCheckedChange={(checked) => onDeepgramConfigChange({ punctuate: checked })}
             disabled={isTranscribing}
           />
-        </div>
+        </Field.Field>
 
         <!-- Smart Format -->
-        <div class="flex items-center justify-between">
-          <div class="space-y-0.5">
-            <Label class="text-sm">Smart Format</Label>
-            <p class="text-xs text-muted-foreground">
+        <Field.Field orientation="horizontal">
+          <Field.FieldContent>
+            <Field.FieldLabel for={smartFormatSwitchId}>Smart Format</Field.FieldLabel>
+            <Field.FieldDescription>
               Format numbers, dates, currencies
-            </p>
-          </div>
+            </Field.FieldDescription>
+          </Field.FieldContent>
           <Switch
+            id={smartFormatSwitchId}
             checked={config.deepgramConfig.smartFormat}
             onCheckedChange={(checked) => onDeepgramConfigChange({ smartFormat: checked })}
             disabled={isTranscribing}
           />
-        </div>
+        </Field.Field>
 
         <!-- Paragraphs -->
-        <div class="flex items-center justify-between">
-          <div class="space-y-0.5">
-            <Label class="text-sm">Paragraphs</Label>
-            <p class="text-xs text-muted-foreground">
+        <Field.Field orientation="horizontal">
+          <Field.FieldContent>
+            <Field.FieldLabel for={paragraphsSwitchId}>Paragraphs</Field.FieldLabel>
+            <Field.FieldDescription>
               Detect paragraph changes
-            </p>
-          </div>
+            </Field.FieldDescription>
+          </Field.FieldContent>
           <Switch
+            id={paragraphsSwitchId}
             checked={config.deepgramConfig.paragraphs}
             onCheckedChange={(checked) => onDeepgramConfigChange({ paragraphs: checked })}
             disabled={isTranscribing}
           />
-        </div>
+        </Field.Field>
 
         <Separator />
 
         <!-- Diarization -->
-        <div class="flex items-center justify-between">
-          <div class="space-y-0.5">
-            <Label class="text-sm flex items-center gap-2">
+        <Field.Field orientation="horizontal">
+          <Field.FieldContent>
+            <Field.FieldLabel for={diarizeSwitchId}>
               <Users class="size-4" />
               Diarization
-            </Label>
-            <p class="text-xs text-muted-foreground">
+            </Field.FieldLabel>
+            <Field.FieldDescription>
               Identify different speakers
-            </p>
-          </div>
+            </Field.FieldDescription>
+          </Field.FieldContent>
           <Switch
+            id={diarizeSwitchId}
             checked={config.deepgramConfig.diarize}
             onCheckedChange={(checked) => onDeepgramConfigChange({ diarize: checked })}
             disabled={isTranscribing}
           />
-        </div>
+        </Field.Field>
 
         <Separator />
 
         <!-- Utterance Split -->
-        <div class="space-y-3">
-          <div class="space-y-0.5">
-            <Label class="text-sm">Pause Threshold</Label>
-            <p class="text-xs text-muted-foreground">
+        <Field.Field>
+          <Field.FieldLabel id={`${uttSplitSliderId}-label`}>Pause Threshold</Field.FieldLabel>
+          <Field.FieldDescription>
               Silence duration to split phrases ({config.deepgramConfig.uttSplit.toFixed(1)}s)
-            </p>
-          </div>
+          </Field.FieldDescription>
           <Slider
+            id={uttSplitSliderId}
+            aria-labelledby={`${uttSplitSliderId}-label`}
             type="multiple"
             value={[config.deepgramConfig.uttSplit]}
             onValueChange={(values: number[]) => onDeepgramConfigChange({ uttSplit: values[0] })}
@@ -266,20 +283,19 @@
             <span>0.1s (short phrases)</span>
             <span>2.0s (long phrases)</span>
           </div>
-        </div>
+        </Field.Field>
 
         <Separator />
 
         <!-- Concurrent Transcriptions -->
-        <div class="space-y-3">
-          <div class="space-y-0.5">
-            <Label class="text-sm">Concurrent Transcriptions</Label>
-            <p class="text-xs text-muted-foreground">
+        <Field.Field>
+          <Field.FieldLabel for={maxConcurrentInputId}>Concurrent Transcriptions</Field.FieldLabel>
+          <Field.FieldDescription>
               Number of files to transcribe simultaneously ({config.maxConcurrentTranscriptions})
-            </p>
-          </div>
+          </Field.FieldDescription>
           <div class="flex items-center gap-3">
             <Input
+              id={maxConcurrentInputId}
               type="number"
               value={config.maxConcurrentTranscriptions}
               onchange={(e) => onMaxConcurrentChange(parseInt(e.currentTarget.value, 10))}
@@ -291,7 +307,7 @@
             />
             <span class="text-xs text-muted-foreground">files at once (max 10)</span>
           </div>
-        </div>
+        </Field.Field>
       </Card.Content>
     </Card.Root>
 

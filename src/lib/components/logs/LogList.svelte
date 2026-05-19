@@ -3,6 +3,9 @@
   import type { LogEntry } from '$lib/stores/logs.svelte';
   import { getSourceColor, getLevelColor, getLevelBgColor } from '$lib/stores/logs.svelte';
   import { Badge } from '$lib/components/ui/badge';
+  import * as Empty from '$lib/components/ui/empty';
+  import * as Item from '$lib/components/ui/item';
+  import { cn } from '$lib/utils';
 
 
   interface LogListProps {
@@ -56,55 +59,66 @@
 
 <div class="flex flex-col h-full {className}">
   {#if logs.length === 0}
-    <div class="flex-1 flex flex-col items-center justify-center text-center text-muted-foreground py-12">
-      <Info class="size-12 mb-4 opacity-30" />
-      <p class="font-medium">No logs yet</p>
-      <p class="text-sm">Logs will appear here as operations are performed</p>
-    </div>
+    <Empty.Root class="flex-1 border-0 text-muted-foreground">
+      <Empty.Header>
+        <Empty.Media class="opacity-30">
+          <Info class="size-12" />
+        </Empty.Media>
+        <Empty.Title class="text-base">No logs yet</Empty.Title>
+        <Empty.Description>Logs will appear here as operations are performed</Empty.Description>
+      </Empty.Header>
+    </Empty.Root>
   {:else}
     <div class="flex-1 overflow-scroll">
-      <div class="space-y-1 p-2">
+      <div class="flex flex-col gap-1 p-2">
         {#each logs as log (log.id)}
           {@const Icon = getLevelIcon(log.level)}
           {@const isSelected = selectedLogId === log.id}
-          <button
-            class="w-full flex items-start gap-3 p-3 rounded-lg border text-left transition-all hover:bg-accent/50 {getLevelBgColor(log.level)} {isSelected ? 'ring-2 ring-primary' : ''} {!log.read && log.level === 'error' ? 'border-l-4 border-l-destructive' : ''}"
-            onclick={() => onSelectLog?.(log)}
+          <Item.Root
+            size="sm"
+            variant="outline"
+            class={cn(
+              'items-start text-left hover:bg-muted/70',
+              getLevelBgColor(log.level),
+              isSelected && 'ring-2 ring-primary',
+              !log.read && log.level === 'error' && 'border-l-4 border-l-destructive'
+            )}
           >
-            <!-- Level icon -->
-            <div class="shrink-0 mt-0.5">
-              <Icon class="size-4 {getLevelColor(log.level)}" />
-            </div>
+            {#snippet child({ props })}
+              <button {...props} type="button" onclick={() => onSelectLog?.(log)}>
+                <Item.Media class="mt-0.5">
+                  <Icon class="size-4 {getLevelColor(log.level)}" />
+                </Item.Media>
 
-            <!-- Content -->
-            <div class="flex-1 min-w-0 space-y-1">
-              <div class="flex items-center gap-2 flex-wrap">
-                <span class="font-medium text-sm line-clamp-1">{log.title}</span>
-                {#if !log.read && log.level === 'error'}
-                  <Circle class="size-2 fill-destructive text-destructive" />
-                {/if}
-              </div>
+                <Item.Content class="min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="font-medium text-sm line-clamp-1">{log.title}</span>
+                    {#if !log.read && log.level === 'error'}
+                      <Circle class="size-2 fill-destructive text-destructive" />
+                    {/if}
+                  </div>
 
-              <div class="flex items-center gap-2 flex-wrap">
-                <Badge variant="outline" class="text-xs capitalize {getSourceColor(log.source)}">
-                  {log.source}
-                </Badge>
-                <span class="text-xs text-muted-foreground">
-                  {formatDate(log.timestamp)}
-                </span>
-                {#if log.context?.filePath}
-                  <span class="text-xs text-muted-foreground truncate max-w-32" title={log.context.filePath}>
-                    {log.context.filePath.split('/').pop() || log.context.filePath.split('\\').pop()}
-                  </span>
-                {/if}
-              </div>
-            </div>
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <Badge variant="outline" class="text-xs capitalize {getSourceColor(log.source)}">
+                      {log.source}
+                    </Badge>
+                    <span class="text-xs text-muted-foreground">
+                      {formatDate(log.timestamp)}
+                    </span>
+                    {#if log.context?.filePath}
+                      <span class="text-xs text-muted-foreground truncate max-w-32" title={log.context.filePath}>
+                        {log.context.filePath.split('/').pop() || log.context.filePath.split('\\').pop()}
+                      </span>
+                    {/if}
+                  </div>
+                </Item.Content>
 
-            <!-- View button -->
-            <div class="shrink-0">
-              <ExternalLink class="size-4 text-muted-foreground" />
-            </div>
-          </button>
+                <Item.Actions class="shrink-0">
+                  <ExternalLink class="size-4 text-muted-foreground" />
+                </Item.Actions>
+              </button>
+            {/snippet}
+          </Item.Root>
         {/each}
       </div>
     </div>

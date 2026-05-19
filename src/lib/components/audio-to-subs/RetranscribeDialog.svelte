@@ -6,7 +6,7 @@
   import { RetryVersionDialogShell } from '$lib/components/shared';
   import * as Alert from '$lib/components/ui/alert';
 
-  import { Label } from '$lib/components/ui/label';
+  import * as Field from '$lib/components/ui/field';
   import { Separator } from '$lib/components/ui/separator';
   import { Slider } from '$lib/components/ui/slider';
   import { Switch } from '$lib/components/ui/switch';
@@ -33,6 +33,12 @@
   let versionName = $state('');
   let config = $state<DeepgramConfig>({ ...DEFAULT_DEEPGRAM_CONFIG });
   let validationMessage = $state('');
+  const idPrefix = `retranscribe-${Math.random().toString(36).slice(2)}`;
+  const punctuationSwitchId = `${idPrefix}-punctuation`;
+  const smartFormatSwitchId = `${idPrefix}-smart-format`;
+  const paragraphsSwitchId = `${idPrefix}-paragraphs`;
+  const diarizeSwitchId = `${idPrefix}-diarize`;
+  const uttSplitSliderId = `${idPrefix}-utt-split`;
 
   $effect(() => {
     if (open && file) {
@@ -71,7 +77,7 @@
 >
   {#snippet optionsContent()}
     {#if validationMessage}
-      <Alert.Root class="border-amber-200/80 bg-amber-50/80 text-amber-950 shadow-none *:[svg]:text-amber-600">
+      <Alert.Root role="note" aria-live="off" class="border-amber-500/40 text-amber-700 dark:text-amber-300">
         <AlertTriangle class="size-4" />
         <Alert.Title>Choose a source language to continue</Alert.Title>
         <Alert.Description>{validationMessage}</Alert.Description>
@@ -92,71 +98,76 @@
 
     <Separator />
 
-    <div class="space-y-4">
-      <h4 class="text-sm font-medium flex items-center gap-2">
+    <Field.FieldSet>
+      <Field.FieldLegend variant="label" class="flex items-center gap-2">
         <Settings2 class="size-4" />
         Options
-      </h4>
+      </Field.FieldLegend>
 
-      <div class="flex items-center justify-between">
-        <div class="space-y-0.5">
-          <Label class="text-sm">Auto Punctuation</Label>
-          <p class="text-xs text-muted-foreground">Add punctuation</p>
-        </div>
+      <Field.FieldGroup class="gap-4">
+      <Field.Field orientation="horizontal">
+        <Field.FieldContent>
+          <Field.FieldLabel for={punctuationSwitchId}>Auto Punctuation</Field.FieldLabel>
+          <Field.FieldDescription>Add punctuation</Field.FieldDescription>
+        </Field.FieldContent>
         <Switch
+          id={punctuationSwitchId}
           checked={config.punctuate}
           onCheckedChange={(checked) => config = { ...config, punctuate: checked }}
         />
-      </div>
+      </Field.Field>
 
-      <div class="flex items-center justify-between">
-        <div class="space-y-0.5">
-          <Label class="text-sm">Smart Format</Label>
-          <p class="text-xs text-muted-foreground">Format numbers, dates, currencies</p>
-        </div>
+      <Field.Field orientation="horizontal">
+        <Field.FieldContent>
+          <Field.FieldLabel for={smartFormatSwitchId}>Smart Format</Field.FieldLabel>
+          <Field.FieldDescription>Format numbers, dates, currencies</Field.FieldDescription>
+        </Field.FieldContent>
         <Switch
+          id={smartFormatSwitchId}
           checked={config.smartFormat}
           onCheckedChange={(checked) => config = { ...config, smartFormat: checked }}
         />
-      </div>
+      </Field.Field>
 
-      <div class="flex items-center justify-between">
-        <div class="space-y-0.5">
-          <Label class="text-sm">Paragraphs</Label>
-          <p class="text-xs text-muted-foreground">Detect paragraphs</p>
-        </div>
+      <Field.Field orientation="horizontal">
+        <Field.FieldContent>
+          <Field.FieldLabel for={paragraphsSwitchId}>Paragraphs</Field.FieldLabel>
+          <Field.FieldDescription>Detect paragraphs</Field.FieldDescription>
+        </Field.FieldContent>
         <Switch
+          id={paragraphsSwitchId}
           checked={config.paragraphs}
           onCheckedChange={(checked) => config = { ...config, paragraphs: checked }}
         />
-      </div>
+      </Field.Field>
 
       <Separator />
 
-      <div class="flex items-center justify-between">
-        <div class="space-y-0.5">
-          <Label class="text-sm flex items-center gap-2">
+      <Field.Field orientation="horizontal">
+        <Field.FieldContent>
+          <Field.FieldLabel for={diarizeSwitchId}>
             <Users class="size-4" />
             Diarization
-          </Label>
-          <p class="text-xs text-muted-foreground">Identify speakers</p>
-        </div>
+          </Field.FieldLabel>
+          <Field.FieldDescription>Identify speakers</Field.FieldDescription>
+        </Field.FieldContent>
         <Switch
+          id={diarizeSwitchId}
           checked={config.diarize}
           onCheckedChange={(checked) => config = { ...config, diarize: checked }}
         />
-      </div>
+      </Field.Field>
 
       <Separator />
 
-      <div class="space-y-3">
-        <div class="space-y-0.5">
-          <Label class="text-sm">Pause Threshold</Label>
-          <p class="text-xs text-muted-foreground">
+      <Field.Field>
+        <Field.FieldLabel id={`${uttSplitSliderId}-label`}>Pause Threshold</Field.FieldLabel>
+        <Field.FieldDescription>
             Silence duration to split phrases ({config.uttSplit.toFixed(1)}s)
-          </p>
-        </div>
+        </Field.FieldDescription>
         <Slider
+          id={uttSplitSliderId}
+          aria-labelledby={`${uttSplitSliderId}-label`}
           type="multiple"
           value={[config.uttSplit]}
           onValueChange={(values: number[]) => config = { ...config, uttSplit: values[0] }}
@@ -168,7 +179,8 @@
           <span>0.1s</span>
           <span>2.0s</span>
         </div>
-      </div>
-    </div>
+      </Field.Field>
+      </Field.FieldGroup>
+    </Field.FieldSet>
   {/snippet}
 </RetryVersionDialogShell>

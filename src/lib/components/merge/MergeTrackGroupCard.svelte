@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { Video, Volume2, Subtitles, ChevronDown, ChevronRight, Settings2, Check, Clock } from '@lucide/svelte';
+  import { Video, Volume2, Subtitles, Settings2, Clock, ChevronDown, ChevronRight } from '@lucide/svelte';
   import type { TrackGroup, MergeTrackConfig, TrackType, ImportedTrack, MergeTrack } from '$lib/types';
   import { mergeStore } from '$lib/stores/merge.svelte';
-  import { Card } from '$lib/components/ui/card';
+  import * as Accordion from '$lib/components/ui/accordion';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
   import { Checkbox } from '$lib/components/ui/checkbox';
+  import * as Item from '$lib/components/ui/item';
   import { cn } from '$lib/utils';
   import { formatLanguage } from '$lib/utils/format';
 
@@ -15,12 +16,6 @@
   }
 
   let { group, onEdit }: MergeTrackGroupCardProps = $props();
-
-  const typeIcons = {
-    video: Video,
-    audio: Volume2,
-    subtitle: Subtitles,
-  };
 
   const typeLabels: Record<TrackType, string> = {
     video: 'Video',
@@ -60,11 +55,8 @@
   }
 
   // Derived values for the group
-  const language = $derived(getConsistentValue(c => c.language));
-  const title = $derived(getConsistentValue(c => c.title));
   const isDefault = $derived(getConsistentValue(c => c.default));
   const isForced = $derived(getConsistentValue(c => c.forced));
-  const delayMs = $derived(getConsistentValue(c => c.delayMs));
 
   // Check if any track has delay
   const hasDelay = $derived(
@@ -81,10 +73,6 @@
       return config?.enabled ?? true;
     })
   );
-
-  function toggleGroup() {
-    mergeStore.toggleGroupCollapsed(group.id);
-  }
 
   function handleToggleAll() {
     const newEnabled = !allEnabled;
@@ -108,106 +96,107 @@
     const config = getTrackConfig(track);
     return config?.language ?? track.language;
   }
+
+  function getTypeLabel(type: TrackType): string {
+    return typeLabels[type] ?? type;
+  }
 </script>
 
-<Card class={cn(
-  "overflow-hidden transition-all duration-200",
-  !group.collapsed && "ring-1 ring-primary/20"
-)}>
-  <!-- Header -->
-  <div 
-    class="flex items-center gap-3 p-4 bg-muted/30 hover:bg-muted/50 cursor-pointer transition-colors"
-    onclick={toggleGroup}
-    onkeydown={(e) => e.key === 'Enter' && toggleGroup()}
-    role="button"
-    tabindex="0"
-  >
-    <!-- Collapse/Expand Icon -->
-    <div class="text-muted-foreground">
-      {#if group.collapsed}
-        <ChevronRight class="size-5" />
-      {:else}
-        <ChevronDown class="size-5" />
-      {/if}
-    </div>
+<Accordion.Item
+  value={group.id}
+  class={cn(
+    "w-full overflow-hidden border rounded-3xl bg-card/70 shadow-xs transition-colors data-open:bg-card",
+    !group.collapsed && "border-primary/25"
+  )}
+>
+  <div class="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center">
+    <Accordion.Trigger
+      class="min-w-0 items-center justify-start gap-3 p-4 text-left hover:no-underline [&>svg[data-slot=accordion-trigger-icon]]:hidden"
+      aria-label={`${group.collapsed ? 'Expand' : 'Collapse'} ${getTypeLabel(group.type).toLowerCase()} track group`}
+    >
+      <span class="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
+        {#if group.collapsed}
+          <ChevronRight class="size-4" />
+        {:else}
+          <ChevronDown class="size-4" />
+        {/if}
+      </span>
 
-    <!-- Type Icon -->
-    <div class="flex items-center justify-center w-8 h-8 rounded-md bg-primary/10 text-primary">
-      {#if group.type === 'video'}
-        <Video class="size-4" />
-      {:else if group.type === 'audio'}
-        <Volume2 class="size-4" />
-      {:else}
-        <Subtitles class="size-4" />
-      {/if}
-    </div>
-
-    <!-- Group Info -->
-    <div class="flex-1 min-w-0">
-      <div class="flex items-center gap-2">
-        <span class="font-medium">
-          {typeLabels[group.type]}s
+      <span class="grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] items-center gap-3">
+        <span class="flex size-9 shrink-0 items-center justify-center bg-primary/10 text-primary">
+          {#if group.type === 'video'}
+            <Video class="size-4" />
+          {:else if group.type === 'audio'}
+            <Volume2 class="size-4" />
+          {:else}
+            <Subtitles class="size-4" />
+          {/if}
         </span>
-        <Badge variant="secondary" class="text-xs">
-          {group.language ? formatLanguage(group.language) : 'Undefined'}
-        </Badge>
-        <Badge variant="outline" class="text-xs">
-          {tracks.length} track{tracks.length > 1 ? 's' : ''}
-        </Badge>
-      </div>
-    </div>
 
-    <!-- Quick Status Badges -->
-    <div class="flex items-center gap-2">
-      {#if isDefault === true}
-        <Badge variant="default" class="text-xs">Default</Badge>
-      {:else if isDefault === 'mixed'}
-        <Badge variant="outline" class="text-xs text-amber-600 border-amber-600">Mixed Default</Badge>
-      {/if}
+        <span class="flex min-w-0 flex-col gap-1">
+          <span class="flex min-w-0 flex-wrap items-center gap-2">
+            <span class="truncate font-medium">
+              {getTypeLabel(group.type)}s
+            </span>
+            <Badge variant="secondary" class="h-6 text-xs">
+              {group.language ? formatLanguage(group.language) : 'Undefined'}
+            </Badge>
+            <Badge variant="outline" class="h-6 text-xs">
+              {tracks.length} track{tracks.length > 1 ? 's' : ''}
+            </Badge>
+          </span>
+          <span class="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            {#if isDefault === true}
+              <Badge variant="default" class="h-5 px-2 text-[11px]">Default</Badge>
+            {:else if isDefault === 'mixed'}
+              <Badge variant="outline" class="h-5 border-amber-600 px-2 text-[11px] text-amber-600">Mixed default</Badge>
+            {/if}
 
-      {#if isForced === true}
-        <Badge variant="secondary" class="text-xs">Forced</Badge>
-      {:else if isForced === 'mixed'}
-        <Badge variant="outline" class="text-xs text-amber-600 border-amber-600">Mixed Forced</Badge>
-      {/if}
+            {#if isForced === true}
+              <Badge variant="secondary" class="h-5 px-2 text-[11px]">Forced</Badge>
+            {:else if isForced === 'mixed'}
+              <Badge variant="outline" class="h-5 border-amber-600 px-2 text-[11px] text-amber-600">Mixed forced</Badge>
+            {/if}
 
-      {#if hasDelay}
-        <Clock class="size-4 text-muted-foreground" />
-      {/if}
+            {#if hasDelay}
+              <span class="inline-flex items-center gap-1">
+                <Clock class="size-3.5" />
+                Delay
+              </span>
+            {/if}
+          </span>
+        </span>
+      </span>
+    </Accordion.Trigger>
 
-      <!-- Enable/Disable All -->
-      <div class="flex items-center gap-2 ml-2 pl-2 border-l">
-        <Checkbox
-          checked={allEnabled}
-          onCheckedChange={handleToggleAll}
-          onclick={(e) => e.stopPropagation()}
-        />
-      </div>
+    <div class="mr-4 flex shrink-0 items-center gap-2 border-l pl-4">
+      <Checkbox
+        aria-label="Toggle all tracks in group"
+        checked={allEnabled}
+        onCheckedChange={handleToggleAll}
+      />
 
-      <!-- Edit Button -->
       <Button
         variant="ghost"
-        size="icon"
-        class="size-8"
-        onclick={(e) => {
-          e.stopPropagation();
-          onEdit(group.id);
-        }}
+        size="sm"
+        class="gap-2 px-2"
+        onclick={() => onEdit(group.id)}
       >
         <Settings2 class="size-4" />
+        Edit
       </Button>
     </div>
   </div>
 
   <!-- Expanded Content: Track List -->
-  {#if !group.collapsed}
-    <div class="border-t bg-muted/10">
-      <div class="p-2 space-y-1">
+  <Accordion.Content class="-mx-4 border-t bg-muted/15 px-4 py-3">
+    <Item.Group class="gap-1">
         {#each tracks as track (track.id)}
           {@const config = getTrackConfig(track)}
-          <div class="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-muted/50 text-sm">
+          <Item.Root size="xs" class="min-w-0 flex-nowrap hover:bg-muted/50" role="listitem">
             <!-- Track Enable Checkbox -->
             <Checkbox
+              aria-label={`Toggle ${getTrackDisplayName(track)}`}
               checked={config?.enabled ?? true}
               onCheckedChange={(checked) => {
                 if ('sourceFileId' in track) {
@@ -219,8 +208,11 @@
             />
 
             <!-- Track Info -->
-            <div class="flex-1 min-w-0 flex items-center gap-2">
-              <span class="truncate">{getTrackDisplayName(track)}</span>
+            <Item.Content class="min-w-0">
+            <div class="flex min-w-0 items-center gap-2">
+              <Item.Title class="min-w-0 flex-1 truncate" title={getTrackDisplayName(track)}>
+                {getTrackDisplayName(track)}
+              </Item.Title>
               
               {#if getTrackLanguage(track)}
                 <Badge variant="outline" class="text-xs shrink-0">
@@ -228,9 +220,10 @@
                 </Badge>
               {/if}
             </div>
+            </Item.Content>
 
             <!-- Track Badges -->
-            <div class="flex items-center gap-1 shrink-0">
+            <Item.Actions class="shrink-0">
               {#if config?.default}
                 <Badge variant="default" class="text-xs">Default</Badge>
               {/if}
@@ -242,23 +235,9 @@
                   {config.delayMs > 0 ? '+' : ''}{config.delayMs}ms
                 </Badge>
               {/if}
-            </div>
-          </div>
+            </Item.Actions>
+          </Item.Root>
         {/each}
-      </div>
-
-      <!-- Footer with Edit Button -->
-      <div class="px-4 py-3 border-t bg-muted/20">
-        <Button
-          variant="outline"
-          size="sm"
-          class="w-full"
-          onclick={() => onEdit(group.id)}
-        >
-          <Settings2 class="size-4 mr-2" />
-          Edit {tracks.length} tracks
-        </Button>
-      </div>
-    </div>
-  {/if}
-</Card>
+    </Item.Group>
+  </Accordion.Content>
+</Accordion.Item>

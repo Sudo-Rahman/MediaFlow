@@ -8,6 +8,8 @@
   import TimelinePlugin from 'wavesurfer.js/dist/plugins/timeline.esm.js';
   import { Button } from '$lib/components/ui/button';
   import { Progress } from '$lib/components/ui/progress';
+  import * as Alert from '$lib/components/ui/alert';
+  import * as Empty from '$lib/components/ui/empty';
   import { formatFileSize } from '$lib/utils/format';
   import { audioToSubsStore } from '$lib/stores/audio-to-subs.svelte';
 
@@ -429,14 +431,16 @@
   <!-- Waveform container or large file placeholder -->
   {#if isTooLarge}
     <!-- Large file - show simple UI without waveform -->
-    <div class="relative w-full min-h-[120px] bg-muted/30 rounded-lg overflow-hidden flex flex-col items-center justify-center gap-3 p-4">
-      <FileAudio class="size-10 text-muted-foreground/50" />
-      <div class="text-center">
-        <p class="text-sm text-muted-foreground">File too large for waveform preview</p>
-        <p class="text-xs text-muted-foreground/70">
+    <Empty.Root class="min-h-[120px] flex-none border p-4">
+      <Empty.Header>
+        <Empty.Media>
+          <FileAudio class="size-10 text-muted-foreground/50" />
+        </Empty.Media>
+        <Empty.Title class="text-sm">File too large for waveform preview</Empty.Title>
+        <Empty.Description class="text-xs">
           {formatFileSize(actualFileSize)} (conversion failed)
-        </p>
-      </div>
+        </Empty.Description>
+      </Empty.Header>
       
       <!-- Simple progress bar for large files -->
       {#if totalDuration > 0}
@@ -449,16 +453,16 @@
           <Progress value={progressPercent} class="h-2" />
         </button>
       {/if}
-    </div>
+    </Empty.Root>
   {:else}
     <!-- Normal waveform container -->
     <div 
       bind:this={containerRef}
-      class="relative w-full min-h-[120px] bg-muted/30 rounded-lg overflow-hidden"
+      class="relative w-full min-h-[120px] overflow-hidden"
       onwheel={handleWheel}
     >
       {#if isLoading}
-        <div class="absolute inset-0 flex items-center justify-center bg-background/50 z-10">
+        <div class="absolute inset-0 z-10 flex items-center justify-center">
           <div class="flex flex-col items-center gap-2 text-muted-foreground">
             <Loader2 class="size-6 animate-spin" />
             <span class="text-xs">{loadingMessage}</span>
@@ -468,10 +472,11 @@
       
       {#if error}
         <div class="absolute inset-0 flex items-center justify-center">
-          <div class="flex flex-col items-center gap-2 text-muted-foreground">
+          <Alert.Root variant="destructive" class="mx-4 max-w-sm">
             <AlertCircle class="size-6 text-destructive/50" />
-            <span class="text-xs text-center px-4">{error}</span>
-          </div>
+            <Alert.Title>Waveform unavailable</Alert.Title>
+            <Alert.Description>{error}</Alert.Description>
+          </Alert.Root>
         </div>
       {/if}
     </div>
@@ -485,12 +490,7 @@
       aria-label="Seek waveform"
       onclick={handleSeek}
     >
-      <div class="relative h-1.5 bg-muted rounded-full overflow-hidden">
-        <div 
-          class="absolute inset-y-0 left-0 bg-primary rounded-full transition-all"
-          style="width: {progressPercent}%"
-        ></div>
-      </div>
+      <Progress value={progressPercent} class="h-1.5" />
     </button>
   {/if}
 

@@ -1,10 +1,14 @@
+<script lang="ts" module>
+  let nextRetryVersionNameInputId = 0;
+</script>
+
 <script lang="ts">
   import type { Snippet } from 'svelte';
 
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
+  import * as Field from '$lib/components/ui/field';
   import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
 
   interface RetryVersionDialogShellProps {
     open?: boolean;
@@ -15,6 +19,7 @@
     versionNamePlaceholder?: string;
     confirmLabel?: string;
     confirmDisabled?: boolean;
+    inputId?: string;
     maxWidthClass?: string;
     onConfirm: () => void | Promise<void>;
     optionsContent?: Snippet;
@@ -29,6 +34,7 @@
     versionNamePlaceholder = 'Version 1',
     confirmLabel = 'Run',
     confirmDisabled = false,
+    inputId = `retry-version-name-input-${nextRetryVersionNameInputId += 1}`,
     maxWidthClass = 'max-w-xl',
     onConfirm,
     optionsContent,
@@ -55,18 +61,18 @@
       <Dialog.Description>{description}</Dialog.Description>
     </Dialog.Header>
 
-    <div class="flex-1 overflow-auto p-4 space-y-5">
-      <div class="space-y-2">
-        <Label for="retry-version-name-input">Version name</Label>
+    <div class="flex flex-1 flex-col gap-5 overflow-auto p-4">
+      <Field.Field>
+        <Field.Label for={inputId}>Version name</Field.Label>
         <Input
-          id="retry-version-name-input"
+          id={inputId}
           bind:value={versionName}
           placeholder={versionNamePlaceholder}
         />
-      </div>
+      </Field.Field>
 
       {#if optionsContent}
-        <div class="space-y-5">
+        <div class="flex flex-col gap-5">
           {@render optionsContent()}
         </div>
       {/if}

@@ -3,7 +3,9 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
+  import * as Empty from '$lib/components/ui/empty';
   import * as HoverCard from '$lib/components/ui/hover-card';
+  import * as Item from '$lib/components/ui/item';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
 
   interface LiveOcrHoverCardProps {
@@ -53,16 +55,20 @@
 
 {#snippet detectionItem(detection: OcrZoneFrame)}
   {@const scopeLabel = `${roleLabel(detection.role)} · ${zoneLabel(detection)}`}
-  <div class="rounded-md border bg-muted/30 p-3">
-    <div class="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
-      <span class="shrink-0 font-mono">{formatTimeMs(detection.timeMs)}</span>
-      <Badge variant="outline" class="min-w-0 max-w-44 truncate text-[10px]" title={scopeLabel}>
-        {scopeLabel}
-      </Badge>
-      <span class="ml-auto shrink-0 font-medium text-foreground">{formatConfidence(detection.confidence)}</span>
-    </div>
-    <p class="whitespace-pre-wrap text-sm text-foreground">{detection.text}</p>
-  </div>
+  <Item.Root variant="outline" size="xs" class="items-start">
+    <Item.Content class="min-w-0">
+      <Item.Title class="max-w-full gap-2 text-xs text-muted-foreground">
+        <span class="shrink-0 font-mono font-normal">{formatTimeMs(detection.timeMs)}</span>
+        <Badge variant="outline" class="min-w-0 max-w-44 truncate text-[10px]" title={scopeLabel}>
+          {scopeLabel}
+        </Badge>
+        <span class="ml-auto shrink-0 font-medium text-foreground">{formatConfidence(detection.confidence)}</span>
+      </Item.Title>
+      <Item.Description class="whitespace-pre-wrap text-sm text-foreground line-clamp-none">
+        {detection.text}
+      </Item.Description>
+    </Item.Content>
+  </Item.Root>
 {/snippet}
 
 <HoverCard.Root
@@ -110,7 +116,9 @@
         </div>
       </ScrollArea>
     {:else}
-      <p class="px-3 py-4 text-xs text-muted-foreground">No live detections yet.</p>
+      <Empty.Root class="min-h-24 flex-none border-0 p-4">
+        <Empty.Description>No live detections yet.</Empty.Description>
+      </Empty.Root>
     {/if}
 
     <div class="border-t p-2">
@@ -147,7 +155,9 @@
         </div>
       </ScrollArea>
     {:else}
-      <p class="rounded-md border p-4 text-sm text-muted-foreground">No live detections yet.</p>
+      <Empty.Root class="min-h-32 flex-none border p-4">
+        <Empty.Description>No live detections yet.</Empty.Description>
+      </Empty.Root>
     {/if}
   </Dialog.Content>
 </Dialog.Root>

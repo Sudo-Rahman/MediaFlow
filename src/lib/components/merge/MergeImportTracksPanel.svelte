@@ -1,6 +1,6 @@
 <script lang="ts">
   import { FileAudio, GripVertical, Link, Settings2, Subtitles, Trash2, Unlink } from '@lucide/svelte';
-  import { flip } from 'svelte/animate';
+  import { SHADOW_ITEM_MARKER_PROPERTY_NAME } from 'svelte-dnd-action';
 
   import { mergeStore } from '$lib/stores';
   import type { ImportedTrack } from '$lib/types';
@@ -9,6 +9,8 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
+  import * as Empty from '$lib/components/ui/empty';
+  import * as Item from '$lib/components/ui/item';
   import { ToolImportButton } from '$lib/components/shared';
 
   interface Props {
@@ -21,8 +23,10 @@
 
   const FLIP_DURATION_MS = 200;
 
-  let unassignedItems = $state<(ImportedTrack & { id: string })[]>([]);
-  let attachedItems = $state<(ImportedTrack & { id: string })[]>([]);
+  type DragTrack = ImportedTrack & { [SHADOW_ITEM_MARKER_PROPERTY_NAME]?: boolean };
+
+  let unassignedItems = $state<DragTrack[]>([]);
+  let attachedItems = $state<DragTrack[]>([]);
 
   $effect(() => {
     unassignedItems = mergeStore.unassignedTracks.map((track) => ({ ...track }));
@@ -62,9 +66,10 @@
   }
 
   function handleUnassignedFinalize(items: typeof unassignedItems): void {
-    unassignedItems = items;
+    const realItems = items.filter((item) => !item[SHADOW_ITEM_MARKER_PROPERTY_NAME]);
+    unassignedItems = realItems;
 
-    for (const item of items) {
+    for (const item of realItems) {
       for (const video of mergeStore.videoFiles) {
         if (video.attachedTracks.some((attachedTrack) => attachedTrack.trackId === item.id)) {
           mergeStore.detachTrackFromVideo(item.id, video.id);
@@ -78,7 +83,8 @@
   }
 
   function handleAttachedFinalize(items: typeof attachedItems): void {
-    attachedItems = items;
+    const realItems = items.filter((item) => !item[SHADOW_ITEM_MARKER_PROPERTY_NAME]);
+    attachedItems = realItems;
 
     if (!mergeStore.selectedVideoId) {
       return;
@@ -87,9 +93,9 @@
     const currentAttached = new Set(
       mergeStore.selectedVideo?.attachedTracks.map((attachedTrack) => attachedTrack.trackId) ?? [],
     );
-    const newAttachedIds = items.map((item) => item.id);
+    const newAttachedIds = realItems.map((item) => item.id);
 
-    for (const item of items) {
+    for (const item of realItems) {
       if (!currentAttached.has(item.id)) {
         mergeStore.attachTrackToVideo(item.id, mergeStore.selectedVideoId);
       }
@@ -124,43 +130,56 @@
         use:dndzone={{
           items: unassignedItems,
           flipDurationMs: FLIP_DURATION_MS,
+          morphDisabled: true,
           type: 'tracks',
           onConsider: handleUnassignedConsider,
           onFinalize: handleUnassignedFinalize,
         }}
       >
-        {#each unassignedItems as track (track.id)}
+        {#each unassignedItems as track (`${track.id}-${track[SHADOW_ITEM_MARKER_PROPERTY_NAME] ? 'shadow' : 'item'}`)}
           {@const TrackIcon = track.type === 'subtitle' ? Subtitles : FileAudio}
           {@const seriesInfo = formatSeriesInfo(track.seasonNumber, track.episodeNumber)}
-          <div
-            class="flex items-center gap-2 rounded-md border p-2 bg-card cursor-grab active:cursor-grabbing {getTrackTypeColor(track.type)}"
-            animate:flip={{ duration: FLIP_DURATION_MS }}
+          <Item.Root
+            size="xs"
+            variant="outline"
+            data-is-dnd-shadow-item-hint={track[SHADOW_ITEM_MARKER_PROPERTY_NAME]}
+            class="min-w-0 max-w-full overflow-hidden cursor-grab active:cursor-grabbing {getTrackTypeColor(track.type)}"
           >
-            <GripVertical class="size-4 text-muted-foreground/50" />
-            <TrackIcon class="size-4" />
-            <span class="flex-1 text-sm truncate">{track.name}</span>
-            {#if seriesInfo}
-              <Badge variant="outline" class="text-xs">{seriesInfo}</Badge>
-            {/if}
-            {#if track.config.language}
-              <Badge variant="secondary" class="text-xs">{track.config.language}</Badge>
-            {/if}
-            <Button variant="ghost" size="icon-sm" onclick={() => onEditImportedTrack(track.id)}>
-              <Settings2 class="size-3" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onclick={() => mergeStore.removeImportedTrack(track.id)}
-              class="text-muted-foreground hover:text-destructive"
-            >
-              <Trash2 class="size-3" />
-            </Button>
-          </div>
+            <div class="grid w-full min-w-0 grid-cols-[auto_auto_minmax(0,1fr)_auto_auto] items-center gap-2">
+              <GripVertical class="size-4 text-muted-foreground/50" />
+              <TrackIcon class="size-4 text-muted-foreground" />
+              <div class="min-w-0 overflow-hidden">
+                <Item.Title class="block w-full min-w-0 truncate text-sm" title={track.name}>{track.name}</Item.Title>
+                {#if seriesInfo || track.config.language}
+                  <div class="mt-1 flex min-w-0 flex-wrap gap-1">
+                    {#if seriesInfo}
+                      <Badge variant="outline" class="text-xs">{seriesInfo}</Badge>
+                    {/if}
+                    {#if track.config.language}
+                      <Badge variant="secondary" class="text-xs">{track.config.language}</Badge>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+              <Button variant="ghost" size="icon-sm" onclick={() => onEditImportedTrack(track.id)}>
+                <Settings2 class="size-3" />
+                <span class="sr-only">Edit imported track</span>
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onclick={() => mergeStore.removeImportedTrack(track.id)}
+                class="text-muted-foreground hover:text-destructive"
+              >
+                <Trash2 class="size-3" />
+                <span class="sr-only">Remove imported track</span>
+              </Button>
+            </div>
+          </Item.Root>
         {:else}
-          <p class="text-sm text-muted-foreground text-center py-4 select-none">
-            No unassigned tracks. Add tracks or drag here to detach.
-          </p>
+          <Empty.Root class="border-0 p-4 select-none">
+            <Empty.Description>No unassigned tracks. Add tracks or drag here to detach.</Empty.Description>
+          </Empty.Root>
         {/each}
       </section>
     </Card.Content>
@@ -182,49 +201,62 @@
           use:dndzone={{
             items: attachedItems,
             flipDurationMs: FLIP_DURATION_MS,
+            morphDisabled: true,
             type: 'tracks',
             onConsider: handleAttachedConsider,
             onFinalize: handleAttachedFinalize,
           }}
         >
-          {#each attachedItems as track (track.id)}
+          {#each attachedItems as track (`${track.id}-${track[SHADOW_ITEM_MARKER_PROPERTY_NAME] ? 'shadow' : 'item'}`)}
             {@const TrackIcon = track.type === 'subtitle' ? Subtitles : FileAudio}
-            <div
-              class="flex items-center gap-2 rounded-md border p-2 bg-card cursor-grab active:cursor-grabbing {getTrackTypeColor(track.type)}"
-              animate:flip={{ duration: FLIP_DURATION_MS }}
+            <Item.Root
+              size="xs"
+              variant="outline"
+              data-is-dnd-shadow-item-hint={track[SHADOW_ITEM_MARKER_PROPERTY_NAME]}
+              class="min-w-0 max-w-full overflow-hidden cursor-grab active:cursor-grabbing {getTrackTypeColor(track.type)}"
             >
-              <GripVertical class="size-4 text-muted-foreground/50" />
-              <TrackIcon class="size-4" />
-              <span class="flex-1 text-sm truncate">{track.name}</span>
-              {#if track.config.delayMs !== 0}
-                <Badge variant="secondary" class="text-xs">{track.config.delayMs}ms</Badge>
-              {/if}
-              {#if track.config.language}
-                <Badge variant="secondary" class="text-xs">{track.config.language}</Badge>
-              {/if}
-              <Button variant="ghost" size="icon-sm" onclick={() => onEditImportedTrack(track.id)}>
-                <Settings2 class="size-3" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onclick={() => mergeStore.detachTrackFromVideo(track.id, video.id)}
-                class="text-muted-foreground hover:text-orange-500"
-              >
-                <Unlink class="size-3" />
-              </Button>
-            </div>
+              <div class="grid w-full min-w-0 grid-cols-[auto_auto_minmax(0,1fr)_auto_auto] items-center gap-2">
+                <GripVertical class="size-4 text-muted-foreground/50" />
+                <TrackIcon class="size-4 text-muted-foreground" />
+                <div class="min-w-0 overflow-hidden">
+                  <Item.Title class="block w-full min-w-0 truncate text-sm" title={track.name}>{track.name}</Item.Title>
+                  {#if track.config.delayMs !== 0 || track.config.language}
+                    <div class="mt-1 flex min-w-0 flex-wrap gap-1">
+                      {#if track.config.delayMs !== 0}
+                        <Badge variant="secondary" class="text-xs">{track.config.delayMs}ms</Badge>
+                      {/if}
+                      {#if track.config.language}
+                        <Badge variant="secondary" class="text-xs">{track.config.language}</Badge>
+                      {/if}
+                    </div>
+                  {/if}
+                </div>
+                <Button variant="ghost" size="icon-sm" onclick={() => onEditImportedTrack(track.id)}>
+                  <Settings2 class="size-3" />
+                  <span class="sr-only">Edit imported track</span>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onclick={() => mergeStore.detachTrackFromVideo(track.id, video.id)}
+                  class="text-muted-foreground hover:text-orange-500"
+                >
+                  <Unlink class="size-3" />
+                  <span class="sr-only">Detach track</span>
+                </Button>
+              </div>
+            </Item.Root>
           {:else}
-            <p class="text-sm text-muted-foreground text-center py-6">
-              Drop tracks here to attach to this video
-            </p>
+            <Empty.Root class="border-0 p-6">
+              <Empty.Description>Drop tracks here to attach to this video</Empty.Description>
+            </Empty.Root>
           {/each}
         </section>
       </Card.Content>
     </Card.Root>
   {:else if mergeStore.videoFiles.length > 0}
-    <div class="flex items-center justify-center py-8 text-muted-foreground">
-      <p>Select a video to attach tracks</p>
-    </div>
+    <Empty.Root class="border-0 py-8">
+      <Empty.Description>Select a video to attach tracks</Empty.Description>
+    </Empty.Root>
   {/if}
 </div>

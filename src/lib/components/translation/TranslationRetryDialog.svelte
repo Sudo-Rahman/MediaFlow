@@ -3,8 +3,9 @@
 
   import { LlmProviderModelSelector } from '$lib/components/llm';
   import { RetryVersionDialogShell } from '$lib/components/shared';
+  import * as Field from '$lib/components/ui/field';
   import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
+  import * as Item from '$lib/components/ui/item';
   import * as Select from '$lib/components/ui/select';
   import {
     getDefaultLLMModel,
@@ -114,6 +115,11 @@
     });
     onOpenChange(false);
   }
+
+  const controlId = $props.id();
+  const sourceLanguageId = `${controlId}-retry-source-language`;
+  const targetLanguageId = `${controlId}-retry-target-language`;
+  const batchCountId = `${controlId}-retry-batch-count`;
 </script>
 
 <RetryVersionDialogShell
@@ -129,16 +135,17 @@
   onConfirm={handleConfirm}
 >
   {#snippet optionsContent()}
-    <div class="space-y-2">
-      <Label class="text-sm">Languages</Label>
+    <Field.FieldSet class="gap-2">
+      <Field.FieldLegend variant="label" class="mb-0">Languages</Field.FieldLegend>
       <div class="flex items-center gap-3">
-        <div class="flex-1">
+        <Field.Field class="flex-1">
+          <Field.FieldLabel for={sourceLanguageId} class="sr-only">Source language</Field.FieldLabel>
           <Select.Root
             type="single"
             value={sourceLanguage}
             onValueChange={(value) => sourceLanguage = value as LanguageCode}
           >
-            <Select.Trigger class="w-full h-9">
+            <Select.Trigger id={sourceLanguageId} class="w-full h-9">
               {SUPPORTED_LANGUAGES.find((lang) => lang.code === sourceLanguage)?.name || 'Source'}
             </Select.Trigger>
             <Select.Content>
@@ -149,17 +156,18 @@
               </Select.Group>
             </Select.Content>
           </Select.Root>
-        </div>
+        </Field.Field>
 
         <ArrowRight class="size-4 text-muted-foreground shrink-0" />
 
-        <div class="flex-1">
+        <Field.Field class="flex-1">
+          <Field.FieldLabel for={targetLanguageId} class="sr-only">Target language</Field.FieldLabel>
           <Select.Root
             type="single"
             value={targetLanguage}
             onValueChange={(value) => targetLanguage = value as LanguageCode}
           >
-            <Select.Trigger class="w-full h-9">
+            <Select.Trigger id={targetLanguageId} class="w-full h-9">
               {targetLanguages.find((lang) => lang.code === targetLanguage)?.name || 'Target'}
             </Select.Trigger>
             <Select.Content>
@@ -170,22 +178,24 @@
               </Select.Group>
             </Select.Content>
           </Select.Root>
-        </div>
+        </Field.Field>
       </div>
-    </div>
+    </Field.FieldSet>
 
     {#if isCompareMode}
-      <div class="space-y-2">
-        <Label class="text-sm">Compare models</Label>
-        <p class="text-xs text-muted-foreground">
+      <Field.Field>
+        <Field.FieldTitle class="text-sm">Compare models</Field.FieldTitle>
+        <Field.FieldDescription class="text-xs">
           Using active Compare Models selection from the tool.
-        </p>
-        <div class="rounded-md border p-2 space-y-1">
+        </Field.FieldDescription>
+        <div class="space-y-1">
           {#each compareModelDisplay as modelEntry (modelEntry.id)}
-            <p class="text-xs">{modelEntry.label}</p>
+            <Item.Root variant="outline" size="xs">
+              <Item.Title class="truncate text-xs">{modelEntry.label}</Item.Title>
+            </Item.Root>
           {/each}
         </div>
-      </div>
+      </Field.Field>
     {:else}
       <LlmProviderModelSelector
         {provider}
@@ -201,19 +211,19 @@
       />
     {/if}
 
-    <div class="space-y-2">
-      <Label for="retry-batch-count" class="text-sm">Number of batches</Label>
+    <Field.Field>
+      <Field.FieldLabel for={batchCountId} class="text-sm">Number of batches</Field.FieldLabel>
       <Input
-        id="retry-batch-count"
+        id={batchCountId}
         type="number"
         min="1"
         max="20"
         bind:value={batchCount}
         class="h-9"
       />
-      <p class="text-xs text-muted-foreground">
+      <Field.FieldDescription class="text-xs">
         Split file into N parts to avoid token limits.
-      </p>
-    </div>
+      </Field.FieldDescription>
+    </Field.Field>
   {/snippet}
 </RetryVersionDialogShell>

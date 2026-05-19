@@ -5,6 +5,7 @@
   import { Progress } from '$lib/components/ui/progress';
   import * as Card from '$lib/components/ui/card';
   import * as Alert from '$lib/components/ui/alert';
+  import * as Item from '$lib/components/ui/item';
   import { OutputFolderField } from '$lib/components/shared';
   import { resolveOutputFolderDisplay } from '$lib/utils';
   import { formatTransferRate } from '$lib/utils';
@@ -63,18 +64,20 @@
     />
 
     <!-- Selection summary -->
-    <div class="rounded-md bg-muted/50 p-3 text-sm flex items-center justify-between">
-      <span>Selected tracks</span>
+    <Item.Root size="xs" variant="muted" class="justify-between">
+      <Item.Content>
+        <Item.Title>Selected tracks</Item.Title>
+      </Item.Content>
       <Badge variant={selectedCount > 0 ? 'default' : 'secondary'}>
         {selectedCount}
       </Badge>
-    </div>
+    </Item.Root>
 
     <!-- Progress -->
     {#if isExtracting || isCompleted || isCancelled}
       <div class="space-y-3">
         {#if isCompleted}
-          <Alert.Root class="border-green-500/50 bg-green-500/10">
+          <Alert.Root role="status" aria-live="polite" class="border-green-500/50 bg-green-500/10">
             <CheckCircle class="size-4 text-green-500" />
             <Alert.Title>Extraction complete!</Alert.Title>
             <Alert.Description>
@@ -82,7 +85,7 @@
             </Alert.Description>
           </Alert.Root>
         {:else if isCancelled}
-          <Alert.Root class="border-orange-500/50 bg-orange-500/10">
+          <Alert.Root role="status" aria-live="polite" class="border-orange-500/50 bg-orange-500/10">
             <CircleAlert class="size-4 text-orange-500" />
             <Alert.Title>Extraction cancelled</Alert.Title>
             <Alert.Description>
@@ -90,7 +93,8 @@
             </Alert.Description>
           </Alert.Root>
         {:else}
-          <div class="space-y-2 rounded-md border bg-muted/30 px-3 py-2">
+          <Item.Root variant="outline" class="items-stretch">
+            <Item.Content class="min-w-0">
             <p class="text-sm font-medium">Extracting...</p>
             {#if progress.currentFile}
               <p class="text-xs text-muted-foreground truncate">
@@ -106,11 +110,12 @@
               <p class="text-[11px] text-muted-foreground">
                 File progress: {Math.round(progress.currentFileProgress)}%
                 {#if progress.currentSpeedBytesPerSec && progress.currentSpeedBytesPerSec > 0}
-                  {' '}· {formatTransferRate(progress.currentSpeedBytesPerSec)}
+                  <span> · {formatTransferRate(progress.currentSpeedBytesPerSec)}</span>
                 {/if}
               </p>
             </div>
-          </div>
+            </Item.Content>
+          </Item.Root>
         {/if}
       </div>
     {/if}

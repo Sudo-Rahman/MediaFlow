@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { useId } from 'bits-ui';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
@@ -16,6 +17,7 @@
   import * as RadioGroup from '$lib/components/ui/radio-group';
   import { Separator } from '$lib/components/ui/separator';
   import { Badge } from '$lib/components/ui/badge';
+  import * as Field from '$lib/components/ui/field';
   import { loadAppVersion } from '$lib/services/app-metadata';
   import * as Item from "$lib/components/ui/item/index.js";
 
@@ -323,6 +325,8 @@
   }
 
   const currentMode = $derived(mode.current || 'system');
+  const baseId = useId();
+  const themeGroupLabelId = `${baseId}-theme-group-label`;
   const deepgramApiKeyConfigured = $derived(
     settingsStore.settings.deepgramApiKey && settingsStore.settings.deepgramApiKey.length > 0
   );
@@ -425,23 +429,27 @@
             {/if}
           </div>
         {:else}
-          <div class="space-y-3">
-            <div class="space-y-1">
-              <Label>Active FFmpeg</Label>
-              <p class="break-all rounded bg-muted px-2 py-1 text-xs">
-                {ffmpegInfo?.ffmpegPath ?? 'Unavailable'}
-              </p>
-            </div>
-            <div class="space-y-1">
-              <Label>Active FFprobe</Label>
-              <p class="break-all rounded bg-muted px-2 py-1 text-xs">
-                {ffmpegInfo?.ffprobePath ?? 'Unavailable'}
-              </p>
-            </div>
-            <p class="text-xs text-muted-foreground">
+          <Field.FieldGroup class="gap-3">
+            <Item.Root variant="outline" size="sm">
+              <Item.Content>
+                <Item.Title>Active FFmpeg</Item.Title>
+                <Item.Description class="break-all font-mono text-xs line-clamp-none">
+                  {ffmpegInfo?.ffmpegPath ?? 'Unavailable'}
+                </Item.Description>
+              </Item.Content>
+            </Item.Root>
+            <Item.Root variant="outline" size="sm">
+              <Item.Content>
+                <Item.Title>Active FFprobe</Item.Title>
+                <Item.Description class="break-all font-mono text-xs line-clamp-none">
+                  {ffmpegInfo?.ffprobePath ?? 'Unavailable'}
+                </Item.Description>
+              </Item.Content>
+            </Item.Root>
+            <Field.FieldDescription>
               Production builds always use the bundled FFmpeg tools.
-            </p>
-          </div>
+            </Field.FieldDescription>
+          </Field.FieldGroup>
           {#if ffmpegError}
             <p class="text-xs text-destructive">{ffmpegError}</p>
           {/if}
@@ -489,20 +497,23 @@
           </Card.Description>
         </Card.Header>
         <Card.Content class="space-y-4">
-          <div class="flex items-center justify-between p-3 rounded-md bg-muted/50">
-            <div class="flex items-center gap-2 min-w-0">
+          <Item.Root variant="muted" size="sm">
+            <Item.Media>
               {#if mediaflowUser}
-                <CheckCircle class="size-4 text-green-500 shrink-0" />
-                <div class="min-w-0">
-                  <p class="text-sm font-medium truncate">{mediaflowUser.name || mediaflowUser.email}</p>
-                  <p class="text-xs text-muted-foreground truncate">{mediaflowUser.email}</p>
-                </div>
+                <CheckCircle class="size-4 text-green-500" />
               {:else}
-                <XCircle class="size-4 text-amber-500 shrink-0" />
-                <span class="text-sm text-amber-600 dark:text-amber-400">Not signed in</span>
+                <XCircle class="size-4 text-amber-500" />
               {/if}
-            </div>
-          </div>
+            </Item.Media>
+            <Item.Content class="min-w-0">
+              {#if mediaflowUser}
+                <Item.Title class="truncate">{mediaflowUser.name || mediaflowUser.email}</Item.Title>
+                <Item.Description class="truncate">{mediaflowUser.email}</Item.Description>
+              {:else}
+                <Item.Title class="text-amber-600 dark:text-amber-400">Not signed in</Item.Title>
+              {/if}
+            </Item.Content>
+          </Item.Root>
 
           <div class="flex flex-wrap gap-2">
             {#if mediaflowUser}
@@ -646,17 +657,22 @@
         </Card.Header>
         <Card.Content class="space-y-4">
           <!-- Status -->
-          <div class="flex items-center justify-between p-3 rounded-md bg-muted/50">
-            <div class="flex items-center gap-2">
+          <Item.Root variant="muted" size="sm">
+            <Item.Media>
               {#if deepgramApiKeyConfigured}
                 <CheckCircle class="size-4 text-green-500" />
-                <span class="text-sm">API key configured</span>
               {:else}
                 <XCircle class="size-4 text-amber-500" />
-                <span class="text-sm text-amber-600 dark:text-amber-400">API key not configured</span>
               {/if}
-            </div>
-          </div>
+            </Item.Media>
+            <Item.Content>
+              {#if deepgramApiKeyConfigured}
+                <Item.Title>API key configured</Item.Title>
+              {:else}
+                <Item.Title class="text-amber-600 dark:text-amber-400">API key not configured</Item.Title>
+              {/if}
+            </Item.Content>
+          </Item.Root>
 
           <!-- API Key input -->
           <div class="space-y-2">
@@ -687,20 +703,26 @@
           </div>
 
           <!-- Info and link -->
-          <div class="p-3 rounded-md border border-muted bg-muted/30">
-            <p class="text-sm text-muted-foreground mb-2">
-              Deepgram Nova offers high-quality audio transcription with multilingual support.
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              class="w-full"
-              onclick={handleOpenDeepgramConsole}
-            >
-              <ExternalLink class="size-4 mr-2" />
-              Get API key on Deepgram
-            </Button>
-          </div>
+          <Item.Root variant="outline" size="sm">
+            <Item.Media>
+              <Info class="size-4 text-muted-foreground" />
+            </Item.Media>
+            <Item.Content>
+              <Item.Description class="line-clamp-none">
+                Deepgram Nova offers high-quality audio transcription with multilingual support.
+              </Item.Description>
+            </Item.Content>
+            <Item.Actions class="w-full justify-start pl-7">
+              <Button
+                variant="outline"
+                size="sm"
+                onclick={handleOpenDeepgramConsole}
+              >
+                <ExternalLink class="size-4 mr-2" />
+                Get API key on Deepgram
+              </Button>
+            </Item.Actions>
+          </Item.Root>
 
           <div class="pt-2 text-xs text-muted-foreground">
             <p>The API key is stored locally and is never shared.</p>
@@ -721,26 +743,41 @@
         </Card.Description>
       </Card.Header>
       <Card.Content>
-        <RadioGroup.Root value={currentMode} onValueChange={handleThemeChange} class="grid gap-3">
-          {#each themeOptions as option (option.value)}
-            {@const Icon = option.icon}
-            <Label
-              for={option.value}
-              class="flex items-center gap-4 rounded-lg border p-4 cursor-pointer transition-colors hover:bg-accent/50 has-data-[state=checked]:border-primary has-data-[state=checked]:bg-primary/5"
-            >
-              <RadioGroup.Item value={option.value} id={option.value} />
-              <div class="flex items-center gap-3 flex-1">
-                <div class="p-2 rounded-md bg-muted">
-                  <Icon class="size-5 text-muted-foreground" />
-                </div>
-                <div class="flex-1">
-                  <div class="font-medium">{option.label}</div>
-                  <div class="text-sm text-muted-foreground">{option.description}</div>
-                </div>
-              </div>
-            </Label>
-          {/each}
-        </RadioGroup.Root>
+        <Field.FieldSet class="gap-3">
+          <Field.FieldLegend id={themeGroupLabelId} variant="label" class="sr-only">Theme</Field.FieldLegend>
+          <RadioGroup.Root
+            value={currentMode}
+            aria-labelledby={themeGroupLabelId}
+            onValueChange={handleThemeChange}
+            class="grid gap-3"
+          >
+            {#each themeOptions as option (option.value)}
+              {@const Icon = option.icon}
+              {@const optionId = `${baseId}-theme-${option.value}`}
+              {@const optionTitleId = `${optionId}-title`}
+              {@const optionDescriptionId = `${optionId}-description`}
+              <Item.Root variant="outline">
+                <Item.Media>
+                  <RadioGroup.Item
+                    value={option.value}
+                    id={optionId}
+                    aria-labelledby={optionTitleId}
+                    aria-describedby={optionDescriptionId}
+                  />
+                </Item.Media>
+                <Field.FieldLabel for={optionId} class="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                  <Item.Media variant="icon">
+                    <Icon class="size-5 text-muted-foreground" />
+                  </Item.Media>
+                  <Item.Content>
+                    <Item.Title id={optionTitleId}>{option.label}</Item.Title>
+                    <Item.Description id={optionDescriptionId}>{option.description}</Item.Description>
+                  </Item.Content>
+                </Field.FieldLabel>
+              </Item.Root>
+            {/each}
+          </RadioGroup.Root>
+        </Field.FieldSet>
       </Card.Content>
     </Card.Root>
 

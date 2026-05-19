@@ -3,6 +3,7 @@
 
   import * as Card from '$lib/components/ui/card';
   import { Badge } from '$lib/components/ui/badge';
+  import * as Item from '$lib/components/ui/item';
 
   import type { FileInfo } from '$lib/stores/info.svelte';
 
@@ -92,53 +93,55 @@
       </Card.Header>
       <Card.Content class="space-y-3">
         {#each trackGroups.video as track (track.id)}
-          <div class="p-3 rounded-md bg-muted/50 space-y-2">
-            <div class="flex items-center gap-2">
-              <Badge variant="outline" class="font-mono">#{track.index}</Badge>
-              <span class="font-medium">{track.codec.toUpperCase()}</span>
-              {#if track.codecLong}
-                <span class="text-xs text-muted-foreground">({track.codecLong})</span>
-              {/if}
-            </div>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-              {#if track.width && track.height}
-                <div>
-                  <p class="text-xs text-muted-foreground">Resolution</p>
-                  <p>{track.width}×{track.height}</p>
-                </div>
-              {/if}
-              {#if track.frameRate}
-                <div>
-                  <p class="text-xs text-muted-foreground">Frame Rate</p>
-                  <p>{track.frameRate} fps</p>
-                </div>
-              {/if}
-              {#if track.bitrate}
-                <div>
-                  <p class="text-xs text-muted-foreground">Bitrate</p>
-                  <p>{formatBitrate(track.bitrate)}</p>
-                </div>
-              {/if}
-              {#if track.size}
-                <div>
-                  <p class="text-xs text-muted-foreground">Size</p>
-                  <p>{formatFileSize(track.size)}</p>
-                </div>
-              {/if}
-              {#if track.pixelFormat}
-                <div>
-                  <p class="text-xs text-muted-foreground">Pixel Format</p>
-                  <p>{track.pixelFormat}</p>
-                </div>
-              {/if}
-              {#if track.colorRange}
-                <div>
-                  <p class="text-xs text-muted-foreground">Color Range</p>
-                  <p>{track.colorRange}</p>
-                </div>
-              {/if}
-            </div>
-          </div>
+          <Item.Root variant="muted" size="sm" class="items-start">
+            <Item.Content class="gap-2">
+              <div class="flex items-center gap-2">
+                <Badge variant="outline" class="font-mono">#{track.index}</Badge>
+                <span class="font-medium">{track.codec.toUpperCase()}</span>
+                {#if track.codecLong}
+                  <span class="text-xs text-muted-foreground">({track.codecLong})</span>
+                {/if}
+              </div>
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                {#if track.width && track.height}
+                  <div>
+                    <p class="text-xs text-muted-foreground">Resolution</p>
+                    <p>{track.width}×{track.height}</p>
+                  </div>
+                {/if}
+                {#if track.frameRate}
+                  <div>
+                    <p class="text-xs text-muted-foreground">Frame Rate</p>
+                    <p>{track.frameRate} fps</p>
+                  </div>
+                {/if}
+                {#if track.bitrate}
+                  <div>
+                    <p class="text-xs text-muted-foreground">Bitrate</p>
+                    <p>{formatBitrate(track.bitrate)}</p>
+                  </div>
+                {/if}
+                {#if track.size}
+                  <div>
+                    <p class="text-xs text-muted-foreground">Size</p>
+                    <p>{formatFileSize(track.size)}</p>
+                  </div>
+                {/if}
+                {#if track.pixelFormat}
+                  <div>
+                    <p class="text-xs text-muted-foreground">Pixel Format</p>
+                    <p>{track.pixelFormat}</p>
+                  </div>
+                {/if}
+                {#if track.colorRange}
+                  <div>
+                    <p class="text-xs text-muted-foreground">Color Range</p>
+                    <p>{track.colorRange}</p>
+                  </div>
+                {/if}
+              </div>
+            </Item.Content>
+          </Item.Root>
         {/each}
       </Card.Content>
     </Card.Root>
@@ -154,36 +157,38 @@
       </Card.Header>
       <Card.Content class="space-y-2">
         {#each trackGroups.audio as track (track.id)}
-          <div class="p-3 rounded-md bg-muted/50">
-            <div class="flex items-center gap-2 flex-wrap">
-              <Badge variant="outline" class="font-mono">#{track.index}</Badge>
-              <span class="font-medium">{track.codec.toUpperCase()}</span>
-              {#if track.language}
-                <Badge variant="secondary">{track.language}</Badge>
-              {/if}
-              {#if track.title}
-                <span class="text-sm text-muted-foreground">"{track.title}"</span>
-              {/if}
-              {#if track.default}
-                <Badge>Default</Badge>
-              {/if}
-            </div>
+          <Item.Root variant="muted" size="sm" class="items-start">
+            <Item.Content>
+              <div class="flex items-center gap-2 flex-wrap">
+                <Badge variant="outline" class="font-mono">#{track.index}</Badge>
+                <span class="font-medium">{track.codec.toUpperCase()}</span>
+                {#if track.language}
+                  <Badge variant="secondary">{track.language}</Badge>
+                {/if}
+                {#if track.title}
+                  <span class="text-sm text-muted-foreground">"{track.title}"</span>
+                {/if}
+                {#if track.default}
+                  <Badge>Default</Badge>
+                {/if}
+              </div>
 
-            <div class="flex gap-4 mt-2 text-sm text-muted-foreground">
-              {#if track.channels}
-                <span>{track.channels} channels</span>
-              {/if}
-              {#if track.sampleRate}
-                <span>{track.sampleRate} Hz</span>
-              {/if}
-              {#if track.bitrate}
-                <span>{formatBitrate(track.bitrate)}</span>
-              {/if}
-              {#if track.size}
-                <span>{formatFileSize(track.size)}</span>
-              {/if}
-            </div>
-          </div>
+              <div class="flex gap-4 mt-2 text-sm text-muted-foreground">
+                {#if track.channels}
+                  <span>{track.channels} channels</span>
+                {/if}
+                {#if track.sampleRate}
+                  <span>{track.sampleRate} Hz</span>
+                {/if}
+                {#if track.bitrate}
+                  <span>{formatBitrate(track.bitrate)}</span>
+                {/if}
+                {#if track.size}
+                  <span>{formatFileSize(track.size)}</span>
+                {/if}
+              </div>
+            </Item.Content>
+          </Item.Root>
         {/each}
       </Card.Content>
     </Card.Root>
@@ -199,36 +204,38 @@
       </Card.Header>
       <Card.Content class="space-y-2">
         {#each trackGroups.subtitle as track (track.id)}
-          <div class="p-3 rounded-md bg-muted/50">
-            <div class="flex items-center gap-2 flex-wrap">
-              <Badge variant="outline" class="font-mono">#{track.index}</Badge>
-              <span class="font-medium">{track.codec.toUpperCase()}</span>
-              {#if track.language}
-                <Badge variant="secondary">{track.language}</Badge>
-              {/if}
-              {#if track.title}
-                <span class="text-sm text-muted-foreground">"{track.title}"</span>
-              {/if}
-              {#if track.default}
-                <Badge>Default</Badge>
-              {/if}
-              {#if track.forced}
-                <Badge variant="destructive">Forced</Badge>
-              {/if}
-            </div>
+          <Item.Root variant="muted" size="sm" class="items-start">
+            <Item.Content>
+              <div class="flex items-center gap-2 flex-wrap">
+                <Badge variant="outline" class="font-mono">#{track.index}</Badge>
+                <span class="font-medium">{track.codec.toUpperCase()}</span>
+                {#if track.language}
+                  <Badge variant="secondary">{track.language}</Badge>
+                {/if}
+                {#if track.title}
+                  <span class="text-sm text-muted-foreground">"{track.title}"</span>
+                {/if}
+                {#if track.default}
+                  <Badge>Default</Badge>
+                {/if}
+                {#if track.forced}
+                  <Badge variant="destructive">Forced</Badge>
+                {/if}
+              </div>
 
-            <div class="flex gap-4 mt-2 text-sm text-muted-foreground">
-              {#if track.bitrate}
-                <span>{formatBitrate(track.bitrate)}</span>
-              {/if}
-              {#if track.size}
-                <span>{formatFileSize(track.size)}</span>
-              {/if}
-              {#if track.numberOfFrames}
-                <span>{track.numberOfFrames} frames</span>
-              {/if}
-            </div>
-          </div>
+              <div class="flex gap-4 mt-2 text-sm text-muted-foreground">
+                {#if track.bitrate}
+                  <span>{formatBitrate(track.bitrate)}</span>
+                {/if}
+                {#if track.size}
+                  <span>{formatFileSize(track.size)}</span>
+                {/if}
+                {#if track.numberOfFrames}
+                  <span>{track.numberOfFrames} frames</span>
+                {/if}
+              </div>
+            </Item.Content>
+          </Item.Root>
         {/each}
       </Card.Content>
     </Card.Root>

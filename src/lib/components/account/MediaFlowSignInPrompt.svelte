@@ -31,7 +31,7 @@
 >
   <Item.Media
     variant="icon"
-    class="size-8 rounded-full border border-primary/25 bg-background text-primary"
+    class="text-primary"
   >
     {#if authAction === 'opening-browser' || authAction === 'signing-out'}
       <Loader2 class="size-4 animate-spin" />

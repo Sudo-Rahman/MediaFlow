@@ -1,9 +1,13 @@
+<script lang="ts" module>
+  let nextOutputFolderFieldId = 0;
+</script>
+
 <script lang="ts">
   import { FolderOpen } from '@lucide/svelte';
 
   import { Button } from '$lib/components/ui/button';
+  import * as Field from '$lib/components/ui/field';
   import { Input } from '$lib/components/ui/input';
-  import { Label } from '$lib/components/ui/label';
   import type { OutputFolderFieldState } from '$lib/utils/output-folder';
 
   interface OutputFolderFieldProps {
@@ -16,6 +20,7 @@
     showReset?: boolean;
     resetLabel?: string;
     browseAriaLabel?: string;
+    inputId?: string;
     onBrowse?: () => void | Promise<void>;
     onReset?: () => void;
   }
@@ -30,6 +35,7 @@
     showReset = false,
     resetLabel = 'Reset',
     browseAriaLabel = 'Select output folder',
+    inputId = `output-folder-field-${nextOutputFolderFieldId += 1}`,
     onBrowse,
     onReset,
   }: OutputFolderFieldProps = $props();
@@ -39,11 +45,12 @@
   const displayTitle = $derived(state === 'empty' ? undefined : normalizedDisplayText);
 </script>
 
-<div class="space-y-2">
-  <Label>{label}</Label>
+<Field.Field>
+  <Field.Label for={inputId}>{label}</Field.Label>
 
   <div class="flex gap-2">
     <Input
+      id={inputId}
       value={inputValue}
       readonly
       placeholder={placeholder}
@@ -51,24 +58,26 @@
       title={displayTitle}
     />
     <Button variant="outline" size="icon" onclick={onBrowse} disabled={disabled || !onBrowse} aria-label={browseAriaLabel}>
-      <FolderOpen class="size-4" />
+      <FolderOpen />
     </Button>
   </div>
 
   {#if description}
-    <p class="text-xs text-muted-foreground">
+    <Field.Description class="text-xs">
       {description}
-    </p>
+    </Field.Description>
   {/if}
 
   {#if showReset && onReset}
-    <Button
-      variant="ghost"
-      class="h-6 text-xs text-muted-foreground hover:text-foreground"
-      onclick={onReset}
-      disabled={disabled}
-    >
-      {resetLabel}
-    </Button>
+    <div>
+      <Button
+        variant="ghost"
+        class="h-6 text-xs text-muted-foreground hover:text-foreground"
+        onclick={onReset}
+        disabled={disabled}
+      >
+        {resetLabel}
+      </Button>
+    </div>
   {/if}
-</div>
+</Field.Field>

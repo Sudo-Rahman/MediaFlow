@@ -9,6 +9,7 @@
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Badge } from '$lib/components/ui/badge';
+  import * as Empty from '$lib/components/ui/empty';
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
   import { ToolImportButton } from '$lib/components/shared';
@@ -148,10 +149,13 @@
           placeholder="Search..."
           value={workspace.searchQuery}
           oninput={handleSearchChange}
+          aria-label="Search files"
           class="pl-8 h-8"
         />
         {#if workspace.searchQuery}
           <button
+            type="button"
+            aria-label="Clear search"
             class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             onclick={() => workspace.setSearchQuery('')}
           >
@@ -250,15 +254,15 @@
               class="h-full"
             />
           {:else}
-            <div class="h-full rounded-lg border border-dashed border-muted-foreground/25 p-8 flex items-center justify-center text-center">
-              <div class="space-y-2">
-                <div class="mx-auto flex items-center justify-center size-16 rounded-full bg-muted/50">
+            <Empty.Root class="h-full border border-muted-foreground/25">
+              <Empty.Header>
+                <Empty.Media variant="icon" class="size-16 rounded-full">
                   <FileText class="size-8 text-muted-foreground" />
-                </div>
-                <p class="text-lg font-medium text-muted-foreground">{emptyStateTitle}</p>
-                <p class="text-sm text-muted-foreground/70">{emptyStateSubtitle}</p>
-              </div>
-            </div>
+                </Empty.Media>
+                <Empty.Title class="text-lg text-muted-foreground">{emptyStateTitle}</Empty.Title>
+                <Empty.Description>{emptyStateSubtitle}</Empty.Description>
+              </Empty.Header>
+            </Empty.Root>
           {/if}
         </div>
       {:else}

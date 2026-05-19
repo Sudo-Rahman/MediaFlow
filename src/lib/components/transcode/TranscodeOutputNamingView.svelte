@@ -2,6 +2,7 @@
   import type { RenameWorkspaceStore } from '$lib/stores/rename.svelte';
   import { RenameWorkspace } from '$lib/components/rename';
   import { Badge } from '$lib/components/ui/badge';
+  import * as Item from '$lib/components/ui/item';
   import { OutputFolderField } from '$lib/components/shared';
   import { resolveOutputFolderDisplay } from '$lib/utils';
 
@@ -55,20 +56,20 @@
           onReset={onClearOutputDir}
         />
 
-        <div class="rounded-md border bg-muted/30 p-3 space-y-2">
-          <div class="flex items-center justify-between text-sm">
-            <span class="text-muted-foreground">Selected outputs</span>
+        <Item.Group class="gap-2">
+          <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+            <Item.Title>Selected outputs</Item.Title>
             <Badge variant={workspace.selectedCount > 0 ? 'default' : 'secondary'}>
               {workspace.selectedCount}
             </Badge>
-          </div>
-          <div class="flex items-center justify-between text-sm">
-            <span class="text-muted-foreground">Conflicts</span>
+          </Item.Root>
+          <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+            <Item.Title>Conflicts</Item.Title>
             <Badge variant={outputConflictCount > 0 ? 'destructive' : 'secondary'}>
               {outputConflictCount}
             </Badge>
-          </div>
-        </div>
+          </Item.Root>
+        </Item.Group>
       </div>
     {/snippet}
   </RenameWorkspace>

@@ -4,6 +4,7 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
+  import * as Item from '$lib/components/ui/item';
   import { getAudioTrackLanguageLabel } from '$lib/utils/audio-language';
   import { cn } from '$lib/utils';
 
@@ -79,67 +80,74 @@
       </Dialog.Description>
     </Dialog.Header>
 
-    <div class="dialog-scroll-body space-y-2 py-4">
+    <div class="dialog-scroll-body flex flex-col gap-2 py-4">
       {#each tracks as track (track.index)}
         {@const isSelected = selectedTrackIndex === track.index}
-        <button
+        <Item.Root
+          variant={isSelected ? 'outline' : 'default'}
+          size="sm"
           class={cn(
-            "w-full text-left p-3 rounded-lg border transition-colors",
-            isSelected 
-              ? "border-primary bg-primary/5" 
-              : "border-border hover:bg-muted/50"
+            "hover:bg-muted/50",
+            isSelected && "border-primary bg-card ring-1 ring-primary/20 hover:bg-card"
           )}
-          onclick={() => selectedTrackIndex = track.index}
         >
-          <div class="flex items-start gap-3">
-            <!-- Selection indicator -->
-            <div class={cn(
-              "size-5 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5",
-              isSelected ? "border-primary bg-primary" : "border-muted-foreground"
-            )}>
-              {#if isSelected}
-                <Check class="size-3 text-primary-foreground" />
-              {/if}
-            </div>
-            
-            <!-- Track info -->
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2">
-                <span class="font-medium text-sm">
-                  Track {track.index + 1}
-                  {#if track.title}
-                    - {track.title}
+          {#snippet child({ props })}
+            <button
+              {...props}
+              type="button"
+              class={cn(String(props.class ?? ''), "text-left")}
+              aria-pressed={isSelected}
+              onclick={() => selectedTrackIndex = track.index}
+            >
+              <Item.Media class="mt-0.5">
+                <div class={cn(
+                  "size-5 rounded-full border-2 flex items-center justify-center",
+                  isSelected ? "border-primary bg-primary" : "border-muted-foreground"
+                )}>
+                  {#if isSelected}
+                    <Check class="size-3 text-primary-foreground" />
                   {/if}
-                </span>
-                {#if track.isDefault}
-                  <Badge variant="secondary" class="text-[10px]">Default</Badge>
-                {/if}
-              </div>
-              
-              <div class="flex items-center gap-2 text-xs text-muted-foreground mt-1 flex-wrap">
-                <Badge variant="outline" class="text-[10px]">
-                  {track.codec.toUpperCase()}
-                </Badge>
-                
-                <span>{formatChannels(track.channels)}</span>
-                <span>{formatSampleRate(track.sampleRate)}</span>
-                
-                {#if track.bitrate}
-                  <span>{formatBitrate(track.bitrate)}</span>
-                {/if}
-                
-                {#if getAudioTrackLanguageLabel(track.language)}
-                  <span class="flex items-center gap-1">
-                    <Languages class="size-3" />
-                    {getAudioTrackLanguageLabel(track.language)}
+                </div>
+              </Item.Media>
+
+              <Item.Content class="min-w-0">
+                <Item.Title class="max-w-full">
+                  <span class="truncate">
+                    Track {track.index + 1}
+                    {#if track.title}
+                      - {track.title}
+                    {/if}
                   </span>
-                {:else}
-                  <span class="text-muted-foreground">No language tag</span>
-                {/if}
-              </div>
-            </div>
-          </div>
-        </button>
+                  {#if track.isDefault}
+                    <Badge variant="secondary" class="text-[10px]">Default</Badge>
+                  {/if}
+                </Item.Title>
+
+                <Item.Description class="flex max-w-full flex-wrap items-center gap-2 text-xs">
+                  <Badge variant="outline" class="text-[10px]">
+                    {track.codec.toUpperCase()}
+                  </Badge>
+
+                  <span>{formatChannels(track.channels)}</span>
+                  <span>{formatSampleRate(track.sampleRate)}</span>
+
+                  {#if track.bitrate}
+                    <span>{formatBitrate(track.bitrate)}</span>
+                  {/if}
+
+                  {#if getAudioTrackLanguageLabel(track.language)}
+                    <span class="flex items-center gap-1">
+                      <Languages class="size-3" />
+                      {getAudioTrackLanguageLabel(track.language)}
+                    </span>
+                  {:else}
+                    <span>No language tag</span>
+                  {/if}
+                </Item.Description>
+              </Item.Content>
+            </button>
+          {/snippet}
+        </Item.Root>
       {/each}
     </div>
 

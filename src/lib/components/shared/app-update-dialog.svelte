@@ -3,8 +3,10 @@
   import { toast } from 'svelte-sonner';
 
   import * as AlertDialog from '$lib/components/ui/alert-dialog';
+  import * as Alert from '$lib/components/ui/alert';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
+  import * as Item from '$lib/components/ui/item';
   import { Progress } from '$lib/components/ui/progress';
   import { updaterStore } from '$lib/stores';
   import { formatFileSize } from '$lib/utils/format';
@@ -87,24 +89,22 @@
     </Dialog.Header>
 
     <div class="space-y-4">
-      <div class="rounded-lg border bg-muted/30 p-3">
-        <div class="flex items-start gap-3">
-          <div class="mt-0.5 rounded-md bg-background p-2">
-            <Download class="size-4 text-primary" />
-          </div>
-          <div class="min-w-0 flex-1">
-            <p class="text-sm font-medium">Version {updaterStore.availableVersion ?? 'unknown'}</p>
-            {#if updateDateLabel}
-              <p class="text-xs text-muted-foreground">{updateDateLabel}</p>
-            {/if}
-            {#if updaterStore.currentVersion}
-              <p class="mt-1 text-xs text-muted-foreground">
-                Current version: {updaterStore.currentVersion}
-              </p>
-            {/if}
-          </div>
-        </div>
-      </div>
+      <Item.Root variant="muted" size="sm">
+        <Item.Media variant="icon" class="mt-0.5 size-8 bg-background text-primary">
+          <Download class="size-4" />
+        </Item.Media>
+        <Item.Content class="min-w-0">
+          <Item.Title>Version {updaterStore.availableVersion ?? 'unknown'}</Item.Title>
+          {#if updateDateLabel}
+            <Item.Description class="text-xs">{updateDateLabel}</Item.Description>
+          {/if}
+          {#if updaterStore.currentVersion}
+            <Item.Description class="text-xs">
+              Current version: {updaterStore.currentVersion}
+            </Item.Description>
+          {/if}
+        </Item.Content>
+      </Item.Root>
 
       {#if updaterStore.isInstalling}
         <div class="space-y-2">
@@ -119,12 +119,12 @@
       {/if}
 
       {#if hasActiveJobs && !updaterStore.isInstalling}
-        <div class="flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
-          <AlertTriangle class="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-          <p class="text-amber-700 dark:text-amber-300">
+        <Alert.Root role="note" aria-live="off" class="border-amber-500/30 bg-amber-500/10">
+          <AlertTriangle class="text-amber-600 dark:text-amber-400" />
+          <Alert.Description class="text-amber-700 dark:text-amber-300">
             Processing is active. Updating now will stop current work and relaunch the app.
-          </p>
-        </div>
+          </Alert.Description>
+        </Alert.Root>
       {/if}
     </div>
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Video, Volume2, Subtitles, Table, Clock } from '@lucide/svelte';
+  import { Table, Clock } from '@lucide/svelte';
   import type { MergeTrack, ImportedTrack, MergeTrackConfig } from '$lib/types';
   import { mergeStore } from '$lib/stores/merge.svelte';
   import { COMMON_LANGUAGES } from '$lib/types';
@@ -7,6 +7,7 @@
   import { Input } from '$lib/components/ui/input';
   import { Checkbox } from '$lib/components/ui/checkbox';
   import { Badge } from '$lib/components/ui/badge';
+  import * as Empty from '$lib/components/ui/empty';
   import * as Select from '$lib/components/ui/select';
   import { cn } from '$lib/utils';
 
@@ -48,12 +49,6 @@
 
     return tracks;
   });
-
-  const typeIcons = {
-    video: Video,
-    audio: Volume2,
-    subtitle: Subtitles,
-  };
 
   function handleToggleEnabled(trackId: string, source: 'source' | 'imported', current: boolean) {
     if (source === 'source') {
@@ -159,11 +154,12 @@
 
       <!-- Table Body -->
       <div class="divide-y">
-        {#each allTracks as { track, config, source, videoName }}
+        {#each allTracks as { track, config, source, videoName } (`${source}:${track.id}`)}
           <div class="grid grid-cols-[40px_200px_80px_120px_200px_80px_80px_100px] gap-2 p-3 items-center hover:bg-muted/30 transition-colors">
             <!-- Enable Checkbox -->
             <div>
               <Checkbox
+                aria-label={`Enable ${getTrackDisplayName(track)}`}
                 checked={config?.enabled ?? true}
                 onCheckedChange={() => handleToggleEnabled(track.id, source, config?.enabled ?? true)}
               />
@@ -202,7 +198,7 @@
                 </Select.Trigger>
                 <Select.Content>
                   <Select.Group>
-                    {#each COMMON_LANGUAGES as lang}
+                    {#each COMMON_LANGUAGES as lang (lang.code)}
                       <Select.Item value={lang.code} class="text-xs">{lang.label}</Select.Item>
                     {/each}
                   </Select.Group>
@@ -224,6 +220,7 @@
             <!-- Default -->
             <div class="flex items-center justify-center">
               <Checkbox
+                aria-label={`Set ${getTrackDisplayName(track)} as default`}
                 checked={config?.default || ('default' in track ? track.default : false) || false}
                 onCheckedChange={(checked) => handleDefaultChange(track.id, source, !!checked)}
               />
@@ -233,6 +230,7 @@
             <div class="flex items-center justify-center">
               {#if track.type === 'subtitle'}
                 <Checkbox
+                  aria-label={`Mark ${getTrackDisplayName(track)} as forced`}
                   checked={config?.forced || ('forced' in track ? track.forced : false) || false}
                   onCheckedChange={(checked) => handleForcedChange(track.id, source, !!checked)}
                 />
@@ -259,11 +257,15 @@
       </div>
 
       {#if allTracks.length === 0}
-        <div class="text-center py-12 text-muted-foreground">
-          <Table class="size-12 mx-auto mb-4 opacity-50" />
-          <p>No tracks to display</p>
-          <p class="text-sm mt-1">Import videos and tracks to get started</p>
-        </div>
+        <Empty.Root class="border-0 py-12">
+          <Empty.Header>
+            <Empty.Media>
+              <Table class="size-12 text-muted-foreground/50" />
+            </Empty.Media>
+            <Empty.Title class="text-base">No tracks to display</Empty.Title>
+            <Empty.Description>Import videos and tracks to get started</Empty.Description>
+          </Empty.Header>
+        </Empty.Root>
       {/if}
     </div>
   </div>

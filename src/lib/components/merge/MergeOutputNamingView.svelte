@@ -3,6 +3,7 @@
   import { RenameWorkspace } from '$lib/components/rename';
   import { OutputFolderField } from '$lib/components/shared';
   import { Badge } from '$lib/components/ui/badge';
+  import * as Item from '$lib/components/ui/item';
   import { resolveOutputFolderDisplay } from '$lib/utils';
 
   interface Props {
@@ -51,19 +52,23 @@
         />
       </div>
 
-      <div class="rounded-md bg-muted/50 p-3 space-y-2">
-        <div class="flex items-center justify-between text-sm">
-          <span class="text-muted-foreground">Selected videos</span>
+      <div class="flex w-full flex-col gap-2">
+        <Item.Root size="xs" variant="muted" class="justify-between">
+          <Item.Content>
+            <Item.Title>Selected videos</Item.Title>
+          </Item.Content>
           <Badge variant={selectedVideosCount > 0 ? 'default' : 'secondary'}>
             {selectedVideosCount}
           </Badge>
-        </div>
-        <div class="flex items-center justify-between text-sm">
-          <span class="text-muted-foreground">Attached tracks</span>
+        </Item.Root>
+        <Item.Root size="xs" variant="muted" class="justify-between">
+          <Item.Content>
+            <Item.Title>Attached tracks</Item.Title>
+          </Item.Content>
           <Badge variant={selectedTracksCount > 0 ? 'default' : 'secondary'}>
             {selectedTracksCount}
           </Badge>
-        </div>
+        </Item.Root>
       </div>
     {/snippet}
   </RenameWorkspace>

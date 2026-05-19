@@ -1,11 +1,16 @@
 <script lang="ts">
   import { Film } from '@lucide/svelte';
+  import * as Empty from '$lib/components/ui/empty';
 </script>
 
 <div class="flex-1 flex items-center justify-center">
-  <div class="text-center">
-    <Film class="size-16 text-muted-foreground/30 mx-auto mb-4" />
-    <h3 class="text-lg font-medium text-muted-foreground">No file selected</h3>
-    <p class="text-sm text-muted-foreground mt-1">Select a file from the list or add new files</p>
-  </div>
+  <Empty.Root class="border-0">
+    <Empty.Header>
+      <Empty.Media class="opacity-30">
+        <Film class="size-16 text-muted-foreground" />
+      </Empty.Media>
+      <Empty.Title class="text-lg text-muted-foreground">No file selected</Empty.Title>
+      <Empty.Description>Select a file from the list or add new files</Empty.Description>
+    </Empty.Header>
+  </Empty.Root>
 </div>

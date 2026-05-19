@@ -5,7 +5,8 @@
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import * as Card from '$lib/components/ui/card';
-  import { Label } from '$lib/components/ui/label';
+  import * as Field from '$lib/components/ui/field';
+  import * as Item from '$lib/components/ui/item';
   import * as Select from '$lib/components/ui/select';
   import { settingsStore, translationStore } from '$lib/stores';
   import { LLM_PROVIDERS, SUPPORTED_LANGUAGES } from '$lib/types';
@@ -59,6 +60,10 @@
     if (!model) return false;
     return !!settingsStore.getLLMApiKey(provider);
   });
+
+  const controlId = $props.id();
+  const sourceLanguageId = `${controlId}-source-language`;
+  const targetLanguageId = `${controlId}-target-language`;
 </script>
 
 <Card.Root>
@@ -72,16 +77,17 @@
     </Card.Description>
   </Card.Header>
   <Card.Content class="space-y-6">
-    <div class="space-y-4">
-      <Label class="text-sm font-medium">Languages</Label>
+    <Field.FieldSet class="gap-4">
+      <Field.FieldLegend variant="label" class="mb-0">Languages</Field.FieldLegend>
       <div class="flex items-center gap-3">
-        <div class="flex-1">
+        <Field.Field class="flex-1">
+          <Field.FieldLabel for={sourceLanguageId} class="sr-only">Source language</Field.FieldLabel>
           <Select.Root
             type="single"
             value={translationStore.config.sourceLanguage}
             onValueChange={handleSourceLangChange}
           >
-            <Select.Trigger class="w-full">
+            <Select.Trigger id={sourceLanguageId} class="w-full">
               {SUPPORTED_LANGUAGES.find((language) => language.code === translationStore.config.sourceLanguage)?.name || 'Select source'}
             </Select.Trigger>
             <Select.Content>
@@ -92,17 +98,18 @@
               </Select.Group>
             </Select.Content>
           </Select.Root>
-        </div>
+        </Field.Field>
 
         <ArrowRight class="size-5 text-muted-foreground shrink-0" />
 
-        <div class="flex-1">
+        <Field.Field class="flex-1">
+          <Field.FieldLabel for={targetLanguageId} class="sr-only">Target language</Field.FieldLabel>
           <Select.Root
             type="single"
             value={translationStore.config.targetLanguage}
             onValueChange={handleTargetLangChange}
           >
-            <Select.Trigger class="w-full">
+            <Select.Trigger id={targetLanguageId} class="w-full">
               {targetLanguages.find((language) => language.code === translationStore.config.targetLanguage)?.name || 'Select target'}
             </Select.Trigger>
             <Select.Content>
@@ -113,9 +120,9 @@
               </Select.Group>
             </Select.Content>
           </Select.Root>
-        </div>
+        </Field.Field>
       </div>
-    </div>
+    </Field.FieldSet>
 
     <LlmProviderModelSelector
       provider={translationStore.config.provider}
@@ -128,7 +135,7 @@
     <!-- Multi-Model Comparison -->
     <div class="space-y-3">
       <div class="flex items-center justify-between">
-        <Label class="text-sm font-medium">Compare Models</Label>
+        <Field.FieldTitle class="text-sm font-medium">Compare Models</Field.FieldTitle>
         {#if isMultiModel}
           <Badge variant="secondary" class="text-xs">
             {additionalModels.length} model{additionalModels.length > 1 ? 's' : ''}
@@ -142,17 +149,22 @@
       {#if additionalModels.length > 0}
         <div class="space-y-1.5">
           {#each additionalModels as entry (entry.id)}
-            <div class="flex items-center gap-2 px-2 py-1.5 rounded-md bg-muted/50 text-sm">
-              <span class="flex-1 truncate">{getModelDisplayName(entry.provider, entry.model)}</span>
-              <Button
-                variant="ghost"
-                size="icon"
-                class="size-6 text-muted-foreground hover:text-destructive"
-                onclick={() => handleRemoveModel(entry.id)}
-              >
-                <X class="size-3" />
-              </Button>
-            </div>
+            <Item.Root variant="muted" size="xs" class="flex-nowrap">
+              <Item.Content class="min-w-0">
+                <Item.Title class="w-full truncate">{getModelDisplayName(entry.provider, entry.model)}</Item.Title>
+              </Item.Content>
+              <Item.Actions>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="size-6 text-muted-foreground hover:text-destructive"
+                  onclick={() => handleRemoveModel(entry.id)}
+                >
+                  <X class="size-3" />
+                  <span class="sr-only">Remove model</span>
+                </Button>
+              </Item.Actions>
+            </Item.Root>
           {/each}
         </div>
       {/if}

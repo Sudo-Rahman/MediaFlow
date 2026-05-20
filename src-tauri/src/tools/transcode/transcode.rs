@@ -30,6 +30,9 @@ pub(crate) struct TranscodeProgressEvent {
     pub(crate) output_path: String,
     pub(crate) progress: i32,
     pub(crate) speed_bytes_per_sec: Option<f64>,
+    pub(crate) current_frame: Option<u64>,
+    pub(crate) total_frames: Option<u64>,
+    pub(crate) frames_per_second: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -134,6 +137,9 @@ fn emit_transcode_progress(
     output_path: &str,
     progress: i32,
     speed_bytes_per_sec: Option<f64>,
+    current_frame: Option<u64>,
+    total_frames: Option<u64>,
+    frames_per_second: Option<f64>,
 ) {
     let _ = app.emit(
         "media-transcode-progress",
@@ -141,7 +147,10 @@ fn emit_transcode_progress(
             "inputPath": input_path,
             "outputPath": output_path,
             "progress": progress,
-            "speedBytesPerSec": speed_bytes_per_sec
+            "speedBytesPerSec": speed_bytes_per_sec,
+            "currentFrame": current_frame,
+            "totalFrames": total_frames,
+            "framesPerSecond": frames_per_second
         }),
     );
 }
@@ -317,6 +326,62 @@ fn extract_streams_by_type(streams: &[Value], codec_type: &str) -> Vec<StreamInf
             probe_stream: stream.clone(),
         })
         .collect()
+}
+
+fn parse_positive_u64_value(value: Option<&Value>) -> Option<u64> {
+    match value? {
+        Value::Number(number) => number.as_u64().filter(|value| *value > 0),
+        Value::String(value) => value.trim().parse::<u64>().ok().filter(|value| *value > 0),
+        _ => None,
+    }
+}
+
+fn parse_frame_rate_ratio(value: Option<&Value>) -> Option<f64> {
+    let raw = value?.as_str()?.trim();
+    if raw.is_empty() || raw == "0/0" || raw.eq_ignore_ascii_case("n/a") {
+        return None;
+    }
+
+    if let Some((numerator, denominator)) = raw.split_once('/') {
+        let numerator = numerator.trim().parse::<f64>().ok()?;
+        let denominator = denominator.trim().parse::<f64>().ok()?;
+        if denominator <= 0.0 {
+            return None;
+        }
+
+        let rate = numerator / denominator;
+        return rate.is_finite().then_some(rate).filter(|rate| *rate > 0.0);
+    }
+
+    raw.parse::<f64>()
+        .ok()
+        .filter(|rate| rate.is_finite() && *rate > 0.0)
+}
+
+fn resolve_primary_video_total_frames(streams: &[Value], duration_us: Option<u64>) -> Option<u64> {
+    let stream = streams.iter().find(|stream| {
+        stream
+            .get("codec_type")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| value == "video")
+    })?;
+
+    parse_positive_u64_value(stream.get("nb_frames"))
+        .or_else(|| {
+            stream
+                .get("tags")
+                .and_then(|tags| parse_positive_u64_value(tags.get("NUMBER_OF_FRAMES")))
+        })
+        .or_else(|| {
+            let duration_seconds = duration_us? as f64 / 1_000_000.0;
+            let frame_rate = parse_frame_rate_ratio(stream.get("avg_frame_rate"))
+                .or_else(|| parse_frame_rate_ratio(stream.get("r_frame_rate")))?;
+            let total_frames = (duration_seconds * frame_rate).round();
+            total_frames
+                .is_finite()
+                .then_some(total_frames as u64)
+                .filter(|value| *value > 0)
+        })
 }
 
 fn has_enabled_additional_arg(additional_args: &[TranscodeAdditionalArg], flag: &str) -> bool {
@@ -871,6 +936,9 @@ pub(crate) async fn transcode_media(
     let duration_us = get_media_duration_us_with_ffprobe(&ffprobe_path, &request.input_path)
         .await
         .ok();
+    let total_frames = (request.video.mode != "disable")
+        .then(|| resolve_primary_video_total_frames(&streams, duration_us))
+        .flatten();
     let args = build_transcode_args(&request, &streams, duration_us)?;
 
     let mut child = tokio_command(&ffmpeg_path)
@@ -880,7 +948,16 @@ pub(crate) async fn transcode_media(
         .spawn()
         .map_err(|error| format!("Failed to start ffmpeg: {}", error))?;
 
-    emit_transcode_progress(&app, &request.input_path, &request.output_path, 0, None);
+    emit_transcode_progress(
+        &app,
+        &request.input_path,
+        &request.output_path,
+        0,
+        None,
+        None,
+        total_frames,
+        None,
+    );
 
     if let Some(pid) = child.id() {
         if let Ok(mut guard) = super::state::TRANSCODE_PROCESS_IDS.lock() {
@@ -898,7 +975,7 @@ pub(crate) async fn transcode_media(
         let output_path_for_progress = request.output_path.clone();
 
         tokio::spawn(async move {
-            let mut tracker = FfmpegProgressTracker::new(duration_us);
+            let mut tracker = FfmpegProgressTracker::with_total_frames(duration_us, total_frames);
             let mut last_progress = 0;
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
@@ -915,6 +992,9 @@ pub(crate) async fn transcode_media(
                         &output_path_for_progress,
                         last_progress,
                         update.speed_bytes_per_sec,
+                        update.current_frame,
+                        update.total_frames,
+                        update.frames_per_second,
                     );
                 }
             }
@@ -972,7 +1052,16 @@ pub(crate) async fn transcode_media(
         return Err("Transcode failed: output file not created".to_string());
     }
 
-    emit_transcode_progress(&app, &request.input_path, &request.output_path, 100, None);
+    emit_transcode_progress(
+        &app,
+        &request.input_path,
+        &request.output_path,
+        100,
+        None,
+        total_frames,
+        total_frames,
+        None,
+    );
 
     Ok(request.output_path)
 }
@@ -1006,7 +1095,7 @@ mod tests {
     use super::{
         TranscodeAdditionalArg, TranscodeAudioSettings, TranscodeAudioTrackOverride,
         TranscodeRequest, TranscodeSubtitleSettings, TranscodeVideoSettings, build_transcode_args,
-        cpu_used_preset_max, transcode_media_with_bins,
+        cpu_used_preset_max, resolve_primary_video_total_frames, transcode_media_with_bins,
     };
 
     const AUDIO_LAYOUT_CASES: &[(&str, u64)] = &[
@@ -2004,6 +2093,38 @@ mod tests {
             default_subtitle_encoder_id: None,
             metadata_schema: metadata_schema_for_container("mkv"),
         }
+    }
+
+    #[test]
+    fn resolve_primary_video_total_frames_reads_nb_frames() {
+        let streams = vec![
+            json!({
+                "codec_type": "audio",
+                "nb_frames": "500"
+            }),
+            json!({
+                "codec_type": "video",
+                "nb_frames": "1440"
+            }),
+        ];
+
+        assert_eq!(
+            resolve_primary_video_total_frames(&streams, None),
+            Some(1440)
+        );
+    }
+
+    #[test]
+    fn resolve_primary_video_total_frames_estimates_from_average_frame_rate() {
+        let streams = vec![json!({
+            "codec_type": "video",
+            "avg_frame_rate": "30000/1001"
+        })];
+
+        assert_eq!(
+            resolve_primary_video_total_frames(&streams, Some(10_010_000)),
+            Some(300),
+        );
     }
 
     #[test]

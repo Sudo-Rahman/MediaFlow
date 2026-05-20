@@ -854,9 +854,16 @@
         return;
       }
 
+      const progressMetrics = {
+        currentFrame: event.payload.currentFrame ?? undefined,
+        totalFrames: event.payload.totalFrames ?? undefined,
+        framesPerSecond: event.payload.framesPerSecond ?? undefined,
+      };
+
       transcodeStore.updateRuntimeCurrentFile(
         event.payload.progress,
         event.payload.speedBytesPerSec,
+        progressMetrics,
       );
       transcodeStore.updateFileRunProgress(
         event.payload.inputPath,
@@ -1122,6 +1129,9 @@
           progress={transcodeStore.progress}
           totalFiles={transcodeStore.runtimeProgress.totalFiles}
           currentSpeedBytesPerSec={transcodeStore.runtimeProgress.currentSpeedBytesPerSec}
+          currentFrame={transcodeStore.runtimeProgress.currentFrame}
+          totalFrames={transcodeStore.runtimeProgress.totalFrames}
+          framesPerSecond={transcodeStore.runtimeProgress.framesPerSecond}
           onOpenOutput={() => transcodeStore.setActiveTab('output')}
           onCancelAll={() => void handleCancelAll()}
           onStartTranscode={() => void handleStartTranscode()}

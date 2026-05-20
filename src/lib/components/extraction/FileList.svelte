@@ -67,7 +67,11 @@
     {@const isCurrentProcessing = isProcessing && currentProcessingPath === file.path}
     {@const showCancelAction = status === 'processing' && isCurrentProcessing}
     {@const removeDisabled = isProcessing && !isCurrentProcessing}
-    <FileItemCard selected={selectedPath === file.path} onclick={() => onSelect?.(file.path)}>
+    <FileItemCard
+      selected={selectedPath === file.path}
+      onclick={() => onSelect?.(file.path)}
+      selectionLabel={`Select ${file.name}`}
+    >
       {#snippet icon()}
         {#if status === 'scanning'}
           <Loader2 class={cn(FILE_ITEM_CARD_STATUS_ICON_CLASS, 'text-muted-foreground animate-spin')} />

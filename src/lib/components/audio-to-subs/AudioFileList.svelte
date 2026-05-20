@@ -49,7 +49,11 @@
     {@const isTranscribing = file.status === 'transcribing'}
     {@const isTranscoding = file.status === 'transcoding'}
     {@const versionCount = file.transcriptionVersions?.length ?? 0}
-    <FileItemCard selected={isSelected} onclick={() => onSelect(file.id)}>
+    <FileItemCard
+      selected={isSelected}
+      onclick={() => onSelect(file.id)}
+      selectionLabel={`Select ${file.name}`}
+    >
       {#snippet icon()}
         {#if file.status === 'completed'}
           <CheckCircle class={`${FILE_ITEM_CARD_STATUS_ICON_CLASS} text-green-500`} />

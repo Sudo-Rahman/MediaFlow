@@ -54,7 +54,11 @@
     {@const hasModelJobs = !!job.modelJobs && job.modelJobs.length > 0}
     {@const completedModels = hasModelJobs ? job.modelJobs!.filter(mj => mj.status === 'completed').length : 0}
     {@const totalModels = hasModelJobs ? job.modelJobs!.length : 0}
-    <FileItemCard selected={isSelected} onclick={() => onSelect(job.id)}>
+    <FileItemCard
+      selected={isSelected}
+      onclick={() => onSelect(job.id)}
+      selectionLabel={`Select ${job.file.name}`}
+    >
       {#snippet icon()}
         {#if job.status === 'completed'}
           <CheckCircle class={`${FILE_ITEM_CARD_STATUS_ICON_CLASS} text-green-500`} />

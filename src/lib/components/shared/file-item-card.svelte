@@ -13,6 +13,7 @@
     actions?: Snippet;
     footer?: Snippet;
     onclick?: () => void;
+    selectionLabel?: string;
   }
 
   let {
@@ -25,6 +26,7 @@
     actions,
     footer,
     onclick,
+    selectionLabel = 'Select item',
   }: FileItemCardProps = $props();
 </script>
 
@@ -32,22 +34,33 @@
   variant={selected ? 'outline' : 'default'}
   size={compact ? 'xs' : 'sm'}
   class={cn(
-    'items-start text-left hover:bg-muted/70',
+    'relative items-start text-left hover:bg-muted/70',
     selected && 'border-primary bg-card ring-1 ring-primary/20 hover:bg-card',
     disabled && 'cursor-not-allowed opacity-60',
     className
   )}
 >
-  <button
-    type="button"
+  {#if onclick}
+    <button
+      type="button"
+      class={cn(
+        'absolute inset-0 z-0 rounded-[inherit] text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+        disabled && 'cursor-not-allowed'
+      )}
+      onclick={onclick}
+      disabled={disabled}
+      aria-pressed={selected}
+      aria-label={selectionLabel}
+    ></button>
+  {/if}
+
+  <div
     class={cn(
-      'flex min-w-0 flex-1 flex-wrap items-start gap-3 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+      'relative z-10 flex min-w-0 flex-1 flex-wrap items-start gap-3 text-left',
+      onclick && 'pointer-events-none',
       compact && 'gap-2',
       disabled && 'cursor-not-allowed'
     )}
-    onclick={onclick}
-    disabled={disabled}
-    aria-pressed={selected}
   >
     {#if icon}
       <Item.Media class="mt-0.5">
@@ -64,10 +77,10 @@
         {@render footer()}
       </Item.Footer>
     {/if}
-  </button>
+  </div>
 
   {#if actions}
-    <Item.Actions class="shrink-0">
+    <Item.Actions class="relative z-20 shrink-0">
       {@render actions()}
     </Item.Actions>
   {/if}

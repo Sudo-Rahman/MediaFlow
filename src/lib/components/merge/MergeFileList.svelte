@@ -88,6 +88,7 @@
         compact={compact}
         selected={selectedId === file.id}
         onclick={() => onSelect?.(file.id)}
+        selectionLabel={`Select ${file.name}`}
       >
         {#snippet icon()}
           {#if status === 'scanning'}

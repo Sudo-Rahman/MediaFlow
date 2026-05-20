@@ -81,7 +81,11 @@
     {@const isSelected = file.id === selectedId}
     {@const processing = isProcessing(file.status)}
     {@const versionCount = file.ocrVersions?.length ?? 0}
-    <FileItemCard selected={isSelected} onclick={() => onSelect(file.id)}>
+    <FileItemCard
+      selected={isSelected}
+      onclick={() => onSelect(file.id)}
+      selectionLabel={`Select ${file.name}`}
+    >
       {#snippet icon()}
         {#if file.status === 'completed'}
           <CheckCircle class={`${FILE_ITEM_CARD_STATUS_ICON_CLASS} text-green-500`} />

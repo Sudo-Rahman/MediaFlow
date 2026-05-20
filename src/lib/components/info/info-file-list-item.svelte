@@ -31,7 +31,7 @@
   }
 </script>
 
-<FileItemCard {selected} onclick={onSelect}>
+<FileItemCard {selected} onclick={onSelect} selectionLabel={`Select ${file.name}`}>
   {#snippet icon()}
     {#if file.status === 'scanning'}
       <Loader2 class={`${FILE_ITEM_CARD_STATUS_ICON_CLASS} animate-spin text-muted-foreground`} />

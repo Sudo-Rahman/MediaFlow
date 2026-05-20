@@ -98,7 +98,7 @@
       <div class="space-y-2">
         <Label>Output preview</Label>
         <Item.Root variant="outline" size="sm">
-          <Item.Description class="break-all">{outputPreviewPath}</Item.Description>
+          <Item.Description class="block w-full min-w-0 max-w-full break-all">{outputPreviewPath}</Item.Description>
         </Item.Root>
       </div>
     </Card.Content>

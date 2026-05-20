@@ -2,9 +2,12 @@
   import {
     CheckCircle,
     FileVideo,
+    Film,
     Info,
     Loader2,
+    Subtitles,
     Trash2,
+    Volume2,
     X,
     XCircle,
   } from '@lucide/svelte';
@@ -17,6 +20,7 @@
   import { FileItemCard, ToolImportButton } from '$lib/components/shared';
   import { describeTrackSummary } from '$lib/services/transcode';
   import { cn } from '$lib/utils';
+  import { countTracksByType } from '$lib/utils/media-tracks';
   import {
     FILE_ITEM_CARD_ACTION_BUTTON_CLASS,
     FILE_ITEM_CARD_ACTION_ICON_CLASS,
@@ -120,19 +124,22 @@
         onBrowse={onAddFiles}
       />
     {:else}
-      <div class="space-y-1.5">
+      <div class="space-y-2">
         {#each files as file (file.id)}
           {@const runState = fileRunStates.get(file.path)}
           {@const status = getFileCardStatus(file.status, runState)}
+          {@const counts = countTracksByType(file.tracks)}
           {@const showProgress = !!runState && shouldShowFileCardProgress(status)}
           {@const isCurrentProcessing = isProcessing && currentProcessingFileId === file.id}
           {@const showCancelAction = status === 'processing' && isCurrentProcessing}
           {@const removeDisabled = isProcessing && !isCurrentProcessing}
           {@const aiLabel = formatAiStatusLabel(file)}
+          {@const showBadgeRow =
+            status !== 'ready' || counts.video > 0 || counts.audio > 0 || counts.subtitle > 0 || !!aiLabel}
           <FileItemCard
-            compact
             selected={selectedFileId === file.id}
             onclick={() => onSelectFile?.(file.id)}
+            selectionLabel={`Select ${file.name}`}
           >
             {#snippet icon()}
               {#if status === 'scanning'}
@@ -151,15 +158,41 @@
             {/snippet}
 
             {#snippet content()}
-              <div class="flex items-start justify-between gap-2">
-                <p class={FILE_ITEM_CARD_TITLE_CLASS}>{file.name}</p>
-                <Badge
-                  variant={status === 'error' ? 'destructive' : status === 'completed' ? 'default' : 'secondary'}
-                  class="text-[10px] shrink-0"
-                >
-                  {formatStatusLabel(status)}
-                </Badge>
-              </div>
+              <p class={FILE_ITEM_CARD_TITLE_CLASS}>{file.name}</p>
+
+              {#if showBadgeRow}
+                <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
+                  {#if status !== 'ready'}
+                    <Badge
+                      variant={status === 'error' ? 'destructive' : status === 'completed' ? 'default' : 'secondary'}
+                      class="text-xs"
+                    >
+                      {formatStatusLabel(status)}
+                    </Badge>
+                  {/if}
+                  {#if counts.video > 0}
+                    <Badge variant="secondary" class="text-xs gap-1">
+                      <Film class="size-3" />
+                      {counts.video}
+                    </Badge>
+                  {/if}
+                  {#if counts.audio > 0}
+                    <Badge variant="secondary" class="text-xs gap-1">
+                      <Volume2 class="size-3" />
+                      {counts.audio}
+                    </Badge>
+                  {/if}
+                  {#if counts.subtitle > 0}
+                    <Badge variant="secondary" class="text-xs gap-1">
+                      <Subtitles class="size-3" />
+                      {counts.subtitle}
+                    </Badge>
+                  {/if}
+                  {#if aiLabel}
+                    <Badge variant="outline" class="text-xs">{aiLabel}</Badge>
+                  {/if}
+                </div>
+              {/if}
 
               <p class="mt-1 text-xs text-muted-foreground line-clamp-2">
                 {#if file.status === 'error'}
@@ -178,9 +211,6 @@
                 {/if}
                 {#if showProgress && runState}
                   <span>• {Math.round(runState.progress)}%</span>
-                {/if}
-                {#if aiLabel}
-                  <span>• {aiLabel}</span>
                 {/if}
               </div>
 

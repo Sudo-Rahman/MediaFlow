@@ -28,7 +28,6 @@
     FILE_ITEM_CARD_META_CLASS,
     FILE_ITEM_CARD_REMOVE_ACTION_CLASS,
     FILE_ITEM_CARD_STATUS_ICON_CLASS,
-    FILE_ITEM_CARD_TITLE_CLASS,
   } from '$lib/utils/file-item-card-visuals';
   import { formatDuration, formatFileSize } from '$lib/utils/format';
 
@@ -68,6 +67,7 @@
     {@const showCancelAction = status === 'processing' && isCurrentProcessing}
     {@const removeDisabled = isProcessing && !isCurrentProcessing}
     <FileItemCard
+      title={file.name}
       selected={selectedPath === file.path}
       onclick={() => onSelect?.(file.path)}
       selectionLabel={`Select ${file.name}`}
@@ -88,9 +88,7 @@
         {/if}
       {/snippet}
 
-      {#snippet content()}
-        <p class={FILE_ITEM_CARD_TITLE_CLASS}>{file.name}</p>
-
+      {#snippet meta()}
         <div class="flex flex-wrap gap-1.5 mt-1.5">
           {#if counts.video > 0}
             <Badge variant="secondary" class="text-xs gap-1">
@@ -111,7 +109,9 @@
             </Badge>
           {/if}
         </div>
+      {/snippet}
 
+      {#snippet details()}
         <div class={FILE_ITEM_CARD_META_CLASS}>
           <span>{formatFileSize(file.size)}</span>
           {#if file.duration}

@@ -28,7 +28,6 @@
     FILE_ITEM_CARD_META_CLASS,
     FILE_ITEM_CARD_REMOVE_ACTION_CLASS,
     FILE_ITEM_CARD_STATUS_ICON_CLASS,
-    FILE_ITEM_CARD_TITLE_CLASS,
   } from '$lib/utils/file-item-card-visuals';
   import { getFileCardStatus, shouldShowFileCardProgress } from '$lib/utils/file-run-state';
   import { formatDuration, formatFileSize } from '$lib/utils/format';
@@ -137,6 +136,7 @@
           {@const showBadgeRow =
             status !== 'ready' || counts.video > 0 || counts.audio > 0 || counts.subtitle > 0 || !!aiLabel}
           <FileItemCard
+            title={file.name}
             selected={selectedFileId === file.id}
             onclick={() => onSelectFile?.(file.id)}
             selectionLabel={`Select ${file.name}`}
@@ -157,9 +157,7 @@
               {/if}
             {/snippet}
 
-            {#snippet content()}
-              <p class={FILE_ITEM_CARD_TITLE_CLASS}>{file.name}</p>
-
+            {#snippet meta()}
               {#if showBadgeRow}
                 <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
                   {#if status !== 'ready'}
@@ -193,7 +191,9 @@
                   {/if}
                 </div>
               {/if}
+            {/snippet}
 
+            {#snippet details()}
               <p class="mt-1 text-xs text-muted-foreground line-clamp-2">
                 {#if file.status === 'error'}
                   {file.error}

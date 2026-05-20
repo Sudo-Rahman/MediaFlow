@@ -8,8 +8,10 @@
     compact?: boolean;
     disabled?: boolean;
     class?: string;
+    title: string;
     icon?: Snippet;
-    content: Snippet;
+    meta?: Snippet;
+    details?: Snippet;
     actions?: Snippet;
     footer?: Snippet;
     onclick?: () => void;
@@ -21,12 +23,14 @@
     compact = false,
     disabled = false,
     class: className = '',
+    title,
     icon,
-    content,
+    meta,
+    details,
     actions,
     footer,
     onclick,
-    selectionLabel = 'Select item',
+    selectionLabel = `Select ${title}`,
   }: FileItemCardProps = $props();
 </script>
 
@@ -34,7 +38,8 @@
   variant={selected ? 'outline' : 'default'}
   size={compact ? 'xs' : 'sm'}
   class={cn(
-    'relative items-start text-left hover:bg-muted/70',
+    'relative grid items-start text-left hover:bg-muted/70',
+    actions ? 'grid-cols-[auto_minmax(0,1fr)_auto]' : 'grid-cols-[auto_minmax(0,1fr)]',
     selected && 'border-primary bg-card ring-1 ring-primary/20 hover:bg-card',
     disabled && 'cursor-not-allowed opacity-60',
     className
@@ -54,33 +59,47 @@
     ></button>
   {/if}
 
-  <div
+  {#if icon}
+    <Item.Media class={cn('relative z-10 col-start-1 row-start-1 mt-0.5 self-start', onclick && 'pointer-events-none')}>
+      {@render icon()}
+    </Item.Media>
+  {/if}
+
+  <Item.Content
     class={cn(
-      'relative z-10 flex min-w-0 flex-1 flex-wrap items-start gap-3 text-left',
+      'relative z-10 row-start-1 min-w-0',
+      icon ? 'col-start-2' : 'col-start-1',
       onclick && 'pointer-events-none',
-      compact && 'gap-2',
+      actions && 'grid [grid-template-columns:subgrid]',
+      actions && (icon ? 'col-end-4' : 'col-end-3'),
       disabled && 'cursor-not-allowed'
     )}
   >
-    {#if icon}
-      <Item.Media class="mt-0.5">
-        {@render icon()}
-      </Item.Media>
+    <p class="col-start-1 min-w-0 truncate font-medium text-sm" {title}>{title}</p>
+
+    {#if meta}
+      <div class="col-span-full min-w-0">
+        {@render meta()}
+      </div>
     {/if}
 
-    <Item.Content class="min-w-0">
-      {@render content()}
-    </Item.Content>
-
-    {#if footer}
-      <Item.Footer class="mt-2">
-        {@render footer()}
-      </Item.Footer>
+    {#if details}
+      <div class="col-span-full min-w-0">
+        {@render details()}
+      </div>
     {/if}
-  </div>
+  </Item.Content>
+
+  {#if footer}
+    <Item.Footer class={cn('relative z-10 col-start-2 mt-2', actions && 'col-end-4', onclick && 'pointer-events-none')}>
+      {@render footer()}
+    </Item.Footer>
+  {/if}
 
   {#if actions}
-    <Item.Actions class="relative z-20 shrink-0">
+    <Item.Actions
+      class="relative z-20 col-start-3 row-start-1 shrink-0 self-start justify-self-end"
+    >
       {@render actions()}
     </Item.Actions>
   {/if}

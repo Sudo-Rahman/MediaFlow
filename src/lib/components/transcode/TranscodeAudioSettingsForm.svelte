@@ -139,7 +139,7 @@
 
       <div class="grid gap-4 xl:grid-cols-2">
         {#if selectedEncoder?.supportsChannels}
-          <Field.Field class="gap-2">
+          <Field.Field class="gap-3 rounded-2xl border border-border px-3.5 py-3">
             <Field.Field class="min-w-0" orientation="horizontal">
               <Field.Content>
                 <Field.Label id={channelsLabelId} for={channelsSwitchId}>Channels</Field.Label>
@@ -172,7 +172,7 @@
         {/if}
 
         {#if selectedEncoder?.supportsSampleRate}
-          <Field.Field class="gap-2">
+          <Field.Field class="gap-3 rounded-2xl border border-border px-3.5 py-3">
             <Field.Field class="min-w-0" orientation="horizontal">
               <Field.Content>
                 <Field.Label id={sampleRateLabelId} for={sampleRateSwitchId}>Sample rate</Field.Label>

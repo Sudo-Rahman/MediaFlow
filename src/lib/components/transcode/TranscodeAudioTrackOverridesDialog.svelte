@@ -269,7 +269,7 @@
 
     {#if file && audioTracks.length > 0}
       <div class="flex min-h-0 flex-1 flex-col gap-4 py-2 lg:flex-row">
-        <Card.Root class="flex min-h-0 flex-col overflow-hidden lg:w-72 lg:flex-none">
+        <Card.Root class="flex min-h-0 flex-col overflow-hidden lg:w-64 lg:flex-none">
           <Card.Header class="pb-3">
             <Card.Title>Detected audio tracks</Card.Title>
             <Card.Action>
@@ -296,14 +296,17 @@
                       type="button"
                       aria-pressed={isSelected}
                       onclick={() => selectedTrackId = track.id}
+                      class={cn(props.class as string, 'grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2')}
                     >
-                      <Item.Content class="min-w-0">
-                        <Item.Title class="truncate">{getTrackLabel(track)} · {getTrackDescription(track)}</Item.Title>
+                      <Item.Content class="min-w-0 overflow-hidden">
+                        <Item.Title class="block w-full min-w-0 truncate" title={`${getTrackLabel(track)} · ${getTrackDescription(track)}`}>
+                          {getTrackLabel(track)} · {getTrackDescription(track)}
+                        </Item.Title>
                         <Item.Description class="truncate">{getTrackMeta(track)}</Item.Description>
                         <Item.Description class="truncate">{getTrackModeSummary(track.id)}</Item.Description>
                       </Item.Content>
 
-                      <Item.Actions>
+                      <Item.Actions class="shrink-0">
                         <Badge variant={isCustom ? 'default' : 'outline'}>
                           {isCustom ? 'Custom' : 'Global'}
                         </Badge>
@@ -316,8 +319,8 @@
           </Card.Content>
         </Card.Root>
 
-        <div class="min-h-0 flex-1 overflow-auto">
-          <div class="h-full min-h-0 px-4">
+        <div class="min-h-0 min-w-0 flex-1 overflow-auto">
+          <div class="h-full min-h-0 px-2 pt-1 lg:px-3">
             {#if selectedTrack && selectedTrackEffectiveSettings}
               <div class="space-y-4 pb-1">
                 <Card.Root>
@@ -358,6 +361,7 @@
                   <TranscodeAudioSettingsForm
                     settings={selectedTrackEffectiveSettings}
                     sourceTrack={selectedTrack}
+                    streamOverrideLayout="stacked"
                     selectedEncoder={selectedTrackEncoder}
                     modeOptions={selectedTrackModeOptions}
                     availableAudioEncoders={availableAudioEncoders}

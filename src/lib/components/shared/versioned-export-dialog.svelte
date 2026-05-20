@@ -76,6 +76,10 @@
   const exportFormatLabelId = `${baseId}-versioned-export-format-label`;
   const exportIssuesTitleId = `${baseId}-versioned-export-issues-title`;
   const exportIssuesDescriptionId = `${baseId}-versioned-export-issues-description`;
+  const constrainedBlockClass = 'min-w-0 max-w-full overflow-hidden';
+  const constrainedStackClass = 'flex min-w-0 max-w-full flex-col overflow-hidden';
+  const interactiveItemClass = 'min-w-0 max-w-full flex-nowrap cursor-pointer overflow-hidden';
+  const truncatedTitleClass = 'min-w-0 w-full overflow-hidden';
 
   onDestroy(() => {
     isDestroyed = true;
@@ -192,6 +196,17 @@
   const selectedFormatIsAllowed = $derived(selectedFormatOptions.some((option) => option.value === selectedFormat));
   const formatOptionsWereFiltered = $derived(selectedFormatOptions.length < formatOptions.length);
   const hasAvailableFormat = $derived(selectedFormatOptions.length > 0);
+  const totalVersionCount = $derived.by(() =>
+    sortedGroups.reduce((total, group) => total + group.versions.length, 0),
+  );
+  const fileFilterScrollClass = $derived(sortedGroups.length > 2 ? 'h-40' : 'h-auto');
+  const versionFilterScrollClass = $derived(totalVersionCount > 3 ? 'h-56' : 'h-auto');
+  const fileFilterScrollClasses = $derived([fileFilterScrollClass, constrainedBlockClass]);
+  const versionFilterScrollClasses = $derived([
+    versionFilterScrollClass,
+    constrainedBlockClass,
+    'rounded-2xl border border-border bg-muted/20 p-2',
+  ]);
   const canExport = $derived(
     outputDir.trim().length > 0 && selectedVersionCount > 0 && selectedFormatIsAllowed && !isExporting,
   );
@@ -320,14 +335,49 @@
   }
 </script>
 
+{#snippet truncatedText(text: string)}
+  <span class="block min-w-0 max-w-full truncate">{text}</span>
+{/snippet}
+
+{#snippet exportModeOption(
+  value: VersionedExportMode,
+  inputId: string,
+  titleId: string,
+  descriptionId: string,
+  titleText: string,
+  descriptionText: string,
+)}
+  <Item.Root variant="outline" size="sm" class={interactiveItemClass}>
+    {#snippet child({ props })}
+      <div
+        {...props}
+        onclick={() => setMode(value)}
+      >
+        <Item.Media>
+          <RadioGroup.Item
+            {value}
+            id={inputId}
+            aria-labelledby={titleId}
+            aria-describedby={descriptionId}
+          />
+        </Item.Media>
+        <Item.Content class="min-w-0">
+          <Item.Title id={titleId}>{titleText}</Item.Title>
+          <Item.Description id={descriptionId}>{descriptionText}</Item.Description>
+        </Item.Content>
+      </div>
+    {/snippet}
+  </Item.Root>
+{/snippet}
+
 <Dialog.Root bind:open onOpenChange={onOpenChange}>
-  <Dialog.Content class="max-w-4xl max-h-[85vh] flex flex-col">
-    <Dialog.Header class="shrink-0">
+  <Dialog.Content class="max-h-[85dvh] overflow-hidden sm:max-w-xl flex flex-col">
+    <Dialog.Header class="shrink-0 pr-12">
       <Dialog.Title>{title}</Dialog.Title>
       <Dialog.Description>{description}</Dialog.Description>
     </Dialog.Header>
 
-    <div class="dialog-scroll-body py-1">
+    <div class="dialog-scroll-body min-w-0 overflow-x-hidden pb-4 pt-1">
       {#if !hasExportableData}
         <Empty.Root class="min-h-24 flex-none p-6">
           <Empty.Header>
@@ -335,85 +385,46 @@
           </Empty.Header>
         </Empty.Root>
       {:else}
-        <Field.Group class="gap-4">
-          <Field.Set class="gap-3">
+        <Field.Group class={[constrainedBlockClass, 'gap-4']}>
+          <Field.Set class={[constrainedBlockClass, 'gap-3']}>
             <Field.Legend id={exportModeLabelId} variant="label" class="mb-0">Export mode</Field.Legend>
             <RadioGroup.Root
               value={mode}
               aria-labelledby={exportModeLabelId}
               onValueChange={(value) => value && setMode(value as VersionedExportMode)}
             >
-              <div class="flex flex-col gap-2">
-                <Item.Root variant="outline" size="sm" class="cursor-pointer">
-                  {#snippet child({ props })}
-                    <div
-                      {...props}
-                      onclick={() => setMode('latest_per_file')}
-                    >
-                      <Item.Media>
-                        <RadioGroup.Item
-                          value="latest_per_file"
-                          id={latestPerFileId}
-                          aria-labelledby={latestPerFileTitleId}
-                          aria-describedby={latestPerFileDescriptionId}
-                        />
-                      </Item.Media>
-                      <Item.Content>
-                        <Item.Title id={latestPerFileTitleId}>Latest per file</Item.Title>
-                        <Item.Description id={latestPerFileDescriptionId}>Export the newest version from each selected file.</Item.Description>
-                      </Item.Content>
-                    </div>
-                  {/snippet}
-                </Item.Root>
+              <div class={[constrainedStackClass, 'gap-2']}>
+                {@render exportModeOption(
+                  'latest_per_file',
+                  latestPerFileId,
+                  latestPerFileTitleId,
+                  latestPerFileDescriptionId,
+                  'Latest per file',
+                  'Export the newest version from each selected file.',
+                )}
 
-                <Item.Root variant="outline" size="sm" class="cursor-pointer">
-                  {#snippet child({ props })}
-                    <div
-                      {...props}
-                      onclick={() => setMode('all_versions')}
-                    >
-                      <Item.Media>
-                        <RadioGroup.Item
-                          value="all_versions"
-                          id={allVersionsId}
-                          aria-labelledby={allVersionsTitleId}
-                          aria-describedby={allVersionsDescriptionId}
-                        />
-                      </Item.Media>
-                      <Item.Content>
-                        <Item.Title id={allVersionsTitleId}>All versions</Item.Title>
-                        <Item.Description id={allVersionsDescriptionId}>Export every version from each selected file.</Item.Description>
-                      </Item.Content>
-                    </div>
-                  {/snippet}
-                </Item.Root>
+                {@render exportModeOption(
+                  'all_versions',
+                  allVersionsId,
+                  allVersionsTitleId,
+                  allVersionsDescriptionId,
+                  'All versions',
+                  'Export every version from each selected file.',
+                )}
 
-                <Item.Root variant="outline" size="sm" class="cursor-pointer">
-                  {#snippet child({ props })}
-                    <div
-                      {...props}
-                      onclick={() => setMode('custom')}
-                    >
-                      <Item.Media>
-                        <RadioGroup.Item
-                          value="custom"
-                          id={customSelectionId}
-                          aria-labelledby={customSelectionTitleId}
-                          aria-describedby={customSelectionDescriptionId}
-                        />
-                      </Item.Media>
-                      <Item.Content>
-                        <Item.Title id={customSelectionTitleId}>Custom selection</Item.Title>
-                        <Item.Description id={customSelectionDescriptionId}>Choose specific versions to export.</Item.Description>
-                      </Item.Content>
-                    </div>
-                  {/snippet}
-                </Item.Root>
+                {@render exportModeOption(
+                  'custom',
+                  customSelectionId,
+                  customSelectionTitleId,
+                  customSelectionDescriptionId,
+                  'Custom selection',
+                  'Choose specific versions to export.',
+                )}
               </div>
             </RadioGroup.Root>
           </Field.Set>
 
-          <Field.Field>
+          <Field.Field class={constrainedBlockClass}>
             <Field.Label id={exportFormatLabelId}>Export format</Field.Label>
             <Select.Root
               type="single"
@@ -449,17 +460,17 @@
             {/if}
           </Field.Field>
 
-          <Field.Set class="gap-3">
+          <Field.Set class={[constrainedBlockClass, 'gap-3']}>
             <Field.Legend variant="label" class="mb-0">File filter</Field.Legend>
             <Field.Description class="text-xs">Select which files to include.</Field.Description>
 
-            <ScrollArea class="h-40">
-              <div class="flex flex-col gap-2 pr-3">
+            <ScrollArea class={fileFilterScrollClasses}>
+              <div class={[constrainedStackClass, 'gap-2 pr-3']}>
                 {#each sortedGroups as group, groupIndex (group.fileId)}
                   {@const fileId = `${baseId}-export-file-${groupIndex}`}
                   {@const fileTitleId = `${fileId}-title`}
                   {@const fileDescriptionId = `${fileId}-description`}
-                  <Item.Root variant="outline" size="xs" class="cursor-pointer">
+                  <Item.Root variant="outline" size="xs" class={interactiveItemClass}>
                     {#snippet child({ props })}
                       <div
                         {...props}
@@ -474,12 +485,14 @@
                             aria-describedby={fileDescriptionId}
                           />
                         </Item.Media>
-                        <Item.Content class="min-w-0">
-                          <Item.Title id={fileTitleId} class="truncate">{group.fileName}</Item.Title>
+                        <Item.Content class="min-w-0 overflow-hidden">
+                          <Item.Title id={fileTitleId} class={truncatedTitleClass} title={group.fileName}>
+                            {@render truncatedText(group.fileName)}
+                          </Item.Title>
                           <Item.Description id={fileDescriptionId} class="text-xs">{group.versions.length} version(s)</Item.Description>
                         </Item.Content>
                         {#if group.fileBadge}
-                          <Item.Actions>
+                          <Item.Actions class="ml-auto shrink-0">
                             <Badge variant="outline" class="shrink-0 uppercase">{group.fileBadge}</Badge>
                           </Item.Actions>
                         {/if}
@@ -492,16 +505,21 @@
           </Field.Set>
 
           {#if mode === 'custom'}
-            <Field.Set class="gap-3">
+            <Field.Set class={[constrainedBlockClass, 'gap-3']}>
               <Field.Legend variant="label" class="mb-0">Version filter</Field.Legend>
               <Field.Description class="text-xs">Choose exact versions to export.</Field.Description>
 
-              <ScrollArea class="h-56">
-                <div class="flex flex-col gap-4 pr-3">
+              <ScrollArea
+                class={versionFilterScrollClasses}
+                scrollbarYClasses="py-2"
+              >
+                <div class={[constrainedStackClass, 'gap-4 px-1']}>
                   {#each sortedGroups as group, groupIndex (group.fileId)}
-                    <section class="flex flex-col gap-2">
-                      <p class="text-sm font-medium truncate">{group.fileName}</p>
-                      <div class="flex flex-col gap-1.5">
+                    <section class={[constrainedStackClass, 'gap-2']}>
+                      <p class="min-w-0 max-w-full overflow-hidden px-1 text-sm font-medium" title={group.fileName}>
+                        {@render truncatedText(group.fileName)}
+                      </p>
+                      <div class={[constrainedStackClass, 'gap-1.5']}>
                         {#each group.versions as version, versionIndex (version.key)}
                           {@const versionId = `${baseId}-export-version-${groupIndex}-${versionIndex}`}
                           {@const versionTitleId = `${versionId}-title`}
@@ -509,7 +527,10 @@
                           <Item.Root
                             variant="outline"
                             size="xs"
-                            class={['cursor-pointer', !selectedFileIds.has(group.fileId) && 'opacity-60']}
+                            class={[
+                              interactiveItemClass,
+                              !selectedFileIds.has(group.fileId) && 'opacity-60',
+                            ]}
                           >
                             {#snippet child({ props })}
                               <div
@@ -526,8 +547,10 @@
                                     aria-describedby={versionDescriptionId}
                                   />
                                 </Item.Media>
-                                <Item.Content class="min-w-0">
-                                  <Item.Title id={versionTitleId} class="truncate">{version.versionName}</Item.Title>
+                                <Item.Content class="min-w-0 overflow-hidden">
+                                  <Item.Title id={versionTitleId} class={truncatedTitleClass} title={version.versionName}>
+                                    {@render truncatedText(version.versionName)}
+                                  </Item.Title>
                                   <Item.Description id={versionDescriptionId} class="text-xs">{formatCreatedAt(version.createdAt)}</Item.Description>
                                 </Item.Content>
                               </div>
@@ -550,9 +573,9 @@
             onBrowse={handleBrowseOutput}
           />
 
-          <Item.Root variant="muted" size="xs">
-            <Item.Content>
-              <Item.Description>
+          <Item.Root variant="muted" size="xs" class="min-w-0 overflow-hidden">
+            <Item.Content class="min-w-0">
+              <Item.Description class="truncate">
                 {selectedFileCount} file(s) selected · {selectedVersionCount} version(s) to export
               </Item.Description>
             </Item.Content>

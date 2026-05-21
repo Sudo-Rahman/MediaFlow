@@ -63,6 +63,21 @@
     onvolumechange?.(nextVolumePercent / 100);
   }
 
+  function handleVolumePointerLeave(event: PointerEvent): void {
+    const wrapper = event.currentTarget as HTMLElement;
+    const activeElement = document.activeElement;
+    const nextPointerTarget = event.relatedTarget as Node | null;
+
+    if (
+      (activeElement && wrapper.contains(activeElement))
+      || (nextPointerTarget && wrapper.contains(nextPointerTarget))
+    ) {
+      return;
+    }
+
+    volumeOpen = false;
+  }
+
   function handleVolumeFocusOut(event: FocusEvent): void {
     const wrapper = event.currentTarget as HTMLElement;
     const nextFocusedElement = event.relatedTarget as Node | null;
@@ -144,9 +159,7 @@
       onpointerenter={() => {
         volumeOpen = true;
       }}
-      onpointerleave={() => {
-        volumeOpen = false;
-      }}
+      onpointerleave={handleVolumePointerLeave}
       onfocusin={() => {
         volumeOpen = true;
       }}
@@ -169,7 +182,7 @@
       </Button>
 
       {#if volumeOpen}
-        <div class="absolute bottom-full left-1/2 z-20 mb-2 flex h-36 -translate-x-1/2 flex-col items-center gap-2 rounded-md border bg-popover px-3 py-3 text-popover-foreground shadow-md">
+        <div class="absolute bottom-full left-1/2 z-20 flex h-36 -translate-x-1/2 flex-col items-center gap-2 rounded-md border bg-popover px-3 py-3 text-popover-foreground shadow-md">
           <Slider
             aria-label="Volume"
             type="single"

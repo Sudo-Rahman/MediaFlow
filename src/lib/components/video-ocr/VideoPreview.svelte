@@ -71,6 +71,7 @@
   let editingZone = $state<{ segmentId: string; zoneId: string } | null>(null);
   let editingRegion = $state<OcrRegion | undefined>();
   let contextZone = $state<VisibleZoneEntry | undefined>();
+  let contextMenuOpen = $state(false);
   let resumePlayback = $state(false);
   let lastAppliedSeekRequestId = $state<number | null>(null);
   let isPointerInsidePreview = $state(false);
@@ -202,12 +203,16 @@
   function handleTimeUpdate() {
     if (videoEl) {
       const nextTime = videoEl.currentTime;
-      if (file) {
-        currentTimesByFileId = { ...currentTimesByFileId, [file.id]: nextTime };
-      }
-      onTimeChange?.(Math.round(nextTime * 1000));
+      updateCurrentTimeState(nextTime);
       syncPlaybackState();
     }
+  }
+
+  function updateCurrentTimeState(nextTimeSeconds: number): void {
+    if (file) {
+      currentTimesByFileId = { ...currentTimesByFileId, [file.id]: nextTimeSeconds };
+    }
+    onTimeChange?.(Math.round(nextTimeSeconds * 1000));
   }
 
   function syncPlaybackState(): void {
@@ -231,6 +236,36 @@
     return Math.max(0, durationSeconds ?? 0);
   }
 
+  function reconcileLoadedMetadataTime(): void {
+    if (!videoEl) {
+      return;
+    }
+
+    const storedTimeSeconds = file ? currentTimesByFileId[file.id] : undefined;
+    const actualTimeSeconds = Number.isFinite(videoEl.currentTime) ? videoEl.currentTime : 0;
+    const durationSeconds = getVideoDurationSeconds();
+    const hasValidStoredTime = storedTimeSeconds !== undefined
+      && Number.isFinite(storedTimeSeconds)
+      && storedTimeSeconds >= 0
+      && durationSeconds > 0
+      && storedTimeSeconds <= durationSeconds;
+
+    if (hasValidStoredTime) {
+      videoEl.currentTime = storedTimeSeconds;
+      updateCurrentTimeState(storedTimeSeconds);
+      return;
+    }
+
+    updateCurrentTimeState(actualTimeSeconds);
+  }
+
+  function handleLoadedMetadata(): void {
+    updateVideoBounds();
+    syncPlaybackState();
+    reconcileLoadedMetadataTime();
+    syncPlaybackState();
+  }
+
   function seekToSeconds(timeSeconds: number): void {
     if (!videoEl) {
       return;
@@ -241,10 +276,7 @@
     const nextTimeSeconds = Math.min(Math.max(0, requestedTimeSeconds), maxTimeSeconds);
 
     videoEl.currentTime = nextTimeSeconds;
-    if (file) {
-      currentTimesByFileId = { ...currentTimesByFileId, [file.id]: nextTimeSeconds };
-    }
-    onTimeChange?.(Math.round(nextTimeSeconds * 1000));
+    updateCurrentTimeState(nextTimeSeconds);
   }
 
   function skipBySeconds(deltaSeconds: number): void {
@@ -330,6 +362,8 @@
       return;
     }
 
+    contextMenuOpen = false;
+    contextZone = undefined;
     drawingStartTimeMs = Math.round(videoEl.currentTime * 1000);
     drawingRegion = undefined;
     editingZone = null;
@@ -346,6 +380,8 @@
       return;
     }
 
+    contextMenuOpen = false;
+    contextZone = undefined;
     isDrawingZone = false;
     drawingRegion = undefined;
     editingZone = { segmentId: entry.segmentId, zoneId: entry.zoneId };
@@ -389,6 +425,7 @@
     drawingRegion = undefined;
     editingZone = null;
     editingRegion = undefined;
+    contextZone = undefined;
   }
   
   function updateVideoBounds() {
@@ -485,6 +522,14 @@
   }
 
   function handlePreviewContextMenu(event: MouseEvent): void {
+    if (isDrawingZone || isEditingZone) {
+      event.preventDefault();
+      event.stopPropagation();
+      contextMenuOpen = false;
+      contextZone = undefined;
+      return;
+    }
+
     contextZone = findZoneAtEvent(event);
   }
 
@@ -525,7 +570,7 @@
         onsave={saveZoneEditing}
       />
 
-      <ContextMenu.Root>
+      <ContextMenu.Root bind:open={contextMenuOpen}>
         <ContextMenu.Trigger
           bind:ref={containerEl}
           class="relative min-h-0 flex-1 overflow-hidden bg-black"
@@ -546,10 +591,7 @@
             onplay={syncPlaybackState}
             onpause={syncPlaybackState}
             onvolumechange={syncPlaybackState}
-            onloadedmetadata={() => {
-              updateVideoBounds();
-              syncPlaybackState();
-            }}
+            onloadedmetadata={handleLoadedMetadata}
             onresize={updateVideoBounds}
             onerror={handleVideoError}
           >
@@ -606,38 +648,42 @@
             />
           {/if}
         </ContextMenu.Trigger>
-        <ContextMenu.Content class="w-64">
-          {#if contextZone}
-            {@const menuZone = contextZone}
-            <ContextMenu.Item onclick={() => beginZoneEditing(menuZone)}>
-              Modify zone
-            </ContextMenu.Item>
-            {#if menuZone.role !== 'main_subtitle'}
-              <ContextMenu.Item onclick={() => handleZoneRole(menuZone.segmentId, menuZone.zoneId, 'main_subtitle')}>
-                Set as Main subtitle
+        {#if !isDrawingZone && !isEditingZone}
+          <ContextMenu.Content class="w-64">
+            {#if contextZone}
+              {@const menuZone = contextZone}
+              <ContextMenu.Item onclick={() => beginZoneEditing(menuZone)}>
+                Modify zone
+              </ContextMenu.Item>
+              {#if menuZone.role !== 'main_subtitle'}
+                <ContextMenu.Item onclick={() => handleZoneRole(menuZone.segmentId, menuZone.zoneId, 'main_subtitle')}>
+                  Set as Main subtitle
+                </ContextMenu.Item>
+              {/if}
+              {#if menuZone.role !== 'on_screen_text'}
+                <ContextMenu.Item onclick={() => handleZoneRole(menuZone.segmentId, menuZone.zoneId, 'on_screen_text')}>
+                  Set as On-screen text
+                </ContextMenu.Item>
+              {/if}
+              <ContextMenu.Separator />
+              <ContextMenu.Item
+                variant="destructive"
+                onclick={() => handleDeleteZone(menuZone.segmentId, menuZone.zoneId)}
+              >
+                Delete zone
+              </ContextMenu.Item>
+            {:else}
+              <ContextMenu.Item onclick={beginZoneDrawing}>
+                Add OCR zone from current time
               </ContextMenu.Item>
             {/if}
-            {#if menuZone.role !== 'on_screen_text'}
-              <ContextMenu.Item onclick={() => handleZoneRole(menuZone.segmentId, menuZone.zoneId, 'on_screen_text')}>
-                Set as On-screen text
-              </ContextMenu.Item>
-            {/if}
-            <ContextMenu.Separator />
-            <ContextMenu.Item
-              variant="destructive"
-              onclick={() => handleDeleteZone(menuZone.segmentId, menuZone.zoneId)}
-            >
-              Delete zone
-            </ContextMenu.Item>
-          {:else}
-            <ContextMenu.Item onclick={beginZoneDrawing}>
-              Add OCR zone from current time
-            </ContextMenu.Item>
-          {/if}
-        </ContextMenu.Content>
+          </ContextMenu.Content>
+        {/if}
       </ContextMenu.Root>
 
-      <ActiveCueSummary summary={activeCueSummary} />
+      {#if showSubtitles}
+        <ActiveCueSummary summary={activeCueSummary} />
+      {/if}
       <PreviewPlayerControls
         {currentTime}
         {duration}

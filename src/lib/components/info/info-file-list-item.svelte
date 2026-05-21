@@ -9,7 +9,6 @@
     FILE_ITEM_CARD_META_CLASS,
     FILE_ITEM_CARD_REMOVE_ACTION_CLASS,
     FILE_ITEM_CARD_STATUS_ICON_CLASS,
-    FILE_ITEM_CARD_TITLE_CLASS,
   } from '$lib/utils/file-item-card-visuals';
 
   import type { FileInfo } from '$lib/stores/info.svelte';
@@ -31,7 +30,7 @@
   }
 </script>
 
-<FileItemCard {selected} onclick={onSelect}>
+<FileItemCard title={file.name} {selected} onclick={onSelect} selectionLabel={`Select ${file.name}`}>
   {#snippet icon()}
     {#if file.status === 'scanning'}
       <Loader2 class={`${FILE_ITEM_CARD_STATUS_ICON_CLASS} animate-spin text-muted-foreground`} />
@@ -42,8 +41,7 @@
     {/if}
   {/snippet}
 
-  {#snippet content()}
-    <p class={FILE_ITEM_CARD_TITLE_CLASS}>{file.name}</p>
+  {#snippet details()}
     {#if file.status === 'ready'}
       <p class={FILE_ITEM_CARD_META_CLASS}>
         {formatFileSize(file.size)} • {file.tracks.length} tracks

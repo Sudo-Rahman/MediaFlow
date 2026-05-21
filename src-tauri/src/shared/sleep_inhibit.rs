@@ -337,8 +337,9 @@ mod windows {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use std::process::{Child, Command, Stdio};
+    use std::process::{Child, Stdio};
 
+    use crate::shared::process::std_command;
     use zbus::blocking::{Connection, Proxy};
     use zbus::zvariant::OwnedFd;
 
@@ -372,7 +373,7 @@ mod linux {
         }
 
         // Fallback: spawn a long-lived systemd-inhibit process.
-        let mut child = Command::new("systemd-inhibit")
+        let mut child = std_command("systemd-inhibit")
             .args([
                 "--what=sleep:idle",
                 "--who=MediaFlow",

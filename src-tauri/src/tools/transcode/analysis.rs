@@ -2,8 +2,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::shared::process::tokio_command;
 use serde_json::Value;
-use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::shared::hash::stable_hash64;
@@ -96,7 +96,7 @@ pub(crate) async fn extract_transcode_analysis_frames_with_bins(
 
         let output = timeout(
             ANALYSIS_FRAME_TIMEOUT,
-            Command::new(ffmpeg_path)
+            tokio_command(ffmpeg_path)
                 .args([
                     "-hide_banner",
                     "-loglevel",

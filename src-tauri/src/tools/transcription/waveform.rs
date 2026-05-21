@@ -1,10 +1,10 @@
 use std::path::Path;
 
 use crate::shared::hash::stable_hash64;
+use crate::shared::process::tokio_command;
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::validation::validate_media_path;
-use tokio::process::Command;
 use tokio::time::{Duration, timeout};
 
 /// Timeout for audio conversion for waveform (2 minutes)
@@ -47,7 +47,7 @@ pub(super) async fn convert_audio_for_waveform_with_ffmpeg(
 
     let audio_stream = format!("a:{}", track_idx);
     let convert_future = async {
-        Command::new(ffmpeg_path)
+        tokio_command(ffmpeg_path)
             .args([
                 "-y",
                 "-i",

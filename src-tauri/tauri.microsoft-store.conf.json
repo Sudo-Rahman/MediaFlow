@@ -1,0 +1,13 @@
+{
+  "app": {
+    "security": {
+      "capabilities": ["default"]
+    }
+  },
+  "plugins": {
+    "updater": null
+  },
+  "bundle": {
+    "createUpdaterArtifacts": false
+  }
+}

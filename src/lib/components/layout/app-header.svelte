@@ -1,10 +1,13 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
 
+  import type { PlatformChrome } from './platform-chrome';
+  import WindowsWindowControls from './WindowsWindowControls.svelte';
+
   interface AppHeaderProps {
     title: string;
     description?: string;
-    isMacOS: boolean;
+    platformChrome: PlatformChrome;
     showTitle?: boolean;
     leading?: Snippet;
     titleSuffix?: Snippet;
@@ -16,7 +19,7 @@
   let {
     title,
     description,
-    isMacOS,
+    platformChrome,
     showTitle = true,
     leading,
     titleSuffix,
@@ -24,32 +27,33 @@
     actions,
     trailing,
   }: AppHeaderProps = $props();
+
+  const usesHeaderDragRegion = $derived(
+    platformChrome === 'macos-overlay' || platformChrome === 'windows-custom',
+  );
+  const usesWindowsControls = $derived(platformChrome === 'windows-custom');
 </script>
 
 <header
-  class="flex min-h-14 shrink-0 items-center gap-2 border-b px-4 py-2"
-  data-tauri-drag-region={isMacOS}
+  class="flex min-h-14 shrink-0 items-center gap-2 border-b {usesWindowsControls ? 'py-0 pr-0 pl-4' : 'px-4 py-2'}"
+  data-tauri-drag-region={usesHeaderDragRegion ? true : undefined}
 >
   {#if leading}
     {@render leading()}
   {/if}
 
-  <div class="flex-1 min-w-0 flex items-center gap-2" data-tauri-drag-region={isMacOS}>
+  <div class="flex min-w-0 flex-1 items-center gap-2" data-tauri-drag-region={usesHeaderDragRegion ? true : undefined}>
     {#if showTitle}
-      <div class="min-w-0" data-tauri-drag-region={isMacOS}>
-        <h1 data-tauri-drag-region={isMacOS} class="text-lg font-semibold truncate">{title}</h1>
+      <div class="min-w-0" data-tauri-drag-region={usesHeaderDragRegion ? true : undefined}>
+        <h1 data-tauri-drag-region={usesHeaderDragRegion ? true : undefined} class="truncate text-lg font-semibold">{title}</h1>
         {#if description}
-          <p data-tauri-drag-region={isMacOS} class="text-sm text-muted-foreground truncate">
-            {description}
-          </p>
+          <p data-tauri-drag-region={usesHeaderDragRegion ? true : undefined} class="truncate text-sm text-muted-foreground">{description}</p>
         {/if}
       </div>
     {/if}
 
     {#if titleSuffix}
-      <div class="shrink-0">
-        {@render titleSuffix()}
-      </div>
+      <div class="shrink-0">{@render titleSuffix()}</div>
     {/if}
   </div>
 
@@ -63,5 +67,9 @@
 
   {#if trailing}
     {@render trailing()}
+  {/if}
+
+  {#if usesWindowsControls}
+    <WindowsWindowControls />
   {/if}
 </header>

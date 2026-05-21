@@ -4,6 +4,7 @@ use std::process::Stdio;
 use tauri::Emitter;
 use tokio::time::{Duration, timeout};
 
+use crate::shared::process::tokio_command;
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::validation::{validate_media_path, validate_output_path};
@@ -35,7 +36,7 @@ pub(super) async fn transcode_to_opus_with_bins(
         None => "0:a:0".to_string(),
     };
 
-    let child = tokio::process::Command::new(ffmpeg_path)
+    let child = tokio_command(ffmpeg_path)
         .args([
             "-y",
             "-i",
@@ -112,7 +113,7 @@ pub(crate) async fn transcode_to_opus(
     );
 
     let ffmpeg_path = resolve_ffmpeg_path(&app)?;
-    let mut child = tokio::process::Command::new(ffmpeg_path)
+    let mut child = tokio_command(ffmpeg_path)
         .args([
             "-y",
             "-i",

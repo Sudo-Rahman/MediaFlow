@@ -1,5 +1,5 @@
+use crate::shared::process::tokio_command;
 use crate::shared::validation::validate_directory_path;
-use tokio::process::Command;
 
 /// Open a folder in the system file manager
 #[tauri::command]
@@ -9,7 +9,7 @@ pub(crate) async fn open_folder(path: String) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     {
-        Command::new("open")
+        tokio_command("open")
             .arg(&path)
             .spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;
@@ -17,7 +17,7 @@ pub(crate) async fn open_folder(path: String) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        Command::new("explorer")
+        tokio_command("explorer")
             .arg(&path)
             .spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;
@@ -25,7 +25,7 @@ pub(crate) async fn open_folder(path: String) -> Result<(), String> {
 
     #[cfg(target_os = "linux")]
     {
-        Command::new("xdg-open")
+        tokio_command("xdg-open")
             .arg(&path)
             .spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;

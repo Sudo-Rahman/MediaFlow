@@ -6,7 +6,7 @@
   import { formatToSRT, formatToVTT, formatToJSON } from '$lib/services/deepgram';
   import { Badge } from '$lib/components/ui/badge';
   import { VersionBrowserDialog } from '$lib/components/shared';
-  import { formatDuration } from '$lib/utils/format';
+  import { formatDuration, getFileName } from '$lib/utils/format';
 
   import { toast } from 'svelte-sonner';
 
@@ -98,7 +98,7 @@
     try {
       const content = getFormattedContent(exportVersion, format);
       await writeTextFile(savePath, content);
-      toast.success(`Exported to ${savePath.split('/').pop()}`);
+      toast.success(`Exported to ${getFileName(savePath)}`);
     } catch {
       toast.error('Export failed');
     }

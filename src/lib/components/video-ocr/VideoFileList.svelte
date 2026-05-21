@@ -16,7 +16,6 @@
     FILE_ITEM_CARD_REMOVE_ACTION_CLASS,
     FILE_ITEM_CARD_RETRY_ACTION_CLASS,
     FILE_ITEM_CARD_STATUS_ICON_CLASS,
-    FILE_ITEM_CARD_TITLE_CLASS,
   } from '$lib/utils/file-item-card-visuals';
   import { OCR_PHASE_LABELS } from '$lib/types';
 
@@ -81,7 +80,12 @@
     {@const isSelected = file.id === selectedId}
     {@const processing = isProcessing(file.status)}
     {@const versionCount = file.ocrVersions?.length ?? 0}
-    <FileItemCard selected={isSelected} onclick={() => onSelect(file.id)}>
+    <FileItemCard
+      title={file.name}
+      selected={isSelected}
+      onclick={() => onSelect(file.id)}
+      selectionLabel={`Select ${file.name}`}
+    >
       {#snippet icon()}
         {#if file.status === 'completed'}
           <CheckCircle class={`${FILE_ITEM_CARD_STATUS_ICON_CLASS} text-green-500`} />
@@ -94,9 +98,7 @@
         {/if}
       {/snippet}
 
-      {#snippet content()}
-        <p class={FILE_ITEM_CARD_TITLE_CLASS}>{file.name}</p>
-
+      {#snippet meta()}
         <div class={FILE_ITEM_CARD_META_CLASS}>
           {#if file.duration}
             <span class="flex items-center gap-1">
@@ -114,8 +116,16 @@
           {#if file.size && file.size > 0}
             <span>{formatFileSize(file.size)}</span>
           {/if}
-        </div>
 
+          {#if versionCount > 0}
+            <Badge variant="secondary" class="text-[10px] px-1.5 py-0">
+              {versionCount} version{versionCount > 1 ? 's' : ''}
+            </Badge>
+          {/if}
+        </div>
+      {/snippet}
+
+      {#snippet details()}
         {#if processing}
           <div class="mt-2">
             <Progress value={getProgressValue(file)} class="h-1.5" />
@@ -136,73 +146,65 @@
       {/snippet}
 
       {#snippet actions()}
-        <div class="flex flex-col items-end gap-1">
-          <div class="flex items-center gap-1">
-            {#if versionCount > 0 && onViewResult}
-              <Button
-                variant="ghost"
-                size="icon"
-                class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_PRIMARY_ACTION_CLASS}`}
-                onclick={(e: MouseEvent) => {
-                  e.stopPropagation();
-                  onViewResult(file);
-                }}
-                title="View subtitles"
-              >
-                <FileText class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
-              </Button>
-            {/if}
+        <div class="flex items-center gap-1">
+          {#if versionCount > 0 && onViewResult}
+            <Button
+              variant="ghost"
+              size="icon"
+              class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_PRIMARY_ACTION_CLASS}`}
+              onclick={(e: MouseEvent) => {
+                e.stopPropagation();
+                onViewResult(file);
+              }}
+              title="View subtitles"
+            >
+              <FileText class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
+            </Button>
+          {/if}
 
-            {#if (file.status === 'error' || file.status === 'completed') && onRetry}
-              <Button
-                variant="ghost"
-                size="icon"
-                class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_RETRY_ACTION_CLASS}`}
-                onclick={(e: MouseEvent) => {
-                  e.stopPropagation();
-                  onRetry(file);
-                }}
-                disabled={disabled}
-                title="Retry"
-              >
-                <RotateCw class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
-              </Button>
-            {/if}
+          {#if (file.status === 'error' || file.status === 'completed') && onRetry}
+            <Button
+              variant="ghost"
+              size="icon"
+              class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_RETRY_ACTION_CLASS}`}
+              onclick={(e: MouseEvent) => {
+                e.stopPropagation();
+                onRetry(file);
+              }}
+              disabled={disabled}
+              title="Retry"
+            >
+              <RotateCw class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
+            </Button>
+          {/if}
 
-            {#if ['transcoding', 'extracting_frames', 'ocr_processing', 'generating_subs'].includes(file.status) && onCancel}
-              <Button
-                variant="ghost"
-                size="icon"
-                class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_CANCEL_ACTION_CLASS}`}
-                onclick={(e: MouseEvent) => {
-                  e.stopPropagation();
-                  onCancel(file.id);
-                }}
-                title="Cancel"
-              >
-                <X class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
-              </Button>
-            {:else}
-              <Button
-                variant="ghost"
-                size="icon"
-                class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_REMOVE_ACTION_CLASS}`}
-                onclick={(e: MouseEvent) => {
-                  e.stopPropagation();
-                  onRemove(file.id);
-                }}
-                disabled={disabled}
-                title="Remove"
-              >
-                <Trash2 class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
-              </Button>
-            {/if}
-          </div>
-
-          {#if versionCount > 0}
-            <Badge variant="secondary" class="text-[10px] px-1.5 py-0">
-              {versionCount} version{versionCount > 1 ? 's' : ''}
-            </Badge>
+          {#if ['transcoding', 'extracting_frames', 'ocr_processing', 'generating_subs'].includes(file.status) && onCancel}
+            <Button
+              variant="ghost"
+              size="icon"
+              class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_CANCEL_ACTION_CLASS}`}
+              onclick={(e: MouseEvent) => {
+                e.stopPropagation();
+                onCancel(file.id);
+              }}
+              title="Cancel"
+            >
+              <X class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
+            </Button>
+          {:else}
+            <Button
+              variant="ghost"
+              size="icon"
+              class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_REMOVE_ACTION_CLASS}`}
+              onclick={(e: MouseEvent) => {
+                e.stopPropagation();
+                onRemove(file.id);
+              }}
+              disabled={disabled}
+              title="Remove"
+            >
+              <Trash2 class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
+            </Button>
           {/if}
         </div>
       {/snippet}

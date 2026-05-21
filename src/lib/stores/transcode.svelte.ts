@@ -26,6 +26,7 @@ import type {
   TranscodePreset,
   TranscodePresetTab,
   TranscodeProfile,
+  TranscodeProgressMetrics,
   TranscodeRuntimeProgress,
   TranscodeTab,
   TranscodeAudioSettings,
@@ -68,6 +69,9 @@ let runtimeProgress = $state<TranscodeRuntimeProgress>({
   currentFileName: '',
   currentFileProgress: 0,
   currentSpeedBytesPerSec: undefined,
+  currentFrame: undefined,
+  totalFrames: undefined,
+  framesPerSecond: undefined,
 });
 let status = $state<TranscodeStoreStatus>('idle');
 let progress = $state(0);
@@ -128,7 +132,18 @@ function resetRuntimeProgressState(): TranscodeRuntimeProgress {
     currentFileName: '',
     currentFileProgress: 0,
     currentSpeedBytesPerSec: undefined,
+    currentFrame: undefined,
+    totalFrames: undefined,
+    framesPerSecond: undefined,
   };
+}
+
+function normalizePositiveMetric(value: number | null | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function normalizeNonNegativeMetric(value: number | null | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 async function loadPresetsFromStore(): Promise<void> {
@@ -598,15 +613,25 @@ export const transcodeStore = {
       currentFileName: fileName,
       currentFileProgress: 0,
       currentSpeedBytesPerSec: undefined,
+      currentFrame: undefined,
+      totalFrames: undefined,
+      framesPerSecond: undefined,
     };
     progress = computeOverallProgress(runtimeProgress);
   },
 
-  updateRuntimeCurrentFile(currentFileProgress: number, currentSpeedBytesPerSec?: number) {
+  updateRuntimeCurrentFile(
+    currentFileProgress: number,
+    currentSpeedBytesPerSec?: number,
+    metrics?: TranscodeProgressMetrics,
+  ) {
     runtimeProgress = {
       ...runtimeProgress,
       currentFileProgress: clampPercentage(currentFileProgress),
       currentSpeedBytesPerSec,
+      currentFrame: normalizeNonNegativeMetric(metrics?.currentFrame) ?? runtimeProgress.currentFrame,
+      totalFrames: normalizePositiveMetric(metrics?.totalFrames) ?? runtimeProgress.totalFrames,
+      framesPerSecond: normalizeNonNegativeMetric(metrics?.framesPerSecond) ?? runtimeProgress.framesPerSecond,
     };
     progress = computeOverallProgress(runtimeProgress);
   },
@@ -617,6 +642,9 @@ export const transcodeStore = {
       completedFiles: Math.min(runtimeProgress.totalFiles, runtimeProgress.completedFiles + 1),
       currentFileProgress: 0,
       currentSpeedBytesPerSec: undefined,
+      currentFrame: undefined,
+      totalFrames: undefined,
+      framesPerSecond: undefined,
     };
     progress = computeOverallProgress(runtimeProgress);
   },

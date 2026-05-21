@@ -20,7 +20,7 @@ import type {
   VideoOcrSelection,
 } from '$lib/types';
 import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
-import { clampRegion, createDefaultVideoOcrSelection, normalizeOcrZoneLabels } from '$lib/utils';
+import { clampRegion, createDefaultVideoOcrSelection, getFileName, normalizeOcrZoneLabels } from '$lib/utils';
 import { logStore } from './logs.svelte';
 
 // ============================================================================
@@ -66,10 +66,6 @@ function generateId(): string {
 
 function generateLogId(): string {
   return `log-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-}
-
-function getFileName(path: string): string {
-  return path.split('/').pop() || path.split('\\').pop() || path;
 }
 
 function createEmptyVideoFile(path: string, id?: string): OcrVideoFile {

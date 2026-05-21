@@ -171,7 +171,21 @@ jobs:
           }
 
           Invoke-LibHarness
-          Invoke-LibHarness -TestArgs @("btbn_latest_page_contains_download_url_for_supported_variant", "--ignored")
+          Invoke-LibHarness -TestArgs @("tools::ffmpeg::download::btbn::tests::btbn_latest_page_contains_download_url_for_supported_variant", "--ignored", "--exact")
 
       - name: Build Tauri app
-        run: pnpm tauri build --no-bundle
+        run: pnpm tauri build --bundles msi,nsis --config src-tauri/tauri.ci-windows.conf.json
+
+      - name: Upload Windows MSI installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: mediaflow-windows-msi
+          path: src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+      - name: Upload Windows EXE installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: mediaflow-windows-exe
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error

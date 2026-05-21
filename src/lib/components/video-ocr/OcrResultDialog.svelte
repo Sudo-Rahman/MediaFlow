@@ -7,6 +7,7 @@
 
   import type { OcrOutputFormat, OcrVideoFile, OcrVersion } from '$lib/types/video-ocr';
   import { OCR_OUTPUT_FORMATS } from '$lib/types/video-ocr';
+  import { getFileName } from '$lib/utils/format';
   import { normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils/ocr-subtitle-adapter';
   import { Badge } from '$lib/components/ui/badge';
   import { VersionBrowserDialog } from '$lib/components/shared';
@@ -229,7 +230,7 @@
         outputPath,
         format: exportFormat,
       });
-      toast.success(`Exported ${outputPath.split('/').pop()}`);
+      toast.success(`Exported ${getFileName(outputPath)}`);
     } catch (error) {
       console.error('Export failed:', error);
       toast.error(error instanceof Error ? error.message : 'Export failed');

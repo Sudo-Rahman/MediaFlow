@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { slide } from 'svelte/transition';
+
   import type {
     Track,
     TranscodeAudioEncoderCapability,
@@ -13,12 +15,14 @@
   import { Switch } from '$lib/components/ui/switch';
   import * as Select from '$lib/components/ui/select';
   import { formatChannels } from '$lib/utils/format';
+  import {ScrollArea} from '$lib/components/ui/scroll-area';
 
   interface Props {
     settings: Pick<TranscodeAudioSettings, 'mode' | 'encoderId' | 'bitrateKbps' | 'channels' | 'sampleRate'>
       | Pick<TranscodeAudioTrackOverride, 'mode' | 'encoderId' | 'bitrateKbps' | 'channels' | 'sampleRate'>;
     sourceTrack: Track | null;
     showSourceTrackDetails?: boolean;
+    streamOverrideLayout?: 'auto' | 'stacked';
     selectedEncoder: TranscodeAudioEncoderCapability | null;
     modeOptions: TranscodeModeOption<TranscodeAudioMode>[];
     availableAudioEncoders: TranscodeAudioEncoderCapability[];
@@ -36,6 +40,7 @@
     settings,
     sourceTrack,
     showSourceTrackDetails = true,
+    streamOverrideLayout = 'auto',
     selectedEncoder,
     modeOptions,
     availableAudioEncoders,
@@ -66,6 +71,9 @@
   );
   const sampleRateDefaultLabel = $derived(
     showSourceTrackDetails ? `Default: As source (${formatSampleRate(sourceTrack?.sampleRate)})` : 'Default: As source',
+  );
+  const streamOverrideGridClass = $derived(
+    streamOverrideLayout === 'stacked' ? 'grid gap-4' : 'grid gap-4 2xl:grid-cols-2',
   );
   const controlId = $props.id();
   const audioModeId = `${controlId}-audio-mode`;
@@ -137,17 +145,17 @@
         />
       </Field.Field>
 
-      <div class="grid gap-4 xl:grid-cols-2">
+      <div class={streamOverrideGridClass}>
         {#if selectedEncoder?.supportsChannels}
-          <Field.Field class="gap-2">
-            <Field.Field class="min-w-0" orientation="horizontal">
-              <Field.Content>
+          <Field.Field class="gap-0 rounded-2xl border border-border px-3.5 py-3">
+            <div class="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
+              <Field.Content class="min-w-0">
                 <Field.Label id={channelsLabelId} for={channelsSwitchId}>Channels</Field.Label>
                 <Field.Description class="break-words text-xs">
                   {channelsDefaultLabel}
                 </Field.Description>
               </Field.Content>
-              <div class="flex items-center gap-3">
+              <div class="flex shrink-0 items-center gap-2">
                 <span class="text-xs text-muted-foreground">Override</span>
                 <Switch
                   id={channelsSwitchId}
@@ -157,30 +165,32 @@
                   )}
                 />
               </div>
-            </Field.Field>
+            </div>
 
             {#if settings.channels !== undefined}
-              <Input
-                id={channelsInputId}
-                type="number"
-                aria-labelledby={channelsLabelId}
-                value={settings.channels?.toString() ?? ''}
-                oninput={(event) => onChannelsChange(parseOptionalInt(event.currentTarget.value))}
-              />
+              <div class="overflow-hidden pt-3" transition:slide={{ duration: 140 }}>
+                <Input
+                  id={channelsInputId}
+                  type="number"
+                  aria-labelledby={channelsLabelId}
+                  value={settings.channels?.toString() ?? ''}
+                  oninput={(event) => onChannelsChange(parseOptionalInt(event.currentTarget.value))}
+                />
+              </div>
             {/if}
           </Field.Field>
         {/if}
 
         {#if selectedEncoder?.supportsSampleRate}
-          <Field.Field class="gap-2">
-            <Field.Field class="min-w-0" orientation="horizontal">
-              <Field.Content>
+          <Field.Field class="gap-0 rounded-2xl border border-border px-3.5 py-3">
+            <div class="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
+              <Field.Content class="min-w-0">
                 <Field.Label id={sampleRateLabelId} for={sampleRateSwitchId}>Sample rate</Field.Label>
                 <Field.Description class="break-words text-xs">
                   {sampleRateDefaultLabel}
                 </Field.Description>
               </Field.Content>
-              <div class="flex items-center gap-3">
+              <div class="flex shrink-0 items-center gap-2">
                 <span class="text-xs text-muted-foreground">Override</span>
                 <Switch
                   id={sampleRateSwitchId}
@@ -190,16 +200,18 @@
                   )}
                 />
               </div>
-            </Field.Field>
+            </div>
 
             {#if settings.sampleRate !== undefined}
-              <Input
-                id={sampleRateInputId}
-                type="number"
-                aria-labelledby={sampleRateLabelId}
-                value={settings.sampleRate?.toString() ?? ''}
-                oninput={(event) => onSampleRateChange(parseOptionalInt(event.currentTarget.value))}
-              />
+              <div class="overflow-hidden pt-3" transition:slide={{ duration: 140 }}>
+                <Input
+                  id={sampleRateInputId}
+                  type="number"
+                  aria-labelledby={sampleRateLabelId}
+                  value={settings.sampleRate?.toString() ?? ''}
+                  oninput={(event) => onSampleRateChange(parseOptionalInt(event.currentTarget.value))}
+                />
+              </div>
             {/if}
           </Field.Field>
         {/if}
@@ -231,8 +243,10 @@
       </Item.Group>
     {:else}
       <Item.Root variant="outline" size="sm">
-        <Item.Description>
-          Source codec, channels, sample rate, and layout vary across the detected audio tracks. Open Track Overrides to inspect per-track details.
+          <Item.Description>
+              <ScrollArea>
+                  Source codec, channels, sample rate, and layout vary across the detected audio tracks. Open Track Overrides to inspect per-track details.                  
+              </ScrollArea>
         </Item.Description>
       </Item.Root>
     {/if}

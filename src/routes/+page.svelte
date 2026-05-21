@@ -15,6 +15,7 @@
   import { AppUpdateDialog, HeaderUpdateButton, VersionedExportDialog } from '$lib/components/shared';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
   import AppHeader from '$lib/components/layout/app-header.svelte';
+  import { getPlatformChrome } from '$lib/components/layout/platform-chrome';
   import { setToolHeader } from '$lib/components/layout/tool-header-context.svelte';
   import { ExtractView, MergeView, SettingsView, InfoView, TranslationView, RenameView, AudioToSubsView, VideoOcrView, TranscodeView } from '$lib/components/views';
   import { TranslationExportDialog } from '$lib/components/translation';
@@ -71,7 +72,8 @@
   let audioToSubsViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let videoOcrViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
 
-  const isMacOS = OS() === 'MacOS';
+  const platformChrome = getPlatformChrome(OS());
+  const isMacOS = platformChrome === 'macos-overlay';
   const toolHeader = setToolHeader();
 
   interface ToolProgressMetric {
@@ -656,185 +658,187 @@
   }
 </script>
 
-<Sidebar.Provider bind:open={sidebarOpen}>
-  <AppSidebar
-    currentView={currentView}
-    onNavigate={handleNavigate}
-  />
+<div class="h-screen overflow-hidden bg-background">
+  <Sidebar.Provider bind:open={sidebarOpen}>
+    <AppSidebar
+      currentView={currentView}
+      onNavigate={handleNavigate}
+    />
 
-  <Sidebar.Inset class="flex flex-col h-screen overflow-hidden w-[calc(100%-var(--sidebar-width))]">
-    <AppHeader
-      title={activeHeaderTitle}
-      description={activeHeaderDescription}
-      showTitle={!sidebarOpen}
-      {isMacOS}
-    >
-      {#snippet leading()}
-        <Sidebar.Trigger class="{!sidebarOpen && isMacOS ? 'ml-20' : '-ml-1'} transition-all duration-300" />
-        <Separator orientation="vertical" class="data-[orientation=vertical]:h-4" />
-      {/snippet}
+    <Sidebar.Inset class="flex flex-col h-screen overflow-hidden w-[calc(100%-var(--sidebar-width))]">
+      <AppHeader
+        title={activeHeaderTitle}
+        description={activeHeaderDescription}
+        showTitle={!sidebarOpen}
+        {platformChrome}
+      >
+        {#snippet leading()}
+          <Sidebar.Trigger class="{!sidebarOpen && isMacOS ? 'ml-20' : '-ml-1'} transition-all duration-300" />
+          <Separator orientation="vertical" class="data-[orientation=vertical]:h-4" />
+        {/snippet}
 
-      {#snippet titleSuffix()}
-        {#if updaterStore.hasUpdate && updaterStore.availableVersion}
-          <HeaderUpdateButton
-            version={updaterStore.availableVersion}
-            compact={!sidebarOpen}
-            onOpen={() => updateDialogOpen = true}
-          />
-        {/if}
-      {/snippet}
-
-      {#snippet status()}
-        {#if globalToolProgress.active}
-          <HoverCard.Root openDelay={150} closeDelay={100}>
-            <HoverCard.Trigger
-              class="flex w-38 h-8 items-center rounded-full border bg-muted/40 px-2 py-1.5 transition-colors hover:bg-muted/60"
-              title={`Global progress: ${Math.round(globalToolProgress.percentage)}%`}
-            >
-              <div class="flex h-full w-full items-center gap-2">
-                <Progress value={globalToolProgress.percentage} class="h-2 flex-1" />
-                <span class="text-[11px] font-medium tabular-nums">{Math.round(globalToolProgress.percentage)}%</span>
-              </div>
-            </HoverCard.Trigger>
-            <HoverCard.Content align="end" class="w-68 p-3">
-              <div class="mb-2 border-b pb-2">
-                <div class="mb-2 flex items-center justify-between">
-                  <p class="text-[11px] uppercase tracking-wide text-muted-foreground">Global Progress</p>
-                  <p class="text-sm font-medium">{Math.round(globalToolProgress.percentage)}%</p>
-                </div>
-                <Progress value={globalToolProgress.percentage} class="h-2" />
-                <p class="mt-1 text-[11px] text-muted-foreground">{globalToolProgress.tools.length} tools active</p>
-              </div>
-              <div class="space-y-2">
-                {#each globalToolProgress.tools as metric (metric.toolId)}
-                  {@const ToolIcon = metric.icon}
-                  <Item.Root variant="muted" size="xs" class="items-start">
-                    <Item.Media class="mt-0.5">
-                      <ToolIcon class="size-4 text-muted-foreground" />
-                    </Item.Media>
-                    <Item.Content class="min-w-0 gap-1">
-                      <div class="flex items-center gap-2">
-                        <p class="truncate text-xs font-medium flex-1">{metric.label}</p>
-                        <p class="text-[11px] font-medium tabular-nums">{Math.round(metric.percentage)}%</p>
-                      </div>
-                      <Progress value={metric.percentage} class="h-1.5" />
-                      <p class="truncate text-[11px] text-muted-foreground">{metric.detailText}</p>
-                    </Item.Content>
-                  </Item.Root>
-                {/each}
-              </div>
-            </HoverCard.Content>
-          </HoverCard.Root>
-        {/if}
-      {/snippet}
-
-      {#snippet actions()}
-        {#if activeToolHeader?.actions}
-          {@render activeToolHeader.actions()}
-        {/if}
-      {/snippet}
-
-      {#snippet trailing()}
-        {#if showGlobalExportButton}
-          <Button
-            variant="outline"
-            size="sm"
-            onclick={handleOpenGlobalExportDialog}
-            disabled={globalExportDisabled}
-            title={globalExportTitle}
-          >
-            <Download class="size-4 mr-2" />
-            Export
-          </Button>
-        {/if}
-
-        <Separator orientation="vertical" class="h-6 ml-1 mr-1" />
-
-        <Button
-          variant="ghost"
-          size="icon"
-          onclick={() => logStore.open()}
-          class="relative"
-          title="View logs"
-        >
-          <ScrollText class="size-4" />
-          {#if logStore.unreadErrorCount > 0}
-            <span class="absolute -top-1 -right-1 size-4 bg-destructive text-white rounded-full text-[10px] font-medium flex items-center justify-center">
-              {logStore.unreadErrorCount > 9 ? '9+' : logStore.unreadErrorCount}
-            </span>
+        {#snippet titleSuffix()}
+          {#if updaterStore.hasUpdate && updaterStore.availableVersion}
+            <HeaderUpdateButton
+              version={updaterStore.availableVersion}
+              compact={!sidebarOpen}
+              onOpen={() => updateDialogOpen = true}
+            />
           {/if}
-        </Button>
-      {/snippet}
-    </AppHeader>
+        {/snippet}
 
-    <!-- FFmpeg warning -->
-    {#if ffmpegAvailable === false && currentView !== 'settings'}
-      <div class="p-4">
-        <Alert variant="destructive">
-          <AlertCircle class="size-4" />
-          <AlertTitle>FFmpeg not available</AlertTitle>
-          <AlertDescription>
-            Install FFmpeg to use this application.
-          </AlertDescription>
-        </Alert>
-      </div>
-    {/if}
+        {#snippet status()}
+          {#if globalToolProgress.active}
+            <HoverCard.Root openDelay={150} closeDelay={100}>
+              <HoverCard.Trigger
+                class="flex w-38 h-8 items-center rounded-full border bg-muted/40 px-2 py-1.5 transition-colors hover:bg-muted/60"
+                title={`Global progress: ${Math.round(globalToolProgress.percentage)}%`}
+              >
+                <div class="flex h-full w-full items-center gap-2">
+                  <Progress value={globalToolProgress.percentage} class="h-2 flex-1" />
+                  <span class="text-[11px] font-medium tabular-nums">{Math.round(globalToolProgress.percentage)}%</span>
+                </div>
+              </HoverCard.Trigger>
+              <HoverCard.Content align="end" class="w-68 p-3">
+                <div class="mb-2 border-b pb-2">
+                  <div class="mb-2 flex items-center justify-between">
+                    <p class="text-[11px] uppercase tracking-wide text-muted-foreground">Global Progress</p>
+                    <p class="text-sm font-medium">{Math.round(globalToolProgress.percentage)}%</p>
+                  </div>
+                  <Progress value={globalToolProgress.percentage} class="h-2" />
+                  <p class="mt-1 text-[11px] text-muted-foreground">{globalToolProgress.tools.length} tools active</p>
+                </div>
+                <div class="space-y-2">
+                  {#each globalToolProgress.tools as metric (metric.toolId)}
+                    {@const ToolIcon = metric.icon}
+                    <Item.Root variant="muted" size="xs" class="items-start">
+                      <Item.Media class="mt-0.5">
+                        <ToolIcon class="size-4 text-muted-foreground" />
+                      </Item.Media>
+                      <Item.Content class="min-w-0 gap-1">
+                        <div class="flex items-center gap-2">
+                          <p class="truncate text-xs font-medium flex-1">{metric.label}</p>
+                          <p class="text-[11px] font-medium tabular-nums">{Math.round(metric.percentage)}%</p>
+                        </div>
+                        <Progress value={metric.percentage} class="h-1.5" />
+                        <p class="truncate text-[11px] text-muted-foreground">{metric.detailText}</p>
+                      </Item.Content>
+                    </Item.Root>
+                  {/each}
+                </div>
+              </HoverCard.Content>
+            </HoverCard.Root>
+          {/if}
+        {/snippet}
 
-    <!-- Main content - all views mounted but hidden with display:none for persistence -->
-    <main class="flex-1 overflow-hidden relative">
-      <!-- Extract View -->
-      <div class="absolute inset-0" style="display: {currentView === 'extract' ? 'block' : 'none'}">
-        <ExtractView bind:this={extractViewRef} />
-      </div>
-      
-      <!-- Merge View -->
-      <div class="absolute inset-0" style="display: {currentView === 'merge' ? 'block' : 'none'}">
-        <MergeView
-          bind:this={mergeViewRef}
-          onNavigateToSettings={() => handleNavigate('settings')}
-        />
-      </div>
+        {#snippet actions()}
+          {#if activeToolHeader?.actions}
+            {@render activeToolHeader.actions()}
+          {/if}
+        {/snippet}
 
-      <!-- Transcode View -->
-      <div class="absolute inset-0" style="display: {currentView === 'transcode' ? 'block' : 'none'}">
-        <TranscodeView
-          bind:this={transcodeViewRef}
-          onNavigateToSettings={() => handleNavigate('settings')}
-        />
-      </div>
-      
-      <!-- Audio to Subs View - persists when switching views -->
-      <div class="absolute inset-0" style="display: {currentView === 'audio-to-subs' ? 'block' : 'none'}">
-        <AudioToSubsView bind:this={audioToSubsViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
-      </div>
-      
-      <!-- Video OCR View - persists when switching views -->
-      <div class="absolute inset-0" style="display: {currentView === 'video-ocr' ? 'block' : 'none'}">
-        <VideoOcrView bind:this={videoOcrViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
-      </div>
-      
-      <!-- Translation View -->
-      <div class="absolute inset-0" style="display: {currentView === 'translate' ? 'block' : 'none'}">
-        <TranslationView bind:this={translateViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
-      </div>
-      
-      <!-- Rename View -->
-      <div class="absolute inset-0" style="display: {currentView === 'rename' ? 'block' : 'none'}">
-        <RenameView bind:this={renameViewRef} />
-      </div>
-      
-      <!-- Info View -->
-      <div class="absolute inset-0" style="display: {currentView === 'info' ? 'block' : 'none'}">
-        <InfoView bind:this={infoViewRef} />
-      </div>
-      
-      <!-- Settings View -->
-      <div class="absolute inset-0" style="display: {currentView === 'settings' ? 'block' : 'none'}">
-        <SettingsView onOpenUpdateDialog={() => updateDialogOpen = true} />
-      </div>
-    </main>
-  </Sidebar.Inset>
-</Sidebar.Provider>
+        {#snippet trailing()}
+          {#if showGlobalExportButton}
+            <Button
+              variant="outline"
+              size="sm"
+              onclick={handleOpenGlobalExportDialog}
+              disabled={globalExportDisabled}
+              title={globalExportTitle}
+            >
+              <Download class="size-4 mr-2" />
+              Export
+            </Button>
+          {/if}
+
+          <Separator orientation="vertical" class="h-6 ml-1 mr-1" />
+
+          <Button
+            variant="ghost"
+            size="icon"
+            onclick={() => logStore.open()}
+            class="relative"
+            title="View logs"
+          >
+            <ScrollText class="size-4" />
+            {#if logStore.unreadErrorCount > 0}
+              <span class="absolute -top-1 -right-1 size-4 bg-destructive text-white rounded-full text-[10px] font-medium flex items-center justify-center">
+                {logStore.unreadErrorCount > 9 ? '9+' : logStore.unreadErrorCount}
+              </span>
+            {/if}
+          </Button>
+        {/snippet}
+      </AppHeader>
+
+      <!-- FFmpeg warning -->
+      {#if ffmpegAvailable === false && currentView !== 'settings'}
+        <div class="p-4">
+          <Alert variant="destructive">
+            <AlertCircle class="size-4" />
+            <AlertTitle>FFmpeg not available</AlertTitle>
+            <AlertDescription>
+              Install FFmpeg to use this application.
+            </AlertDescription>
+          </Alert>
+        </div>
+      {/if}
+
+      <!-- Main content - all views mounted but hidden with display:none for persistence -->
+      <main class="flex-1 overflow-hidden relative">
+        <!-- Extract View -->
+        <div class="absolute inset-0" style="display: {currentView === 'extract' ? 'block' : 'none'}">
+          <ExtractView bind:this={extractViewRef} />
+        </div>
+
+        <!-- Merge View -->
+        <div class="absolute inset-0" style="display: {currentView === 'merge' ? 'block' : 'none'}">
+          <MergeView
+            bind:this={mergeViewRef}
+            onNavigateToSettings={() => handleNavigate('settings')}
+          />
+        </div>
+
+        <!-- Transcode View -->
+        <div class="absolute inset-0" style="display: {currentView === 'transcode' ? 'block' : 'none'}">
+          <TranscodeView
+            bind:this={transcodeViewRef}
+            onNavigateToSettings={() => handleNavigate('settings')}
+          />
+        </div>
+
+        <!-- Audio to Subs View - persists when switching views -->
+        <div class="absolute inset-0" style="display: {currentView === 'audio-to-subs' ? 'block' : 'none'}">
+          <AudioToSubsView bind:this={audioToSubsViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
+        </div>
+
+        <!-- Video OCR View - persists when switching views -->
+        <div class="absolute inset-0" style="display: {currentView === 'video-ocr' ? 'block' : 'none'}">
+          <VideoOcrView bind:this={videoOcrViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
+        </div>
+
+        <!-- Translation View -->
+        <div class="absolute inset-0" style="display: {currentView === 'translate' ? 'block' : 'none'}">
+          <TranslationView bind:this={translateViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
+        </div>
+
+        <!-- Rename View -->
+        <div class="absolute inset-0" style="display: {currentView === 'rename' ? 'block' : 'none'}">
+          <RenameView bind:this={renameViewRef} />
+        </div>
+
+        <!-- Info View -->
+        <div class="absolute inset-0" style="display: {currentView === 'info' ? 'block' : 'none'}">
+          <InfoView bind:this={infoViewRef} />
+        </div>
+
+        <!-- Settings View -->
+        <div class="absolute inset-0" style="display: {currentView === 'settings' ? 'block' : 'none'}">
+          <SettingsView onOpenUpdateDialog={() => updateDialogOpen = true} />
+        </div>
+      </main>
+    </Sidebar.Inset>
+  </Sidebar.Provider>
+</div>
 
 <TranslationExportDialog
   open={translationExportDialogOpen}

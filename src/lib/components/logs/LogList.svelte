@@ -6,6 +6,7 @@
   import * as Empty from '$lib/components/ui/empty';
   import * as Item from '$lib/components/ui/item';
   import { cn } from '$lib/utils';
+  import { getFileName } from '$lib/utils/format';
 
 
   interface LogListProps {
@@ -107,7 +108,7 @@
                     </span>
                     {#if log.context?.filePath}
                       <span class="text-xs text-muted-foreground truncate max-w-32" title={log.context.filePath}>
-                        {log.context.filePath.split('/').pop() || log.context.filePath.split('\\').pop()}
+                        {getFileName(log.context.filePath)}
                       </span>
                     {/if}
                   </div>

@@ -16,11 +16,12 @@
   import { ProcessingRemoveDialog } from '$lib/components/shared';
   import { fetchFileMetadata } from '$lib/services/file-metadata';
   import { scanFiles } from '$lib/services/ffprobe';
+  import { prepareMkvMergeSourceTracks } from '$lib/services/merge-compat';
   import { analyzeMergeAiMatches } from '$lib/services/merge-ai';
   import { pickOutputDirectory } from '$lib/services/output-folder';
   import { getBaseName, getDirectoryFromPath, getExtension, type ResolveRenameTargetPathContext } from '$lib/services/rename';
   import { createRenameWorkspaceStore, mergeStore, settingsStore, toolImportStore } from '$lib/stores';
-  import { resolveOutputFolderDisplay } from '$lib/utils';
+  import { getFileName, resolveOutputFolderDisplay } from '$lib/utils';
   import { logAndToast } from '$lib/utils/log-toast';
   import { getCodecFromExtension, type ImportedTrack, type MergeTrackConfig, type MergeProgressEvent, type MergeVideoFile, type RenameFile } from '$lib/types';
   import type { ImportItem, ImportSourceId, ImportableKind } from '$lib/types/tool-import';
@@ -239,7 +240,7 @@
       byPath.set(path, {
         key: `merge-output:${path}`,
         path,
-        name: path.split('/').pop() || path,
+        name: getFileName(path),
         kind: 'generic_file',
         createdAt: now,
       });
@@ -344,7 +345,7 @@
         continue;
       }
 
-      const name = path.split('/').pop() || path.split('\\').pop() || path;
+      const name = getFileName(path);
       const extension = path.toLowerCase().substring(path.lastIndexOf('.'));
       const forcedType = forcedTypes?.get(path);
 
@@ -614,25 +615,30 @@
         trackIndex: 0,
         config: track.config,
       }));
-      const sourceTrackConfigs = video.tracks.map((track) => {
-        const config = mergeStore.getSourceTrackConfig(track.id);
-        return {
-          originalIndex: track.originalIndex,
-          type: track.type,
-          config: config || {
-            trackId: track.id,
-            enabled: true,
-            language: track.language,
-            title: track.title,
-            default: track.default,
-            forced: track.forced,
-            delayMs: 0,
-            order: 0,
-          },
-        };
-      });
 
       try {
+        const {
+          sourceTrackConfigs,
+          skippedDataStreams,
+          blockingError,
+        } = prepareMkvMergeSourceTracks(
+          video.tracks,
+          (track) => mergeStore.getSourceTrackConfig(track.id),
+        );
+
+        if (skippedDataStreams.length > 0) {
+          logAndToast.warning({
+            source: 'merge',
+            title: 'Skipped unsupported data streams',
+            details: `Skipped unsupported data stream(s) for MKV merge: ${skippedDataStreams.join(', ')}.`,
+            showToast: false,
+          });
+        }
+
+        if (blockingError) {
+          throw new Error(blockingError);
+        }
+
         await invoke('merge_tracks', {
           videoPath: video.path,
           tracks: trackArgs,

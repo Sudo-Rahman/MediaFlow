@@ -6,12 +6,19 @@ const DEFAULT_EMA_ALPHA: f64 = 0.25;
 pub(crate) struct FfmpegProgressUpdate {
     pub(crate) progress: Option<i32>,
     pub(crate) speed_bytes_per_sec: Option<f64>,
+    pub(crate) current_frame: Option<u64>,
+    pub(crate) total_frames: Option<u64>,
+    pub(crate) frames_per_second: Option<f64>,
     pub(crate) is_end: bool,
 }
 
 pub(crate) struct FfmpegProgressTracker {
     duration_us: Option<u64>,
+    total_frames: Option<u64>,
     start_instant: Instant,
+    last_out_time_us: Option<u64>,
+    current_frame: Option<u64>,
+    frames_per_second: Option<f64>,
     last_total_size_bytes: Option<u64>,
     last_total_size_elapsed_seconds: Option<f64>,
     smoothed_speed_bytes_per_sec: Option<f64>,
@@ -20,9 +27,17 @@ pub(crate) struct FfmpegProgressTracker {
 
 impl FfmpegProgressTracker {
     pub(crate) fn new(duration_us: Option<u64>) -> Self {
+        Self::with_total_frames(duration_us, None)
+    }
+
+    pub(crate) fn with_total_frames(duration_us: Option<u64>, total_frames: Option<u64>) -> Self {
         Self {
             duration_us: duration_us.filter(|value| *value > 0),
+            total_frames: total_frames.filter(|value| *value > 0),
             start_instant: Instant::now(),
+            last_out_time_us: None,
+            current_frame: None,
+            frames_per_second: None,
             last_total_size_bytes: None,
             last_total_size_elapsed_seconds: None,
             smoothed_speed_bytes_per_sec: None,
@@ -36,38 +51,62 @@ impl FfmpegProgressTracker {
         match key {
             "out_time_us" => {
                 let out_time_us = value.parse::<u64>().ok()?;
-                Some(FfmpegProgressUpdate {
-                    progress: self.compute_running_progress(out_time_us),
-                    speed_bytes_per_sec: self.smoothed_speed_bytes_per_sec,
-                    is_end: false,
-                })
+                self.last_out_time_us = Some(out_time_us);
+                Some(self.build_update(self.compute_running_progress(), false))
+            }
+            "frame" => {
+                self.current_frame = value.parse::<u64>().ok();
+                Some(self.build_update(self.compute_running_progress(), false))
+            }
+            "fps" => {
+                let frames_per_second = value.parse::<f64>().ok()?;
+                if frames_per_second.is_finite() && frames_per_second >= 0.0 {
+                    self.frames_per_second = Some(frames_per_second);
+                }
+                Some(self.build_update(self.compute_running_progress(), false))
             }
             "total_size" => {
                 let total_size_bytes = value.parse::<u64>().ok()?;
                 self.update_speed(total_size_bytes, self.start_instant.elapsed().as_secs_f64());
                 self.smoothed_speed_bytes_per_sec
-                    .map(|speed_bytes_per_sec| FfmpegProgressUpdate {
-                        progress: None,
-                        speed_bytes_per_sec: Some(speed_bytes_per_sec),
-                        is_end: false,
-                    })
+                    .map(|_| self.build_update(self.compute_running_progress(), false))
             }
-            "progress" if value == "end" => Some(FfmpegProgressUpdate {
-                progress: Some(100),
-                speed_bytes_per_sec: self.smoothed_speed_bytes_per_sec,
-                is_end: true,
-            }),
+            "progress" if value == "end" => Some(self.build_update(Some(100), true)),
             _ => None,
         }
     }
 
-    fn compute_running_progress(&self, out_time_us: u64) -> Option<i32> {
-        let duration_us = self.duration_us?;
-        if duration_us == 0 {
-            return None;
+    fn build_update(&self, progress: Option<i32>, is_end: bool) -> FfmpegProgressUpdate {
+        FfmpegProgressUpdate {
+            progress,
+            speed_bytes_per_sec: self.smoothed_speed_bytes_per_sec,
+            current_frame: self.current_frame,
+            total_frames: self.total_frames,
+            frames_per_second: self.frames_per_second,
+            is_end,
         }
+    }
+
+    fn compute_running_progress(&self) -> Option<i32> {
+        [self.compute_time_progress(), self.compute_frame_progress()]
+            .into_iter()
+            .flatten()
+            .max()
+    }
+
+    fn compute_time_progress(&self) -> Option<i32> {
+        let duration_us = self.duration_us?;
+        let out_time_us = self.last_out_time_us?;
 
         let raw_progress = ((out_time_us as f64 / duration_us as f64) * 100.0).clamp(0.0, 99.0);
+        Some(raw_progress.round() as i32)
+    }
+
+    fn compute_frame_progress(&self) -> Option<i32> {
+        let total_frames = self.total_frames?;
+        let current_frame = self.current_frame?;
+
+        let raw_progress = ((current_frame as f64 / total_frames as f64) * 100.0).clamp(0.0, 99.0);
         Some(raw_progress.round() as i32)
     }
 
@@ -191,5 +230,32 @@ mod tests {
         assert_eq!(second.progress, None);
         assert!(second.speed_bytes_per_sec.is_some());
         assert!(!second.is_end);
+    }
+
+    #[test]
+    fn tracker_uses_frame_progress_when_timestamps_lag() {
+        let mut tracker = FfmpegProgressTracker::with_total_frames(Some(100_000_000), Some(1_000));
+
+        let timestamp_update = tracker
+            .handle_line("out_time_us=5000000")
+            .expect("timestamp progress should exist");
+        assert_eq!(timestamp_update.progress, Some(5));
+
+        let frame_update = tracker
+            .handle_line("frame=500")
+            .expect("frame progress should exist");
+        assert_eq!(frame_update.progress, Some(50));
+        assert_eq!(frame_update.current_frame, Some(500));
+        assert_eq!(frame_update.total_frames, Some(1_000));
+    }
+
+    #[test]
+    fn tracker_parses_fps_metric() {
+        let mut tracker = FfmpegProgressTracker::with_total_frames(Some(100_000_000), Some(1_000));
+
+        let update = tracker
+            .handle_line("fps=123.45")
+            .expect("fps metric should emit an update");
+        assert_eq!(update.frames_per_second, Some(123.45));
     }
 }

@@ -29,7 +29,6 @@
     FILE_ITEM_CARD_META_CLASS,
     FILE_ITEM_CARD_REMOVE_ACTION_CLASS,
     FILE_ITEM_CARD_STATUS_ICON_CLASS,
-    FILE_ITEM_CARD_TITLE_CLASS,
   } from '$lib/utils/file-item-card-visuals';
   import { formatDuration, formatFileSize } from '$lib/utils/format';
 
@@ -85,9 +84,11 @@
       {@const removeDisabled = isProcessing && !isCurrentProcessing}
       {@const seriesInfo = formatSeriesInfo(file.seasonNumber, file.episodeNumber)}
       <FileItemCard
+        title={file.name}
         compact={compact}
         selected={selectedId === file.id}
         onclick={() => onSelect?.(file.id)}
+        selectionLabel={`Select ${file.name}`}
       >
         {#snippet icon()}
           {#if status === 'scanning'}
@@ -105,9 +106,7 @@
           {/if}
         {/snippet}
 
-        {#snippet content()}
-          <p class={FILE_ITEM_CARD_TITLE_CLASS}>{file.name}</p>
-
+        {#snippet meta()}
           <div class="flex flex-wrap items-center gap-1.5 mt-1.5">
             {#if seriesInfo}
               <Badge variant="outline" class="text-xs">{seriesInfo}</Badge>
@@ -134,7 +133,9 @@
               <Badge class="text-xs">+{file.attachedTracks.length}</Badge>
             {/if}
           </div>
+        {/snippet}
 
+        {#snippet details()}
           <div class={FILE_ITEM_CARD_META_CLASS}>
             <span>{formatFileSize(file.size)}</span>
             {#if file.duration}

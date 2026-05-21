@@ -12,7 +12,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::time::timeout;
 
 use crate::shared::ffmpeg_progress::FfmpegProgressTracker;
-use crate::shared::process::terminate_process;
+use crate::shared::process::{terminate_process, tokio_command};
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::store::{resolve_ffmpeg_path, resolve_ffprobe_path};
 use crate::shared::validation::validate_media_path;
@@ -951,7 +951,7 @@ async fn extract_selected_intervals_with_ffmpeg(
         }
 
         let ffmpeg_args = build_ocr_interval_ffmpeg_args(video_path, fps, output_spec, *interval);
-        let mut child = tokio::process::Command::new(ffmpeg_path)
+        let mut child = tokio_command(ffmpeg_path)
             .args(ffmpeg_args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

@@ -15,6 +15,10 @@ license-file = "../LICENSE"
 name = "mediaflow_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = []
+microsoft-store = []
+
 [build-dependencies]
 tauri-build = { version = "^2", features = [] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
@@ -66,6 +70,10 @@ ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git", branch = "n
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "^3", features = ["windows-native"] }
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm"
+] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

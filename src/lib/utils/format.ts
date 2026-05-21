@@ -145,7 +145,7 @@ export function getTrackTypeIcon(type: string): string {
  * Extract filename from path
  */
 export function getFileName(path: string): string {
-  return path.split('/').pop() || path.split('\\').pop() || path;
+  return path.split(/[/\\]/).pop() || path;
 }
 
 /**

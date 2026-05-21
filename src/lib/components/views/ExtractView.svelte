@@ -17,6 +17,7 @@
   import { scanFiles } from '$lib/services/ffprobe';
   import { extractTrack, buildOutputPath } from '$lib/services/ffmpeg';
   import { pickOutputDirectory } from '$lib/services/output-folder';
+  import { getFileName } from '$lib/utils/format';
   import { logAndToast } from '$lib/utils/log-toast';
   import type { ExtractProgressEvent, Track, VideoFile } from '$lib/types';
 
@@ -165,7 +166,7 @@
 
     const pendingFiles: VideoFile[] = videoPaths.map(path => ({
       path,
-      name: path.split('/').pop() || path.split('\\').pop() || path,
+      name: getFileName(path),
       size: 0,
       tracks: [],
       status: 'scanning' as const
@@ -420,7 +421,7 @@
           extractedOutputs.push({
             key: `extract:${file.path}:${track.id}:${outputPath}`,
             path: outputPath,
-            name: outputPath.split('/').pop() ?? outputPath,
+            name: getFileName(outputPath),
             kind: importKind,
             createdAt: Date.now(),
           });

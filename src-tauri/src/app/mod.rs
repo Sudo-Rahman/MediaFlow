@@ -54,7 +54,23 @@ pub(crate) fn create_main_window(app: tauri::AppHandle) {
     #[cfg(target_os = "macos")]
     configure_macos_window_shape(&window);
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        let window = window
+            .decorations(false)
+            .shadow(true)
+            .transparent(true)
+            .build()
+            .unwrap();
+
+        if let Err(error) = crate::tools::window_chrome::install_windows_chrome(&window) {
+            eprintln!("failed to install Windows window chrome: {}", error);
+        }
+
+        return;
+    }
+
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     let _window = window.build().unwrap();
 }
 

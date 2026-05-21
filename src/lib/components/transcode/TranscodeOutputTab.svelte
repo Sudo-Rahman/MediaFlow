@@ -98,7 +98,7 @@
       <div class="space-y-2">
         <Label>Output preview</Label>
         <Item.Root variant="outline" size="sm">
-          <Item.Description class="break-all">{outputPreviewPath}</Item.Description>
+          <Item.Description class="block w-full min-w-0 max-w-full break-all">{outputPreviewPath}</Item.Description>
         </Item.Root>
       </div>
     </Card.Content>
@@ -131,12 +131,16 @@
       <div class="space-y-2">
         <Label>Batch preview</Label>
         {#if readyQueueFiles.length > 0}
-          <Item.Group class="max-h-56 gap-2 overflow-auto">
+          <Item.Group class="max-h-56 gap-2 overflow-y-auto overflow-x-hidden">
             {#each readyQueueFiles.slice(0, 6) as queuedFile (queuedFile.id)}
-              <Item.Root variant="outline" size="sm" role="listitem">
-                <Item.Content class="min-w-0">
-                  <Item.Title class="truncate">{queuedFile.name}</Item.Title>
-                  <Item.Description class="break-all">{buildOutputPath(queuedFile)}</Item.Description>
+              <Item.Root variant="outline" size="sm" class="min-w-0 overflow-hidden" role="listitem">
+                <Item.Content class="min-w-0 overflow-hidden">
+                  <Item.Title class="block w-full min-w-0 max-w-full truncate" title={queuedFile.name}>
+                    {queuedFile.name}
+                  </Item.Title>
+                  <Item.Description class="block w-full min-w-0 max-w-full break-all">
+                    {buildOutputPath(queuedFile)}
+                  </Item.Description>
                 </Item.Content>
               </Item.Root>
             {/each}

@@ -243,6 +243,15 @@ export interface TranscodeRuntimeProgress {
   currentFileName: string;
   currentFileProgress: number;
   currentSpeedBytesPerSec?: number;
+  currentFrame?: number;
+  totalFrames?: number;
+  framesPerSecond?: number;
+}
+
+export interface TranscodeProgressMetrics {
+  currentFrame?: number;
+  totalFrames?: number;
+  framesPerSecond?: number;
 }
 
 export interface TranscodeProgressEvent {
@@ -250,6 +259,9 @@ export interface TranscodeProgressEvent {
   outputPath: string;
   progress: number;
   speedBytesPerSec?: number;
+  currentFrame?: number | null;
+  totalFrames?: number | null;
+  framesPerSecond?: number | null;
 }
 
 export interface TranscodeRequest {

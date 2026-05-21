@@ -15,7 +15,6 @@
     FILE_ITEM_CARD_REMOVE_ACTION_CLASS,
     FILE_ITEM_CARD_RETRY_ACTION_CLASS,
     FILE_ITEM_CARD_STATUS_ICON_CLASS,
-    FILE_ITEM_CARD_TITLE_CLASS,
   } from '$lib/utils/file-item-card-visuals';
 
   interface TranslationFileListProps {
@@ -54,7 +53,12 @@
     {@const hasModelJobs = !!job.modelJobs && job.modelJobs.length > 0}
     {@const completedModels = hasModelJobs ? job.modelJobs!.filter(mj => mj.status === 'completed').length : 0}
     {@const totalModels = hasModelJobs ? job.modelJobs!.length : 0}
-    <FileItemCard selected={isSelected} onclick={() => onSelect(job.id)}>
+    <FileItemCard
+      title={job.file.name}
+      selected={isSelected}
+      onclick={() => onSelect(job.id)}
+      selectionLabel={`Select ${job.file.name}`}
+    >
       {#snippet icon()}
         {#if job.status === 'completed'}
           <CheckCircle class={`${FILE_ITEM_CARD_STATUS_ICON_CLASS} text-green-500`} />
@@ -67,13 +71,16 @@
         {/if}
       {/snippet}
 
-      {#snippet content()}
-        <p class={FILE_ITEM_CARD_TITLE_CLASS}>{job.file.name}</p>
-
+      {#snippet meta()}
         <div class={FILE_ITEM_CARD_META_CLASS}>
           <Badge variant="outline" class="text-[10px] px-1.5 py-0 uppercase">
             {job.file.format}
           </Badge>
+          {#if hasVersions}
+            <Badge variant="secondary" class="text-[10px] px-1.5 py-0">
+              {versionCount} version{versionCount > 1 ? 's' : ''}
+            </Badge>
+          {/if}
           {#if processing && hasModelJobs}
             <span>{completedModels}/{totalModels} models complete</span>
           {:else if processing}
@@ -85,7 +92,9 @@
             {/if}
           {/if}
         </div>
+      {/snippet}
 
+      {#snippet details()}
         {#if processing}
           <div class="mt-2">
             <Progress value={job.progress} class="h-1.5" />
@@ -100,77 +109,69 @@
       {/snippet}
 
       {#snippet actions()}
-        <div class="flex flex-col items-end gap-1">
-          <div class="flex items-center gap-1">
-            {#if hasVersions && onViewResult}
-              <Button
-                variant="ghost"
-                size="icon"
-                class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_PRIMARY_ACTION_CLASS}`}
-                onclick={(e: MouseEvent) => {
-                  e.stopPropagation();
-                  onViewResult(job);
-                }}
-                title="View results"
-                aria-label="View results"
-              >
-                <FileText class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
-              </Button>
-            {/if}
+        <div class="flex items-center gap-1">
+          {#if hasVersions && onViewResult}
+            <Button
+              variant="ghost"
+              size="icon"
+              class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_PRIMARY_ACTION_CLASS}`}
+              onclick={(e: MouseEvent) => {
+                e.stopPropagation();
+                onViewResult(job);
+              }}
+              title="View results"
+              aria-label="View results"
+            >
+              <FileText class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
+            </Button>
+          {/if}
 
-            {#if (job.status === 'error' || job.status === 'completed' || job.status === 'cancelled' || hasVersions) && onRetry && !processing}
-              <Button
-                variant="ghost"
-                size="icon"
-                class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_RETRY_ACTION_CLASS}`}
-                onclick={(e: MouseEvent) => {
-                  e.stopPropagation();
-                  onRetry(job);
-                }}
-                disabled={disabled}
-                title="Retry"
-                aria-label="Retry translation"
-              >
-                <RotateCw class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
-              </Button>
-            {/if}
+          {#if (job.status === 'error' || job.status === 'completed' || job.status === 'cancelled' || hasVersions) && onRetry && !processing}
+            <Button
+              variant="ghost"
+              size="icon"
+              class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_RETRY_ACTION_CLASS}`}
+              onclick={(e: MouseEvent) => {
+                e.stopPropagation();
+                onRetry(job);
+              }}
+              disabled={disabled}
+              title="Retry"
+              aria-label="Retry translation"
+            >
+              <RotateCw class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
+            </Button>
+          {/if}
 
-            {#if processing && onCancel}
-              <Button
-                variant="ghost"
-                size="icon"
-                class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_CANCEL_ACTION_CLASS}`}
-                onclick={(e: MouseEvent) => {
-                  e.stopPropagation();
-                  onCancel(job.id);
-                }}
-                title="Cancel"
-                aria-label="Cancel translation"
-              >
-                <X class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
-              </Button>
-            {:else}
-              <Button
-                variant="ghost"
-                size="icon"
-                class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_REMOVE_ACTION_CLASS}`}
-                onclick={(e: MouseEvent) => {
-                  e.stopPropagation();
-                  onRemove(job.id);
-                }}
-                disabled={disabled}
-                title="Remove"
-                aria-label="Remove file"
-              >
-                <Trash2 class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
-              </Button>
-            {/if}
-          </div>
-
-          {#if hasVersions}
-            <Badge variant="secondary" class="text-[10px] px-1.5 py-0">
-              {versionCount} version{versionCount > 1 ? 's' : ''}
-            </Badge>
+          {#if processing && onCancel}
+            <Button
+              variant="ghost"
+              size="icon"
+              class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_CANCEL_ACTION_CLASS}`}
+              onclick={(e: MouseEvent) => {
+                e.stopPropagation();
+                onCancel(job.id);
+              }}
+              title="Cancel"
+              aria-label="Cancel translation"
+            >
+              <X class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
+            </Button>
+          {:else}
+            <Button
+              variant="ghost"
+              size="icon"
+              class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_REMOVE_ACTION_CLASS}`}
+              onclick={(e: MouseEvent) => {
+                e.stopPropagation();
+                onRemove(job.id);
+              }}
+              disabled={disabled}
+              title="Remove"
+              aria-label="Remove file"
+            >
+              <Trash2 class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
+            </Button>
           {/if}
         </div>
       {/snippet}

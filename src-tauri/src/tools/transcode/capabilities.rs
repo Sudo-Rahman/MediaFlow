@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashSet};
 
+use crate::shared::process::tokio_command;
 use serde::{Deserialize, Serialize};
-use tokio::process::Command;
 
 use crate::shared::store::resolve_ffmpeg_path;
 use crate::tools::media_metadata::{ContainerMetadataSchema, metadata_schema_for_container};
@@ -435,7 +435,7 @@ pub(crate) fn container_extension_for_id(container_id: &str) -> Option<&'static 
 }
 
 async fn run_ffmpeg_command(ffmpeg_path: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(ffmpeg_path)
+    let output = tokio_command(ffmpeg_path)
         .args(args)
         .output()
         .await
@@ -539,11 +539,31 @@ fn parse_supported_pixel_formats(output: &str) -> Vec<String> {
                 .map(|(_, values)| {
                     values
                         .split_whitespace()
-                        .map(|value| value.trim().to_string())
+                        .map(str::trim)
+                        .filter(|value| is_selectable_output_pixel_format(value))
+                        .map(str::to_string)
                         .collect::<Vec<_>>()
                 })
         })
         .unwrap_or_default()
+}
+
+fn is_selectable_output_pixel_format(pixel_format: &str) -> bool {
+    !matches!(
+        pixel_format,
+        "videotoolbox_vld"
+            | "d3d11"
+            | "d3d11va_vld"
+            | "dxva2_vld"
+            | "vdpau"
+            | "cuda"
+            | "qsv"
+            | "vaapi"
+            | "drm_prime"
+            | "opencl"
+            | "vulkan"
+            | "mediacodec"
+    )
 }
 
 fn parse_option_enum_values(output: &str, option_name: &str) -> Vec<String> {
@@ -1122,15 +1142,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_supported_pixel_formats_extracts_formats() {
-        let sample = "Supported pixel formats: videotoolbox_vld nv12 yuv420p p010le";
+    fn parse_supported_pixel_formats_filters_opaque_hardware_formats() {
+        let sample = "Supported pixel formats: videotoolbox_vld nv12 yuv420p p010le p416le";
         assert_eq!(
             parse_supported_pixel_formats(sample),
             vec![
-                "videotoolbox_vld".to_string(),
                 "nv12".to_string(),
                 "yuv420p".to_string(),
-                "p010le".to_string()
+                "p010le".to_string(),
+                "p416le".to_string()
             ]
         );
     }

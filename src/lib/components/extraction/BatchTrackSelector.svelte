@@ -8,6 +8,10 @@
   import * as ToggleGroup from '$lib/components/ui/toggle-group';
   import { formatLanguage } from '$lib/utils/format';
   import { ChevronDown, Subtitles, Volume2, Video, Check, X } from '@lucide/svelte';
+  import {
+    applyLanguageTokenSelection,
+    getSelectedLanguageTokens,
+  } from './batch-track-selection';
 
   interface BatchTrackSelectorProps {
     files: VideoFile[];
@@ -60,22 +64,10 @@
   });
 
   const selectedLanguageTokens = $derived.by(() => {
-    const tokens: string[] = [];
-
-    for (const lang of trackStats.subtitleLanguages) {
-      if (isLanguageFullySelected('subtitle', lang)) {
-        tokens.push(`subtitle:${lang}`);
-      }
-    }
-
-    for (const lang of trackStats.audioLanguages) {
-      if (isLanguageFullySelected('audio', lang)) {
-        tokens.push(`audio:${lang}`);
-      }
-    }
-
-    return tokens;
+    return getSelectedLanguageTokens(files, selectedTracks);
   });
+
+  let languageTokenValue = $derived(selectedLanguageTokens);
 
   // Preset selections
   type PresetType = 'all-subs' | 'subs-fra' | 'subs-eng' | 'all-audio' | 'audio-fra' | 'audio-eng' | 'all-video' | 'clear';
@@ -131,47 +123,6 @@
     onBatchSelect(newSelection);
   }
 
-  function selectByLanguage(type: TrackType, language: string) {
-    const newSelection = new Map(selectedTracks);
-
-    for (const file of files) {
-      const currentTracks = newSelection.get(file.path) || [];
-      const newTracks = new Set(currentTracks);
-
-      for (const track of file.tracks) {
-        if (track.type === type && track.language === language) {
-          newTracks.add(track.id);
-        }
-      }
-
-      if (newTracks.size > 0) {
-        newSelection.set(file.path, Array.from(newTracks));
-      }
-    }
-
-    onBatchSelect(newSelection);
-  }
-
-  function deselectByLanguage(type: TrackType, language: string) {
-    const newSelection = new Map(selectedTracks);
-
-    for (const file of files) {
-      const currentTracks = newSelection.get(file.path) || [];
-      const filteredTracks = currentTracks.filter(trackId => {
-        const track = file.tracks.find(t => t.id === trackId);
-        return !(track && track.type === type && track.language === language);
-      });
-
-      if (filteredTracks.length > 0) {
-        newSelection.set(file.path, filteredTracks);
-      } else {
-        newSelection.delete(file.path);
-      }
-    }
-
-    onBatchSelect(newSelection);
-  }
-
   function isLanguageFullySelected(type: TrackType, language: string): boolean {
     for (const file of files) {
       const selected = selectedTracks.get(file.path) || [];
@@ -185,11 +136,23 @@
   }
 
   function toggleLanguage(type: TrackType, language: string) {
-    if (isLanguageFullySelected(type, language)) {
-      deselectByLanguage(type, language);
-    } else {
-      selectByLanguage(type, language);
-    }
+    const token = `${type}:${language}`;
+    const nextTokens = selectedLanguageTokens.includes(token)
+      ? selectedLanguageTokens.filter((item) => item !== token)
+      : [...selectedLanguageTokens, token];
+
+    handleLanguageTokensChange(nextTokens);
+  }
+
+  function handleLanguageTokensChange(value: string[] | string | undefined) {
+    const nextTokens = Array.isArray(value)
+      ? value
+      : value
+        ? [value]
+        : [];
+
+    languageTokenValue = nextTokens;
+    onBatchSelect(applyLanguageTokenSelection(files, selectedTracks, nextTokens));
   }
 </script>
 
@@ -288,7 +251,8 @@
     <Separator />
     <ToggleGroup.Root
       type="multiple"
-      value={selectedLanguageTokens}
+      bind:value={languageTokenValue}
+      onValueChange={handleLanguageTokensChange}
       variant="outline"
       size="sm"
       spacing={1}
@@ -299,7 +263,6 @@
         <ToggleGroup.Item
           value={`subtitle:${lang}`}
           class="gap-1"
-          onclick={() => toggleLanguage('subtitle', lang)}
         >
           <Subtitles class="size-3" />
           {formatLanguage(lang)}
@@ -309,7 +272,6 @@
         <ToggleGroup.Item
           value={`audio:${lang}`}
           class="gap-1"
-          onclick={() => toggleLanguage('audio', lang)}
         >
           <Volume2 class="size-3" />
           {formatLanguage(lang)}

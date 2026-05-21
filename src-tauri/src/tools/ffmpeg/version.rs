@@ -1,9 +1,9 @@
+use crate::shared::process::tokio_command;
 use crate::shared::store::{
     BinaryPathSource, resolve_ffmpeg_path, resolve_ffmpeg_path_with_source, resolve_ffprobe_path,
     resolve_ffprobe_path_with_source,
 };
 use serde::Serialize;
-use tokio::process::Command;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,8 +26,8 @@ fn parse_ffmpeg_version(stdout: &[u8]) -> Option<String> {
 }
 
 async fn check_ffmpeg_paths(ffprobe_path: &str, ffmpeg_path: &str) -> Result<bool, String> {
-    let ffprobe_check = Command::new(ffprobe_path).arg("-version").output().await;
-    let ffmpeg_check = Command::new(ffmpeg_path).arg("-version").output().await;
+    let ffprobe_check = tokio_command(ffprobe_path).arg("-version").output().await;
+    let ffmpeg_check = tokio_command(ffmpeg_path).arg("-version").output().await;
 
     match (ffprobe_check, ffmpeg_check) {
         (Ok(probe), Ok(mpeg)) if probe.status.success() && mpeg.status.success() => Ok(true),
@@ -36,7 +36,7 @@ async fn check_ffmpeg_paths(ffprobe_path: &str, ffmpeg_path: &str) -> Result<boo
 }
 
 async fn get_ffmpeg_version_from_path(ffmpeg_path: &str) -> Result<String, String> {
-    let output = Command::new(ffmpeg_path)
+    let output = tokio_command(ffmpeg_path)
         .arg("-version")
         .output()
         .await

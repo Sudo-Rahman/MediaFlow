@@ -85,7 +85,9 @@ export function buildActiveCueSummary({
 export function roleLabelForCue(cue: ActivePreviewCue): string {
   const role = cue.subtitle.role ?? cue.zone?.role;
   const roleLabel = role === 'main_subtitle' ? 'Main subtitle' : 'On-screen text';
-  const zoneLabel = cue.zone?.label?.trim() || `Zone ${Number.isFinite(cue.zoneIndex) ? cue.zoneIndex + 1 : 1}`;
+  const zoneLabel = cue.zone
+    ? cue.zone.label?.trim() || `Zone ${cue.zoneIndex + 1}`
+    : 'Unknown zone';
   return `${roleLabel} - ${zoneLabel}`;
 }
 

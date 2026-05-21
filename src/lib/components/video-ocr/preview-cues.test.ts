@@ -126,6 +126,30 @@ describe('preview cue helpers', () => {
     expect(summary.extraCueCount).toBe(0);
   });
 
+  it('uses a neutral label when active cue zone metadata cannot be resolved', () => {
+    const summary = buildActiveCueSummary({
+      subtitles: [
+        {
+          id: 'cue-missing-zone',
+          text: 'Unresolved zone subtitle',
+          startTime: 1_000,
+          endTime: 4_000,
+          confidence: 0.9,
+          segmentId: 'segment-main',
+          zoneId: 'zone-missing',
+          role: 'main_subtitle',
+        },
+      ],
+      selection,
+      timeMs: 2_000,
+      selectedZoneId: null,
+    });
+
+    expect(summary.primaryCue ? roleLabelForCue(summary.primaryCue) : '').toBe(
+      'Main subtitle - Unknown zone',
+    );
+  });
+
   it('formats confidence values as percentages', () => {
     expect(formatCueConfidence(0.923)).toBe('92%');
     expect(formatCueConfidence(2)).toBe('100%');

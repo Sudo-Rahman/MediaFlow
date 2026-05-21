@@ -15,6 +15,7 @@
   import { Switch } from '$lib/components/ui/switch';
   import * as Select from '$lib/components/ui/select';
   import { formatChannels } from '$lib/utils/format';
+  import {ScrollArea} from '$lib/components/ui/scroll-area';
 
   interface Props {
     settings: Pick<TranscodeAudioSettings, 'mode' | 'encoderId' | 'bitrateKbps' | 'channels' | 'sampleRate'>
@@ -72,7 +73,7 @@
     showSourceTrackDetails ? `Default: As source (${formatSampleRate(sourceTrack?.sampleRate)})` : 'Default: As source',
   );
   const streamOverrideGridClass = $derived(
-    streamOverrideLayout === 'stacked' ? 'grid gap-4' : 'grid gap-4 xl:grid-cols-2',
+    streamOverrideLayout === 'stacked' ? 'grid gap-4' : 'grid gap-4 2xl:grid-cols-2',
   );
   const controlId = $props.id();
   const audioModeId = `${controlId}-audio-mode`;
@@ -242,8 +243,10 @@
       </Item.Group>
     {:else}
       <Item.Root variant="outline" size="sm">
-        <Item.Description>
-          Source codec, channels, sample rate, and layout vary across the detected audio tracks. Open Track Overrides to inspect per-track details.
+          <Item.Description>
+              <ScrollArea>
+                  Source codec, channels, sample rate, and layout vary across the detected audio tracks. Open Track Overrides to inspect per-track details.                  
+              </ScrollArea>
         </Item.Description>
       </Item.Root>
     {/if}

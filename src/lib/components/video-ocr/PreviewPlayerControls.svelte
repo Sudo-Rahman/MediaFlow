@@ -102,17 +102,17 @@
 
 <div
   class={cn(
-    'preview-player-controls-shell min-h-14 border-t bg-background px-3 py-2',
+    'min-h-14 border-t bg-background px-3 py-2',
     className,
   )}
 >
-  <div class="preview-player-controls-grid grid min-h-10 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
-    <div class="transport-controls flex shrink-0 items-center gap-1">
+  <div class="grid min-h-10 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
+    <div class="flex shrink-0 items-center gap-1">
       <Button
         type="button"
         variant="ghost"
         size="icon-sm"
-        class="skip-control"
+        class="hidden xl:flex"
         disabled={disabled}
         aria-label="Back 10 seconds"
         title="Back 10 seconds"
@@ -141,7 +141,7 @@
         type="button"
         variant="ghost"
         size="icon-sm"
-        class="skip-control"
+        class="hidden xl:flex"
         disabled={disabled}
         aria-label="Forward 10 seconds"
         title="Forward 10 seconds"
@@ -151,8 +151,8 @@
       </Button>
     </div>
 
-    <div class="seek-controls grid min-w-0 grid-cols-[3.5rem_minmax(0,1fr)_3.5rem] items-center gap-2">
-      <span class="time-label font-mono text-xs tabular-nums text-muted-foreground">{formatTime(safeCurrentTime)}</span>
+    <div class="flex space-x-2 min-w-0 items-center">
+      <span class="font-mono text-xs tabular-nums text-muted-foreground">{formatTime(safeCurrentTime)}</span>
       <Slider
         aria-label="Seek"
         type="single"
@@ -163,7 +163,7 @@
         step={0.1}
         disabled={controlsDisabled}
       />
-      <span class="time-label text-right font-mono text-xs tabular-nums text-muted-foreground">{formatTime(safeDuration)}</span>
+      <span class="text-right font-mono text-xs tabular-nums text-muted-foreground">{formatTime(safeDuration)}</span>
     </div>
 
     <div class="flex shrink-0 items-center gap-1">
@@ -205,7 +205,7 @@
           sideOffset={6}
           collisionPadding={8}
           data-video-volume-control
-          class="w-11 rounded-md p-2"
+          class="w-11 p-2"
           onpointerenter={openVolumePopover}
           onpointerleave={scheduleVolumePopoverClose}
           onfocusin={openVolumePopover}
@@ -246,43 +246,3 @@
     </div>
   </div>
 </div>
-
-<style>
-  .preview-player-controls-shell {
-    container-type: inline-size;
-  }
-
-  @container (max-width: 38rem) {
-    .preview-player-controls-grid {
-      grid-template-columns: auto minmax(5rem, 1fr) auto;
-      gap: 0.5rem;
-    }
-
-    .skip-control {
-      display: none;
-    }
-
-    .seek-controls {
-      grid-template-columns: 2.75rem minmax(4rem, 1fr) 2.75rem;
-      gap: 0.375rem;
-    }
-  }
-
-  @container (max-width: 30rem) {
-    .preview-player-controls-grid {
-      gap: 0.375rem;
-    }
-
-    .transport-controls {
-      gap: 0;
-    }
-
-    .seek-controls {
-      grid-template-columns: 2.35rem minmax(3rem, 1fr) 2.35rem;
-    }
-
-    .time-label {
-      font-size: 0.625rem;
-    }
-  }
-</style>

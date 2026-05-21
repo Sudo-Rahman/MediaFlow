@@ -90,7 +90,8 @@
 
 <div
   class={cn(
-    'grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-t bg-background px-3 py-2',
+    'grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-t bg-background px-3 py-2 transition-[min-height]',
+    volumeOpen ? 'min-h-48' : 'min-h-14',
     className,
   )}
 >
@@ -153,7 +154,7 @@
 
   <div class="flex shrink-0 items-center gap-1">
     <div
-      class="relative"
+      class="flex self-stretch flex-col items-center justify-end gap-2"
       role="group"
       aria-label="Volume controls"
       onpointerenter={() => {
@@ -182,7 +183,7 @@
       </Button>
 
       {#if volumeOpen}
-        <div class="absolute bottom-full left-1/2 z-20 flex h-56 -translate-x-1/2 flex-col items-center gap-2 rounded-md border bg-popover px-3 py-3 text-popover-foreground shadow-md">
+        <div class="flex min-h-28 flex-1 items-center justify-center px-2 py-2">
           <Slider
             aria-label="Volume"
             type="single"
@@ -193,9 +194,8 @@
             max={100}
             step={1}
             disabled={disabled}
-            class="h-40"
+            class="h-24"
           />
-          <span class="font-mono text-[10px] tabular-nums text-muted-foreground">{volumePercent}%</span>
         </div>
       {/if}
     </div>

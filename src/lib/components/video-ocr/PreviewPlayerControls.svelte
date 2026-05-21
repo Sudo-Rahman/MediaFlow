@@ -118,7 +118,7 @@
     latestPlaybackTimeSeconds = safeTimeSeconds;
     if (currentTimeTextEl && latestCurrentTimeLabel !== nextTimeLabel) {
       currentTimeTextEl.dataset.timeLabel = nextTimeLabel;
-      currentTimeTextEl.textContent = nextTimeLabel;
+      currentTimeTextEl.setAttribute('aria-label', nextTimeLabel);
       latestCurrentTimeLabel = nextTimeLabel;
     }
     if (seekControlEl) {
@@ -316,9 +316,11 @@
     <div class="flex min-w-0 items-center space-x-4">
       <span
         bind:this={currentTimeTextEl}
-        class="font-mono text-xs tabular-nums text-muted-foreground"
+        class="time-label font-mono text-xs tabular-nums text-muted-foreground"
         data-time-label={formatTime(safeCurrentTime)}
-      >{formatTime(safeCurrentTime)}</span>
+        role="timer"
+        aria-label={formatTime(safeCurrentTime)}
+      ></span>
       <div
         bind:this={seekControlEl}
         class={cn(
@@ -435,3 +437,9 @@
     </div>
   </div>
 </div>
+
+<style>
+  .time-label::before {
+    content: attr(data-time-label);
+  }
+</style>

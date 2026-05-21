@@ -192,7 +192,7 @@
     latestPlaybackTimeMs = safeTimeMs;
     if (playbackTimeLabelEl && latestPlaybackTimeLabel !== nextTimeLabel) {
       playbackTimeLabelEl.dataset.timeLabel = nextTimeLabel;
-      playbackTimeLabelEl.textContent = nextTimeLabel;
+      playbackTimeLabelEl.setAttribute('aria-label', nextTimeLabel);
       latestPlaybackTimeLabel = nextTimeLabel;
     }
 
@@ -513,8 +513,11 @@
         <Badge variant="outline" class="h-5 rounded-full px-2 text-[11px]">
           <span
             bind:this={playbackTimeLabelEl}
+            class="timeline-time-label"
             data-time-label={formatTime(currentTimeMs)}
-          >{formatTime(currentTimeMs)}</span>
+            role="timer"
+            aria-label={formatTime(currentTimeMs)}
+          ></span>
         </Badge>
       </div>
     </div>
@@ -707,5 +710,9 @@
     );
     height: var(--timeline-lane-height);
     line-height: var(--timeline-lane-height);
+  }
+
+  .timeline-time-label::before {
+    content: attr(data-time-label);
   }
 </style>

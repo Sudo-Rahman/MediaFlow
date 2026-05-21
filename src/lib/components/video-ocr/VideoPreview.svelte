@@ -85,6 +85,7 @@
   let latestPlaybackTimesByFileId: Record<string, number> = {};
   let previewStateKeysByFileId: Record<string, string> = {};
   let playbackClock: PreviewPlaybackClock | null = null;
+  let manualSeekActive = false;
   
   // Video bounds within container (for letterboxed videos)
   // These are relative values (0-1) within the container
@@ -211,6 +212,10 @@
 
     const clock = createPreviewPlaybackClock({
       onFrame: ({ timeSeconds }) => {
+        if (manualSeekActive) {
+          return;
+        }
+
         syncPlaybackFrame(timeSeconds);
       },
     });
@@ -271,6 +276,18 @@
     const safeTimeSeconds = normalizePlaybackTimeSeconds(nextTimeSeconds);
     syncPlaybackFrame(safeTimeSeconds, forcePreviewState);
     onTimeChange?.(Math.round(safeTimeSeconds * 1000));
+  }
+
+  function beginManualSeek(): void {
+    manualSeekActive = true;
+    playbackClock?.stop();
+  }
+
+  function finishManualSeek(): void {
+    manualSeekActive = false;
+    if (videoEl && !videoEl.paused) {
+      playbackClock?.start(videoEl);
+    }
   }
 
   function normalizePlaybackTimeSeconds(timeSeconds: number): number {
@@ -434,12 +451,14 @@
       return;
     }
 
+    beginManualSeek();
     const maxTimeSeconds = getVideoDurationSeconds();
     const requestedTimeSeconds = Number.isFinite(timeSeconds) ? timeSeconds : 0;
     const nextTimeSeconds = Math.min(Math.max(0, requestedTimeSeconds), maxTimeSeconds);
 
     videoEl.currentTime = nextTimeSeconds;
     commitPlaybackTime(nextTimeSeconds);
+    finishManualSeek();
   }
 
   function previewSeekToSeconds(timeSeconds: number): void {
@@ -447,6 +466,7 @@
       return;
     }
 
+    beginManualSeek();
     const maxTimeSeconds = getVideoDurationSeconds();
     const requestedTimeSeconds = Number.isFinite(timeSeconds) ? timeSeconds : 0;
     const nextTimeSeconds = Math.min(Math.max(0, requestedTimeSeconds), maxTimeSeconds);

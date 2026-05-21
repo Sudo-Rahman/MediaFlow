@@ -30,7 +30,9 @@
 
   <div class="min-w-0 flex-1">
     <div class="flex min-w-0 items-center gap-2">
-      <span class="max-w-40 shrink truncate text-xs font-medium text-muted-foreground">{primaryLabel}</span>
+      <span class="hidden max-w-40 shrink truncate text-xs font-medium text-muted-foreground xl:inline">
+        {primaryLabel}
+      </span>
       <span class="min-w-0 truncate text-sm font-medium text-foreground">{primaryText}</span>
     </div>
   </div>
@@ -47,7 +49,8 @@
             class="h-7 shrink-0 px-2 text-xs"
             aria-label={`Show ${summary.activeCues.length} active OCR cues`}
           >
-            {summary.activeCues.length} active cues
+            <span aria-hidden="true">{summary.activeCues.length}</span>
+            <span class="hidden xl:inline">active cues</span>
           </Button>
         {/snippet}
       </Popover.Trigger>

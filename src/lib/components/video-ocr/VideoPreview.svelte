@@ -5,14 +5,15 @@
   import { cn } from '$lib/utils';
   import * as ContextMenu from '$lib/components/ui/context-menu';
   import ActiveCueSummary from './ActiveCueSummary.svelte';
+  import type { PreviewPlayerControlsApi } from './PreviewPlayerControls.svelte';
   import PreviewPlayerControls from './PreviewPlayerControls.svelte';
   import PreviewToolbar from './PreviewToolbar.svelte';
   import RegionSelector from './RegionSelector.svelte';
   import LiveOcrHoverCard from './LiveOcrHoverCard.svelte';
   import { buildActiveCueSummary } from './preview-cues';
+  import type { PreviewPlaybackClock } from './preview-playback-clock';
+  import { createPreviewPlaybackClock } from './preview-playback-clock';
   import { getPreviewLayerState } from './preview-layer-state';
-
-  const PLAYBACK_TIME_UPDATE_INTERVAL_MS = 250;
 
   interface VideoSeekRequest {
     fileId: string;
@@ -28,6 +29,7 @@
     suspendPlayback?: boolean;
     seekRequest?: VideoSeekRequest | null;
     onTimeChange?: (timeMs: number) => void;
+    onPlaybackFrame?: (timeMs: number) => void;
     onAddSegmentFromRegion?: (region: OcrRegion, startTimeMs: number, endTimeMs: number) => void | Promise<void>;
     onUpdateZoneRegion?: (segmentId: string, zoneId: string, region: OcrRegion) => void | Promise<void>;
     onSetZoneRole?: (segmentId: string, zoneId: string, role: OcrZoneRole) => void | Promise<void>;
@@ -52,6 +54,7 @@
     suspendPlayback = false,
     seekRequest = null,
     onTimeChange,
+    onPlaybackFrame,
     onAddSegmentFromRegion,
     onUpdateZoneRegion,
     onSetZoneRole,
@@ -63,6 +66,7 @@
   let videoEl = $state<HTMLVideoElement | null>(null);
   let previewContainerEl = $state<HTMLDivElement | null>(null);
   let containerEl = $state<HTMLElement | null>(null);
+  let playerControlsRef = $state<PreviewPlayerControlsApi | null>(null);
   let currentTimesByFileId = $state.raw<Record<string, number>>({});
   let isDrawingZone = $state(false);
   let isPaused = $state(true);
@@ -78,7 +82,9 @@
   let resumePlayback = $state(false);
   let lastAppliedSeekRequestId = $state<number | null>(null);
   let isFullscreen = $state(false);
-  let lastPlaybackPublishTimeMs = 0;
+  let latestPlaybackTimesByFileId: Record<string, number> = {};
+  let previewStateKeysByFileId: Record<string, string> = {};
+  let playbackClock: PreviewPlaybackClock | null = null;
   
   // Video bounds within container (for letterboxed videos)
   // These are relative values (0-1) within the container
@@ -133,14 +139,14 @@
   const previewLayers = $derived(getPreviewLayerState({ isDrawingZone, isEditingZone }));
   const selectedZoneId = $derived(editingZone?.zoneId ?? null);
   const activeRegion = $derived(isEditingZone ? editingRegion : drawingRegion);
+  const previewChangeTimesMs = $derived.by(() => createPreviewChangeTimes(file));
 
   // Get video source URL
   const videoSrc = $derived(
     file?.previewPath ? convertFileSrc(file.previewPath) : undefined
   );
-  const latestSubtitles = $derived(file?.ocrVersions.at(-1)?.finalSubtitles ?? []);
   const activeCueSummary = $derived.by(() => buildActiveCueSummary({
-    subtitles: latestSubtitles,
+    subtitles: getLatestSubtitles(),
     selection: file?.ocrSelection ?? { segments: [] },
     timeMs: Math.round(currentTime * 1000),
     selectedZoneId,
@@ -160,20 +166,7 @@
       return [];
     }
 
-    const timeMs = Math.round(currentTime * 1000);
-    return file.ocrSelection.segments.flatMap((segment) => {
-      if (timeMs < segment.startTimeMs || timeMs >= segment.endTimeMs) {
-        return [];
-      }
-
-      return segment.zones.map((zone, zoneIndex) => ({
-        segmentId: segment.id,
-        zoneId: zone.id,
-        role: zone.role,
-        region: zone.region,
-        label: zone.label ?? `Zone ${zoneIndex + 1}`,
-      }));
-    });
+    return getVisibleZoneEntriesAtTime(Math.round(currentTime * 1000));
   });
   const hasLiveDetections = $derived(liveDetections.length > 0);
 
@@ -209,48 +202,178 @@
     };
   });
 
-  function handleTimeUpdate() {
-    publishCurrentVideoTime();
-  }
-
-  function publishCurrentVideoTime(force = false): void {
+  $effect(() => {
     if (!videoEl) {
+      playbackClock?.stop();
+      playbackClock = null;
       return;
     }
 
-    const nextTimeSeconds = Number.isFinite(videoEl.currentTime) ? videoEl.currentTime : 0;
-    const nextTimeMs = Math.round(nextTimeSeconds * 1000);
-    const previousTimeMs = file
-      ? Math.round((currentTimesByFileId[file.id] ?? 0) * 1000)
-      : lastPlaybackPublishTimeMs;
-    const isEnding = duration > 0 && nextTimeSeconds >= duration;
+    const clock = createPreviewPlaybackClock({
+      onFrame: ({ timeSeconds }) => {
+        syncPlaybackFrame(timeSeconds);
+      },
+    });
 
-    if (
-      !force
-      && !isEnding
-      && Math.abs(nextTimeMs - previousTimeMs) < PLAYBACK_TIME_UPDATE_INTERVAL_MS
-    ) {
-      return;
+    playbackClock = clock;
+    if (!videoEl.paused) {
+      clock.start(videoEl);
     }
 
-    lastPlaybackPublishTimeMs = nextTimeMs;
-    updateCurrentTimeState(nextTimeSeconds);
-  }
+    return () => {
+      clock.stop();
+      if (playbackClock === clock) {
+        playbackClock = null;
+      }
+    };
+  });
 
   function handlePlaybackPause(): void {
-    publishCurrentVideoTime(true);
+    playbackClock?.stop();
+    commitPlaybackTime(getCurrentPlaybackTimeSeconds(), true);
     syncPlaybackState();
   }
 
   function handlePlaybackPlay(): void {
     syncPlaybackState();
+    if (videoEl) {
+      syncPlaybackFrame(getCurrentPlaybackTimeSeconds(), true);
+      playbackClock?.start(videoEl);
+    }
   }
 
-  function updateCurrentTimeState(nextTimeSeconds: number): void {
+  function updateCurrentTimeState(nextTimeSeconds: number, force = false): void {
     if (file) {
+      const nextKey = getPreviewStateKey(Math.round(nextTimeSeconds * 1000));
+      if (!force && previewStateKeysByFileId[file.id] === nextKey) {
+        return;
+      }
+
+      previewStateKeysByFileId[file.id] = nextKey;
       currentTimesByFileId = { ...currentTimesByFileId, [file.id]: nextTimeSeconds };
     }
-    onTimeChange?.(Math.round(nextTimeSeconds * 1000));
+  }
+
+  function syncPlaybackFrame(nextTimeSeconds: number, forcePreviewState = false): void {
+    const safeTimeSeconds = normalizePlaybackTimeSeconds(nextTimeSeconds);
+    const nextTimeMs = Math.round(safeTimeSeconds * 1000);
+
+    if (file) {
+      latestPlaybackTimesByFileId[file.id] = safeTimeSeconds;
+    }
+
+    playerControlsRef?.syncPlaybackTime(safeTimeSeconds);
+    onPlaybackFrame?.(nextTimeMs);
+    updateCurrentTimeState(safeTimeSeconds, forcePreviewState);
+  }
+
+  function commitPlaybackTime(nextTimeSeconds: number, forcePreviewState = true): void {
+    const safeTimeSeconds = normalizePlaybackTimeSeconds(nextTimeSeconds);
+    syncPlaybackFrame(safeTimeSeconds, forcePreviewState);
+    onTimeChange?.(Math.round(safeTimeSeconds * 1000));
+  }
+
+  function normalizePlaybackTimeSeconds(timeSeconds: number): number {
+    const maxTimeSeconds = getVideoDurationSeconds() || Number.MAX_SAFE_INTEGER;
+    return Number.isFinite(timeSeconds)
+      ? Math.max(0, Math.min(timeSeconds, maxTimeSeconds))
+      : 0;
+  }
+
+  function getCurrentPlaybackTimeSeconds(): number {
+    const currentVideoTime = videoEl?.currentTime;
+    if (typeof currentVideoTime === 'number' && Number.isFinite(currentVideoTime)) {
+      return currentVideoTime;
+    }
+
+    if (file) {
+      return latestPlaybackTimesByFileId[file.id] ?? currentTime;
+    }
+
+    return currentTime;
+  }
+
+  function getLatestSubtitles() {
+    return file?.ocrVersions.at(-1)?.finalSubtitles ?? [];
+  }
+
+  function getVisibleZoneEntriesAtTime(timeMs: number): VisibleZoneEntry[] {
+    if (!file) {
+      return [];
+    }
+
+    return file.ocrSelection.segments.flatMap((segment) => {
+      if (timeMs < segment.startTimeMs || timeMs >= segment.endTimeMs) {
+        return [];
+      }
+
+      return segment.zones.map((zone, zoneIndex) => ({
+        segmentId: segment.id,
+        zoneId: zone.id,
+        role: zone.role,
+        region: zone.region,
+        label: zone.label ?? `Zone ${zoneIndex + 1}`,
+      }));
+    });
+  }
+
+  function createPreviewChangeTimes(videoFile: OcrVideoFile | undefined): number[] {
+    if (!videoFile) {
+      return [0];
+    }
+
+    const changeTimes = new Set<number>([0]);
+    const durationMs = Math.max(0, Math.round((videoFile.duration ?? 0) * 1000));
+
+    if (durationMs > 0) {
+      changeTimes.add(durationMs);
+    }
+
+    for (const segment of videoFile.ocrSelection.segments) {
+      addPreviewChangeTime(changeTimes, segment.startTimeMs, durationMs);
+      addPreviewChangeTime(changeTimes, segment.endTimeMs, durationMs);
+    }
+
+    for (const subtitle of videoFile.ocrVersions.at(-1)?.finalSubtitles ?? []) {
+      addPreviewChangeTime(changeTimes, subtitle.startTime, durationMs);
+      addPreviewChangeTime(changeTimes, subtitle.endTime + 1, durationMs);
+    }
+
+    return Array.from(changeTimes).sort((left, right) => left - right);
+  }
+
+  function addPreviewChangeTime(changeTimes: Set<number>, timeMs: number, durationMs: number): void {
+    if (!Number.isFinite(timeMs)) {
+      return;
+    }
+
+    const roundedTimeMs = Math.max(0, Math.round(timeMs));
+    changeTimes.add(durationMs > 0 ? Math.min(roundedTimeMs, durationMs) : roundedTimeMs);
+  }
+
+  function getPreviewStateKey(timeMs: number): string {
+    if (!file) {
+      return '';
+    }
+
+    return `${file.id}:${findPreviewChangeBucket(timeMs, previewChangeTimesMs)}`;
+  }
+
+  function findPreviewChangeBucket(timeMs: number, changeTimes: number[]): number {
+    const safeTimeMs = Number.isFinite(timeMs) ? Math.max(0, Math.round(timeMs)) : 0;
+    let low = 0;
+    let high = changeTimes.length;
+
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (changeTimes[middle] <= safeTimeMs) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+
+    return low - 1;
   }
 
   function syncPlaybackState(): void {
@@ -279,7 +402,9 @@
       return;
     }
 
-    const storedTimeSeconds = file ? currentTimesByFileId[file.id] : undefined;
+    const storedTimeSeconds = file
+      ? latestPlaybackTimesByFileId[file.id] ?? currentTimesByFileId[file.id]
+      : undefined;
     const actualTimeSeconds = Number.isFinite(videoEl.currentTime) ? videoEl.currentTime : 0;
     const durationSeconds = getVideoDurationSeconds();
     const hasValidStoredTime = storedTimeSeconds !== undefined
@@ -290,11 +415,11 @@
 
     if (hasValidStoredTime) {
       videoEl.currentTime = storedTimeSeconds;
-      updateCurrentTimeState(storedTimeSeconds);
+      commitPlaybackTime(storedTimeSeconds);
       return;
     }
 
-    updateCurrentTimeState(actualTimeSeconds);
+    commitPlaybackTime(actualTimeSeconds);
   }
 
   function handleLoadedMetadata(): void {
@@ -314,11 +439,24 @@
     const nextTimeSeconds = Math.min(Math.max(0, requestedTimeSeconds), maxTimeSeconds);
 
     videoEl.currentTime = nextTimeSeconds;
-    updateCurrentTimeState(nextTimeSeconds);
+    commitPlaybackTime(nextTimeSeconds);
+  }
+
+  function previewSeekToSeconds(timeSeconds: number): void {
+    if (!videoEl) {
+      return;
+    }
+
+    const maxTimeSeconds = getVideoDurationSeconds();
+    const requestedTimeSeconds = Number.isFinite(timeSeconds) ? timeSeconds : 0;
+    const nextTimeSeconds = Math.min(Math.max(0, requestedTimeSeconds), maxTimeSeconds);
+
+    videoEl.currentTime = nextTimeSeconds;
+    syncPlaybackFrame(nextTimeSeconds);
   }
 
   function skipBySeconds(deltaSeconds: number): void {
-    seekToSeconds(currentTime + deltaSeconds);
+    seekToSeconds(getCurrentPlaybackTimeSeconds() + deltaSeconds);
   }
 
   function togglePlayback(): void {
@@ -641,7 +779,6 @@
             bind:this={videoEl}
             src={videoSrc}
             class="h-full w-full object-contain"
-            ontimeupdate={handleTimeUpdate}
             onplay={handlePlaybackPlay}
             onpause={handlePlaybackPause}
             onvolumechange={syncPlaybackState}
@@ -730,6 +867,7 @@
         <ActiveCueSummary summary={activeCueSummary} />
       {/if}
       <PreviewPlayerControls
+        bind:this={playerControlsRef}
         {currentTime}
         {duration}
         paused={isPaused}
@@ -737,6 +875,7 @@
         {volume}
         fullscreen={isFullscreen}
         disabled={isDrawingZone || isEditingZone}
+        onpreviewseek={previewSeekToSeconds}
         onseek={seekToSeconds}
         ontoggleplay={togglePlayback}
         onskip={skipBySeconds}

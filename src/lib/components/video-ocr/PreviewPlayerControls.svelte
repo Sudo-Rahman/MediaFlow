@@ -1,3 +1,14 @@
+<script lang="ts" module>
+  export interface PreviewPlayerControlsApi {
+    syncPlaybackTime: (timeSeconds: number) => void;
+  }
+
+  export interface PreviewPlayerControlsSeekHandlers {
+    onpreviewseek?: (timeSeconds: number) => void;
+    onseek?: (timeSeconds: number) => void;
+  }
+</script>
+
 <script lang="ts">
   import { Maximize, Minimize, Pause, Play, RotateCcw, RotateCw, Volume2, VolumeX } from '@lucide/svelte';
 
@@ -14,6 +25,7 @@
     volume: number;
     fullscreen?: boolean;
     disabled?: boolean;
+    onpreviewseek?: (timeSeconds: number) => void;
     onseek?: (timeSeconds: number) => void;
     ontoggleplay?: () => void;
     onskip?: (deltaSeconds: number) => void;
@@ -31,6 +43,7 @@
     volume,
     fullscreen = false,
     disabled = false,
+    onpreviewseek,
     onseek,
     ontoggleplay,
     onskip,
@@ -41,11 +54,17 @@
   }: PreviewPlayerControlsProps = $props();
 
   let volumeOpen = $state(false);
+  let currentTimeTextEl = $state<HTMLSpanElement | null>(null);
+  let seekControlEl = $state<HTMLDivElement | null>(null);
   let volumeCloseTimer: ReturnType<typeof setTimeout> | undefined;
+  let latestPlaybackTimeSeconds = 0;
+  let activeSeekPointerId: number | null = null;
+  let latestCurrentTimeLabel = '';
+  let latestSeekAriaNow = '';
 
   const safeDuration = $derived(Number.isFinite(duration) ? Math.max(0, duration) : 0);
   const safeCurrentTime = $derived(
-    Number.isFinite(currentTime) ? Math.min(Math.max(0, currentTime), safeDuration || Number.MAX_SAFE_INTEGER) : 0,
+    clampPlaybackTime(latestPlaybackTimeSeconds),
   );
   const safeVolume = $derived(Number.isFinite(volume) ? Math.min(Math.max(0, volume), 1) : 0);
   const volumePercent = $derived(Math.round(safeVolume * 100));
@@ -60,11 +79,150 @@
   }
 
   function handleSeek(timeSeconds: number): void {
-    onseek?.(timeSeconds);
+    const nextTimeSeconds = clampPlaybackTime(timeSeconds);
+    syncPlaybackTime(nextTimeSeconds);
+    onseek?.(nextTimeSeconds);
+  }
+
+  function previewSeek(timeSeconds: number): void {
+    const nextTimeSeconds = clampPlaybackTime(timeSeconds);
+    syncPlaybackTime(nextTimeSeconds);
+    onpreviewseek?.(nextTimeSeconds);
   }
 
   function handleVolumeChange(nextVolumePercent: number): void {
     onvolumechange?.(nextVolumePercent / 100);
+  }
+
+  function clampPlaybackTime(timeSeconds: number): number {
+    const fallbackMax = safeDuration || Number.MAX_SAFE_INTEGER;
+    return Number.isFinite(timeSeconds)
+      ? Math.min(Math.max(0, timeSeconds), fallbackMax)
+      : 0;
+  }
+
+  function getSeekProgressPercent(timeSeconds: number): number {
+    if (safeDuration <= 0) {
+      return 0;
+    }
+
+    return Math.max(0, Math.min(100, (clampPlaybackTime(timeSeconds) / safeDuration) * 100));
+  }
+
+  function syncSeekDom(timeSeconds: number): void {
+    const safeTimeSeconds = clampPlaybackTime(timeSeconds);
+    const progressPercent = getSeekProgressPercent(safeTimeSeconds);
+    const nextTimeLabel = formatTime(safeTimeSeconds);
+    const nextAriaNow = safeTimeSeconds.toFixed(1);
+
+    latestPlaybackTimeSeconds = safeTimeSeconds;
+    if (currentTimeTextEl && latestCurrentTimeLabel !== nextTimeLabel) {
+      currentTimeTextEl.dataset.timeLabel = nextTimeLabel;
+      currentTimeTextEl.textContent = nextTimeLabel;
+      latestCurrentTimeLabel = nextTimeLabel;
+    }
+    if (seekControlEl) {
+      seekControlEl.style.setProperty('--seek-progress', `${progressPercent}%`);
+      if (latestSeekAriaNow !== nextAriaNow) {
+        seekControlEl.setAttribute('aria-valuenow', nextAriaNow);
+        latestSeekAriaNow = nextAriaNow;
+      }
+      seekControlEl.setAttribute('aria-valuetext', nextTimeLabel);
+    }
+  }
+
+  export function syncPlaybackTime(timeSeconds: number): void {
+    syncSeekDom(timeSeconds);
+  }
+
+  function seekTimeFromPointer(event: PointerEvent): number | null {
+    if (!seekControlEl || controlsDisabled) {
+      return null;
+    }
+
+    const rect = seekControlEl.getBoundingClientRect();
+    if (rect.width <= 0) {
+      return null;
+    }
+
+    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    return ratio * safeDuration;
+  }
+
+  function handleSeekPointerDown(event: PointerEvent): void {
+    if (event.pointerType === 'mouse' && event.button !== 0) {
+      return;
+    }
+
+    const nextTimeSeconds = seekTimeFromPointer(event);
+    if (nextTimeSeconds === null) {
+      return;
+    }
+
+    event.preventDefault();
+    activeSeekPointerId = event.pointerId;
+    seekControlEl?.setPointerCapture(event.pointerId);
+    previewSeek(nextTimeSeconds);
+  }
+
+  function handleSeekPointerMove(event: PointerEvent): void {
+    if (activeSeekPointerId !== event.pointerId) {
+      return;
+    }
+
+    const nextTimeSeconds = seekTimeFromPointer(event);
+    if (nextTimeSeconds !== null) {
+      previewSeek(nextTimeSeconds);
+    }
+  }
+
+  function stopSeekDrag(event: PointerEvent, commit = false): void {
+    if (activeSeekPointerId !== event.pointerId) {
+      return;
+    }
+
+    const nextTimeSeconds = seekTimeFromPointer(event);
+    if (nextTimeSeconds !== null) {
+      previewSeek(nextTimeSeconds);
+    }
+
+    seekControlEl?.releasePointerCapture(event.pointerId);
+    activeSeekPointerId = null;
+
+    if (commit) {
+      handleSeek(latestPlaybackTimeSeconds);
+    }
+  }
+
+  function handleSeekKeydown(event: KeyboardEvent): void {
+    if (controlsDisabled) {
+      return;
+    }
+
+    const stepSeconds = event.shiftKey ? 10 : 1;
+    const current = latestPlaybackTimeSeconds;
+    let nextTimeSeconds: number | null = null;
+
+    if (event.key === 'Home') {
+      nextTimeSeconds = 0;
+    } else if (event.key === 'End') {
+      nextTimeSeconds = safeDuration;
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') {
+      nextTimeSeconds = current - stepSeconds;
+    } else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') {
+      nextTimeSeconds = current + stepSeconds;
+    } else if (event.key === 'PageDown') {
+      nextTimeSeconds = current - 10;
+    } else if (event.key === 'PageUp') {
+      nextTimeSeconds = current + 10;
+    }
+
+    if (nextTimeSeconds === null) {
+      return;
+    }
+
+    event.preventDefault();
+    handleSeek(nextTimeSeconds);
   }
 
   function openVolumePopover(): void {
@@ -97,6 +255,10 @@
     if (volumeCloseTimer) {
       clearTimeout(volumeCloseTimer);
     }
+  });
+
+  $effect(() => {
+    syncSeekDom(currentTime);
   });
 </script>
 
@@ -151,18 +313,45 @@
       </Button>
     </div>
 
-    <div class="flex space-x-2 min-w-0 items-center">
-      <span class="font-mono text-xs tabular-nums text-muted-foreground">{formatTime(safeCurrentTime)}</span>
-      <Slider
+    <div class="flex min-w-0 items-center space-x-4">
+      <span
+        bind:this={currentTimeTextEl}
+        class="font-mono text-xs tabular-nums text-muted-foreground"
+        data-time-label={formatTime(safeCurrentTime)}
+      >{formatTime(safeCurrentTime)}</span>
+      <div
+        bind:this={seekControlEl}
+        class={cn(
+          'relative flex h-4 w-full touch-none select-none items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          controlsDisabled && 'opacity-50',
+        )}
+        style={`--seek-progress: ${getSeekProgressPercent(safeCurrentTime)}%;`}
+        role="slider"
+        tabindex={controlsDisabled ? undefined : 0}
         aria-label="Seek"
-        type="single"
-        value={safeCurrentTime}
-        onValueChange={handleSeek}
-        min={0}
-        max={safeDuration}
-        step={0.1}
-        disabled={controlsDisabled}
-      />
+        aria-valuemin="0"
+        aria-valuemax={safeDuration}
+        aria-valuenow={safeCurrentTime}
+        aria-valuetext={formatTime(safeCurrentTime)}
+        aria-disabled={controlsDisabled}
+        onpointerdown={handleSeekPointerDown}
+        onpointermove={handleSeekPointerMove}
+        onpointerup={(event) => stopSeekDrag(event, true)}
+        onpointercancel={(event) => stopSeekDrag(event, true)}
+        onkeydown={handleSeekKeydown}
+      >
+        <span class="relative h-2 w-full grow overflow-hidden rounded-full bg-muted">
+          <span
+            class="absolute left-0 top-0 h-full select-none bg-primary"
+            style="width: var(--seek-progress);"
+          ></span>
+        </span>
+        <span
+          class="absolute top-1/2 block h-4 w-6 shrink-0 -translate-x-1/2 -translate-y-1/2 select-none rounded-full bg-white shadow-md ring-1 ring-black/10 transition-[color,box-shadow,background-color] not-dark:bg-clip-padding"
+          style="left: var(--seek-progress);"
+          aria-hidden="true"
+        ></span>
+      </div>
       <span class="text-right font-mono text-xs tabular-nums text-muted-foreground">{formatTime(safeDuration)}</span>
     </div>
 

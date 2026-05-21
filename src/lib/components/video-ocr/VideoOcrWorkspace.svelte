@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { OcrRegion, OcrVideoFile, OcrZoneFrame, OcrZoneRole } from '$lib/types';
+  import type { OcrTimelineApi } from './OcrTimeline.svelte';
 
   import OcrTimeline from './OcrTimeline.svelte';
   import VideoPreview from './VideoPreview.svelte';
@@ -41,6 +42,7 @@
   let seekRequest = $state<{ fileId: string; timeMs: number; requestId: number } | null>(null);
   let seekRequestId = $state(0);
   let selectedZone = $state<{ fileId: string; segmentId: string; zoneId: string } | null>(null);
+  let timelineRef = $state<OcrTimelineApi | null>(null);
 
   const durationMs = $derived(Math.round((file?.duration ?? 0) * 1000));
   const currentTimeMs = $derived(playbackTime.fileId === file?.id ? playbackTime.timeMs : 0);
@@ -56,6 +58,11 @@
 
   function handleTimeChange(timeMs: number): void {
     playbackTime = { fileId: file?.id ?? null, timeMs };
+    timelineRef?.syncPlaybackTime(timeMs);
+  }
+
+  function handlePlaybackFrame(timeMs: number): void {
+    timelineRef?.syncPlaybackTime(timeMs);
   }
 
   function handleSelectZone(segmentId: string, zoneId: string): void {
@@ -138,6 +145,7 @@
     suspendPlayback={dialogsOpen}
     {seekRequest}
     onTimeChange={handleTimeChange}
+    onPlaybackFrame={handlePlaybackFrame}
     onAddSegmentFromRegion={handleAddSegmentFromRegion}
     onUpdateZoneRegion={handleUpdateZoneRegion}
     onSetZoneRole={handleSetZoneRole}
@@ -148,6 +156,7 @@
 
   {#if file}
     <OcrTimeline
+      bind:this={timelineRef}
       selection={file.ocrSelection}
       {durationMs}
       {currentTimeMs}

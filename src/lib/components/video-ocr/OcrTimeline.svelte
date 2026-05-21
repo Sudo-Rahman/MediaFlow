@@ -1,3 +1,9 @@
+<script lang="ts" module>
+  export interface OcrTimelineApi {
+    syncPlaybackTime: (timeMs: number) => void;
+  }
+</script>
+
 <script lang="ts">
   import type { OcrZoneRole, VideoOcrSelection } from '$lib/types';
   import type { OcrTimelineViewport } from '$lib/utils';
@@ -84,10 +90,14 @@
 
   let activeDrag: TimelineDrag | null = null;
   let editingLabel = $state<{ segmentId: string; zoneId: string; value: string } | null>(null);
+  let timelineRootEl = $state<HTMLDivElement | null>(null);
+  let playbackTimeLabelEl = $state<HTMLSpanElement | null>(null);
   let labelInputEl = $state<HTMLInputElement | null>(null);
   let focusedLabelKey: string | null = null;
   let timelineViewport = $state<OcrTimelineViewport>({ startTimeMs: 0, endTimeMs: 1 });
   let lastDurationMs = 0;
+  let latestPlaybackTimeMs = 0;
+  let latestPlaybackTimeLabel = '';
 
   const roles: RoleConfig[] = [
     {
@@ -116,9 +126,6 @@
   const viewportWindowMs = $derived(visibleViewport.endTimeMs - visibleViewport.startTimeMs);
   const timelineTicks = $derived(createOcrTimelineTicks(visibleViewport));
   const timelineMinorTicks = $derived(createOcrTimelineMinorTicks(visibleViewport));
-  const playheadInViewport = $derived(
-    currentTimeMs >= visibleViewport.startTimeMs && currentTimeMs <= visibleViewport.endTimeMs,
-  );
 
   $effect(() => {
     if (lastDurationMs === safeDurationMs) {
@@ -127,6 +134,16 @@
 
     lastDurationMs = safeDurationMs;
     timelineViewport = createOcrTimelineViewport(safeDurationMs);
+  });
+
+  $effect(() => {
+    syncTimelinePlaybackDom(currentTimeMs);
+  });
+
+  $effect(() => {
+    visibleViewport;
+    timelineRootEl;
+    syncTimelinePlaybackDom(latestPlaybackTimeMs);
   });
 
   function blocksForRole(role: OcrZoneRole): RoleBlock[] {
@@ -146,6 +163,54 @@
 
   function viewportPercentage(timeMs: number): number {
     return Math.max(0, Math.min(100, ((timeMs - visibleViewport.startTimeMs) / viewportWindowMs) * 100));
+  }
+
+  function playbackTimeInViewport(timeMs: number): boolean {
+    return timeMs >= visibleViewport.startTimeMs && timeMs <= visibleViewport.endTimeMs;
+  }
+
+  function clampPlaybackTimeMs(timeMs: number): number {
+    return Number.isFinite(timeMs)
+      ? Math.max(0, Math.min(Math.round(timeMs), safeDurationMs))
+      : 0;
+  }
+
+  function playheadStyle(timeMs: number): string {
+    const safeTimeMs = clampPlaybackTimeMs(timeMs);
+    const display = playbackTimeInViewport(safeTimeMs) ? '' : 'display: none;';
+    return `${display} left: ${viewportPercentage(safeTimeMs)}%;`;
+  }
+
+  function syncTimelinePlaybackDom(timeMs: number): void {
+    const safeTimeMs = clampPlaybackTimeMs(timeMs);
+    const valuemax = String(safeDurationMs);
+    const valuenow = String(safeTimeMs);
+    const playheadDisplay = playbackTimeInViewport(safeTimeMs) ? '' : 'none';
+    const playheadLeft = `${viewportPercentage(safeTimeMs)}%`;
+    const nextTimeLabel = formatTime(safeTimeMs);
+
+    latestPlaybackTimeMs = safeTimeMs;
+    if (playbackTimeLabelEl && latestPlaybackTimeLabel !== nextTimeLabel) {
+      playbackTimeLabelEl.dataset.timeLabel = nextTimeLabel;
+      playbackTimeLabelEl.textContent = nextTimeLabel;
+      latestPlaybackTimeLabel = nextTimeLabel;
+    }
+
+    const tracks = timelineRootEl?.querySelectorAll<HTMLElement>('[data-timeline-track="true"]') ?? [];
+    for (const track of tracks) {
+      track.setAttribute('aria-valuemax', valuemax);
+      track.setAttribute('aria-valuenow', valuenow);
+
+      const playheads = track.querySelectorAll<HTMLElement>('[data-timeline-playhead="true"]');
+      for (const playhead of playheads) {
+        playhead.style.display = playheadDisplay;
+        playhead.style.left = playheadLeft;
+      }
+    }
+  }
+
+  export function syncPlaybackTime(timeMs: number): void {
+    syncTimelinePlaybackDom(timeMs);
   }
 
   function blockOverlapsViewport(block: RoleBlock): boolean {
@@ -428,23 +493,29 @@
     }
 
     const stepMs = event.shiftKey ? 5_000 : 1_000;
+    const baseTimeMs = latestPlaybackTimeMs;
     if (event.key === 'ArrowLeft') {
       event.preventDefault();
-      onSeek(Math.max(0, currentTimeMs - stepMs));
+      onSeek(Math.max(0, baseTimeMs - stepMs));
     } else if (event.key === 'ArrowRight') {
       event.preventDefault();
-      onSeek(Math.min(safeDurationMs, currentTimeMs + stepMs));
+      onSeek(Math.min(safeDurationMs, baseTimeMs + stepMs));
     }
   }
 </script>
 
-<div class="flex h-full min-h-0 flex-col border-t bg-muted/20 py-2">
+<div bind:this={timelineRootEl} class="flex h-full min-h-0 flex-col border-t bg-muted/20 py-2">
   <div class="flex h-full min-h-0 flex-col gap-2">
     <div class="flex shrink-0 items-center justify-between gap-2 px-0.5">
       <h3 class="text-sm font-semibold leading-none text-foreground">OCR timeline</h3>
       <div class="flex items-center gap-1.5">
         <Badge variant="secondary" class="h-5 rounded-full px-2 text-[11px]">{segmentCount} segments</Badge>
-        <Badge variant="outline" class="h-5 rounded-full px-2 text-[11px]">{formatTime(currentTimeMs)}</Badge>
+        <Badge variant="outline" class="h-5 rounded-full px-2 text-[11px]">
+          <span
+            bind:this={playbackTimeLabelEl}
+            data-time-label={formatTime(currentTimeMs)}
+          >{formatTime(currentTimeMs)}</span>
+        </Badge>
       </div>
     </div>
 
@@ -587,22 +658,22 @@
                   </ContextMenu.Content>
                 </ContextMenu.Root>
               {/each}
-              {#if playheadInViewport}
-                <div
-                  class="pointer-events-none absolute bottom-[var(--timeline-track-pad)] top-[calc(var(--timeline-ruler-height)+var(--timeline-track-pad))] w-0.5 -translate-x-1/2 rounded-sm bg-foreground shadow-[0_0_0_3px_hsl(var(--foreground)/0.12)]"
-                  style={`left: ${viewportPercentage(currentTimeMs)}%`}
-                  aria-label="Current playback position"
-                ></div>
-                <button
-                  type="button"
-                  data-timeline-control="true"
-                  class="absolute bottom-[var(--timeline-track-pad)] top-[calc(var(--timeline-ruler-height)+var(--timeline-track-pad))] w-2 -translate-x-1/2 cursor-grab rounded-xs border border-foreground/15 bg-background/35 shadow-sm active:cursor-grabbing"
-                  style={`left: ${viewportPercentage(currentTimeMs)}%`}
-                  aria-label="Drag playback position"
-                  title="Drag playback position"
-                  onpointerdown={startSeek}
-                ></button>
-              {/if}
+              <div
+                data-timeline-playhead="true"
+                class="pointer-events-none absolute bottom-[var(--timeline-track-pad)] top-[calc(var(--timeline-ruler-height)+var(--timeline-track-pad))] w-0.5 -translate-x-1/2 rounded-sm bg-foreground shadow-[0_0_0_3px_hsl(var(--foreground)/0.12)]"
+                style={playheadStyle(currentTimeMs)}
+                aria-label="Current playback position"
+              ></div>
+              <button
+                type="button"
+                data-timeline-control="true"
+                data-timeline-playhead="true"
+                class="absolute bottom-[var(--timeline-track-pad)] top-[calc(var(--timeline-ruler-height)+var(--timeline-track-pad))] w-2 -translate-x-1/2 cursor-grab rounded-xs border border-foreground/15 bg-background/35 shadow-sm active:cursor-grabbing"
+                style={playheadStyle(currentTimeMs)}
+                aria-label="Drag playback position"
+                title="Drag playback position"
+                onpointerdown={startSeek}
+              ></button>
             </div>
           </ScrollArea>
         </section>

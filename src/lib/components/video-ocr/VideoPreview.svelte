@@ -12,6 +12,8 @@
   import { buildActiveCueSummary } from './preview-cues';
   import { getPreviewLayerState } from './preview-layer-state';
 
+  const PLAYBACK_TIME_UPDATE_INTERVAL_MS = 250;
+
   interface VideoSeekRequest {
     fileId: string;
     timeMs: number;
@@ -75,6 +77,8 @@
   let contextMenuOpen = $state(false);
   let resumePlayback = $state(false);
   let lastAppliedSeekRequestId = $state<number | null>(null);
+  let isFullscreen = $state(false);
+  let lastPlaybackPublishTimeMs = 0;
   
   // Video bounds within container (for letterboxed videos)
   // These are relative values (0-1) within the container
@@ -192,12 +196,54 @@
     duration = getVideoDurationSeconds();
   });
 
+  $effect(() => {
+    const handleFullscreenChange = () => {
+      syncFullscreenState();
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    syncFullscreenState();
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  });
+
   function handleTimeUpdate() {
-    if (videoEl) {
-      const nextTime = videoEl.currentTime;
-      updateCurrentTimeState(nextTime);
-      syncPlaybackState();
+    publishCurrentVideoTime();
+  }
+
+  function publishCurrentVideoTime(force = false): void {
+    if (!videoEl) {
+      return;
     }
+
+    const nextTimeSeconds = Number.isFinite(videoEl.currentTime) ? videoEl.currentTime : 0;
+    const nextTimeMs = Math.round(nextTimeSeconds * 1000);
+    const previousTimeMs = file
+      ? Math.round((currentTimesByFileId[file.id] ?? 0) * 1000)
+      : lastPlaybackPublishTimeMs;
+    const isEnding = duration > 0 && nextTimeSeconds >= duration;
+
+    if (
+      !force
+      && !isEnding
+      && Math.abs(nextTimeMs - previousTimeMs) < PLAYBACK_TIME_UPDATE_INTERVAL_MS
+    ) {
+      return;
+    }
+
+    lastPlaybackPublishTimeMs = nextTimeMs;
+    updateCurrentTimeState(nextTimeSeconds);
+  }
+
+  function handlePlaybackPause(): void {
+    publishCurrentVideoTime(true);
+    syncPlaybackState();
+  }
+
+  function handlePlaybackPlay(): void {
+    syncPlaybackState();
   }
 
   function updateCurrentTimeState(nextTimeSeconds: number): void {
@@ -314,7 +360,29 @@
   }
 
   function enterFullscreen(): void {
-    void (previewContainerEl ?? containerEl)?.requestFullscreen?.();
+    void toggleFullscreen();
+  }
+
+  async function toggleFullscreen(): Promise<void> {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        return;
+      }
+
+      await (previewContainerEl ?? containerEl)?.requestFullscreen?.();
+    } catch {
+      // Fullscreen can be rejected by the WebView when state changes between click and request.
+    } finally {
+      syncFullscreenState();
+    }
+  }
+
+  function syncFullscreenState(): void {
+    const fullscreenElement = document.fullscreenElement;
+    isFullscreen = !!fullscreenElement
+      && !!previewContainerEl
+      && (fullscreenElement === previewContainerEl || previewContainerEl.contains(fullscreenElement));
   }
 
   function describeVideoPlaybackError(error: MediaError | null): string {
@@ -574,8 +642,8 @@
             src={videoSrc}
             class="h-full w-full object-contain"
             ontimeupdate={handleTimeUpdate}
-            onplay={syncPlaybackState}
-            onpause={syncPlaybackState}
+            onplay={handlePlaybackPlay}
+            onpause={handlePlaybackPause}
             onvolumechange={syncPlaybackState}
             onloadedmetadata={handleLoadedMetadata}
             onresize={updateVideoBounds}
@@ -667,6 +735,7 @@
         paused={isPaused}
         muted={isMuted}
         {volume}
+        fullscreen={isFullscreen}
         disabled={isDrawingZone || isEditingZone}
         onseek={seekToSeconds}
         ontoggleplay={togglePlayback}

@@ -2,6 +2,7 @@ export { default as VideoFileList } from './VideoFileList.svelte';
 export { default as VideoPreview } from './VideoPreview.svelte';
 export { default as ActiveCueSummary } from './ActiveCueSummary.svelte';
 export { default as PreviewToolbar } from './PreviewToolbar.svelte';
+export { default as PreviewPlayerControls } from './PreviewPlayerControls.svelte';
 export { default as RegionSelector } from './RegionSelector.svelte';
 export { default as SubtitleOverlay } from './SubtitleOverlay.svelte';
 export { default as OcrOptionsPanel } from './OcrOptionsPanel.svelte';

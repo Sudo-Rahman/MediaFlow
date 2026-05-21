@@ -3,6 +3,7 @@ export { extractionStore } from './extraction.svelte';
 export { uiStore } from './ui.svelte';
 export { mergeStore } from './merge.svelte';
 export { settingsStore } from './settings.svelte';
+export type { ThemePreference } from './settings.svelte';
 export { translationStore } from './translation.svelte';
 export { logStore } from './logs.svelte';
 export { infoStore } from './info.svelte';

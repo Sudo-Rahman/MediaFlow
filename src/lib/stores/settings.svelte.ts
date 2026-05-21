@@ -7,11 +7,13 @@ export interface MediaFlowUser {
   name?: string;
 }
 
+export type ThemePreference = 'system' | 'light' | 'dark';
+
 // Settings interface
 export interface AppSettings {
   ffmpegPath: string;
   ffprobePath: string;
-  theme: 'system' | 'light' | 'dark';
+  theme: ThemePreference;
   outputPathHistory: string[];
   llmApiKeys: LLMApiKeys;
   translationSettings: TranslationSettings;
@@ -64,7 +66,7 @@ export const settingsStore = {
 
       const ffmpegPath = await s.get<string>('ffmpegPath');
       const ffprobePath = await s.get<string>('ffprobePath');
-      const theme = await s.get<'system' | 'light' | 'dark'>('theme');
+      const theme = await s.get<ThemePreference>('theme');
       const outputPathHistory = await s.get<string[]>('outputPathHistory');
       const llmApiKeys = await s.get<LLMApiKeys>('llmApiKeys');
       const translationSettings = await s.get<TranslationSettings>('translationSettings');
@@ -106,7 +108,7 @@ export const settingsStore = {
     await s.set('ffprobePath', path);
   },
 
-  async setTheme(theme: 'system' | 'light' | 'dark') {
+  async setTheme(theme: ThemePreference) {
     settings = { ...settings, theme };
     const s = await getStore();
     await s.set('theme', theme);

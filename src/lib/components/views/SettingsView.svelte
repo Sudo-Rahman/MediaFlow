@@ -5,10 +5,10 @@
   import { listen } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
   import { openUrl } from '@tauri-apps/plugin-opener';
-  import { mode, setMode } from 'mode-watcher';
+  import { setMode } from 'mode-watcher';
   import { toast } from 'svelte-sonner';
 
-  import { settingsStore, updaterStore } from '$lib/stores';
+  import { settingsStore, updaterStore, type ThemePreference } from '$lib/stores';
   import { Button } from '$lib/components/ui/button';
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
@@ -172,7 +172,7 @@
   }
 
   async function handleThemeChange(value: string) {
-    const theme = value as 'system' | 'light' | 'dark';
+    const theme = value as ThemePreference;
     setMode(theme);
     await settingsStore.setTheme(theme);
   }
@@ -325,7 +325,7 @@
     }
   }
 
-  const currentMode = $derived(mode.current || 'system');
+  const selectedTheme = $derived(settingsStore.settings.theme);
   const baseId = useId();
   const themeGroupLabelId = `${baseId}-theme-group-label`;
   const deepgramApiKeyConfigured = $derived(
@@ -747,7 +747,7 @@
         <Field.FieldSet class="gap-3">
           <Field.FieldLegend id={themeGroupLabelId} variant="label" class="sr-only">Theme</Field.FieldLegend>
           <RadioGroup.Root
-            value={currentMode}
+            value={selectedTheme}
             aria-labelledby={themeGroupLabelId}
             onValueChange={handleThemeChange}
             class="grid gap-3"

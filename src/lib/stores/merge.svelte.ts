@@ -1,5 +1,6 @@
 import { LazyStore } from '@tauri-apps/plugin-store';
 
+import { isMkvMergeDisplayTrack } from '$lib/services/merge-compat';
 import type {
   MergeVideoFile,
   ImportedTrack,
@@ -765,7 +766,7 @@ export const mergeStore = {
 
     // Add source tracks
     videoFiles.forEach(video => {
-      video.tracks.forEach(track => {
+      video.tracks.filter(isMkvMergeDisplayTrack).forEach(track => {
         const config = sourceTrackConfigs.get(track.id);
         const lang = config?.language ?? track.language;
         addToGroup(track.id, track.type, lang);

@@ -51,12 +51,41 @@ struct SourceTrackSelection<'a> {
     config: Option<&'a Value>,
 }
 
+fn stream_string_value<'a>(stream: Option<&'a Value>, key: &str) -> Option<&'a str> {
+    stream
+        .and_then(|stream| stream.get(key))
+        .and_then(|value| value.as_str())
+}
+
+fn config_string_value<'a>(config: Option<&'a Value>, key: &str) -> Option<&'a str> {
+    config
+        .and_then(|config| config.get(key))
+        .and_then(|value| value.as_str())
+}
+
+fn is_data_source_stream(source_stream: Option<&Value>, source_config: Option<&Value>) -> bool {
+    stream_string_value(source_stream, "codec_type")
+        .or_else(|| config_string_value(source_config, "type"))
+        == Some("data")
+}
+
+fn unsupported_mkv_subtitle_codec(source_stream: Option<&Value>) -> Option<&str> {
+    if stream_string_value(source_stream, "codec_type") != Some("subtitle") {
+        return None;
+    }
+
+    match stream_string_value(source_stream, "codec_name") {
+        Some("mov_text" | "tx3g") => stream_string_value(source_stream, "codec_name"),
+        _ => None,
+    }
+}
+
 fn build_source_track_selections<'a>(
     source_track_configs: Option<&'a [Value]>,
     source_streams: &'a [Value],
     args: &mut Vec<String>,
     video_path: &str,
-) -> (Vec<SourceTrackSelection<'a>>, usize) {
+) -> Result<(Vec<SourceTrackSelection<'a>>, usize), String> {
     let mut selections = Vec::new();
     let mut delayed_input_indices: HashMap<i64, usize> = HashMap::new();
     let mut next_input_idx = 1usize;
@@ -79,6 +108,24 @@ fn build_source_track_selections<'a>(
             else {
                 continue;
             };
+
+            let source_stream = source_streams.iter().find(|stream| {
+                stream
+                    .get("index")
+                    .and_then(|value| value.as_u64())
+                    .is_some_and(|index| index as usize == original_index)
+            });
+
+            if is_data_source_stream(source_stream, Some(source_config)) {
+                continue;
+            }
+
+            if let Some(codec) = unsupported_mkv_subtitle_codec(source_stream) {
+                return Err(format!(
+                    "MKV merge cannot copy subtitle codec {} from source stream #{}. Disable this track or convert subtitles with Transcode before merging.",
+                    codec, original_index
+                ));
+            }
 
             let delay_ms = source_config
                 .get("config")
@@ -106,12 +153,7 @@ fn build_source_track_selections<'a>(
             selections.push(SourceTrackSelection {
                 input_idx,
                 original_index,
-                source_stream: source_streams.iter().find(|stream| {
-                    stream
-                        .get("index")
-                        .and_then(|value| value.as_u64())
-                        .is_some_and(|index| index as usize == original_index)
-                }),
+                source_stream,
                 config: source_config.get("config"),
             });
         }
@@ -121,6 +163,18 @@ fn build_source_track_selections<'a>(
                 .get("index")
                 .and_then(|value| value.as_u64())
                 .unwrap_or(stream_position as u64) as usize;
+
+            if is_data_source_stream(Some(source_stream), None) {
+                continue;
+            }
+
+            if let Some(codec) = unsupported_mkv_subtitle_codec(Some(source_stream)) {
+                return Err(format!(
+                    "MKV merge cannot copy subtitle codec {} from source stream #{}. Disable this track or convert subtitles with Transcode before merging.",
+                    codec, original_index
+                ));
+            }
+
             selections.push(SourceTrackSelection {
                 input_idx: 0,
                 original_index,
@@ -130,7 +184,7 @@ fn build_source_track_selections<'a>(
         }
     }
 
-    (selections, next_input_idx)
+    Ok((selections, next_input_idx))
 }
 
 fn build_merge_args(
@@ -139,10 +193,10 @@ fn build_merge_args(
     source_track_configs: Option<&[Value]>,
     source_streams: &[Value],
     output_path: &str,
-) -> Vec<String> {
+) -> Result<Vec<String>, String> {
     let mut args = vec!["-y".to_string(), "-i".to_string(), video_path.to_string()];
     let (source_track_selections, mut next_input_idx) =
-        build_source_track_selections(source_track_configs, source_streams, &mut args, video_path);
+        build_source_track_selections(source_track_configs, source_streams, &mut args, video_path)?;
     let mut attached_track_inputs: Vec<(usize, &Value)> = Vec::new();
     let mut output_metadata = Vec::<OutputStreamMetadata>::new();
 
@@ -208,7 +262,7 @@ fn build_merge_args(
     args.push("-progress".to_string());
     args.push("pipe:1".to_string());
     args.push(output_path.to_string());
-    args
+    Ok(args)
 }
 
 fn emit_merge_progress(
@@ -288,7 +342,7 @@ pub(super) async fn merge_tracks_with_bins(
         source_track_configs,
         &streams,
         output_path,
-    );
+    )?;
 
     let wait_future = async move {
         tokio_command(ffmpeg_path)
@@ -387,7 +441,7 @@ pub(crate) async fn merge_tracks(
         source_track_configs.as_deref(),
         &streams,
         &output_path,
-    );
+    )?;
 
     let ffmpeg_path = resolve_ffmpeg_path(&app)?;
     let mut child = tokio_command(ffmpeg_path)
@@ -533,6 +587,85 @@ mod tests {
     }
 
     #[test]
+    fn build_merge_args_skips_data_streams_for_mkv() {
+        let source_streams = vec![
+            json!({"index": 0, "codec_type": "video", "codec_name": "h264"}),
+            json!({"index": 6, "codec_type": "data", "codec_name": "bin_data"}),
+        ];
+        let source_configs = vec![
+            json!({"originalIndex": 0, "config": {"enabled": true}}),
+            json!({"originalIndex": 6, "config": {"enabled": true}}),
+        ];
+
+        let args = build_merge_args(
+            "/tmp/video.mp4",
+            &[],
+            Some(&source_configs),
+            &source_streams,
+            "/tmp/out.mkv",
+        )
+        .expect("data streams should be skipped, not rejected");
+
+        assert!(has_arg_pair(&args, "-map", "0:0"));
+        assert!(!has_arg_pair(&args, "-map", "0:6"));
+    }
+
+    #[test]
+    fn build_merge_args_skips_data_streams_without_source_configs() {
+        let source_streams = vec![
+            json!({"index": 0, "codec_type": "video", "codec_name": "h264"}),
+            json!({"index": 6, "codec_type": "data", "codec_name": "bin_data"}),
+        ];
+
+        let args = build_merge_args("/tmp/video.mp4", &[], None, &source_streams, "/tmp/out.mkv")
+            .expect("data streams should be skipped, not rejected");
+
+        assert!(has_arg_pair(&args, "-map", "0:0"));
+        assert!(!has_arg_pair(&args, "-map", "0:6"));
+    }
+
+    #[test]
+    fn build_merge_args_rejects_mov_text_subtitles_for_mkv() {
+        let source_streams = vec![json!({
+            "index": 2,
+            "codec_type": "subtitle",
+            "codec_name": "mov_text"
+        })];
+        let source_configs = vec![json!({"originalIndex": 2, "config": {"enabled": true}})];
+
+        let error = build_merge_args(
+            "/tmp/video.mp4",
+            &[],
+            Some(&source_configs),
+            &source_streams,
+            "/tmp/out.mkv",
+        )
+        .expect_err("mov_text subtitles should be rejected for MKV copy");
+
+        assert_eq!(
+            error,
+            "MKV merge cannot copy subtitle codec mov_text from source stream #2. Disable this track or convert subtitles with Transcode before merging."
+        );
+    }
+
+    #[test]
+    fn build_merge_args_rejects_mov_text_subtitles_without_source_configs() {
+        let source_streams = vec![json!({
+            "index": 2,
+            "codec_type": "subtitle",
+            "codec_name": "tx3g"
+        })];
+
+        let error = build_merge_args("/tmp/video.mp4", &[], None, &source_streams, "/tmp/out.mkv")
+            .expect_err("tx3g subtitles should be rejected for MKV copy");
+
+        assert_eq!(
+            error,
+            "MKV merge cannot copy subtitle codec tx3g from source stream #2. Disable this track or convert subtitles with Transcode before merging."
+        );
+    }
+
+    #[test]
     fn enabled_source_indices_uses_all_streams_when_no_config_provided() {
         let indices = enabled_source_indices(None, 3);
         assert_eq!(indices, vec![0, 1, 2]);
@@ -569,7 +702,8 @@ mod tests {
             None,
             &source_streams,
             "/tmp/out.mkv",
-        );
+        )
+        .expect("merge args should build");
 
         assert!(args.windows(2).any(|w| w == ["-itsoffset", "1.500"]));
         assert!(args.windows(2).any(|w| w == ["-map", "0:0"]));
@@ -593,7 +727,8 @@ mod tests {
             None,
             &source_streams,
             "/tmp/out.mkv",
-        );
+        )
+        .expect("merge args should build");
 
         assert!(has_arg_pair(&args, "-map", "0:0"));
         assert!(has_arg_pair(&args, "-map", "0:1"));
@@ -614,7 +749,8 @@ mod tests {
             Some(&source_configs),
             &mock_streams(2),
             "/tmp/out.mkv",
-        );
+        )
+        .expect("merge args should build");
 
         assert!(has_arg_pair(&args, "-itsoffset", "1.500"));
         assert!(has_arg_pair(&args, "-map", "1:0"));
@@ -635,7 +771,8 @@ mod tests {
             Some(&source_configs),
             &mock_streams(3),
             "/tmp/out.mkv",
-        );
+        )
+        .expect("merge args should build");
 
         assert_eq!(count_arg_pair(&args, "-itsoffset", "0.900"), 1);
         assert!(has_arg_pair(&args, "-map", "1:0"));
@@ -660,7 +797,8 @@ mod tests {
             Some(&source_configs),
             &mock_streams(2),
             "/tmp/out.mkv",
-        );
+        )
+        .expect("merge args should build");
 
         assert!(has_arg_pair(&args, "-itsoffset", "1.200"));
         assert!(has_arg_pair(&args, "-map", "1:0"));
@@ -698,7 +836,8 @@ mod tests {
             Some(&source_configs),
             &mock_streams(1),
             "/tmp/out.mkv",
-        );
+        )
+        .expect("merge args should build");
 
         assert!(has_arg_pair(&args, "-metadata:s:0", "language=jpn"));
         assert!(has_arg_pair(&args, "-metadata:s:0", "title=Main stream"));

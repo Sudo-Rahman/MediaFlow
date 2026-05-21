@@ -2,6 +2,7 @@
   import { Table, Clock } from '@lucide/svelte';
   import type { MergeTrack, ImportedTrack, MergeTrackConfig } from '$lib/types';
   import { mergeStore } from '$lib/stores/merge.svelte';
+  import { isMkvMergeDisplayTrack } from '$lib/services/merge-compat';
   import { COMMON_LANGUAGES } from '$lib/types';
   import { formatLanguage } from '$lib/utils/format';
   import { Input } from '$lib/components/ui/input';
@@ -28,7 +29,7 @@
 
     // Source tracks
     mergeStore.videoFiles.forEach(video => {
-      video.tracks.forEach(track => {
+      video.tracks.filter(isMkvMergeDisplayTrack).forEach(track => {
         tracks.push({
           track,
           config: mergeStore.getSourceTrackConfig(track.id),
@@ -112,8 +113,7 @@
     const labels: Record<string, string> = {
       video: 'Video',
       audio: 'Audio',
-      subtitle: 'Sub',
-      data: 'Data'
+      subtitle: 'Sub'
     };
     return labels[type] || type;
   }

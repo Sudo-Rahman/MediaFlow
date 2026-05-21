@@ -316,15 +316,4 @@
       </div>
     </div>
   {/if}
-  
-  <!-- Instructions -->
-  <div class="absolute top-4 left-1/2 -translate-x-1/2 bg-black/70 text-white px-3 py-1.5 rounded text-sm pointer-events-none">
-    {#if region && region.width > 0}
-      Drag region to move, use handles to resize
-    {:else if !allowCreate}
-      Select an existing zone to edit
-    {:else}
-      Click and drag to select OCR region
-    {/if}
-  </div>
 </button>

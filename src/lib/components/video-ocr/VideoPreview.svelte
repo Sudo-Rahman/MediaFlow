@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { convertFileSrc } from '@tauri-apps/api/core';
 
   import type { OcrRegion, OcrVideoFile, OcrZoneFrame, OcrZoneRole } from '$lib/types';
@@ -575,13 +576,19 @@
     return Math.max(1, Math.round(getVideoDurationSeconds() * 1000));
   }
 
-  function beginZoneDrawing(): void {
+  function closeZoneContextMenu(): void {
+    contextMenuOpen = false;
+    contextZone = undefined;
+  }
+
+  async function beginZoneDrawing(): Promise<void> {
     if (!file || !videoEl) {
       return;
     }
 
-    contextMenuOpen = false;
-    contextZone = undefined;
+    closeZoneContextMenu();
+    await tick();
+
     drawingStartTimeMs = Math.round(videoEl.currentTime * 1000);
     drawingRegion = undefined;
     editingZone = null;
@@ -593,13 +600,14 @@
     }
   }
 
-  function beginZoneEditing(entry: VisibleZoneEntry): void {
+  async function beginZoneEditing(entry: VisibleZoneEntry): Promise<void> {
     if (!file || !videoEl) {
       return;
     }
 
-    contextMenuOpen = false;
-    contextZone = undefined;
+    closeZoneContextMenu();
+    await tick();
+
     isDrawingZone = false;
     drawingRegion = undefined;
     editingZone = { segmentId: entry.segmentId, zoneId: entry.zoneId };
@@ -633,12 +641,14 @@
       return;
     }
 
+    closeZoneContextMenu();
     void onUpdateZoneRegion?.(editingZone.segmentId, editingZone.zoneId, editingRegion);
     editingZone = null;
     editingRegion = undefined;
   }
 
   function cancelRegionSelection(): void {
+    closeZoneContextMenu();
     isDrawingZone = false;
     drawingRegion = undefined;
     editingZone = null;
@@ -687,10 +697,12 @@
   }
 
   function handleZoneRole(segmentId: string, zoneId: string, role: OcrZoneRole): void {
+    closeZoneContextMenu();
     void onSetZoneRole?.(segmentId, zoneId, role);
   }
 
   function handleDeleteZone(segmentId: string, zoneId: string): void {
+    closeZoneContextMenu();
     void onDeleteZone?.(segmentId, zoneId);
     if (editingZone?.segmentId === segmentId && editingZone.zoneId === zoneId) {
       editingZone = null;
@@ -743,8 +755,7 @@
     if (isDrawingZone || isEditingZone) {
       event.preventDefault();
       event.stopPropagation();
-      contextMenuOpen = false;
-      contextZone = undefined;
+      closeZoneContextMenu();
       return;
     }
 
@@ -850,11 +861,11 @@
             />
           {/if}
         </ContextMenu.Trigger>
-        {#if previewLayers.showPassiveZones}
-          <ContextMenu.Content class="w-64">
+        <ContextMenu.Content class="w-64">
+          {#if previewLayers.showPassiveZones}
             {#if contextZone}
               {@const menuZone = contextZone}
-              <ContextMenu.Item onclick={() => beginZoneEditing(menuZone)}>
+              <ContextMenu.Item onclick={() => void beginZoneEditing(menuZone)}>
                 Modify zone
               </ContextMenu.Item>
               {#if menuZone.role !== 'main_subtitle'}
@@ -875,12 +886,12 @@
                 Delete zone
               </ContextMenu.Item>
             {:else}
-              <ContextMenu.Item onclick={beginZoneDrawing}>
+              <ContextMenu.Item onclick={() => void beginZoneDrawing()}>
                 Add OCR zone from current time
               </ContextMenu.Item>
             {/if}
-          </ContextMenu.Content>
-        {/if}
+          {/if}
+        </ContextMenu.Content>
       </ContextMenu.Root>
 
       {#if showSubtitles}

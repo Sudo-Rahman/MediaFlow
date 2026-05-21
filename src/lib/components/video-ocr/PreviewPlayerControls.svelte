@@ -182,7 +182,7 @@
       </Button>
 
       {#if volumeOpen}
-        <div class="absolute bottom-full left-1/2 z-20 flex h-36 -translate-x-1/2 flex-col items-center gap-2 rounded-md border bg-popover px-3 py-3 text-popover-foreground shadow-md">
+        <div class="absolute bottom-full left-1/2 z-20 flex h-56 -translate-x-1/2 flex-col items-center gap-2 rounded-md border bg-popover px-3 py-3 text-popover-foreground shadow-md">
           <Slider
             aria-label="Volume"
             type="single"
@@ -193,7 +193,7 @@
             max={100}
             step={1}
             disabled={disabled}
-            class="h-24"
+            class="h-40"
           />
           <span class="font-mono text-[10px] tabular-nums text-muted-foreground">{volumePercent}%</span>
         </div>

@@ -39,7 +39,7 @@
   }: VideoOcrWorkspaceProps = $props();
 
   let playbackTime = $state<{ fileId: string | null; timeMs: number }>({ fileId: null, timeMs: 0 });
-  let seekRequest = $state<{ fileId: string; timeMs: number; requestId: number } | null>(null);
+  let seekRequest = $state<{ fileId: string; timeMs: number; requestId: number; mode?: 'preview' | 'commit' } | null>(null);
   let seekRequestId = $state(0);
   let selectedZone = $state<{ fileId: string; segmentId: string; zoneId: string } | null>(null);
   let timelineRef = $state<OcrTimelineApi | null>(null);
@@ -116,15 +116,27 @@
     }
   }
 
-  function handleSeek(timeMs: number): void {
+  function requestPlaybackSeek(timeMs: number, mode: 'preview' | 'commit'): void {
     if (!file) {
       return;
     }
 
     const safeTimeMs = Math.max(0, Math.min(durationMs, Math.round(timeMs)));
     seekRequestId += 1;
-    playbackTime = { fileId: file.id, timeMs: safeTimeMs };
-    seekRequest = { fileId: file.id, timeMs: safeTimeMs, requestId: seekRequestId };
+
+    if (mode === 'commit') {
+      playbackTime = { fileId: file.id, timeMs: safeTimeMs };
+    }
+
+    seekRequest = { fileId: file.id, timeMs: safeTimeMs, requestId: seekRequestId, mode };
+  }
+
+  function handleSeek(timeMs: number): void {
+    requestPlaybackSeek(timeMs, 'commit');
+  }
+
+  function handlePreviewSeek(timeMs: number): void {
+    requestPlaybackSeek(timeMs, 'preview');
   }
 
   function handleTrimSegment(segmentId: string, startTimeMs: number, endTimeMs: number): void {
@@ -163,6 +175,7 @@
       {selectedSegmentId}
       {selectedZoneId}
       onSelect={handleSelectZone}
+      onPreviewSeek={handlePreviewSeek}
       onSeek={handleSeek}
       onSetRole={handleSetZoneRole}
       onRenameZone={handleRenameZone}

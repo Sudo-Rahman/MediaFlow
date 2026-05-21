@@ -29,6 +29,7 @@
     selectedSegmentId?: string | null;
     selectedZoneId?: string | null;
     onSelect?: (segmentId: string, zoneId: string) => void;
+    onPreviewSeek?: (timeMs: number) => void;
     onSeek?: (timeMs: number) => void;
     onSetRole?: (segmentId: string, zoneId: string, role: OcrZoneRole) => void;
     onRenameZone?: (segmentId: string, zoneId: string, label: string) => void;
@@ -81,6 +82,7 @@
     selectedSegmentId = null,
     selectedZoneId = null,
     onSelect,
+    onPreviewSeek,
     onSeek,
     onSetRole,
     onRenameZone,
@@ -320,6 +322,10 @@
     return Math.round(visibleViewport.startTimeMs + Math.max(0, Math.min(1, ratio)) * viewportWindowMs);
   }
 
+  function previewSeek(timeMs: number): void {
+    (onPreviewSeek ?? onSeek)?.(timeMs);
+  }
+
   function handleTimelineWheel(event: WheelEvent): void {
     if (!(event.currentTarget instanceof HTMLElement)) {
       return;
@@ -371,10 +377,10 @@
 
     event.preventDefault();
     activeDrag = { type: 'seek', trackEl };
-    onSeek?.(timeFromPointer(event, trackEl));
+    previewSeek(timeFromPointer(event, trackEl));
     window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', stopDrag, { once: true });
-    window.addEventListener('pointercancel', stopDrag, { once: true });
+    window.addEventListener('pointerup', commitDrag, { once: true });
+    window.addEventListener('pointercancel', cancelDrag, { once: true });
   }
 
   function startMove(event: PointerEvent, block: RoleBlock): void {
@@ -407,8 +413,8 @@
     };
     onSelect?.(block.segmentId, block.zoneId);
     window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', stopDrag, { once: true });
-    window.addEventListener('pointercancel', stopDrag, { once: true });
+    window.addEventListener('pointerup', commitDrag, { once: true });
+    window.addEventListener('pointercancel', cancelDrag, { once: true });
   }
 
   function startTrim(event: PointerEvent, block: RoleBlock, edge: 'start' | 'end'): void {
@@ -433,8 +439,8 @@
       endTimeMs: block.endTimeMs,
     };
     window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', stopDrag, { once: true });
-    window.addEventListener('pointercancel', stopDrag, { once: true });
+    window.addEventListener('pointerup', commitDrag, { once: true });
+    window.addEventListener('pointercancel', cancelDrag, { once: true });
   }
 
   function handlePointerMove(event: PointerEvent): void {
@@ -444,7 +450,7 @@
 
     const timeMs = timeFromPointer(event, activeDrag.trackEl);
     if (activeDrag.type === 'seek') {
-      onSeek?.(timeMs);
+      previewSeek(timeMs);
       return;
     }
 
@@ -469,10 +475,24 @@
     onSeek?.(nextEndTimeMs);
   }
 
-  function stopDrag(): void {
+  function commitDrag(event: PointerEvent): void {
+    stopDrag(event);
+  }
+
+  function cancelDrag(): void {
+    stopDrag();
+  }
+
+  function stopDrag(event?: PointerEvent): void {
+    const finishedDrag = activeDrag;
     activeDrag = null;
     window.removeEventListener('pointermove', handlePointerMove);
-    window.removeEventListener('pointercancel', stopDrag);
+    window.removeEventListener('pointerup', commitDrag);
+    window.removeEventListener('pointercancel', cancelDrag);
+
+    if (finishedDrag?.type === 'seek' && event) {
+      onSeek?.(timeFromPointer(event, finishedDrag.trackEl));
+    }
   }
 
   function handleTrackKeydown(event: KeyboardEvent): void {

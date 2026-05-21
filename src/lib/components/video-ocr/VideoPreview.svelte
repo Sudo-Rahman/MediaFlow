@@ -15,11 +15,13 @@
   import type { PreviewPlaybackClock } from './preview-playback-clock';
   import { createPreviewPlaybackClock } from './preview-playback-clock';
   import { getPreviewLayerState } from './preview-layer-state';
+  import { createPreviewSeekSession } from './preview-seek-session';
 
   interface VideoSeekRequest {
     fileId: string;
     timeMs: number;
     requestId: number;
+    mode?: 'preview' | 'commit';
   }
 
   interface VideoPreviewProps {
@@ -86,7 +88,8 @@
   let latestPlaybackTimesByFileId: Record<string, number> = {};
   let previewStateKeysByFileId: Record<string, string> = {};
   let playbackClock: PreviewPlaybackClock | null = null;
-  let manualSeekActive = false;
+  let seekReleaseTimer: ReturnType<typeof setTimeout> | undefined;
+  const seekSession = createPreviewSeekSession();
   
   // Video bounds within container (for letterboxed videos)
   // These are relative values (0-1) within the container
@@ -182,6 +185,11 @@
     }
 
     lastAppliedSeekRequestId = seekRequest.requestId;
+    if (seekRequest.mode === 'preview') {
+      previewSeekToSeconds(seekRequest.timeMs / 1000);
+      return;
+    }
+
     seekToSeconds(seekRequest.timeMs / 1000);
   });
 
@@ -208,12 +216,20 @@
     if (!videoEl) {
       playbackClock?.stop();
       playbackClock = null;
+      seekSession.clear();
+      clearSeekFallbackTimer();
       return;
     }
 
     const clock = createPreviewPlaybackClock({
       onFrame: ({ timeSeconds }) => {
-        if (manualSeekActive) {
+        const frameAction = seekSession.resolvePlaybackFrame(timeSeconds);
+        if (frameAction === 'complete') {
+          finishSeekSession(timeSeconds, false);
+          return;
+        }
+
+        if (frameAction === 'suppress') {
           return;
         }
 
@@ -230,19 +246,23 @@
       clock.stop();
       if (playbackClock === clock) {
         playbackClock = null;
+        seekSession.clear();
+        clearSeekFallbackTimer();
       }
     };
   });
 
   function handlePlaybackPause(): void {
     playbackClock?.stop();
-    commitPlaybackTime(getCurrentPlaybackTimeSeconds(), true);
+    if (!seekSession.isActive) {
+      commitPlaybackTime(getCurrentPlaybackTimeSeconds(), true);
+    }
     syncPlaybackState();
   }
 
   function handlePlaybackPlay(): void {
     syncPlaybackState();
-    if (videoEl) {
+    if (videoEl && !seekSession.isActive) {
       syncPlaybackFrame(getCurrentPlaybackTimeSeconds(), true);
       playbackClock?.start(videoEl);
     }
@@ -279,16 +299,66 @@
     onTimeChange?.(Math.round(safeTimeSeconds * 1000));
   }
 
-  function beginManualSeek(): void {
-    manualSeekActive = true;
+  function clearSeekFallbackTimer(): void {
+    if (!seekReleaseTimer) {
+      return;
+    }
+
+    clearTimeout(seekReleaseTimer);
+    seekReleaseTimer = undefined;
+  }
+
+  function beginScrubPreview(targetTimeSeconds: number): void {
+    seekSession.startScrub(targetTimeSeconds);
+    clearSeekFallbackTimer();
     playbackClock?.stop();
   }
 
-  function finishManualSeek(): void {
-    manualSeekActive = false;
-    if (videoEl && !videoEl.paused) {
+  function beginCommittedSeek(targetTimeSeconds: number): void {
+    // Native media seeking is async; keep optimistic UI pinned until a matching frame arrives.
+    seekSession.startCommit(targetTimeSeconds);
+    clearSeekFallbackTimer();
+    playbackClock?.stop();
+  }
+
+  function finishSeekSession(confirmedTimeSeconds = seekSession.pendingTargetTimeSeconds, restartClock = true): void {
+    const completedTargetTimeSeconds = seekSession.complete();
+    clearSeekFallbackTimer();
+
+    if (completedTargetTimeSeconds !== null && videoEl) {
+      syncPlaybackFrame(confirmedTimeSeconds ?? completedTargetTimeSeconds, true);
+    }
+
+    if (restartClock && videoEl && !videoEl.paused) {
       playbackClock?.start(videoEl);
     }
+  }
+
+  function scheduleSeekFallback(): void {
+    clearSeekFallbackTimer();
+    seekReleaseTimer = setTimeout(() => {
+      seekReleaseTimer = undefined;
+      if (!seekSession.isActive || seekSession.pendingTargetTimeSeconds === null) {
+        return;
+      }
+
+      if (seekSession.isScrubbing) {
+        return;
+      }
+
+      if (videoEl?.seeking) {
+        scheduleSeekFallback();
+        return;
+      }
+
+      if (videoEl && !videoEl.paused) {
+        playbackClock?.start(videoEl);
+        scheduleSeekFallback();
+        return;
+      }
+
+      finishSeekSession(seekSession.pendingTargetTimeSeconds);
+    }, 750);
   }
 
   function normalizePlaybackTimeSeconds(timeSeconds: number): number {
@@ -452,14 +522,14 @@
       return;
     }
 
-    beginManualSeek();
     const maxTimeSeconds = getVideoDurationSeconds();
     const requestedTimeSeconds = Number.isFinite(timeSeconds) ? timeSeconds : 0;
     const nextTimeSeconds = Math.min(Math.max(0, requestedTimeSeconds), maxTimeSeconds);
 
+    beginCommittedSeek(nextTimeSeconds);
     videoEl.currentTime = nextTimeSeconds;
     commitPlaybackTime(nextTimeSeconds);
-    finishManualSeek();
+    scheduleSeekFallback();
   }
 
   function previewSeekToSeconds(timeSeconds: number): void {
@@ -467,13 +537,35 @@
       return;
     }
 
-    beginManualSeek();
     const maxTimeSeconds = getVideoDurationSeconds();
     const requestedTimeSeconds = Number.isFinite(timeSeconds) ? timeSeconds : 0;
     const nextTimeSeconds = Math.min(Math.max(0, requestedTimeSeconds), maxTimeSeconds);
 
-    videoEl.currentTime = nextTimeSeconds;
-    syncPlaybackFrame(nextTimeSeconds);
+    beginScrubPreview(nextTimeSeconds);
+    syncPlaybackFrame(nextTimeSeconds, true);
+  }
+
+  function handleVideoSeeked(): void {
+    if (seekSession.isScrubbing) {
+      return;
+    }
+
+    if (!seekSession.isActive && seekSession.pendingTargetTimeSeconds === null) {
+      return;
+    }
+
+    if (!videoEl) {
+      return;
+    }
+
+    if (videoEl.paused) {
+      if (seekSession.targetMatches(videoEl.currentTime)) {
+        finishSeekSession(videoEl.currentTime);
+      }
+      return;
+    }
+
+    playbackClock?.start(videoEl);
   }
 
   function skipBySeconds(deltaSeconds: number): void {
@@ -814,6 +906,7 @@
             onpause={handlePlaybackPause}
             onvolumechange={syncPlaybackState}
             onloadedmetadata={handleLoadedMetadata}
+            onseeked={handleVideoSeeked}
             onresize={updateVideoBounds}
             onerror={handleVideoError}
           >

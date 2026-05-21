@@ -2,6 +2,7 @@
   import { Captions } from '@lucide/svelte';
 
   import { Button } from '$lib/components/ui/button';
+  import * as Item from '$lib/components/ui/item';
   import * as Popover from '$lib/components/ui/popover';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { cn } from '$lib/utils';
@@ -29,7 +30,7 @@
 
   <div class="min-w-0 flex-1">
     <div class="flex min-w-0 items-center gap-2">
-      <span class="shrink-0 text-xs font-medium text-muted-foreground">{primaryLabel}</span>
+      <span class="max-w-40 shrink truncate text-xs font-medium text-muted-foreground">{primaryLabel}</span>
       <span class="min-w-0 truncate text-sm font-medium text-foreground">{primaryText}</span>
     </div>
   </div>
@@ -58,17 +59,19 @@
         <ScrollArea class="max-h-72" scrollbarYClasses="w-2">
           <div class="flex flex-col gap-2 p-3">
             {#each summary.activeCues as cue (`${cue.subtitle.id}:${cue.subtitle.zoneId ?? ''}`)}
-              <div class="rounded-md border bg-background p-2">
-                <div class="flex min-w-0 items-center gap-2">
-                  <span class="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground">
+              <Item.Root variant="outline" size="xs" class="flex-nowrap items-start">
+                <Item.Content class="min-w-0">
+                  <Item.Title class="w-auto max-w-full truncate text-xs text-muted-foreground">
                     {roleLabelForCue(cue)}
-                  </span>
-                  <span class="shrink-0 text-xs font-medium text-foreground">
-                    {formatCueConfidence(cue.subtitle.confidence)}
-                  </span>
-                </div>
-                <p class="mt-1 whitespace-pre-wrap text-sm text-foreground">{cue.subtitle.text}</p>
-              </div>
+                  </Item.Title>
+                  <Item.Description class="line-clamp-none whitespace-pre-wrap break-words text-foreground">
+                    {cue.subtitle.text}
+                  </Item.Description>
+                </Item.Content>
+                <Item.Actions class="shrink-0 text-xs font-medium text-foreground">
+                  {formatCueConfidence(cue.subtitle.confidence)}
+                </Item.Actions>
+              </Item.Root>
             {/each}
           </div>
         </ScrollArea>

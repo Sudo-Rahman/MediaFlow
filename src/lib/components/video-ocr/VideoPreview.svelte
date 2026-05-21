@@ -10,6 +10,7 @@
   import RegionSelector from './RegionSelector.svelte';
   import LiveOcrHoverCard from './LiveOcrHoverCard.svelte';
   import { buildActiveCueSummary } from './preview-cues';
+  import { getPreviewLayerState } from './preview-layer-state';
 
   interface VideoSeekRequest {
     fileId: string;
@@ -127,6 +128,7 @@
 
   const currentTime = $derived(file ? currentTimesByFileId[file.id] ?? 0 : 0);
   const isEditingZone = $derived(editingZone !== null);
+  const previewLayers = $derived(getPreviewLayerState({ isDrawingZone, isEditingZone }));
   const selectedZoneId = $derived(editingZone?.zoneId ?? null);
   const activeRegion = $derived(isEditingZone ? editingRegion : drawingRegion);
 
@@ -174,8 +176,7 @@
   const hasLiveDetections = $derived(liveDetections.length > 0);
   const shouldShowZoneHint = $derived(
     !!file
-      && !isDrawingZone
-      && !isEditingZone
+      && previewLayers.showPassiveZones
       && visibleZoneEntries.length === 0
       && !isPointerInsidePreview
       && (!hasLiveDetections || !liveDetectionsHoverOpen),
@@ -563,8 +564,8 @@
       <PreviewToolbar
         title={previewTitle}
         description={previewDescription}
-        showCancel={isDrawingZone || isEditingZone}
-        showSave={isEditingZone}
+        showCancel={previewLayers.showToolbarActions}
+        showSave={previewLayers.showToolbarActions && isEditingZone}
         saveDisabled={!editingRegion}
         oncancel={cancelRegionSelection}
         onsave={saveZoneEditing}
@@ -597,7 +598,7 @@
           >
           </video>
 
-          {#if !isDrawingZone && !isEditingZone}
+          {#if previewLayers.showPassiveZones}
             {#each visibleZoneEntries as entry (`${entry.segmentId}:${entry.zoneId}`)}
               <div
                 class={zoneClass(entry.role)}
@@ -631,7 +632,7 @@
           </div>
 
           <!-- Region selector overlay -->
-          {#if isDrawingZone || isEditingZone}
+          {#if previewLayers.showRegionSelector}
             <RegionSelector
               region={activeRegion}
               {videoBounds}
@@ -648,7 +649,7 @@
             />
           {/if}
         </ContextMenu.Trigger>
-        {#if !isDrawingZone && !isEditingZone}
+        {#if previewLayers.showPassiveZones}
           <ContextMenu.Content class="w-64">
             {#if contextZone}
               {@const menuZone = contextZone}

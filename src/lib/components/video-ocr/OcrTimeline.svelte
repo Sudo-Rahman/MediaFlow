@@ -128,6 +128,17 @@
   const viewportWindowMs = $derived(visibleViewport.endTimeMs - visibleViewport.startTimeMs);
   const timelineTicks = $derived(createOcrTimelineTicks(visibleViewport));
   const timelineMinorTicks = $derived(createOcrTimelineMinorTicks(visibleViewport));
+  const hasOnScreenTextZones = $derived(
+    selection.segments.some((segment) =>
+      segment.zones.some((zone) => zone.role === 'on_screen_text'),
+    ),
+  );
+  const visibleRoles = $derived(
+    hasOnScreenTextZones
+      ? roles
+      : roles.filter((roleConfig) => roleConfig.role === 'main_subtitle'),
+  );
+  const roleGridClass = $derived(hasOnScreenTextZones ? 'grid-rows-2' : 'grid-rows-1');
 
   $effect(() => {
     if (lastDurationMs === safeDurationMs) {
@@ -542,8 +553,8 @@
       </div>
     </div>
 
-    <div class="grid min-h-0 flex-1 grid-rows-2 gap-2">
-      {#each roles as roleConfig (roleConfig.role)}
+    <div class={`grid min-h-0 flex-1 ${roleGridClass} gap-2`}>
+      {#each visibleRoles as roleConfig (roleConfig.role)}
         {@const blocks = assignOcrTimelineLanes(blocksForRole(roleConfig.role).filter(blockOverlapsViewport))}
         {@const laneCount = Math.max(1, ...blocks.map((block) => block.lane + 1))}
         <section class="flex min-h-0 flex-col gap-1">

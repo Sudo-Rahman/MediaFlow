@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { cubicOut } from 'svelte/easing';
+  import { fly } from 'svelte/transition';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { join } from '@tauri-apps/api/path';
@@ -12,6 +14,7 @@
   import { Alert, AlertTitle, AlertDescription } from '$lib/components';
   import * as HoverCard from '$lib/components/ui/hover-card';
   import * as Item from '$lib/components/ui/item';
+  import * as Tooltip from '$lib/components/ui/tooltip';
   import { AppUpdateDialog, HeaderUpdateButton, VersionedExportDialog } from '$lib/components/shared';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
   import AppHeader from '$lib/components/layout/app-header.svelte';
@@ -30,7 +33,7 @@
     type VersionedExportRequest,
   } from '$lib/services/versioned-export';
   import { LogsSheet } from '$lib/components/logs';
-  import { AlertCircle, ScrollText, Download, AudioLines, ScanText, Languages, FileOutput, FileVideo, GitMerge, PenLine } from '@lucide/svelte';
+  import { AlertCircle, ScrollText, Download, AudioLines, ScanText, Languages, FileOutput, FileVideo, GitMerge, PenLine, SlidersHorizontal } from '@lucide/svelte';
   import { OCR_OUTPUT_FORMATS } from '$lib/types';
   import type { ToolId } from '$lib/types/tool-import';
   import { formatFileSize } from '$lib/utils/format';
@@ -51,6 +54,8 @@
   let audioExportDialogOpen = $state(false);
   let ocrExportDialogOpen = $state(false);
   let updateDialogOpen = $state(false);
+  let videoOcrOptionsSheetOpen = $state(false);
+  let videoOcrOptionsCompact = $state(true);
 
   const AUDIO_EXPORT_FORMAT_OPTIONS: VersionedExportFormatOption[] = [
     { value: 'srt', label: 'SRT - SubRip' },
@@ -654,6 +659,7 @@
     }
     if (currentView !== 'video-ocr') {
       ocrExportDialogOpen = false;
+      videoOcrOptionsSheetOpen = false;
     }
   }
 </script>
@@ -738,6 +744,30 @@
         {/snippet}
 
         {#snippet trailing()}
+          {#if currentView === 'video-ocr' && videoOcrOptionsCompact}
+            <Tooltip.Root>
+              <div
+                class="mr-1 inline-flex"
+                transition:fly={{ x: 15, y: 0, duration: 200, opacity: 0, easing: cubicOut }}
+              >
+                <Tooltip.Trigger>
+                  {#snippet child({ props })}
+                    <Button
+                      {...props}
+                      variant="outline"
+                      size="icon-sm"
+                      aria-label="Open OCR options"
+                      onclick={() => videoOcrOptionsSheetOpen = true}
+                    >
+                      <SlidersHorizontal class="size-4" aria-hidden="true" />
+                    </Button>
+                  {/snippet}
+                </Tooltip.Trigger>
+              </div>
+              <Tooltip.Content side="top">OCR options</Tooltip.Content>
+            </Tooltip.Root>
+          {/if}
+
           {#if showGlobalExportButton}
             <Button
               variant="outline"
@@ -813,7 +843,13 @@
 
         <!-- Video OCR View - persists when switching views -->
         <div class="absolute inset-0" style="display: {currentView === 'video-ocr' ? 'block' : 'none'}">
-          <VideoOcrView bind:this={videoOcrViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
+          <VideoOcrView
+            bind:this={videoOcrViewRef}
+            bind:optionsSheetOpen={videoOcrOptionsSheetOpen}
+            bind:optionsPanelCompact={videoOcrOptionsCompact}
+            isActive={currentView === 'video-ocr'}
+            onNavigateToSettings={() => handleNavigate('settings')}
+          />
         </div>
 
         <!-- Translation View -->

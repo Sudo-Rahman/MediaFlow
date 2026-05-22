@@ -52,9 +52,20 @@
   const selectedZoneId = $derived(
     selectedZone && selectedZone.fileId === file?.id ? selectedZone.zoneId : null,
   );
-  const workspaceRowsClass = $derived(
-    file ? 'grid-rows-[minmax(0,1fr)_minmax(10rem,35vh)]' : 'grid-rows-[minmax(0,1fr)]',
+  const hasOnScreenTextZones = $derived(
+    file?.ocrSelection.segments.some((segment) =>
+      segment.zones.some((zone) => zone.role === 'on_screen_text'),
+    ) ?? false,
   );
+  const workspaceRowsClass = $derived.by(() => {
+    if (!file) {
+      return 'grid-rows-[minmax(0,1fr)]';
+    }
+
+    return hasOnScreenTextZones
+      ? 'grid-rows-[minmax(0,1fr)_minmax(10rem,35vh)]'
+      : 'grid-rows-[minmax(0,1fr)_minmax(7rem,22vh)]';
+  });
 
   function handleTimeChange(timeMs: number): void {
     playbackTime = { fileId: file?.id ?? null, timeMs };
@@ -148,7 +159,7 @@
   }
 </script>
 
-<div class={`flex-1 min-h-0 overflow-hidden p-4 grid gap-2 ${workspaceRowsClass}`}>
+<div class={`h-full min-w-0 min-h-0 overflow-hidden p-4 grid gap-2 ${workspaceRowsClass}`}>
   <VideoPreview
     file={file ?? undefined}
     {liveDetections}

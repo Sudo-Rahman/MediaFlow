@@ -11,6 +11,7 @@
   import { open } from '@tauri-apps/plugin-dialog';
   import { toast } from 'svelte-sonner';
 
+  import * as Sheet from '$lib/components/ui/sheet';
   import type {
     OcrConfig,
     OcrLiveDetectionEvent,
@@ -56,15 +57,25 @@
 
   const VIDEO_FORMATS = VIDEO_EXTENSIONS.map((ext) => ext.toUpperCase()).join(', ');
   const FILE_PREPARATION_CONCURRENCY = 1;
+  const OPTIONS_PANEL_BREAKPOINT_PX = 1280;
 
   interface VideoOcrViewProps {
     onNavigateToSettings?: () => void;
+    optionsSheetOpen?: boolean;
+    optionsPanelCompact?: boolean;
+    isActive?: boolean;
   }
 
   type RemoveTarget = { mode: 'single'; fileId: string } | { mode: 'all' } | null;
 
-  let { onNavigateToSettings }: VideoOcrViewProps = $props();
+  let {
+    onNavigateToSettings,
+    optionsSheetOpen = $bindable(false),
+    optionsPanelCompact = $bindable(true),
+    isActive = true,
+  }: VideoOcrViewProps = $props();
 
+  let viewContainerEl = $state<HTMLDivElement | null>(null);
   let resultDialogOpen = $state(false);
   let resultDialogFileId = $state<string | null>(null);
   let retryDialogOpen = $state(false);
@@ -75,6 +86,7 @@
   let persistedOcrVersionKeys = $state<Set<string>>(new Set());
   let unlistenOcrProgress: UnlistenFn | null = null;
   let unlistenOcrLiveDetection: UnlistenFn | null = null;
+  let pendingOptionsLayoutFrame: number | null = null;
   let isDestroyed = false;
 
   const aiCleanupControllers = new Map<string, AbortController>();
@@ -90,6 +102,12 @@
   );
   const selectedLiveDetectionCount = $derived(
     selectedFile ? videoOcrStore.getLiveDetectionCount(selectedFile.id) : 0,
+  );
+  const optionsPanelWidth = $derived(optionsPanelCompact ? '0rem' : '20rem');
+  const optionsPanelClass = $derived(
+    optionsPanelCompact
+      ? 'pointer-events-none translate-x-3 border-transparent opacity-0'
+      : 'translate-x-0 border-border opacity-100',
   );
   const resultDialogFile = $derived(
     resultDialogFileId
@@ -136,6 +154,45 @@
 
   function getFreshFile(fileId: string): OcrVideoFile | undefined {
     return videoOcrStore.videoFiles.find((file) => file.id === fileId);
+  }
+
+  function getObservedInlineSize(entry: ResizeObserverEntry): number {
+    const borderBoxSize = entry.borderBoxSize as
+      | ResizeObserverSize
+      | readonly ResizeObserverSize[]
+      | undefined;
+
+    if (Array.isArray(borderBoxSize)) {
+      return borderBoxSize[0]?.inlineSize ?? entry.contentRect.width;
+    }
+
+    if (borderBoxSize && 'inlineSize' in borderBoxSize) {
+      return borderBoxSize.inlineSize;
+    }
+
+    return entry.contentRect.width;
+  }
+
+  function reportOptionsPanelLayout(width: number): void {
+    const nextCompact = width < OPTIONS_PANEL_BREAKPOINT_PX;
+    if (optionsPanelCompact !== nextCompact) {
+      optionsPanelCompact = nextCompact;
+    }
+
+    if (!nextCompact && optionsSheetOpen) {
+      optionsSheetOpen = false;
+    }
+  }
+
+  function scheduleOptionsPanelLayoutReport(width: number): void {
+    if (pendingOptionsLayoutFrame !== null) {
+      cancelAnimationFrame(pendingOptionsLayoutFrame);
+    }
+
+    pendingOptionsLayoutFrame = requestAnimationFrame(() => {
+      pendingOptionsLayoutFrame = null;
+      reportOptionsPanelLayout(width);
+    });
   }
 
   function createOcrOperationId(fileId: string): string {
@@ -1076,57 +1133,116 @@
 
     toolImportStore.publishVersionedSource('ocr_versions', 'video-ocr', 'OCR', versionedItems);
   });
+
+  $effect(() => {
+    if (!isActive || !viewContainerEl) {
+      return;
+    }
+
+    const observedElement = viewContainerEl;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) {
+        return;
+      }
+
+      scheduleOptionsPanelLayoutReport(getObservedInlineSize(entry));
+    });
+
+    observer.observe(observedElement);
+    scheduleOptionsPanelLayoutReport(observedElement.getBoundingClientRect().width);
+
+    return () => {
+      observer.disconnect();
+      if (pendingOptionsLayoutFrame !== null) {
+        cancelAnimationFrame(pendingOptionsLayoutFrame);
+        pendingOptionsLayoutFrame = null;
+      }
+    };
+  });
+
 </script>
 
-<div class="h-full flex overflow-hidden">
-  <VideoOcrSidebar
-    files={videoOcrStore.videoFiles}
-    selectedFileId={videoOcrStore.selectedFileId}
-    supportedFormats={VIDEO_FORMATS}
+{#snippet ocrOptionsPanel()}
+  <OcrOptionsPanel
+    config={videoOcrStore.config}
+    {canStart}
+    {canRetryAll}
     isProcessing={videoOcrStore.isProcessing}
-    transcodingCount={fileSummary.transcodingCount}
-    onSelectFile={(fileId) => videoOcrStore.selectFile(fileId)}
-    onRequestRemoveFile={handleRequestRemoveFile}
-    onCancelFile={handleCancelFile}
-    onViewResult={handleViewResult}
-    onRetryFile={handleRetryFile}
-    onAddFiles={handleAddFiles}
-    onClearAll={handleRequestRemoveAll}
+    {startCount}
+    {retryCount}
+    {actionHint}
+    {primaryAction}
+    availableLanguages={videoOcrStore.availableLanguages}
+    onConfigChange={(updates) => videoOcrStore.updateConfig(updates)}
+    onStart={handleStartOcr}
+    onRetryAll={handleOpenRetryAllDialog}
+    onCancel={handleCancelAll}
+    {onNavigateToSettings}
   />
+{/snippet}
 
-  <VideoOcrWorkspace
-    file={selectedFile}
-    liveDetections={selectedLiveDetections}
-    liveDetectionCount={selectedLiveDetectionCount}
-    {dialogsOpen}
-    onAddSegmentFromRegion={handleAddSegmentFromRegion}
-    onUpdateZoneRegion={handleUpdateZoneRegion}
-    onSetZoneRole={handleSetZoneRole}
-    onRenameZone={handleRenameZone}
-    onDeleteZone={handleDeleteZone}
-    onTrimSegment={handleTrimSegment}
-    onPlaybackError={handlePreviewPlaybackError}
-  />
-
-  <div class="w-80 border-l overflow-auto flex flex-col p-4">
-    <OcrOptionsPanel
-      config={videoOcrStore.config}
-      {canStart}
-      {canRetryAll}
+<div bind:this={viewContainerEl} class="@container/video-ocr h-full overflow-hidden">
+  <div
+    class="grid h-full overflow-hidden grid-cols-[auto_minmax(0,1fr)_var(--ocr-options-width)] transition-[grid-template-columns] duration-220 ease-out"
+    style:--ocr-options-width={optionsPanelWidth}
+  >
+    <VideoOcrSidebar
+      files={videoOcrStore.videoFiles}
+      selectedFileId={videoOcrStore.selectedFileId}
+      supportedFormats={VIDEO_FORMATS}
       isProcessing={videoOcrStore.isProcessing}
-      {startCount}
-      {retryCount}
-      {actionHint}
-      {primaryAction}
-      availableLanguages={videoOcrStore.availableLanguages}
-      onConfigChange={(updates) => videoOcrStore.updateConfig(updates)}
-      onStart={handleStartOcr}
-      onRetryAll={handleOpenRetryAllDialog}
-      onCancel={handleCancelAll}
-      {onNavigateToSettings}
+      transcodingCount={fileSummary.transcodingCount}
+      onSelectFile={(fileId) => videoOcrStore.selectFile(fileId)}
+      onRequestRemoveFile={handleRequestRemoveFile}
+      onCancelFile={handleCancelFile}
+      onViewResult={handleViewResult}
+      onRetryFile={handleRetryFile}
+      onAddFiles={handleAddFiles}
+      onClearAll={handleRequestRemoveAll}
     />
+
+    <div class="h-full min-w-0 min-h-0 overflow-hidden">
+      <VideoOcrWorkspace
+        file={selectedFile}
+        liveDetections={selectedLiveDetections}
+        liveDetectionCount={selectedLiveDetectionCount}
+        {dialogsOpen}
+        onAddSegmentFromRegion={handleAddSegmentFromRegion}
+        onUpdateZoneRegion={handleUpdateZoneRegion}
+        onSetZoneRole={handleSetZoneRole}
+        onRenameZone={handleRenameZone}
+        onDeleteZone={handleDeleteZone}
+        onTrimSegment={handleTrimSegment}
+        onPlaybackError={handlePreviewPlaybackError}
+      />
+    </div>
+
+    <aside
+      class={`min-w-0 overflow-hidden border-l transition-[opacity,transform,border-color] duration-200 ease-out ${optionsPanelClass}`}
+      aria-hidden={optionsPanelCompact}
+      inert={optionsPanelCompact ? true : undefined}
+    >
+      <div class="h-full w-80 overflow-auto p-4">
+        {@render ocrOptionsPanel()}
+      </div>
+    </aside>
   </div>
 </div>
+
+<Sheet.Root open={optionsSheetOpen} onOpenChange={(open) => optionsSheetOpen = open}>
+  <Sheet.Content side="right" class="w-full sm:max-w-sm">
+    <Sheet.Header class="sr-only">
+      <Sheet.Title>OCR Options</Sheet.Title>
+      <Sheet.Description>
+        Adjust OCR language, timing, cleanup, and processing actions.
+      </Sheet.Description>
+    </Sheet.Header>
+    <div class="min-h-0 flex-1 overflow-auto p-4 pt-6">
+      {@render ocrOptionsPanel()}
+    </div>
+  </Sheet.Content>
+</Sheet.Root>
 
 <VideoOcrDialogs
   {resultDialogOpen}

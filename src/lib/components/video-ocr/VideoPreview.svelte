@@ -880,7 +880,7 @@
 <div class={cn("relative flex flex-col min-h-0 h-full", className)}>
   <!-- Video container - scales to available space -->
   {#if videoSrc}
-    <div bind:this={previewContainerEl} class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-background">
+    <div bind:this={previewContainerEl} class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-background">
       <PreviewToolbar
         title={previewTitle}
         description={previewDescription}
@@ -1009,7 +1009,7 @@
       />
     </div>
   {:else if file}
-    <div class="relative bg-black rounded-lg overflow-hidden flex-1 min-h-0">
+    <div class="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl bg-black">
       <div class="w-full h-full flex items-center justify-center">
         <div class="text-center text-muted-foreground">
           {#if file.status === 'transcoding'}
@@ -1027,7 +1027,7 @@
       </div>
     </div>
   {:else}
-    <div class="relative bg-black rounded-lg overflow-hidden flex-1 min-h-0">
+    <div class="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl bg-black">
       <div class="w-full h-full flex items-center justify-center">
         <p class="text-muted-foreground text-sm">Select a video to preview</p>
       </div>

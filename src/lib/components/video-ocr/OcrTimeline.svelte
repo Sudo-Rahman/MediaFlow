@@ -535,7 +535,7 @@
   }
 </script>
 
-<div bind:this={timelineRootEl} class="flex h-full min-h-0 flex-col border-t bg-muted/20 py-2">
+<div bind:this={timelineRootEl} class="flex h-full min-h-0 flex-col rounded-xl border bg-background/55 p-2.5">
   <div class="flex h-full min-h-0 flex-col gap-2">
     <div class="flex shrink-0 items-center justify-between gap-2 px-0.5">
       <h3 class="text-sm font-semibold leading-none text-foreground">OCR timeline</h3>
@@ -559,7 +559,7 @@
         {@const laneCount = Math.max(1, ...blocks.map((block) => block.lane + 1))}
         <section class="flex min-h-0 flex-col gap-1">
           <div class="shrink-0 text-[11px] font-semibold leading-none text-muted-foreground">{roleConfig.label}</div>
-          <ScrollArea class="min-h-0 flex-1 rounded-md border bg-background/45" scrollbarYClasses="hidden">
+          <ScrollArea class="min-h-0 flex-1 rounded-lg border bg-background/45" scrollbarYClasses="hidden">
             <div
               class="timeline-track relative min-w-full"
               data-timeline-track="true"
@@ -616,7 +616,7 @@
                       <div
                         data-timeline-control="true"
                         class={cn(
-                          'timeline-block absolute overflow-hidden rounded-md border px-2 text-left text-xs font-medium shadow-sm ring-2 ring-ring ring-offset-1 ring-offset-background',
+                          'timeline-block absolute overflow-hidden rounded-lg border px-2 text-left text-xs font-medium shadow-sm ring-2 ring-ring ring-offset-1 ring-offset-background',
                           roleConfig.blockClass,
                         )}
                         style={`--lane: ${block.lane}; left: ${left}%; width: ${width}%;`}
@@ -642,7 +642,7 @@
                         type="button"
                         data-timeline-control="true"
                         class={cn(
-                          'timeline-block absolute cursor-grab overflow-hidden rounded-md border px-2 text-left text-xs font-medium shadow-sm transition-colors hover:bg-accent active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                          'timeline-block absolute cursor-grab overflow-hidden rounded-lg border px-2 text-left text-xs font-medium shadow-sm transition-colors hover:bg-accent active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                           roleConfig.blockClass,
                           selectedSegmentId === block.segmentId && selectedZoneId === block.zoneId
                             && 'ring-2 ring-ring ring-offset-1 ring-offset-background',

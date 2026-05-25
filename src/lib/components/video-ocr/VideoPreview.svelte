@@ -1,3 +1,31 @@
+<script lang="ts" module>
+  export type PreviewKeyboardAction = 'toggle-playback' | 'skip-backward' | 'skip-forward';
+
+  export function getPreviewKeyboardAction(key: string, disabled: boolean): PreviewKeyboardAction | null {
+    if (disabled) {
+      return null;
+    }
+
+    if (key === ' ' || key === 'Spacebar' || key === 'Space') {
+      return 'toggle-playback';
+    }
+
+    if (key === 'ArrowLeft') {
+      return 'skip-backward';
+    }
+
+    if (key === 'ArrowRight') {
+      return 'skip-forward';
+    }
+
+    return null;
+  }
+
+  export function shouldTogglePreviewPlaybackFromClick(button: number, disabled: boolean): boolean {
+    return !disabled && button === 0;
+  }
+</script>
+
 <script lang="ts">
   import { tick } from 'svelte';
   import { convertFileSrc } from '@tauri-apps/api/core';
@@ -146,6 +174,7 @@
   const previewLayers = $derived(getPreviewLayerState({ isDrawingZone, isEditingZone }));
   const selectedZoneId = $derived(editingZone?.zoneId ?? null);
   const activeRegion = $derived(isEditingZone ? editingRegion : drawingRegion);
+  const previewInteractionsDisabled = $derived(isDrawingZone || isEditingZone);
   const previewChangeTimesMs = $derived.by(() => createPreviewChangeTimes(file));
 
   // Get video source URL
@@ -632,6 +661,39 @@
     seekToSeconds(getCurrentPlaybackTimeSeconds() + deltaSeconds);
   }
 
+  function handlePreviewSurfaceClick(event: MouseEvent): void {
+    if (!shouldTogglePreviewPlaybackFromClick(event.button, previewInteractionsDisabled)) {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('button, a, input, textarea, select, [role="button"], [data-ignore-preview-toggle]')) {
+      return;
+    }
+
+    containerEl?.focus({ preventScroll: true });
+    togglePlayback();
+  }
+
+  function handlePreviewSurfaceKeydown(event: KeyboardEvent): void {
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+
+    const action = getPreviewKeyboardAction(event.key, previewInteractionsDisabled);
+    if (!action) {
+      return;
+    }
+
+    event.preventDefault();
+    if (action === 'toggle-playback') {
+      togglePlayback();
+      return;
+    }
+
+    skipBySeconds(action === 'skip-backward' ? -10 : 10);
+  }
+
   function togglePlayback(): void {
     if (!videoEl) {
       return;
@@ -954,8 +1016,13 @@
       <ContextMenu.Root bind:open={contextMenuOpen}>
         <ContextMenu.Trigger
           bind:ref={containerEl}
-          class="relative min-h-0 flex-1 overflow-hidden bg-black"
+          class="relative min-h-0 flex-1 overflow-hidden bg-black outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0"
+          role="application"
+          tabindex={0}
+          aria-label="Video preview player"
+          onclick={handlePreviewSurfaceClick}
           oncontextmenu={handlePreviewContextMenu}
+          onkeydown={handlePreviewSurfaceKeydown}
         >
           <!-- svelte-ignore a11y_media_has_caption -->
           <video

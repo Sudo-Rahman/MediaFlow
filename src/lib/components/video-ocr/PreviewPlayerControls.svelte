@@ -7,6 +7,10 @@
     onpreviewseek?: (timeSeconds: number) => void;
     onseek?: (timeSeconds: number) => void;
   }
+
+  export function shouldRenderVolumePopoverInline(isFullscreen: boolean): boolean {
+    return isFullscreen;
+  }
 </script>
 
 <script lang="ts">
@@ -69,6 +73,9 @@
   const safeVolume = $derived(Number.isFinite(volume) ? Math.min(Math.max(0, volume), 1) : 0);
   const volumePercent = $derived(Math.round(safeVolume * 100));
   const controlsDisabled = $derived(disabled || safeDuration <= 0);
+  const volumePopoverPortalProps = $derived({
+    disabled: shouldRenderVolumePopoverInline(fullscreen),
+  });
 
   function formatTime(timeSeconds: number): string {
     const totalSeconds = Math.max(0, Math.floor(Number.isFinite(timeSeconds) ? timeSeconds : 0));
@@ -395,6 +402,7 @@
           align="center"
           sideOffset={6}
           collisionPadding={8}
+          portalProps={volumePopoverPortalProps}
           data-video-volume-control
           class="w-11 p-2"
           onpointerenter={openVolumePopover}

@@ -13,13 +13,30 @@ describe('preview seek session', () => {
   it('suppresses playback frames while a scrub preview is active', () => {
     const session = createPreviewSeekSession();
 
-    session.startScrub(42);
+    session.startScrub(42, true);
+    session.startScrub(48);
 
     expect(session.isActive).toBe(true);
     expect(session.isScrubbing).toBe(true);
-    expect(session.pendingTargetTimeSeconds).toBe(42);
-    expect(session.resolvePlaybackFrame(42)).toBe('suppress');
+    expect(session.pendingTargetTimeSeconds).toBe(48);
+    expect(session.shouldResumePlayback).toBe(true);
+    expect(session.resolvePlaybackFrame(48)).toBe('suppress');
     expect(session.resolvePlaybackFrame(12)).toBe('suppress');
+  });
+
+  it('preserves scrub resume intent when committing the final target', () => {
+    const session = createPreviewSeekSession();
+
+    session.startScrub(10, true);
+    session.startScrub(30);
+    session.startCommit(80);
+
+    expect(session.isActive).toBe(true);
+    expect(session.isScrubbing).toBe(false);
+    expect(session.pendingTargetTimeSeconds).toBe(80);
+    expect(session.shouldResumePlayback).toBe(true);
+    expect(session.resolvePlaybackFrame(30)).toBe('suppress');
+    expect(session.resolvePlaybackFrame(79.3)).toBe('complete');
   });
 
   it('completes a committed seek only when playback reaches the latest target', () => {
@@ -39,10 +56,11 @@ describe('preview seek session', () => {
   it('returns the pending target when completed', () => {
     const session = createPreviewSeekSession();
 
-    session.startCommit(42);
+    session.startCommit(42, true);
 
-    expect(session.complete()).toBe(42);
+    expect(session.complete()).toEqual({ targetTimeSeconds: 42, shouldResumePlayback: true });
     expect(session.isActive).toBe(false);
+    expect(session.shouldResumePlayback).toBe(false);
     expect(session.pendingTargetTimeSeconds).toBeNull();
     expect(session.resolvePlaybackFrame(42.1)).toBe('publish');
   });

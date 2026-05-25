@@ -1,12 +1,18 @@
 export type PreviewSeekFrameAction = 'publish' | 'suppress' | 'complete';
 
+export interface PreviewSeekCompletion {
+  targetTimeSeconds: number | null;
+  shouldResumePlayback: boolean;
+}
+
 export interface PreviewSeekSession {
   readonly isActive: boolean;
   readonly isScrubbing: boolean;
   readonly pendingTargetTimeSeconds: number | null;
-  startScrub: (targetTimeSeconds: number) => void;
-  startCommit: (targetTimeSeconds: number) => void;
-  complete: () => number | null;
+  readonly shouldResumePlayback: boolean;
+  startScrub: (targetTimeSeconds: number, shouldResumePlayback?: boolean) => void;
+  startCommit: (targetTimeSeconds: number, shouldResumePlayback?: boolean) => void;
+  complete: () => PreviewSeekCompletion;
   clear: () => void;
   resolvePlaybackFrame: (timeSeconds: number) => PreviewSeekFrameAction;
   targetMatches: (timeSeconds: number) => boolean;
@@ -23,10 +29,17 @@ function normalizeTimeSeconds(timeSeconds: number): number {
 export function createPreviewSeekSession(): PreviewSeekSession {
   let mode: PreviewSeekMode = 'idle';
   let pendingTargetTimeSeconds: number | null = null;
+  let shouldResumePlayback = false;
 
-  function start(modeToStart: Exclude<PreviewSeekMode, 'idle'>, targetTimeSeconds: number): void {
+  function start(
+    modeToStart: Exclude<PreviewSeekMode, 'idle'>,
+    targetTimeSeconds: number,
+    resumePlaybackAfterSeek: boolean,
+  ): void {
+    const preserveResumePlayback = mode !== 'idle' && shouldResumePlayback;
     mode = modeToStart;
     pendingTargetTimeSeconds = normalizeTimeSeconds(targetTimeSeconds);
+    shouldResumePlayback = preserveResumePlayback || resumePlaybackAfterSeek;
   }
 
   function targetMatches(timeSeconds: number): boolean {
@@ -47,24 +60,31 @@ export function createPreviewSeekSession(): PreviewSeekSession {
       return pendingTargetTimeSeconds;
     },
 
-    startScrub(targetTimeSeconds: number): void {
-      start('scrubbing', targetTimeSeconds);
+    get shouldResumePlayback() {
+      return shouldResumePlayback;
     },
 
-    startCommit(targetTimeSeconds: number): void {
-      start('committing', targetTimeSeconds);
+    startScrub(targetTimeSeconds: number, resumePlaybackAfterSeek = false): void {
+      start('scrubbing', targetTimeSeconds, resumePlaybackAfterSeek);
     },
 
-    complete(): number | null {
+    startCommit(targetTimeSeconds: number, resumePlaybackAfterSeek = false): void {
+      start('committing', targetTimeSeconds, resumePlaybackAfterSeek);
+    },
+
+    complete(): PreviewSeekCompletion {
       const targetTimeSeconds = pendingTargetTimeSeconds;
+      const resumePlaybackAfterSeek = shouldResumePlayback;
       mode = 'idle';
       pendingTargetTimeSeconds = null;
-      return targetTimeSeconds;
+      shouldResumePlayback = false;
+      return { targetTimeSeconds, shouldResumePlayback: resumePlaybackAfterSeek };
     },
 
     clear(): void {
       mode = 'idle';
       pendingTargetTimeSeconds = null;
+      shouldResumePlayback = false;
     },
 
     resolvePlaybackFrame(timeSeconds: number): PreviewSeekFrameAction {

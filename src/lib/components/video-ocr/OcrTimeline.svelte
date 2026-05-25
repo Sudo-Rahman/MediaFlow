@@ -334,7 +334,9 @@
   }
 
   function previewSeek(timeMs: number): void {
-    (onPreviewSeek ?? onSeek)?.(timeMs);
+    const safeTimeMs = clampPlaybackTimeMs(timeMs);
+    syncTimelinePlaybackDom(safeTimeMs);
+    (onPreviewSeek ?? onSeek)?.(safeTimeMs);
   }
 
   function handleTimelineWheel(event: WheelEvent): void {
@@ -490,8 +492,8 @@
     stopDrag(event);
   }
 
-  function cancelDrag(): void {
-    stopDrag();
+  function cancelDrag(event: PointerEvent): void {
+    stopDrag(event);
   }
 
   function stopDrag(event?: PointerEvent): void {

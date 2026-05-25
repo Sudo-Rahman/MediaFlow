@@ -89,6 +89,8 @@
   let previewStateKeysByFileId: Record<string, string> = {};
   let playbackClock: PreviewPlaybackClock | null = null;
   let seekReleaseTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingPreviewSeekFrame: number | null = null;
+  let pendingPreviewSeekTimeSeconds: number | null = null;
   const seekSession = createPreviewSeekSession();
   
   // Video bounds within container (for letterboxed videos)
@@ -218,6 +220,7 @@
       playbackClock = null;
       seekSession.clear();
       clearSeekFallbackTimer();
+      clearPendingPreviewSeekFrame();
       return;
     }
 
@@ -248,6 +251,7 @@
         playbackClock = null;
         seekSession.clear();
         clearSeekFallbackTimer();
+        clearPendingPreviewSeekFrame();
       }
     };
   });
@@ -308,30 +312,85 @@
     seekReleaseTimer = undefined;
   }
 
+  function clearPendingPreviewSeekFrame(): void {
+    if (pendingPreviewSeekFrame !== null) {
+      cancelAnimationFrame(pendingPreviewSeekFrame);
+    }
+
+    pendingPreviewSeekFrame = null;
+    pendingPreviewSeekTimeSeconds = null;
+  }
+
+  function schedulePreviewFrameSeek(targetTimeSeconds: number): void {
+    pendingPreviewSeekTimeSeconds = targetTimeSeconds;
+    if (pendingPreviewSeekFrame !== null) {
+      return;
+    }
+
+    pendingPreviewSeekFrame = requestAnimationFrame(() => {
+      const nextTimeSeconds = pendingPreviewSeekTimeSeconds;
+      pendingPreviewSeekFrame = null;
+      pendingPreviewSeekTimeSeconds = null;
+
+      if (!videoEl || !seekSession.isScrubbing || nextTimeSeconds === null) {
+        return;
+      }
+
+      videoEl.currentTime = nextTimeSeconds;
+    });
+  }
+
   function beginScrubPreview(targetTimeSeconds: number): void {
-    seekSession.startScrub(targetTimeSeconds);
+    seekSession.startScrub(targetTimeSeconds, videoEl ? !videoEl.paused : false);
     clearSeekFallbackTimer();
     playbackClock?.stop();
+
+    if (videoEl && !videoEl.paused) {
+      videoEl.pause();
+      syncPlaybackState();
+    }
   }
 
   function beginCommittedSeek(targetTimeSeconds: number): void {
     // Native media seeking is async; keep optimistic UI pinned until a matching frame arrives.
     seekSession.startCommit(targetTimeSeconds);
     clearSeekFallbackTimer();
+    clearPendingPreviewSeekFrame();
     playbackClock?.stop();
   }
 
   function finishSeekSession(confirmedTimeSeconds = seekSession.pendingTargetTimeSeconds, restartClock = true): void {
-    const completedTargetTimeSeconds = seekSession.complete();
+    const completion = seekSession.complete();
     clearSeekFallbackTimer();
+    clearPendingPreviewSeekFrame();
 
-    if (completedTargetTimeSeconds !== null && videoEl) {
-      syncPlaybackFrame(confirmedTimeSeconds ?? completedTargetTimeSeconds, true);
+    if (completion.targetTimeSeconds !== null && videoEl) {
+      syncPlaybackFrame(confirmedTimeSeconds ?? completion.targetTimeSeconds, true);
+    }
+
+    if (completion.shouldResumePlayback && videoEl) {
+      resumePlaybackAfterSeek();
+      return;
     }
 
     if (restartClock && videoEl && !videoEl.paused) {
       playbackClock?.start(videoEl);
     }
+  }
+
+  function resumePlaybackAfterSeek(): void {
+    if (!videoEl) {
+      return;
+    }
+
+    void videoEl.play()
+      .then(() => {
+        syncPlaybackState();
+        if (videoEl) {
+          playbackClock?.start(videoEl);
+        }
+      })
+      .catch(syncPlaybackState);
   }
 
   function scheduleSeekFallback(): void {
@@ -543,6 +602,7 @@
 
     beginScrubPreview(nextTimeSeconds);
     syncPlaybackFrame(nextTimeSeconds, true);
+    schedulePreviewFrameSeek(nextTimeSeconds);
   }
 
   function handleVideoSeeked(): void {

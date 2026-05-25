@@ -39,7 +39,7 @@
   import PreviewToolbar from './PreviewToolbar.svelte';
   import RegionSelector from './RegionSelector.svelte';
   import LiveOcrHoverCard from './LiveOcrHoverCard.svelte';
-  import { buildActiveCueSummary } from './preview-cues';
+  import type { ActiveCueSummary as ActiveCueSummaryModel } from './preview-cues';
   import type { PreviewPlaybackClock } from './preview-playback-clock';
   import { createPreviewPlaybackClock } from './preview-playback-clock';
   import { getPreviewLayerState } from './preview-layer-state';
@@ -59,8 +59,11 @@
     showSubtitles?: boolean;
     suspendPlayback?: boolean;
     seekRequest?: VideoSeekRequest | null;
+    activeCueSummary: ActiveCueSummaryModel;
+    paletteOpen?: boolean;
     onTimeChange?: (timeMs: number) => void;
     onPlaybackFrame?: (timeMs: number) => void;
+    onOpenCuePalette?: () => void;
     onAddSegmentFromRegion?: (region: OcrRegion, startTimeMs: number, endTimeMs: number) => void | Promise<void>;
     onUpdateZoneRegion?: (segmentId: string, zoneId: string, region: OcrRegion) => void | Promise<void>;
     onSetZoneRole?: (segmentId: string, zoneId: string, role: OcrZoneRole) => void | Promise<void>;
@@ -84,8 +87,11 @@
     showSubtitles = true,
     suspendPlayback = false,
     seekRequest = null,
+    activeCueSummary,
+    paletteOpen = false,
     onTimeChange,
     onPlaybackFrame,
+    onOpenCuePalette,
     onAddSegmentFromRegion,
     onUpdateZoneRegion,
     onSetZoneRole,
@@ -172,7 +178,6 @@
   const currentTime = $derived(file ? currentTimesByFileId[file.id] ?? 0 : 0);
   const isEditingZone = $derived(editingZone !== null);
   const previewLayers = $derived(getPreviewLayerState({ isDrawingZone, isEditingZone }));
-  const selectedZoneId = $derived(editingZone?.zoneId ?? null);
   const activeRegion = $derived(isEditingZone ? editingRegion : drawingRegion);
   const previewInteractionsDisabled = $derived(isDrawingZone || isEditingZone);
   const previewChangeTimesMs = $derived.by(() => createPreviewChangeTimes(file));
@@ -181,12 +186,6 @@
   const videoSrc = $derived(
     file?.previewPath ? convertFileSrc(file.previewPath) : undefined
   );
-  const activeCueSummary = $derived.by(() => buildActiveCueSummary({
-    subtitles: getLatestSubtitles(),
-    selection: file?.ocrSelection ?? { segments: [] },
-    timeMs: Math.round(currentTime * 1000),
-    selectedZoneId,
-  }));
   const previewTitle = $derived(
     isEditingZone ? 'Editing OCR zone' : isDrawingZone ? 'Drawing OCR zone' : 'Video preview',
   );
@@ -467,10 +466,6 @@
     }
 
     return currentTime;
-  }
-
-  function getLatestSubtitles() {
-    return file?.ocrVersions.at(-1)?.finalSubtitles ?? [];
   }
 
   function getVisibleZoneEntriesAtTime(timeMs: number): VisibleZoneEntry[] {
@@ -1115,7 +1110,11 @@
       </ContextMenu.Root>
 
       {#if showSubtitles}
-        <ActiveCueSummary summary={activeCueSummary} />
+        <ActiveCueSummary
+          summary={activeCueSummary}
+          {paletteOpen}
+          onOpenPalette={onOpenCuePalette}
+        />
       {/if}
       <PreviewPlayerControls
         bind:this={playerControlsRef}

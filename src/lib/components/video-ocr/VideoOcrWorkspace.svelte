@@ -2,8 +2,15 @@
   import type { OcrRegion, OcrVideoFile, OcrZoneFrame, OcrZoneRole } from '$lib/types';
   import type { OcrTimelineApi } from './OcrTimeline.svelte';
 
+  import FloatingOcrCuePalette from './FloatingOcrCuePalette.svelte';
   import OcrTimeline from './OcrTimeline.svelte';
   import VideoPreview from './VideoPreview.svelte';
+  import {
+    getTopRightFloatingPalettePosition,
+    getViewportFloatingPaletteRect,
+    type FloatingPalettePosition,
+  } from './floating-palette-position';
+  import { buildActiveCueSummary } from './preview-cues';
 
   interface VideoOcrWorkspaceProps {
     file: OcrVideoFile | null;
@@ -43,6 +50,10 @@
   let seekRequestId = $state(0);
   let selectedZone = $state<{ fileId: string; segmentId: string; zoneId: string } | null>(null);
   let timelineRef = $state<OcrTimelineApi | null>(null);
+  let workspaceEl = $state<HTMLDivElement | null>(null);
+  let paletteOpen = $state(false);
+  let palettePosition = $state<FloatingPalettePosition>({ x: 16, y: 16 });
+  let palettePositionInitialized = $state(false);
 
   const durationMs = $derived(Math.round((file?.duration ?? 0) * 1000));
   const currentTimeMs = $derived(playbackTime.fileId === file?.id ? playbackTime.timeMs : 0);
@@ -66,6 +77,12 @@
       ? 'grid-rows-[minmax(0,1fr)_minmax(10rem,35vh)]'
       : 'grid-rows-[minmax(0,1fr)_minmax(7rem,22vh)]';
   });
+  const activeCueSummary = $derived.by(() => buildActiveCueSummary({
+    subtitles: file?.ocrVersions.at(-1)?.finalSubtitles ?? [],
+    selection: file?.ocrSelection ?? { segments: [] },
+    timeMs: currentTimeMs,
+    selectedZoneId,
+  }));
 
   function handleTimeChange(timeMs: number): void {
     playbackTime = { fileId: file?.id ?? null, timeMs };
@@ -73,6 +90,7 @@
   }
 
   function handlePlaybackFrame(timeMs: number): void {
+    playbackTime = { fileId: file?.id ?? null, timeMs };
     timelineRef?.syncPlaybackTime(timeMs);
   }
 
@@ -157,9 +175,36 @@
 
     void onTrimSegment(file.id, segmentId, startTimeMs, endTimeMs);
   }
+
+  function getDefaultPalettePosition(): FloatingPalettePosition {
+    const workspaceRect = workspaceEl?.getBoundingClientRect() ?? { right: 400, top: 16 };
+
+    return getTopRightFloatingPalettePosition(
+      workspaceRect,
+      getViewportFloatingPaletteRect(),
+      { width: 384, height: 280 },
+      16,
+    );
+  }
+
+  function openCuePalette(): void {
+    if (!palettePositionInitialized) {
+      palettePosition = getDefaultPalettePosition();
+      palettePositionInitialized = true;
+    }
+
+    paletteOpen = true;
+  }
+
+  function closeCuePalette(): void {
+    paletteOpen = false;
+  }
 </script>
 
-<div class={`h-full min-w-0 min-h-0 overflow-hidden p-4 grid gap-2 ${workspaceRowsClass}`}>
+<div
+  bind:this={workspaceEl}
+  class={`relative h-full min-w-0 min-h-0 overflow-hidden p-4 grid gap-2 ${workspaceRowsClass}`}
+>
   <VideoPreview
     file={file ?? undefined}
     {liveDetections}
@@ -167,8 +212,11 @@
     showSubtitles={!dialogsOpen}
     suspendPlayback={dialogsOpen}
     {seekRequest}
+    {activeCueSummary}
+    {paletteOpen}
     onTimeChange={handleTimeChange}
     onPlaybackFrame={handlePlaybackFrame}
+    onOpenCuePalette={openCuePalette}
     onAddSegmentFromRegion={handleAddSegmentFromRegion}
     onUpdateZoneRegion={handleUpdateZoneRegion}
     onSetZoneRole={handleSetZoneRole}
@@ -192,6 +240,17 @@
       onRenameZone={handleRenameZone}
       onDeleteZone={handleDeleteZone}
       onTrimSegment={handleTrimSegment}
+    />
+  {/if}
+
+  {#if file && paletteOpen}
+    <FloatingOcrCuePalette
+      summary={activeCueSummary}
+      position={palettePosition}
+      onPositionChange={(position) => {
+        palettePosition = position;
+      }}
+      onClose={closeCuePalette}
     />
   {/if}
 </div>

@@ -2,19 +2,23 @@
   import { Captions } from '@lucide/svelte';
 
   import { Button } from '$lib/components/ui/button';
-  import * as Item from '$lib/components/ui/item';
-  import * as Popover from '$lib/components/ui/popover';
-  import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { cn } from '$lib/utils';
   import type { ActiveCueSummary } from './preview-cues';
-  import { formatCueConfidence, roleLabelForCue } from './preview-cues';
+  import { roleLabelForCue } from './preview-cues';
 
   interface ActiveCueSummaryProps {
     summary: ActiveCueSummary;
+    paletteOpen?: boolean;
+    onOpenPalette?: () => void;
     class?: string;
   }
 
-  let { summary, class: className = '' }: ActiveCueSummaryProps = $props();
+  let {
+    summary,
+    paletteOpen = false,
+    onOpenPalette,
+    class: className = '',
+  }: ActiveCueSummaryProps = $props();
 
   const primaryLabel = $derived(
     summary.primaryCue ? roleLabelForCue(summary.primaryCue) : 'No active OCR cue',
@@ -22,7 +26,13 @@
   const primaryText = $derived(
     summary.primaryCue?.subtitle.text.trim() || 'No OCR text at current time',
   );
-  const hasMultipleCues = $derived(summary.activeCues.length > 1);
+  const activeCueCount = $derived(summary.activeCues.length);
+  const showPaletteButton = $derived(activeCueCount > 0 || paletteOpen);
+  const paletteButtonLabel = $derived(
+    paletteOpen
+      ? 'Active OCR cues palette is open'
+      : `Open ${activeCueCount} active OCR ${activeCueCount === 1 ? 'cue' : 'cues'}`,
+  );
 </script>
 
 <div class={cn('flex h-10 items-center gap-3 border-t bg-muted/35 px-3 py-1.5', className)}>
@@ -37,48 +47,18 @@
     </div>
   </div>
 
-  {#if hasMultipleCues}
-    <Popover.Root>
-      <Popover.Trigger>
-        {#snippet child({ props })}
-          <Button
-            {...props}
-            type="button"
-            variant="secondary"
-            size="sm"
-            class="h-7 shrink-0 px-2 text-xs"
-            aria-label={`Show ${summary.activeCues.length} active OCR cues`}
-          >
-            <span aria-hidden="true">{summary.activeCues.length}</span>
-            <span class="hidden xl:inline">active cues</span>
-          </Button>
-        {/snippet}
-      </Popover.Trigger>
-      <Popover.Content align="end" side="top" sideOffset={8} class="w-96 max-w-[calc(100vw-2rem)] p-0">
-        <Popover.Header class="border-b px-3 py-2">
-          <Popover.Title>Active OCR Cues</Popover.Title>
-          <Popover.Description>OCR text active at the current playback time.</Popover.Description>
-        </Popover.Header>
-        <ScrollArea class="max-h-72" scrollbarYClasses="w-2">
-          <div class="flex flex-col gap-2 p-3">
-            {#each summary.activeCues as cue (`${cue.subtitle.id}:${cue.subtitle.zoneId ?? ''}`)}
-              <Item.Root variant="outline" size="xs" class="flex-nowrap items-start">
-                <Item.Content class="min-w-0">
-                  <Item.Title class="w-auto max-w-full truncate text-xs text-muted-foreground">
-                    {roleLabelForCue(cue)}
-                  </Item.Title>
-                  <Item.Description class="line-clamp-none whitespace-pre-wrap break-words text-foreground">
-                    {cue.subtitle.text}
-                  </Item.Description>
-                </Item.Content>
-                <Item.Actions class="shrink-0 text-xs font-medium text-foreground">
-                  {formatCueConfidence(cue.subtitle.confidence)}
-                </Item.Actions>
-              </Item.Root>
-            {/each}
-          </div>
-        </ScrollArea>
-      </Popover.Content>
-    </Popover.Root>
+  {#if showPaletteButton}
+    <Button
+      type="button"
+      variant="secondary"
+      size="sm"
+      class="h-7 shrink-0 px-2 text-xs"
+      aria-label={paletteButtonLabel}
+      aria-pressed={paletteOpen}
+      onclick={onOpenPalette}
+    >
+      <span aria-hidden="true">{activeCueCount}</span>
+      <span class="hidden xl:inline">active cues</span>
+    </Button>
   {/if}
 </div>

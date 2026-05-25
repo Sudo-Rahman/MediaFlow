@@ -24,6 +24,24 @@
   export function shouldTogglePreviewPlaybackFromClick(button: number, disabled: boolean): boolean {
     return !disabled && button === 0;
   }
+
+  export const PREVIEW_SEEK_THROTTLE_MS = 120;
+
+  export function shouldApplySeekToken(candidateToken: number | null, activeToken: number | null): boolean {
+    return candidateToken !== null && candidateToken === activeToken;
+  }
+
+  export function getPreviewSeekThrottleDelay(
+    nowMs: number,
+    lastSeekWriteMs: number,
+    throttleMs = PREVIEW_SEEK_THROTTLE_MS,
+  ): number {
+    if (!Number.isFinite(lastSeekWriteMs)) {
+      return 0;
+    }
+
+    return Math.max(0, throttleMs - Math.max(0, nowMs - lastSeekWriteMs));
+  }
 </script>
 
 <script lang="ts">
@@ -49,7 +67,7 @@
     fileId: string;
     timeMs: number;
     requestId: number;
-    mode?: 'preview' | 'commit';
+    mode?: 'preview' | 'commit' | 'cancel';
   }
 
   interface VideoPreviewProps {
@@ -104,7 +122,8 @@
   let previewContainerEl = $state<HTMLDivElement | null>(null);
   let containerEl = $state<HTMLElement | null>(null);
   let playerControlsRef = $state<PreviewPlayerControlsApi | null>(null);
-  let currentTimesByFileId = $state.raw<Record<string, number>>({});
+  let displayTimesByFileId = $state.raw<Record<string, number>>({});
+  let previewTimesByFileId = $state.raw<Record<string, number>>({});
   let isDrawingZone = $state(false);
   let isPaused = $state(true);
   let isMuted = $state(false);
@@ -123,8 +142,13 @@
   let previewStateKeysByFileId: Record<string, string> = {};
   let playbackClock: PreviewPlaybackClock | null = null;
   let seekReleaseTimer: ReturnType<typeof setTimeout> | undefined;
-  let pendingPreviewSeekFrame: number | null = null;
+  let pendingPreviewSeekTimer: ReturnType<typeof setTimeout> | undefined;
   let pendingPreviewSeekTimeSeconds: number | null = null;
+  let pendingPreviewSeekToken: number | null = null;
+  let lastPreviewSeekWriteAtMs = Number.NEGATIVE_INFINITY;
+  let nextSeekToken = 0;
+  let activeSeekToken: number | null = null;
+  let scrubRestoreTimeSeconds: number | null = null;
   const seekSession = createPreviewSeekSession();
   
   // Video bounds within container (for letterboxed videos)
@@ -175,7 +199,8 @@
     });
   });
 
-  const currentTime = $derived(file ? currentTimesByFileId[file.id] ?? 0 : 0);
+  const currentTime = $derived(file ? displayTimesByFileId[file.id] ?? 0 : 0);
+  const previewTime = $derived(file ? previewTimesByFileId[file.id] ?? currentTime : currentTime);
   const isEditingZone = $derived(editingZone !== null);
   const previewLayers = $derived(getPreviewLayerState({ isDrawingZone, isEditingZone }));
   const activeRegion = $derived(isEditingZone ? editingRegion : drawingRegion);
@@ -201,7 +226,7 @@
       return [];
     }
 
-    return getVisibleZoneEntriesAtTime(Math.round(currentTime * 1000));
+    return getVisibleZoneEntriesAtTime(Math.round(previewTime * 1000));
   });
   const hasLiveDetections = $derived(liveDetections.length > 0);
 
@@ -215,6 +240,11 @@
     }
 
     lastAppliedSeekRequestId = seekRequest.requestId;
+    if (seekRequest.mode === 'cancel') {
+      cancelActiveSeek();
+      return;
+    }
+
     if (seekRequest.mode === 'preview') {
       previewSeekToSeconds(seekRequest.timeMs / 1000);
       return;
@@ -248,7 +278,9 @@
       playbackClock = null;
       seekSession.clear();
       clearSeekFallbackTimer();
-      clearPendingPreviewSeekFrame();
+      clearPendingPreviewSeek();
+      activeSeekToken = null;
+      scrubRestoreTimeSeconds = null;
       return;
     }
 
@@ -279,7 +311,9 @@
         playbackClock = null;
         seekSession.clear();
         clearSeekFallbackTimer();
-        clearPendingPreviewSeekFrame();
+        clearPendingPreviewSeek();
+        activeSeekToken = null;
+        scrubRestoreTimeSeconds = null;
       }
     };
   });
@@ -300,7 +334,13 @@
     }
   }
 
-  function updateCurrentTimeState(nextTimeSeconds: number, force = false): void {
+  function updateDisplayTimeState(nextTimeSeconds: number): void {
+    if (file) {
+      displayTimesByFileId = { ...displayTimesByFileId, [file.id]: nextTimeSeconds };
+    }
+  }
+
+  function updatePreviewTimeState(nextTimeSeconds: number, force = false): void {
     if (file) {
       const nextKey = getPreviewStateKey(Math.round(nextTimeSeconds * 1000));
       if (!force && previewStateKeysByFileId[file.id] === nextKey) {
@@ -308,21 +348,27 @@
       }
 
       previewStateKeysByFileId[file.id] = nextKey;
-      currentTimesByFileId = { ...currentTimesByFileId, [file.id]: nextTimeSeconds };
+      previewTimesByFileId = { ...previewTimesByFileId, [file.id]: nextTimeSeconds };
     }
   }
 
-  function syncPlaybackFrame(nextTimeSeconds: number, forcePreviewState = false): void {
+  function syncPlaybackFrame(
+    nextTimeSeconds: number,
+    forcePreviewState = false,
+    options: { confirmed?: boolean } = {},
+  ): void {
     const safeTimeSeconds = normalizePlaybackTimeSeconds(nextTimeSeconds);
     const nextTimeMs = Math.round(safeTimeSeconds * 1000);
+    const confirmed = options.confirmed ?? true;
 
-    if (file) {
+    if (file && confirmed) {
       latestPlaybackTimesByFileId[file.id] = safeTimeSeconds;
     }
 
+    updateDisplayTimeState(safeTimeSeconds);
     playerControlsRef?.syncPlaybackTime(safeTimeSeconds);
     onPlaybackFrame?.(nextTimeMs);
-    updateCurrentTimeState(safeTimeSeconds, forcePreviewState);
+    updatePreviewTimeState(safeTimeSeconds, forcePreviewState);
   }
 
   function commitPlaybackTime(nextTimeSeconds: number, forcePreviewState = true): void {
@@ -340,35 +386,69 @@
     seekReleaseTimer = undefined;
   }
 
-  function clearPendingPreviewSeekFrame(): void {
-    if (pendingPreviewSeekFrame !== null) {
-      cancelAnimationFrame(pendingPreviewSeekFrame);
-    }
-
-    pendingPreviewSeekFrame = null;
-    pendingPreviewSeekTimeSeconds = null;
+  function createSeekToken(): number {
+    nextSeekToken += 1;
+    activeSeekToken = nextSeekToken;
+    return nextSeekToken;
   }
 
-  function schedulePreviewFrameSeek(targetTimeSeconds: number): void {
+  function clearActiveSeekToken(token: number | null): void {
+    if (shouldApplySeekToken(token, activeSeekToken)) {
+      activeSeekToken = null;
+    }
+  }
+
+  function clearPendingPreviewSeek(): void {
+    if (pendingPreviewSeekTimer) {
+      clearTimeout(pendingPreviewSeekTimer);
+    }
+
+    pendingPreviewSeekTimer = undefined;
+    pendingPreviewSeekTimeSeconds = null;
+    pendingPreviewSeekToken = null;
+  }
+
+  function schedulePreviewFrameSeek(targetTimeSeconds: number, token: number): void {
     pendingPreviewSeekTimeSeconds = targetTimeSeconds;
-    if (pendingPreviewSeekFrame !== null) {
+    pendingPreviewSeekToken = token;
+    if (pendingPreviewSeekTimer) {
       return;
     }
 
-    pendingPreviewSeekFrame = requestAnimationFrame(() => {
-      const nextTimeSeconds = pendingPreviewSeekTimeSeconds;
-      pendingPreviewSeekFrame = null;
-      pendingPreviewSeekTimeSeconds = null;
-
-      if (!videoEl || !seekSession.isScrubbing || nextTimeSeconds === null) {
-        return;
-      }
-
-      videoEl.currentTime = nextTimeSeconds;
-    });
+    const delayMs = getPreviewSeekThrottleDelay(performance.now(), lastPreviewSeekWriteAtMs);
+    pendingPreviewSeekTimer = setTimeout(flushPendingPreviewSeek, delayMs);
   }
 
-  function beginScrubPreview(targetTimeSeconds: number): void {
+  function flushPendingPreviewSeek(): void {
+    const nextTimeSeconds = pendingPreviewSeekTimeSeconds;
+    const token = pendingPreviewSeekToken;
+    pendingPreviewSeekTimer = undefined;
+    pendingPreviewSeekTimeSeconds = null;
+    pendingPreviewSeekToken = null;
+
+    if (
+      !videoEl
+      || !seekSession.isScrubbing
+      || nextTimeSeconds === null
+      || !shouldApplySeekToken(token, activeSeekToken)
+    ) {
+      return;
+    }
+
+    lastPreviewSeekWriteAtMs = performance.now();
+    videoEl.currentTime = nextTimeSeconds;
+  }
+
+  function beginScrubPreview(targetTimeSeconds: number): number {
+    if (!seekSession.isScrubbing) {
+      scrubRestoreTimeSeconds = file
+        ? latestPlaybackTimesByFileId[file.id] ?? displayTimesByFileId[file.id] ?? getCurrentPlaybackTimeSeconds()
+        : getCurrentPlaybackTimeSeconds();
+      createSeekToken();
+    } else if (activeSeekToken === null) {
+      createSeekToken();
+    }
+
     seekSession.startScrub(targetTimeSeconds, videoEl ? !videoEl.paused : false);
     clearSeekFallbackTimer();
     playbackClock?.stop();
@@ -377,20 +457,33 @@
       videoEl.pause();
       syncPlaybackState();
     }
+
+    return activeSeekToken ?? createSeekToken();
   }
 
-  function beginCommittedSeek(targetTimeSeconds: number): void {
+  function beginCommittedSeek(targetTimeSeconds: number): number {
     // Native media seeking is async; keep optimistic UI pinned until a matching frame arrives.
     seekSession.startCommit(targetTimeSeconds);
     clearSeekFallbackTimer();
-    clearPendingPreviewSeekFrame();
+    clearPendingPreviewSeek();
     playbackClock?.stop();
+    return createSeekToken();
   }
 
-  function finishSeekSession(confirmedTimeSeconds = seekSession.pendingTargetTimeSeconds, restartClock = true): void {
+  function finishSeekSession(
+    confirmedTimeSeconds = seekSession.pendingTargetTimeSeconds,
+    restartClock = true,
+    token = activeSeekToken,
+  ): void {
+    if (token !== null && !shouldApplySeekToken(token, activeSeekToken)) {
+      return;
+    }
+
     const completion = seekSession.complete();
     clearSeekFallbackTimer();
-    clearPendingPreviewSeekFrame();
+    clearPendingPreviewSeek();
+    clearActiveSeekToken(token);
+    scrubRestoreTimeSeconds = null;
 
     if (completion.targetTimeSeconds !== null && videoEl) {
       syncPlaybackFrame(confirmedTimeSeconds ?? completion.targetTimeSeconds, true);
@@ -421,10 +514,14 @@
       .catch(syncPlaybackState);
   }
 
-  function scheduleSeekFallback(): void {
+  function scheduleSeekFallback(token: number): void {
     clearSeekFallbackTimer();
     seekReleaseTimer = setTimeout(() => {
       seekReleaseTimer = undefined;
+      if (!shouldApplySeekToken(token, activeSeekToken)) {
+        return;
+      }
+
       if (!seekSession.isActive || seekSession.pendingTargetTimeSeconds === null) {
         return;
       }
@@ -434,17 +531,17 @@
       }
 
       if (videoEl?.seeking) {
-        scheduleSeekFallback();
+        scheduleSeekFallback(token);
         return;
       }
 
       if (videoEl && !videoEl.paused) {
         playbackClock?.start(videoEl);
-        scheduleSeekFallback();
+        scheduleSeekFallback(token);
         return;
       }
 
-      finishSeekSession(seekSession.pendingTargetTimeSeconds);
+      finishSeekSession(seekSession.pendingTargetTimeSeconds, true, token);
     }, 750);
   }
 
@@ -574,7 +671,7 @@
     }
 
     const storedTimeSeconds = file
-      ? latestPlaybackTimesByFileId[file.id] ?? currentTimesByFileId[file.id]
+      ? latestPlaybackTimesByFileId[file.id] ?? displayTimesByFileId[file.id]
       : undefined;
     const actualTimeSeconds = Number.isFinite(videoEl.currentTime) ? videoEl.currentTime : 0;
     const durationSeconds = getVideoDurationSeconds();
@@ -609,10 +706,11 @@
     const requestedTimeSeconds = Number.isFinite(timeSeconds) ? timeSeconds : 0;
     const nextTimeSeconds = Math.min(Math.max(0, requestedTimeSeconds), maxTimeSeconds);
 
-    beginCommittedSeek(nextTimeSeconds);
+    const token = beginCommittedSeek(nextTimeSeconds);
     videoEl.currentTime = nextTimeSeconds;
-    commitPlaybackTime(nextTimeSeconds);
-    scheduleSeekFallback();
+    syncPlaybackFrame(nextTimeSeconds, true, { confirmed: false });
+    onTimeChange?.(Math.round(nextTimeSeconds * 1000));
+    scheduleSeekFallback(token);
   }
 
   function previewSeekToSeconds(timeSeconds: number): void {
@@ -624,9 +722,9 @@
     const requestedTimeSeconds = Number.isFinite(timeSeconds) ? timeSeconds : 0;
     const nextTimeSeconds = Math.min(Math.max(0, requestedTimeSeconds), maxTimeSeconds);
 
-    beginScrubPreview(nextTimeSeconds);
-    syncPlaybackFrame(nextTimeSeconds, true);
-    schedulePreviewFrameSeek(nextTimeSeconds);
+    const token = beginScrubPreview(nextTimeSeconds);
+    syncPlaybackFrame(nextTimeSeconds, true, { confirmed: false });
+    schedulePreviewFrameSeek(nextTimeSeconds, token);
   }
 
   function handleVideoSeeked(): void {
@@ -644,12 +742,53 @@
 
     if (videoEl.paused) {
       if (seekSession.targetMatches(videoEl.currentTime)) {
-        finishSeekSession(videoEl.currentTime);
+        finishSeekSession(videoEl.currentTime, true, activeSeekToken);
       }
       return;
     }
 
     playbackClock?.start(videoEl);
+  }
+
+  function handleVideoTimeUpdate(): void {
+    if (!videoEl || videoEl.paused || typeof videoEl.requestVideoFrameCallback === 'function') {
+      return;
+    }
+
+    const timeSeconds = getCurrentPlaybackTimeSeconds();
+    const frameAction = seekSession.resolvePlaybackFrame(timeSeconds);
+    if (frameAction === 'complete') {
+      finishSeekSession(timeSeconds, false, activeSeekToken);
+      return;
+    }
+
+    if (frameAction === 'suppress') {
+      return;
+    }
+
+    syncPlaybackFrame(timeSeconds);
+  }
+
+  function cancelActiveSeek(): void {
+    const restoreTimeSeconds = normalizePlaybackTimeSeconds(scrubRestoreTimeSeconds ?? getCurrentPlaybackTimeSeconds());
+    const shouldResumePlayback = seekSession.shouldResumePlayback;
+    const token = activeSeekToken;
+
+    seekSession.clear();
+    clearSeekFallbackTimer();
+    clearPendingPreviewSeek();
+    clearActiveSeekToken(token);
+    scrubRestoreTimeSeconds = null;
+
+    if (videoEl) {
+      videoEl.currentTime = restoreTimeSeconds;
+    }
+
+    commitPlaybackTime(restoreTimeSeconds, true);
+
+    if (shouldResumePlayback) {
+      resumePlaybackAfterSeek();
+    }
   }
 
   function skipBySeconds(deltaSeconds: number): void {
@@ -1026,6 +1165,7 @@
             class="h-full w-full object-contain"
             onplay={handlePlaybackPlay}
             onpause={handlePlaybackPause}
+            ontimeupdate={handleVideoTimeUpdate}
             onvolumechange={syncPlaybackState}
             onloadedmetadata={handleLoadedMetadata}
             onseeked={handleVideoSeeked}
@@ -1127,6 +1267,7 @@
         disabled={isDrawingZone || isEditingZone}
         onpreviewseek={previewSeekToSeconds}
         onseek={seekToSeconds}
+        oncancelseek={cancelActiveSeek}
         ontoggleplay={togglePlayback}
         onskip={skipBySeconds}
         ontogglemute={toggleMute}

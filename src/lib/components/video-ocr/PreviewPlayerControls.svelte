@@ -6,10 +6,21 @@
   export interface PreviewPlayerControlsSeekHandlers {
     onpreviewseek?: (timeSeconds: number) => void;
     onseek?: (timeSeconds: number) => void;
+    oncancelseek?: () => void;
   }
 
   export function shouldRenderVolumePopoverInline(isFullscreen: boolean): boolean {
     return isFullscreen;
+  }
+
+  export type SeekPointerEndType = 'pointerup' | 'pointercancel';
+
+  export function shouldCommitSeekOnPointerEnd(type: SeekPointerEndType): boolean {
+    return type === 'pointerup';
+  }
+
+  export function shouldSyncSeekUiFromCurrentTime(activePointerId: number | null): boolean {
+    return activePointerId === null;
   }
 </script>
 
@@ -31,6 +42,7 @@
     disabled?: boolean;
     onpreviewseek?: (timeSeconds: number) => void;
     onseek?: (timeSeconds: number) => void;
+    oncancelseek?: () => void;
     ontoggleplay?: () => void;
     onskip?: (deltaSeconds: number) => void;
     ontogglemute?: () => void;
@@ -49,6 +61,7 @@
     disabled = false,
     onpreviewseek,
     onseek,
+    oncancelseek,
     ontoggleplay,
     onskip,
     ontogglemute,
@@ -63,6 +76,7 @@
   let volumeCloseTimer: ReturnType<typeof setTimeout> | undefined;
   let latestPlaybackTimeSeconds = 0;
   let activeSeekPointerId: number | null = null;
+  let seekDragStartTimeSeconds: number | null = null;
   let latestCurrentTimeLabel = '';
   let latestSeekAriaNow = '';
 
@@ -168,6 +182,7 @@
 
     event.preventDefault();
     activeSeekPointerId = event.pointerId;
+    seekDragStartTimeSeconds = latestPlaybackTimeSeconds;
     seekControlEl?.setPointerCapture(event.pointerId);
     previewSeek(nextTimeSeconds);
   }
@@ -183,22 +198,30 @@
     }
   }
 
-  function stopSeekDrag(event: PointerEvent, commit = false): void {
+  function stopSeekDrag(event: PointerEvent, type: SeekPointerEndType): void {
     if (activeSeekPointerId !== event.pointerId) {
       return;
     }
 
     const nextTimeSeconds = seekTimeFromPointer(event);
-    if (nextTimeSeconds !== null) {
+    if (nextTimeSeconds !== null && shouldCommitSeekOnPointerEnd(type)) {
       previewSeek(nextTimeSeconds);
     }
 
     seekControlEl?.releasePointerCapture(event.pointerId);
     activeSeekPointerId = null;
+    const restoreTimeSeconds = seekDragStartTimeSeconds;
+    seekDragStartTimeSeconds = null;
 
-    if (commit) {
+    if (shouldCommitSeekOnPointerEnd(type)) {
       handleSeek(latestPlaybackTimeSeconds);
+      return;
     }
+
+    if (restoreTimeSeconds !== null) {
+      syncPlaybackTime(restoreTimeSeconds);
+    }
+    oncancelseek?.();
   }
 
   function handleSeekKeydown(event: KeyboardEvent): void {
@@ -265,6 +288,10 @@
   });
 
   $effect(() => {
+    if (!shouldSyncSeekUiFromCurrentTime(activeSeekPointerId)) {
+      return;
+    }
+
     syncSeekDom(currentTime);
   });
 </script>
@@ -345,8 +372,8 @@
         aria-disabled={controlsDisabled}
         onpointerdown={handleSeekPointerDown}
         onpointermove={handleSeekPointerMove}
-        onpointerup={(event) => stopSeekDrag(event, true)}
-        onpointercancel={(event) => stopSeekDrag(event, true)}
+        onpointerup={(event) => stopSeekDrag(event, 'pointerup')}
+        onpointercancel={(event) => stopSeekDrag(event, 'pointercancel')}
         onkeydown={handleSeekKeydown}
       >
         <span class="relative h-2 w-full grow overflow-hidden rounded-full bg-muted">

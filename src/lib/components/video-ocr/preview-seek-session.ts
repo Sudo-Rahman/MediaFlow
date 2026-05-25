@@ -18,7 +18,7 @@ export interface PreviewSeekSession {
   targetMatches: (timeSeconds: number) => boolean;
 }
 
-const SEEK_COMPLETE_TOLERANCE_SECONDS = 0.75;
+const SEEK_COMPLETE_TOLERANCE_SECONDS = 0.1;
 
 type PreviewSeekMode = 'idle' | 'scrubbing' | 'committing';
 

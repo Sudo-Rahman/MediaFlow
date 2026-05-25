@@ -2,6 +2,20 @@
   export interface OcrTimelineApi {
     syncPlaybackTime: (timeMs: number) => void;
   }
+
+  export type OcrTimelinePointerEndType = 'pointerup' | 'pointercancel';
+  export type OcrTimelineDragType = 'seek' | 'move' | 'trim-start' | 'trim-end';
+
+  export function shouldCommitTimelineSeekOnPointerEnd(
+    type: OcrTimelinePointerEndType,
+    dragType: OcrTimelineDragType | null,
+  ): boolean {
+    return type === 'pointerup' && dragType === 'seek';
+  }
+
+  export function shouldSyncTimelinePlaybackFromCurrentTime(isSeekDragging: boolean): boolean {
+    return !isSeekDragging;
+  }
 </script>
 
 <script lang="ts">
@@ -31,6 +45,7 @@
     onSelect?: (segmentId: string, zoneId: string) => void;
     onPreviewSeek?: (timeMs: number) => void;
     onSeek?: (timeMs: number) => void;
+    onCancelSeek?: () => void;
     onSetRole?: (segmentId: string, zoneId: string, role: OcrZoneRole) => void;
     onRenameZone?: (segmentId: string, zoneId: string, label: string) => void;
     onDeleteZone?: (segmentId: string, zoneId: string) => void;
@@ -84,6 +99,7 @@
     onSelect,
     onPreviewSeek,
     onSeek,
+    onCancelSeek,
     onSetRole,
     onRenameZone,
     onDeleteZone,
@@ -150,12 +166,20 @@
   });
 
   $effect(() => {
+    if (!shouldSyncTimelinePlaybackFromCurrentTime(activeDrag?.type === 'seek')) {
+      return;
+    }
+
     syncTimelinePlaybackDom(currentTimeMs);
   });
 
   $effect(() => {
     visibleViewport;
     timelineRootEl;
+    if (!shouldSyncTimelinePlaybackFromCurrentTime(activeDrag?.type === 'seek')) {
+      return;
+    }
+
     syncTimelinePlaybackDom(latestPlaybackTimeMs);
   });
 
@@ -489,23 +513,31 @@
   }
 
   function commitDrag(event: PointerEvent): void {
-    stopDrag(event);
+    stopDrag(event, 'pointerup');
   }
 
   function cancelDrag(event: PointerEvent): void {
-    stopDrag(event);
+    stopDrag(event, 'pointercancel');
   }
 
-  function stopDrag(event?: PointerEvent): void {
+  function stopDrag(event: PointerEvent | undefined, type: OcrTimelinePointerEndType): void {
     const finishedDrag = activeDrag;
     activeDrag = null;
     window.removeEventListener('pointermove', handlePointerMove);
     window.removeEventListener('pointerup', commitDrag);
     window.removeEventListener('pointercancel', cancelDrag);
 
-    if (finishedDrag?.type === 'seek' && event) {
-      onSeek?.(timeFromPointer(event, finishedDrag.trackEl));
+    if (finishedDrag?.type !== 'seek') {
+      return;
     }
+
+    if (event && shouldCommitTimelineSeekOnPointerEnd(type, finishedDrag.type)) {
+      onSeek?.(timeFromPointer(event, finishedDrag.trackEl));
+      return;
+    }
+
+    syncTimelinePlaybackDom(currentTimeMs);
+    onCancelSeek?.();
   }
 
   function handleTrackKeydown(event: KeyboardEvent): void {

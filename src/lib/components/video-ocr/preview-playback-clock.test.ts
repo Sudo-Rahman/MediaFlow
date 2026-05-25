@@ -113,4 +113,31 @@ describe('preview playback clock', () => {
 
     expect(cancelledHandles).toEqual([21]);
   });
+
+  it('falls back to requestAnimationFrame when requestVideoFrameCallback is unavailable', () => {
+    let callback: ((now: number) => void) | undefined;
+    const cancelledHandles: number[] = [];
+    const frames: number[] = [];
+    const video = { currentTime: 3 };
+    const clock = createPreviewPlaybackClock({
+      onFrame: ({ timeSeconds }) => {
+        frames.push(timeSeconds);
+      },
+      requestAnimationFrame(nextCallback) {
+        callback = nextCallback;
+        return 91;
+      },
+      cancelAnimationFrame(handle) {
+        cancelledHandles.push(handle);
+      },
+    });
+
+    clock.start(video);
+    video.currentTime = 3.25;
+    callback?.(10);
+    clock.stop();
+
+    expect(frames).toEqual([3.25]);
+    expect(cancelledHandles).toEqual([91]);
+  });
 });

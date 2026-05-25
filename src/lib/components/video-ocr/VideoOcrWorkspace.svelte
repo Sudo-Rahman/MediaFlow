@@ -46,7 +46,7 @@
   }: VideoOcrWorkspaceProps = $props();
 
   let playbackTime = $state<{ fileId: string | null; timeMs: number }>({ fileId: null, timeMs: 0 });
-  let seekRequest = $state<{ fileId: string; timeMs: number; requestId: number; mode?: 'preview' | 'commit' } | null>(null);
+  let seekRequest = $state<{ fileId: string; timeMs: number; requestId: number; mode?: 'preview' | 'commit' | 'cancel' } | null>(null);
   let seekRequestId = $state(0);
   let selectedZone = $state<{ fileId: string; segmentId: string; zoneId: string } | null>(null);
   let timelineRef = $state<OcrTimelineApi | null>(null);
@@ -145,7 +145,7 @@
     }
   }
 
-  function requestPlaybackSeek(timeMs: number, mode: 'preview' | 'commit'): void {
+  function requestPlaybackSeek(timeMs: number, mode: 'preview' | 'commit' | 'cancel'): void {
     if (!file) {
       return;
     }
@@ -166,6 +166,10 @@
 
   function handlePreviewSeek(timeMs: number): void {
     requestPlaybackSeek(timeMs, 'preview');
+  }
+
+  function handleCancelSeek(): void {
+    requestPlaybackSeek(currentTimeMs, 'cancel');
   }
 
   function handleTrimSegment(segmentId: string, startTimeMs: number, endTimeMs: number): void {
@@ -236,6 +240,7 @@
       onSelect={handleSelectZone}
       onPreviewSeek={handlePreviewSeek}
       onSeek={handleSeek}
+      onCancelSeek={handleCancelSeek}
       onSetRole={handleSetZoneRole}
       onRenameZone={handleRenameZone}
       onDeleteZone={handleDeleteZone}

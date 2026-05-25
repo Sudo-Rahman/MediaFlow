@@ -36,7 +36,7 @@ describe('preview seek session', () => {
     expect(session.pendingTargetTimeSeconds).toBe(80);
     expect(session.shouldResumePlayback).toBe(true);
     expect(session.resolvePlaybackFrame(30)).toBe('suppress');
-    expect(session.resolvePlaybackFrame(79.3)).toBe('complete');
+    expect(session.resolvePlaybackFrame(79.9)).toBe('complete');
   });
 
   it('completes a committed seek only when playback reaches the latest target', () => {
@@ -47,10 +47,10 @@ describe('preview seek session', () => {
 
     expect(session.pendingTargetTimeSeconds).toBe(80);
     expect(session.resolvePlaybackFrame(10)).toBe('suppress');
-    expect(session.resolvePlaybackFrame(79.2)).toBe('suppress');
-    expect(session.resolvePlaybackFrame(79.3)).toBe('complete');
-    expect(session.resolvePlaybackFrame(80.7)).toBe('complete');
-    expect(session.resolvePlaybackFrame(80.8)).toBe('suppress');
+    expect(session.resolvePlaybackFrame(79.8)).toBe('suppress');
+    expect(session.resolvePlaybackFrame(79.9)).toBe('complete');
+    expect(session.resolvePlaybackFrame(80.1)).toBe('complete');
+    expect(session.resolvePlaybackFrame(80.2)).toBe('suppress');
   });
 
   it('returns the pending target when completed', () => {

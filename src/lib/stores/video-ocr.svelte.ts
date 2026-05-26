@@ -454,7 +454,7 @@ export const videoOcrStore = {
       const durationMs = updates.duration ? Math.round(updates.duration * 1000) : undefined;
       const { ocrVersions, activeOcrVersionId, ...remainingUpdates } = updatesWithoutSelection;
       const nextVersions = ocrVersions === undefined
-        ? f.ocrVersions.map(cloneOcrVersion)
+        ? f.ocrVersions
         : ocrVersions.map(cloneOcrVersion);
       const nextActiveOcrVersionId = activeOcrVersionId === undefined
         ? normalizeActiveVersionId(nextVersions, f.activeOcrVersionId)

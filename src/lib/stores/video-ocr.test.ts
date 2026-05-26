@@ -168,6 +168,23 @@ describe('video OCR store', () => {
     expect(videoOcrStore.videoFiles[0].ocrSelection).toEqual(ocrSelection);
   });
 
+  it('preserves OCR version objects when updating unrelated file metadata', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    videoOcrStore.addOcrVersion(file.id, createVersion('version-1', 'Version 1', undefined, 'First result'));
+
+    const existingVersion = videoOcrStore.videoFiles[0].ocrVersions[0];
+    const existingRawOcr = existingVersion.rawOcr;
+
+    videoOcrStore.updateFile(file.id, {
+      status: 'ready',
+      previewPath: undefined,
+      previewError: 'Preview unavailable',
+    });
+
+    expect(videoOcrStore.videoFiles[0].ocrVersions[0]).toBe(existingVersion);
+    expect(videoOcrStore.videoFiles[0].ocrVersions[0].rawOcr).toBe(existingRawOcr);
+  });
+
   it('clones OCR selections passed through setOcrSelection', () => {
     const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
     const ocrSelection = {

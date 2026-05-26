@@ -23,8 +23,12 @@
     return null;
   }
 
-  export function shouldTogglePreviewPlaybackFromClick(button: number, disabled: boolean): boolean {
-    return !disabled && button === 0;
+  export function shouldTogglePreviewPlaybackFromClick(
+    button: number,
+    disabled: boolean,
+    clickCount = 1,
+  ): boolean {
+    return !disabled && button === 0 && clickCount === 1;
   }
 
   export function shouldTogglePreviewExpandedFromDoubleClick(button: number, disabled: boolean): boolean {
@@ -36,8 +40,42 @@
   }
 
   export const PREVIEW_SEEK_THROTTLE_MS = 120;
+  export const PREVIEW_CLICK_TOGGLE_DELAY_MS = 180;
   export const POST_SEEK_PLAYBACK_SYNC_GUARD_MS = 1_000;
   export const POST_SEEK_PLAYBACK_SYNC_TOLERANCE_SECONDS = 1;
+
+  export interface PreviewClickToggleController {
+    queue: (callback: () => void) => void;
+    cancel: () => void;
+    clear: () => void;
+  }
+
+  export function createPreviewClickToggleController(
+    delayMs = PREVIEW_CLICK_TOGGLE_DELAY_MS,
+  ): PreviewClickToggleController {
+    let pendingTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function clear(): void {
+      if (!pendingTimer) {
+        return;
+      }
+
+      clearTimeout(pendingTimer);
+      pendingTimer = undefined;
+    }
+
+    return {
+      queue(callback) {
+        clear();
+        pendingTimer = setTimeout(() => {
+          pendingTimer = undefined;
+          callback();
+        }, delayMs);
+      },
+      cancel: clear,
+      clear,
+    };
+  }
 
   export function shouldApplySeekToken(candidateToken: number | null, activeToken: number | null): boolean {
     return candidateToken !== null && candidateToken === activeToken;
@@ -115,7 +153,7 @@
 </script>
 
 <script lang="ts">
-  import { tick, type Snippet } from 'svelte';
+  import { onDestroy, tick, type Snippet } from 'svelte';
   import { convertFileSrc } from '@tauri-apps/api/core';
 
   import type { OcrRegion, OcrVideoFile, OcrZoneFrame, OcrZoneRole } from '$lib/types';
@@ -234,10 +272,15 @@
   let lastConfirmedSeekTimeSeconds: number | null = null;
   let postSeekGuardUntilMs = Number.NEGATIVE_INFINITY;
   const seekSession = createPreviewSeekSession();
+  const previewClickToggle = createPreviewClickToggleController();
   
   // Video bounds within container (for letterboxed videos)
   // These are relative values (0-1) within the container
   let videoBounds = $state({ x: 0, y: 0, width: 1, height: 1 });
+
+  onDestroy(() => {
+    previewClickToggle.clear();
+  });
   
   // Watch containerEl and observe it
   $effect(() => {
@@ -886,7 +929,7 @@
   }
 
   function handlePreviewSurfaceClick(event: MouseEvent): void {
-    if (!shouldTogglePreviewPlaybackFromClick(event.button, previewInteractionsDisabled)) {
+    if (!shouldTogglePreviewPlaybackFromClick(event.button, previewInteractionsDisabled, event.detail)) {
       return;
     }
 
@@ -895,8 +938,10 @@
       return;
     }
 
-    containerEl?.focus({ preventScroll: true });
-    togglePlayback();
+    previewClickToggle.queue(() => {
+      containerEl?.focus({ preventScroll: true });
+      togglePlayback();
+    });
   }
 
   function handlePreviewSurfaceKeydown(event: KeyboardEvent): void {
@@ -967,6 +1012,7 @@
 
     event.preventDefault();
     event.stopPropagation();
+    previewClickToggle.cancel();
     toggleExpandedPreview();
   }
 

@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  PREVIEW_CLICK_TOGGLE_DELAY_MS,
   PREVIEW_SEEK_THROTTLE_MS,
+  createPreviewClickToggleController,
   createPreviewChangeTimes,
   getPreviewSeekThrottleDelay,
   getPreviewKeyboardAction,
@@ -14,6 +16,10 @@ import {
 import type { OcrSubtitle, VideoOcrSelection } from '$lib/types';
 
 describe('VideoPreview interactions', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('maps space to playback toggle', () => {
     expect(getPreviewKeyboardAction(' ', false)).toBe('toggle-playback');
   });
@@ -30,9 +36,24 @@ describe('VideoPreview interactions', () => {
   });
 
   it('toggles playback only for primary surface clicks', () => {
-    expect(shouldTogglePreviewPlaybackFromClick(0, false)).toBe(true);
-    expect(shouldTogglePreviewPlaybackFromClick(2, false)).toBe(false);
-    expect(shouldTogglePreviewPlaybackFromClick(0, true)).toBe(false);
+    expect(shouldTogglePreviewPlaybackFromClick(0, false, 1)).toBe(true);
+    expect(shouldTogglePreviewPlaybackFromClick(0, false, 2)).toBe(false);
+    expect(shouldTogglePreviewPlaybackFromClick(2, false, 1)).toBe(false);
+    expect(shouldTogglePreviewPlaybackFromClick(0, true, 1)).toBe(false);
+  });
+
+  it('cancels queued playback toggles when the click becomes a double-click', () => {
+    vi.useFakeTimers();
+    const controller = createPreviewClickToggleController();
+    let toggleCount = 0;
+
+    controller.queue(() => {
+      toggleCount += 1;
+    });
+    controller.cancel();
+    vi.advanceTimersByTime(PREVIEW_CLICK_TOGGLE_DELAY_MS);
+
+    expect(toggleCount).toBe(0);
   });
 
   it('toggles expanded preview only from primary double-clicks while preview interactions are enabled', () => {

@@ -1,5 +1,6 @@
 import type {
   OcrConfig,
+  OcrDraft,
   OcrRetryMode,
   OcrSubtitle,
   OcrRawFrame,
@@ -16,7 +17,18 @@ import { DEFAULT_OCR_CONFIG, OCR_LANGUAGES } from '$lib/types';
 import { validateVideoOcrSelection } from '$lib/utils/ocr-selection';
 import { loadMediaflowData, saveMediaflowData } from './mediaflow-storage';
 
-const LEGACY_OCR_DATA_ERROR = 'This Video OCR data was created with an older MediaFlow version and is not supported.';
+const UNSUPPORTED_OCR_DATA_ERROR = 'This Video OCR data is not compatible with this MediaFlow version.';
+
+export class UnsupportedOcrPersistenceError extends Error {
+  constructor(message = UNSUPPORTED_OCR_DATA_ERROR) {
+    super(message);
+    this.name = 'UnsupportedOcrPersistenceError';
+  }
+}
+
+export function isUnsupportedOcrPersistenceError(error: unknown): error is UnsupportedOcrPersistenceError {
+  return error instanceof UnsupportedOcrPersistenceError;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -63,10 +75,7 @@ function isOcrVersion(value: unknown): value is OcrVersion {
     && isOcrRetryMode(value.mode)
     && isRecord(value.configSnapshot)
     && toFinitePositiveNumber(value.configSnapshot.frameRate) !== null
-    && (
-      value.selectionSnapshot === undefined
-      || isValidOcrSelectionValue(value.selectionSnapshot)
-    )
+    && isValidOcrSelectionValue(value.selectionSnapshot)
     && Array.isArray(value.rawOcr)
     && value.rawOcr.every(isOcrRawFrame)
     && Array.isArray(value.finalSubtitles)
@@ -151,6 +160,14 @@ function isOcrPreviewSourceIdentity(value: unknown): value is OcrPreviewSourceId
     && isFiniteNonNegativeNumber(value.modifiedMs);
 }
 
+function isOcrDraft(value: unknown): value is OcrDraft {
+  return isRecord(value)
+    && (value.baseVersionId === null || typeof value.baseVersionId === 'string')
+    && isValidOcrSelectionValue(value.selection)
+    && typeof value.dirty === 'boolean'
+    && typeof value.updatedAt === 'string';
+}
+
 function isSemanticallyValidOcrSelection(selection: VideoOcrSelection): boolean {
   if (selection.segments.length === 0) {
     return false;
@@ -189,6 +206,7 @@ function isVideoOcrPersistenceData(value: unknown): value is VideoOcrPersistence
       || value.activeOcrVersionId === null
       || typeof value.activeOcrVersionId === 'string'
     )
+    && (value.draft === undefined || isOcrDraft(value.draft))
     && isSemanticallyValidOcrSelection(ocrSelection)
     && Array.isArray(value.ocrVersions)
     && value.ocrVersions.every(isOcrVersion);
@@ -223,6 +241,17 @@ function sanitizePreviewSourceIdentity(
         path: previewSourceIdentity.path,
         size: previewSourceIdentity.size,
         modifiedMs: previewSourceIdentity.modifiedMs,
+      }
+    : undefined;
+}
+
+function sanitizeOcrDraft(draft: OcrDraft | undefined): OcrDraft | undefined {
+  return draft
+    ? {
+        baseVersionId: draft.baseVersionId,
+        selection: sanitizeOcrSelection(draft.selection),
+        dirty: draft.dirty,
+        updatedAt: draft.updatedAt,
       }
     : undefined;
 }
@@ -288,18 +317,19 @@ function sanitizeOcrResultMetadata(
   };
 }
 
-function normalizeAndSanitizeOcrVersion(
-  version: OcrVersion,
-  fallbackSelection: VideoOcrSelection,
-): OcrVersion {
+function normalizeAndSanitizeOcrVersion(version: OcrVersion): OcrVersion {
   const normalized = normalizeOcrVersion(version);
+  if (!normalized.selectionSnapshot) {
+    throw new UnsupportedOcrPersistenceError();
+  }
+
   return {
     id: normalized.id,
     name: normalized.name,
     createdAt: normalized.createdAt,
     mode: normalized.mode,
     configSnapshot: sanitizeOcrConfig(normalized.configSnapshot),
-    selectionSnapshot: sanitizeOcrSelection(normalized.selectionSnapshot ?? fallbackSelection),
+    selectionSnapshot: sanitizeOcrSelection(normalized.selectionSnapshot),
     rawFrameRate: normalized.rawFrameRate,
     rawOcr: normalized.rawOcr.map(sanitizeOcrRawFrame),
     finalSubtitles: normalized.finalSubtitles.map(sanitizeOcrSubtitle),
@@ -309,9 +339,14 @@ function normalizeAndSanitizeOcrVersion(
 function sanitizeActiveOcrVersionId(
   activeOcrVersionId: string | null | undefined,
   versions: readonly OcrVersion[],
+  draft?: OcrDraft,
 ): string | null | undefined {
   if (activeOcrVersionId === null) {
-    return null;
+    if (draft) {
+      return null;
+    }
+
+    throw new UnsupportedOcrPersistenceError();
   }
 
   if (
@@ -321,7 +356,11 @@ function sanitizeActiveOcrVersionId(
     return activeOcrVersionId;
   }
 
-  return undefined;
+  if (activeOcrVersionId === undefined) {
+    return versions.at(-1)?.id;
+  }
+
+  throw new UnsupportedOcrPersistenceError();
 }
 
 function toFiniteNonNegativeNumber(value: unknown): number | null {
@@ -477,34 +516,37 @@ function createEmptyOcrData(
   };
 }
 
+function parseVideoOcrPersistenceData(value: unknown): VideoOcrPersistenceData {
+  if (!isVideoOcrPersistenceData(value)) {
+    throw new UnsupportedOcrPersistenceError();
+  }
+
+  const ocrSelection = sanitizeOcrSelection(value.ocrSelection);
+  const draft = sanitizeOcrDraft(value.draft);
+  const ocrVersions = value.ocrVersions.map(normalizeAndSanitizeOcrVersion);
+
+  return {
+    version: 2,
+    videoPath: value.videoPath,
+    previewPath: value.previewPath,
+    previewSourceIdentity: sanitizePreviewSourceIdentity(value.previewSourceIdentity),
+    previewVersion: value.previewVersion,
+    ocrSelection,
+    activeOcrVersionId: sanitizeActiveOcrVersionId(value.activeOcrVersionId, ocrVersions, draft),
+    draft,
+    ocrVersions,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+  };
+}
+
 export async function loadOcrData(videoPath: string): Promise<VideoOcrPersistenceData | null> {
   const mediaflowData = await loadMediaflowData(videoPath);
   if (!mediaflowData?.videoOcr) {
     return null;
   }
 
-  const videoOcr: unknown = mediaflowData.videoOcr;
-  if (!isVideoOcrPersistenceData(videoOcr)) {
-    throw new Error(LEGACY_OCR_DATA_ERROR);
-  }
-
-  const ocrSelection = sanitizeOcrSelection(videoOcr.ocrSelection);
-  const ocrVersions = videoOcr.ocrVersions.map((version) =>
-    normalizeAndSanitizeOcrVersion(version, ocrSelection),
-  );
-
-  return {
-    version: 2,
-    videoPath: videoOcr.videoPath,
-    previewPath: videoOcr.previewPath,
-    previewSourceIdentity: sanitizePreviewSourceIdentity(videoOcr.previewSourceIdentity),
-    previewVersion: videoOcr.previewVersion,
-    ocrSelection,
-    activeOcrVersionId: sanitizeActiveOcrVersionId(videoOcr.activeOcrVersionId, ocrVersions),
-    ocrVersions,
-    createdAt: videoOcr.createdAt,
-    updatedAt: videoOcr.updatedAt,
-  };
+  return parseVideoOcrPersistenceData(mediaflowData.videoOcr);
 }
 
 export async function saveOcrData(
@@ -512,6 +554,10 @@ export async function saveOcrData(
   data: VideoOcrPersistenceData,
 ): Promise<boolean> {
   const existing = await loadMediaflowData(videoPath);
+  if (existing?.videoOcr) {
+    parseVideoOcrPersistenceData(existing.videoOcr);
+  }
+
   const now = new Date().toISOString();
 
   return saveMediaflowData(videoPath, {
@@ -525,10 +571,9 @@ export async function saveOcrData(
       previewSourceIdentity: sanitizePreviewSourceIdentity(data.previewSourceIdentity),
       previewVersion: data.previewVersion,
       ocrSelection: sanitizeOcrSelection(data.ocrSelection),
-      activeOcrVersionId: sanitizeActiveOcrVersionId(data.activeOcrVersionId, data.ocrVersions),
-      ocrVersions: data.ocrVersions.map((version) =>
-        normalizeAndSanitizeOcrVersion(version, data.ocrSelection),
-      ),
+      activeOcrVersionId: sanitizeActiveOcrVersionId(data.activeOcrVersionId, data.ocrVersions, data.draft),
+      draft: sanitizeOcrDraft(data.draft),
+      ocrVersions: data.ocrVersions.map(normalizeAndSanitizeOcrVersion),
       createdAt: data.createdAt || now,
       updatedAt: now,
     },
@@ -554,9 +599,16 @@ export async function addOcrVersion(
       options.previewVersion,
     );
 
-  data.ocrVersions = [...data.ocrVersions, version];
+  data.ocrVersions = [
+    ...data.ocrVersions,
+    {
+      ...version,
+      selectionSnapshot: sanitizeOcrSelection(version.selectionSnapshot ?? options.ocrSelection),
+    },
+  ];
   data.ocrSelection = options.ocrSelection;
   data.activeOcrVersionId = version.id;
+  data.draft = undefined;
 
   if (options.previewPath !== undefined) {
     data.previewPath = options.previewPath;

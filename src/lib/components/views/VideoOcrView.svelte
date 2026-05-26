@@ -57,7 +57,12 @@
   import { VIDEO_EXTENSIONS } from '$lib/types';
   import { createAsyncTaskQueue } from '$lib/services/async-task-queue';
   import { scanFile } from '$lib/services/ffprobe';
-  import { generateOcrVersionName, loadOcrData, saveOcrData } from '$lib/services/ocr-storage';
+  import {
+    generateOcrVersionName,
+    isUnsupportedOcrPersistenceError,
+    loadOcrData,
+    saveOcrData,
+  } from '$lib/services/ocr-storage';
   import {
     cancelOcrPreview,
     getReusableOcrPreview,
@@ -110,6 +115,9 @@
   let retryDialogOpen = $state(false);
   let retryDialogFileId = $state<string | null>(null);
   let retryAllDialogOpen = $state(false);
+  let unsupportedDataDialogOpen = $state(false);
+  let unsupportedDataFileName = $state('');
+  let unsupportedDataMessage = $state('');
   let removeDialogOpen = $state(false);
   let removeTarget = $state.raw<RemoveTarget>(null);
   let persistedOcrVersionKeys = $state<Set<string>>(new Set());
@@ -166,7 +174,9 @@
       ? videoOcrStore.videoFiles.find((file) => file.id === retryDialogFileId) ?? null
       : null,
   );
-  const dialogsOpen = $derived(resultDialogOpen || retryDialogOpen || retryAllDialogOpen);
+  const dialogsOpen = $derived(
+    resultDialogOpen || retryDialogOpen || retryAllDialogOpen || unsupportedDataDialogOpen,
+  );
   const fileSummary = $derived.by(() => summarizeOcrFiles(videoOcrStore.videoFiles));
   const startCount = $derived(fileSummary.startTargets.length);
   const retryCount = $derived(fileSummary.retryTargets.length);
@@ -279,6 +289,20 @@
     retryAllDialogOpen = false;
   }
 
+  function closeUnsupportedDataDialog(): void {
+    unsupportedDataDialogOpen = false;
+    unsupportedDataFileName = '';
+    unsupportedDataMessage = '';
+  }
+
+  function showUnsupportedDataDialog(file: OcrVideoFile, error: unknown): void {
+    unsupportedDataFileName = file.name;
+    unsupportedDataMessage = error instanceof Error
+      ? error.message
+      : 'This Video OCR data is not compatible with this MediaFlow version.';
+    unsupportedDataDialogOpen = true;
+  }
+
   function handleRemoveDialogOpenChange(open: boolean): void {
     removeDialogOpen = open;
     if (!open) {
@@ -300,6 +324,7 @@
     closeResultDialog();
     closeRetryDialog();
     closeRetryAllDialog();
+    closeUnsupportedDataDialog();
     handleRemoveDialogOpenChange(false);
   }
 
@@ -437,7 +462,21 @@
     let saved = false;
     const previous = persistenceQueues.get(videoPath) ?? Promise.resolve();
     const next = previous.catch(() => {}).then(async () => {
-      const existingData = await loadOcrData(videoPath);
+      let existingData: VideoOcrPersistenceData | null = null;
+      try {
+        existingData = await loadOcrData(videoPath);
+      } catch (error) {
+        const latestFile = getFreshFile(fileId);
+        if (latestFile && isUnsupportedOcrPersistenceError(error)) {
+          showUnsupportedDataDialog(latestFile, error);
+          videoOcrStore.setFileStatus(latestFile.id, 'error', error.message);
+          saved = false;
+          return;
+        }
+
+        throw error;
+      }
+
       const latestFile = getFreshFile(fileId);
       if (!latestFile || latestFile.path !== videoPath) {
         saved = false;
@@ -453,6 +492,7 @@
         previewVersion: latestFile.previewVersion,
         ocrSelection: latestFile.ocrSelection,
         activeOcrVersionId: latestFile.activeOcrVersionId,
+        draft: latestFile.draft,
         ocrVersions: latestFile.ocrVersions,
         createdAt: existingData?.createdAt ?? now,
         updatedAt: now,
@@ -480,16 +520,14 @@
       return;
     }
 
-    videoOcrStore.setOcrSelection(file.id, persisted.ocrSelection);
+    videoOcrStore.updateFile(file.id, {
+      ocrSelection: persisted.ocrSelection,
+      ocrVersions: persisted.ocrVersions,
+      activeOcrVersionId: persisted.activeOcrVersionId,
+      draft: persisted.draft,
+    });
 
     if (persisted.ocrVersions.length > 0) {
-      videoOcrStore.setOcrVersions(file.id, persisted.ocrVersions);
-      videoOcrStore.selectOcrVersion(
-        file.id,
-        persisted.activeOcrVersionId === undefined
-          ? persisted.ocrVersions.at(-1)?.id ?? null
-          : persisted.activeOcrVersionId,
-      );
       markPersistedOcrVersions(file.path, persisted.ocrVersions);
     }
   }
@@ -593,11 +631,11 @@
         return;
       }
 
-      videoOcrStore.setFileStatus(
-        file.id,
-        'error',
-        error instanceof Error ? error.message : 'Scan failed',
-      );
+      const errorMessage = error instanceof Error ? error.message : 'Scan failed';
+      videoOcrStore.setFileStatus(file.id, 'error', errorMessage);
+      if (isUnsupportedOcrPersistenceError(error)) {
+        showUnsupportedDataDialog(file, error);
+      }
     }
   }
 
@@ -1333,6 +1371,9 @@
   {retryDialogOpen}
   {retryDialogFile}
   {retryAllDialogOpen}
+  {unsupportedDataDialogOpen}
+  {unsupportedDataFileName}
+  {unsupportedDataMessage}
   {retryCount}
   retryAllMissingRawCount={fileSummary.retryAllMissingRawCount}
   baseConfig={videoOcrStore.config}
@@ -1356,6 +1397,14 @@
   }}
   onRetryAllDialogOpenChange={(open) => {
     retryAllDialogOpen = open;
+  }}
+  onUnsupportedDataDialogOpenChange={(open) => {
+    if (!open) {
+      closeUnsupportedDataDialog();
+      return;
+    }
+
+    unsupportedDataDialogOpen = true;
   }}
   onRetryConfirm={handleRetryConfirm}
   onRetryAllConfirm={handleRetryAllConfirm}

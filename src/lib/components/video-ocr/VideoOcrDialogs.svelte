@@ -14,6 +14,9 @@
     retryDialogOpen: boolean;
     retryDialogFile: OcrVideoFile | null;
     retryAllDialogOpen: boolean;
+    unsupportedDataDialogOpen: boolean;
+    unsupportedDataFileName: string;
+    unsupportedDataMessage: string;
     retryCount: number;
     retryAllMissingRawCount: number;
     baseConfig: OcrConfig;
@@ -22,6 +25,7 @@
     onResultDialogOpenChange: (open: boolean) => void;
     onRetryDialogOpenChange: (open: boolean) => void;
     onRetryAllDialogOpenChange: (open: boolean) => void;
+    onUnsupportedDataDialogOpenChange: (open: boolean) => void;
     onRetryConfirm: (
       fileId: string,
       versionName: string,
@@ -39,6 +43,9 @@
     retryDialogOpen = $bindable(false),
     retryDialogFile,
     retryAllDialogOpen = $bindable(false),
+    unsupportedDataDialogOpen = $bindable(false),
+    unsupportedDataFileName,
+    unsupportedDataMessage,
     retryCount,
     retryAllMissingRawCount,
     baseConfig,
@@ -47,6 +54,7 @@
     onResultDialogOpenChange,
     onRetryDialogOpenChange,
     onRetryAllDialogOpenChange,
+    onUnsupportedDataDialogOpenChange,
     onRetryConfirm,
     onRetryAllConfirm,
     onRemoveDialogOpenChange,
@@ -76,6 +84,27 @@
   baseConfig={baseConfig}
   onConfirm={onRetryAllConfirm}
 />
+
+<AlertDialog.Root bind:open={unsupportedDataDialogOpen} onOpenChange={onUnsupportedDataDialogOpenChange}>
+  <AlertDialog.Content>
+    <AlertDialog.Header>
+      <AlertDialog.Title>Unsupported Video OCR data</AlertDialog.Title>
+      <AlertDialog.Description>
+        {#if unsupportedDataFileName}
+          {unsupportedDataFileName}: {unsupportedDataMessage}
+        {:else}
+          {unsupportedDataMessage}
+        {/if}
+      </AlertDialog.Description>
+    </AlertDialog.Header>
+
+    <AlertDialog.Footer>
+      <AlertDialog.Action onclick={() => onUnsupportedDataDialogOpenChange(false)}>
+        OK
+      </AlertDialog.Action>
+    </AlertDialog.Footer>
+  </AlertDialog.Content>
+</AlertDialog.Root>
 
 <AlertDialog.Root bind:open={removeDialogOpen} onOpenChange={onRemoveDialogOpenChange}>
   <AlertDialog.Content>

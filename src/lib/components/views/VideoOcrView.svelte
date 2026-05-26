@@ -2,6 +2,31 @@
   export interface VideoOcrViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
+
+  export interface VideoOcrLayoutState {
+    rootClass: string;
+    optionsWidth: string;
+    showFileSidebar: boolean;
+    showOptionsPanel: boolean;
+  }
+
+  export function getVideoOcrLayoutState(optionsPanelWidth: string, previewExpanded: boolean): VideoOcrLayoutState {
+    if (previewExpanded) {
+      return {
+        rootClass: 'grid h-full overflow-hidden grid-cols-[minmax(0,1fr)]',
+        optionsWidth: '0rem',
+        showFileSidebar: false,
+        showOptionsPanel: false,
+      };
+    }
+
+    return {
+      rootClass: 'grid h-full overflow-hidden grid-cols-[auto_minmax(0,1fr)_var(--ocr-options-width)] transition-[grid-template-columns] duration-220 ease-out',
+      optionsWidth: optionsPanelWidth,
+      showFileSidebar: true,
+      showOptionsPanel: true,
+    };
+  }
 </script>
 
 <script lang="ts">
@@ -84,6 +109,7 @@
   let removeDialogOpen = $state(false);
   let removeTarget = $state.raw<RemoveTarget>(null);
   let persistedOcrVersionKeys = $state<Set<string>>(new Set());
+  let previewExpanded = $state(false);
   let unlistenOcrProgress: UnlistenFn | null = null;
   let unlistenOcrLiveDetection: UnlistenFn | null = null;
   let pendingOptionsLayoutFrame: number | null = null;
@@ -116,6 +142,7 @@
     selectedFile ? videoOcrStore.getLiveDetectionCount(selectedFile.id) : 0,
   );
   const optionsPanelWidth = $derived(optionsPanelCompact ? '0rem' : '20rem');
+  const videoOcrLayout = $derived(getVideoOcrLayoutState(optionsPanelWidth, previewExpanded));
   const optionsPanelClass = $derived(
     optionsPanelCompact
       ? 'pointer-events-none translate-x-3 border-transparent opacity-0'
@@ -971,6 +998,12 @@
     toast.info('Cancelling all...');
   }
 
+  function collapsePreviewForRemovedFile(fileId: string): void {
+    if (videoOcrStore.selectedFileId === fileId) {
+      previewExpanded = false;
+    }
+  }
+
   async function handleRequestRemoveFile(fileId: string): Promise<void> {
     const file = getFreshFile(fileId);
     if (!file) {
@@ -980,6 +1013,7 @@
     if (!isOcrActiveStatus(file.status)) {
       resetDialogsForFile(fileId);
       clearPersistedOcrVersionsForPath(file.path);
+      collapsePreviewForRemovedFile(fileId);
       videoOcrStore.removeFile(fileId);
       return;
     }
@@ -993,6 +1027,7 @@
     if (!hasActiveFile) {
       persistedOcrVersionKeys = new Set();
       resetAllDialogs();
+      previewExpanded = false;
       videoOcrStore.clear();
       return;
     }
@@ -1027,6 +1062,7 @@
 
       resetDialogsForFile(file.id);
       clearPersistedOcrVersionsForPath(file.path);
+      collapsePreviewForRemovedFile(file.id);
       videoOcrStore.removeFile(file.id);
       removeTarget = null;
       return;
@@ -1050,6 +1086,7 @@
 
     persistedOcrVersionKeys = new Set();
     resetAllDialogs();
+    previewExpanded = false;
     videoOcrStore.clear();
   }
 
@@ -1209,23 +1246,25 @@
 
 <div bind:this={viewContainerEl} class="@container/video-ocr h-full overflow-hidden">
   <div
-    class="grid h-full overflow-hidden grid-cols-[auto_minmax(0,1fr)_var(--ocr-options-width)] transition-[grid-template-columns] duration-220 ease-out"
-    style:--ocr-options-width={optionsPanelWidth}
+    class={videoOcrLayout.rootClass}
+    style:--ocr-options-width={videoOcrLayout.optionsWidth}
   >
-    <VideoOcrSidebar
-      files={videoOcrStore.videoFiles}
-      selectedFileId={videoOcrStore.selectedFileId}
-      supportedFormats={VIDEO_FORMATS}
-      isProcessing={videoOcrStore.isProcessing}
-      transcodingCount={fileSummary.transcodingCount}
-      onSelectFile={(fileId) => videoOcrStore.selectFile(fileId)}
-      onRequestRemoveFile={handleRequestRemoveFile}
-      onCancelFile={handleCancelFile}
-      onViewResult={handleViewResult}
-      onRetryFile={handleRetryFile}
-      onAddFiles={handleAddFiles}
-      onClearAll={handleRequestRemoveAll}
-    />
+    {#if videoOcrLayout.showFileSidebar}
+      <VideoOcrSidebar
+        files={videoOcrStore.videoFiles}
+        selectedFileId={videoOcrStore.selectedFileId}
+        supportedFormats={VIDEO_FORMATS}
+        isProcessing={videoOcrStore.isProcessing}
+        transcodingCount={fileSummary.transcodingCount}
+        onSelectFile={(fileId) => videoOcrStore.selectFile(fileId)}
+        onRequestRemoveFile={handleRequestRemoveFile}
+        onCancelFile={handleCancelFile}
+        onViewResult={handleViewResult}
+        onRetryFile={handleRetryFile}
+        onAddFiles={handleAddFiles}
+        onClearAll={handleRequestRemoveAll}
+      />
+    {/if}
 
     <div class="h-full min-w-0 min-h-0 overflow-hidden">
       <VideoOcrWorkspace
@@ -1235,8 +1274,12 @@
         liveDetections={selectedLiveDetections}
         liveDetectionCount={selectedLiveDetectionCount}
         {dialogsOpen}
+        {previewExpanded}
         hasDraftVersion={selectedHasDraftVersion}
         draftVersionName={selectedDraftVersionName}
+        onPreviewExpandedChange={(expanded) => {
+          previewExpanded = expanded;
+        }}
         onSelectVersion={handleSelectOcrVersion}
         onAddSegmentFromRegion={handleAddSegmentFromRegion}
         onUpdateZoneRegion={handleUpdateZoneRegion}
@@ -1248,15 +1291,17 @@
       />
     </div>
 
-    <aside
-      class={`min-w-0 overflow-hidden border-l transition-[opacity,transform,border-color] duration-200 ease-out ${optionsPanelClass}`}
-      aria-hidden={optionsPanelCompact}
-      inert={optionsPanelCompact ? true : undefined}
-    >
-      <div class="h-full w-80 overflow-auto p-4">
-        {@render ocrOptionsPanel()}
-      </div>
-    </aside>
+    {#if videoOcrLayout.showOptionsPanel}
+      <aside
+        class={`min-w-0 overflow-hidden border-l transition-[opacity,transform,border-color] duration-200 ease-out ${optionsPanelClass}`}
+        aria-hidden={optionsPanelCompact}
+        inert={optionsPanelCompact ? true : undefined}
+      >
+        <div class="h-full w-80 overflow-auto p-4">
+          {@render ocrOptionsPanel()}
+        </div>
+      </aside>
+    {/if}
   </div>
 </div>
 

@@ -9,8 +9,8 @@
     oncancelseek?: () => void;
   }
 
-  export function shouldRenderVolumePopoverInline(isFullscreen: boolean): boolean {
-    return isFullscreen;
+  export function shouldRenderVolumePopoverInline(_isExpanded: boolean): boolean {
+    return false;
   }
 
   export type SeekPointerEndType = 'pointerup' | 'pointercancel';
@@ -38,7 +38,7 @@
     paused: boolean;
     muted: boolean;
     volume: number;
-    fullscreen?: boolean;
+    expanded?: boolean;
     disabled?: boolean;
     onpreviewseek?: (timeSeconds: number) => void;
     onseek?: (timeSeconds: number) => void;
@@ -47,7 +47,7 @@
     onskip?: (deltaSeconds: number) => void;
     ontogglemute?: () => void;
     onvolumechange?: (volume: number) => void;
-    onfullscreen?: () => void;
+    onexpand?: () => void;
     class?: string;
   }
 
@@ -57,7 +57,7 @@
     paused,
     muted,
     volume,
-    fullscreen = false,
+    expanded = false,
     disabled = false,
     onpreviewseek,
     onseek,
@@ -66,7 +66,7 @@
     onskip,
     ontogglemute,
     onvolumechange,
-    onfullscreen,
+    onexpand,
     class: className = '',
   }: PreviewPlayerControlsProps = $props();
 
@@ -88,7 +88,7 @@
   const volumePercent = $derived(Math.round(safeVolume * 100));
   const controlsDisabled = $derived(disabled || safeDuration <= 0);
   const volumePopoverPortalProps = $derived({
-    disabled: shouldRenderVolumePopoverInline(fullscreen),
+    disabled: shouldRenderVolumePopoverInline(expanded),
   });
 
   function formatTime(timeSeconds: number): string {
@@ -459,11 +459,11 @@
         variant="ghost"
         size="icon-sm"
         disabled={disabled}
-        aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-        title={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
-        onclick={onfullscreen}
+        aria-label={expanded ? 'Collapse preview' : 'Expand preview'}
+        title={expanded ? 'Collapse preview' : 'Expand preview'}
+        onclick={onexpand}
       >
-        {#if fullscreen}
+        {#if expanded}
           <Minimize class="size-4" aria-hidden="true" />
         {:else}
           <Maximize class="size-4" aria-hidden="true" />

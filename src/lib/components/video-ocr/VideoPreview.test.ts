@@ -8,7 +8,7 @@ import {
   shouldRenderPreviewOverlayInline,
   shouldSuppressPostSeekPlaybackSync,
   shouldApplySeekToken,
-  shouldTogglePreviewFullscreenFromDoubleClick,
+  shouldTogglePreviewExpandedFromDoubleClick,
   shouldTogglePreviewPlaybackFromClick,
 } from './VideoPreview.svelte';
 import type { OcrSubtitle, VideoOcrSelection } from '$lib/types';
@@ -35,14 +35,14 @@ describe('VideoPreview interactions', () => {
     expect(shouldTogglePreviewPlaybackFromClick(0, true)).toBe(false);
   });
 
-  it('toggles fullscreen only from primary double-clicks while preview interactions are enabled', () => {
-    expect(shouldTogglePreviewFullscreenFromDoubleClick(0, false)).toBe(true);
-    expect(shouldTogglePreviewFullscreenFromDoubleClick(2, false)).toBe(false);
-    expect(shouldTogglePreviewFullscreenFromDoubleClick(0, true)).toBe(false);
+  it('toggles expanded preview only from primary double-clicks while preview interactions are enabled', () => {
+    expect(shouldTogglePreviewExpandedFromDoubleClick(0, false)).toBe(true);
+    expect(shouldTogglePreviewExpandedFromDoubleClick(2, false)).toBe(false);
+    expect(shouldTogglePreviewExpandedFromDoubleClick(0, true)).toBe(false);
   });
 
-  it('renders preview overlays inline while fullscreen is active', () => {
-    expect(shouldRenderPreviewOverlayInline(true)).toBe(true);
+  it('keeps preview overlays in normal portals while expanded preview is active', () => {
+    expect(shouldRenderPreviewOverlayInline(true)).toBe(false);
     expect(shouldRenderPreviewOverlayInline(false)).toBe(false);
   });
 

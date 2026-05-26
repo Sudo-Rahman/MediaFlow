@@ -20,8 +20,10 @@
     liveDetections: OcrZoneFrame[];
     liveDetectionCount: number;
     dialogsOpen: boolean;
+    previewExpanded?: boolean;
     hasDraftVersion?: boolean;
     draftVersionName?: string | null;
+    onPreviewExpandedChange?: (expanded: boolean) => void;
     onSelectVersion: (fileId: string, versionId: string | null) => void | Promise<void>;
     onAddSegmentFromRegion: (
       fileId: string,
@@ -44,8 +46,10 @@
     liveDetections,
     liveDetectionCount,
     dialogsOpen,
+    previewExpanded = false,
     hasDraftVersion = false,
     draftVersionName = null,
+    onPreviewExpandedChange,
     onSelectVersion,
     onAddSegmentFromRegion,
     onUpdateZoneRegion,
@@ -63,7 +67,6 @@
   let timelineRef = $state<OcrTimelineApi | null>(null);
   let workspaceEl = $state<HTMLDivElement | null>(null);
   let paletteOpen = $state(false);
-  let previewFullscreen = $state(false);
   let palettePosition = $state<FloatingPalettePosition>({ x: 16, y: 16 });
   let palettePositionInitialized = $state(false);
 
@@ -82,6 +85,10 @@
     ),
   );
   const workspaceRowsClass = $derived.by(() => {
+    if (previewExpanded) {
+      return 'grid-rows-[minmax(0,1fr)]';
+    }
+
     if (!file) {
       return 'grid-rows-[minmax(0,1fr)]';
     }
@@ -259,14 +266,13 @@
     {seekRequest}
     {activeCueSummary}
     {paletteOpen}
+    expanded={previewExpanded}
     toolbarAccessory={versionSelector}
-    fullscreenOverlay={activeCuePalette}
+    expandedOverlay={activeCuePalette}
     onTimeChange={handleTimeChange}
     onPlaybackFrame={handlePlaybackFrame}
     onOpenCuePalette={openCuePalette}
-    onFullscreenChange={(fullscreen) => {
-      previewFullscreen = fullscreen;
-    }}
+    onExpandedChange={onPreviewExpandedChange}
     onAddSegmentFromRegion={handleAddSegmentFromRegion}
     onUpdateZoneRegion={handleUpdateZoneRegion}
     onSetZoneRole={handleSetZoneRole}
@@ -275,7 +281,7 @@
     class="min-h-0"
   />
 
-  {#if file}
+  {#if file && !previewExpanded}
     <OcrTimeline
       bind:this={timelineRef}
       selection={workspaceSelection}
@@ -294,7 +300,7 @@
     />
   {/if}
 
-  {#if !previewFullscreen}
+  {#if !previewExpanded}
     {@render activeCuePalette()}
   {/if}
 </div>

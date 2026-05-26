@@ -7,11 +7,11 @@ import {
 } from './PreviewPlayerControls.svelte';
 
 describe('PreviewPlayerControls', () => {
-  it('renders the volume popover inline while fullscreen is active', () => {
-    expect(shouldRenderVolumePopoverInline(true)).toBe(true);
+  it('keeps the volume popover in its normal portal while expanded preview is active', () => {
+    expect(shouldRenderVolumePopoverInline(true)).toBe(false);
   });
 
-  it('keeps the default popover portal outside fullscreen', () => {
+  it('keeps the default popover portal outside expanded preview', () => {
     expect(shouldRenderVolumePopoverInline(false)).toBe(false);
   });
 

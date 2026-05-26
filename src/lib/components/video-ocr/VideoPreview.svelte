@@ -27,12 +27,12 @@
     return !disabled && button === 0;
   }
 
-  export function shouldTogglePreviewFullscreenFromDoubleClick(button: number, disabled: boolean): boolean {
+  export function shouldTogglePreviewExpandedFromDoubleClick(button: number, disabled: boolean): boolean {
     return !disabled && button === 0;
   }
 
-  export function shouldRenderPreviewOverlayInline(isFullscreen: boolean): boolean {
-    return isFullscreen;
+  export function shouldRenderPreviewOverlayInline(_isExpanded: boolean): boolean {
+    return false;
   }
 
   export const PREVIEW_SEEK_THROTTLE_MS = 120;
@@ -151,12 +151,13 @@
     seekRequest?: VideoSeekRequest | null;
     activeCueSummary: ActiveCueSummaryModel;
     paletteOpen?: boolean;
+    expanded?: boolean;
     toolbarAccessory?: Snippet<[boolean]>;
-    fullscreenOverlay?: Snippet;
+    expandedOverlay?: Snippet;
     onTimeChange?: (timeMs: number) => void;
     onPlaybackFrame?: (timeMs: number) => void;
     onOpenCuePalette?: () => void;
-    onFullscreenChange?: (fullscreen: boolean) => void;
+    onExpandedChange?: (expanded: boolean) => void;
     onAddSegmentFromRegion?: (region: OcrRegion, startTimeMs: number, endTimeMs: number) => void | Promise<void>;
     onUpdateZoneRegion?: (segmentId: string, zoneId: string, region: OcrRegion) => void | Promise<void>;
     onSetZoneRole?: (segmentId: string, zoneId: string, role: OcrZoneRole) => void | Promise<void>;
@@ -184,12 +185,13 @@
     seekRequest = null,
     activeCueSummary,
     paletteOpen = false,
+    expanded = false,
     toolbarAccessory,
-    fullscreenOverlay,
+    expandedOverlay,
     onTimeChange,
     onPlaybackFrame,
     onOpenCuePalette,
-    onFullscreenChange,
+    onExpandedChange,
     onAddSegmentFromRegion,
     onUpdateZoneRegion,
     onSetZoneRole,
@@ -217,7 +219,6 @@
   let contextMenuOpen = $state(false);
   let resumePlayback = $state(false);
   let lastAppliedSeekRequestId = $state<number | null>(null);
-  let isFullscreen = $state(false);
   let latestPlaybackTimesByFileId: Record<string, number> = {};
   let previewStateKeysByFileId: Record<string, string> = {};
   let playbackClock: PreviewPlaybackClock | null = null;
@@ -290,8 +291,9 @@
   const previewInteractionsDisabled = $derived(isDrawingZone || isEditingZone);
   const previewSelection = $derived(selection ?? file?.ocrSelection ?? { segments: [] });
   const previewSubtitles = $derived(subtitles);
+  const renderOverlayInline = $derived(shouldRenderPreviewOverlayInline(expanded));
   const overlayPortalProps = $derived({
-    disabled: shouldRenderPreviewOverlayInline(isFullscreen),
+    disabled: renderOverlayInline,
   });
   const previewChangeTimesMs = $derived.by(() =>
     createPreviewChangeTimes(file?.duration, previewSelection, previewSubtitles),
@@ -347,19 +349,6 @@
     file;
     videoEl;
     duration = getVideoDurationSeconds();
-  });
-
-  $effect(() => {
-    const handleFullscreenChange = () => {
-      syncFullscreenState();
-    };
-
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-    syncFullscreenState();
-
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
-    };
   });
 
   $effect(() => {
@@ -967,46 +956,18 @@
     syncPlaybackState();
   }
 
-  function enterFullscreen(): void {
-    void toggleFullscreen();
+  function toggleExpandedPreview(): void {
+    onExpandedChange?.(!expanded);
   }
 
   function handlePreviewDoubleClick(event: MouseEvent): void {
-    if (!shouldTogglePreviewFullscreenFromDoubleClick(event.button, previewInteractionsDisabled)) {
+    if (!shouldTogglePreviewExpandedFromDoubleClick(event.button, previewInteractionsDisabled)) {
       return;
     }
 
     event.preventDefault();
     event.stopPropagation();
-    void toggleFullscreen();
-  }
-
-  async function toggleFullscreen(): Promise<void> {
-    try {
-      if (document.fullscreenElement) {
-        await document.exitFullscreen();
-        return;
-      }
-
-      await (previewContainerEl ?? containerEl)?.requestFullscreen?.();
-    } catch {
-      // Fullscreen can be rejected by the WebView when state changes between click and request.
-    } finally {
-      syncFullscreenState();
-    }
-  }
-
-  function syncFullscreenState(): void {
-    const fullscreenElement = document.fullscreenElement;
-    const nextIsFullscreen = !!fullscreenElement
-      && !!previewContainerEl
-      && (fullscreenElement === previewContainerEl || previewContainerEl.contains(fullscreenElement));
-    if (nextIsFullscreen === isFullscreen) {
-      return;
-    }
-
-    isFullscreen = nextIsFullscreen;
-    onFullscreenChange?.(nextIsFullscreen);
+    toggleExpandedPreview();
   }
 
   function describeVideoPlaybackError(error: MediaError | null): string {
@@ -1258,7 +1219,7 @@
         title={previewTitle}
         description={previewDescription}
         accessory={toolbarAccessory}
-        accessoryInline={isFullscreen}
+        accessoryInline={renderOverlayInline}
         showCancel={previewLayers.showToolbarActions}
         showSave={previewLayers.showToolbarActions && isEditingZone}
         saveDisabled={!editingRegion}
@@ -1314,7 +1275,7 @@
                 detections={liveDetections}
                 detectionCount={liveDetectionCount}
                 selection={previewSelection}
-                renderPopoverInline={isFullscreen}
+                renderPopoverInline={renderOverlayInline}
               />
             {/if}
           </div>
@@ -1377,8 +1338,8 @@
           onOpenPalette={onOpenCuePalette}
         />
       {/if}
-      {#if isFullscreen && fullscreenOverlay}
-        {@render fullscreenOverlay()}
+      {#if expanded && expandedOverlay}
+        {@render expandedOverlay()}
       {/if}
       <PreviewPlayerControls
         bind:this={playerControlsRef}
@@ -1387,7 +1348,7 @@
         paused={isPaused}
         muted={isMuted}
         {volume}
-        fullscreen={isFullscreen}
+        {expanded}
         disabled={isDrawingZone || isEditingZone}
         onpreviewseek={previewSeekToSeconds}
         onseek={seekToSeconds}
@@ -1396,7 +1357,7 @@
         onskip={skipBySeconds}
         ontogglemute={toggleMute}
         onvolumechange={setVolume}
-        onfullscreen={enterFullscreen}
+        onexpand={toggleExpandedPreview}
       />
     </div>
   {:else if file}

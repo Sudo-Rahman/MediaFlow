@@ -26,9 +26,35 @@
   }
 
   export const PREVIEW_SEEK_THROTTLE_MS = 120;
+  export const POST_SEEK_PLAYBACK_SYNC_GUARD_MS = 1_000;
+  export const POST_SEEK_PLAYBACK_SYNC_TOLERANCE_SECONDS = 1;
 
   export function shouldApplySeekToken(candidateToken: number | null, activeToken: number | null): boolean {
     return candidateToken !== null && candidateToken === activeToken;
+  }
+
+  export function shouldSuppressPostSeekPlaybackSync(
+    candidateTimeSeconds: number,
+    confirmedSeekTimeSeconds: number | null,
+    nowMs: number,
+    guardUntilMs: number,
+    toleranceSeconds: number,
+  ): boolean {
+    if (
+      confirmedSeekTimeSeconds === null
+      || !Number.isFinite(candidateTimeSeconds)
+      || !Number.isFinite(confirmedSeekTimeSeconds)
+      || !Number.isFinite(nowMs)
+      || !Number.isFinite(guardUntilMs)
+      || nowMs > guardUntilMs
+    ) {
+      return false;
+    }
+
+    const safeToleranceSeconds = Number.isFinite(toleranceSeconds)
+      ? Math.max(0, toleranceSeconds)
+      : 0;
+    return Math.abs(candidateTimeSeconds - confirmedSeekTimeSeconds) > safeToleranceSeconds;
   }
 
   export function getPreviewSeekThrottleDelay(
@@ -149,6 +175,9 @@
   let nextSeekToken = 0;
   let activeSeekToken: number | null = null;
   let scrubRestoreTimeSeconds: number | null = null;
+  let lastConfirmedSeekFileId: string | null = null;
+  let lastConfirmedSeekTimeSeconds: number | null = null;
+  let postSeekGuardUntilMs = Number.NEGATIVE_INFINITY;
   const seekSession = createPreviewSeekSession();
   
   // Video bounds within container (for letterboxed videos)
@@ -281,6 +310,7 @@
       clearPendingPreviewSeek();
       activeSeekToken = null;
       scrubRestoreTimeSeconds = null;
+      clearPostSeekPlaybackGuard();
       return;
     }
 
@@ -314,6 +344,7 @@
         clearPendingPreviewSeek();
         activeSeekToken = null;
         scrubRestoreTimeSeconds = null;
+        clearPostSeekPlaybackGuard();
       }
     };
   });
@@ -329,7 +360,10 @@
   function handlePlaybackPlay(): void {
     syncPlaybackState();
     if (videoEl && !seekSession.isActive) {
-      syncPlaybackFrame(getCurrentPlaybackTimeSeconds(), true);
+      const playbackTimeSeconds = normalizePlaybackTimeSeconds(getCurrentPlaybackTimeSeconds());
+      if (!shouldSuppressCurrentPostSeekPlaybackSync(playbackTimeSeconds)) {
+        syncPlaybackFrame(playbackTimeSeconds, true);
+      }
       playbackClock?.start(videoEl);
     }
   }
@@ -356,10 +390,14 @@
     nextTimeSeconds: number,
     forcePreviewState = false,
     options: { confirmed?: boolean } = {},
-  ): void {
+  ): boolean {
     const safeTimeSeconds = normalizePlaybackTimeSeconds(nextTimeSeconds);
     const nextTimeMs = Math.round(safeTimeSeconds * 1000);
     const confirmed = options.confirmed ?? true;
+
+    if (confirmed && shouldSuppressCurrentPostSeekPlaybackSync(safeTimeSeconds)) {
+      return false;
+    }
 
     if (file && confirmed) {
       latestPlaybackTimesByFileId[file.id] = safeTimeSeconds;
@@ -369,12 +407,41 @@
     playerControlsRef?.syncPlaybackTime(safeTimeSeconds);
     onPlaybackFrame?.(nextTimeMs);
     updatePreviewTimeState(safeTimeSeconds, forcePreviewState);
+    return true;
   }
 
   function commitPlaybackTime(nextTimeSeconds: number, forcePreviewState = true): void {
     const safeTimeSeconds = normalizePlaybackTimeSeconds(nextTimeSeconds);
-    syncPlaybackFrame(safeTimeSeconds, forcePreviewState);
-    onTimeChange?.(Math.round(safeTimeSeconds * 1000));
+    if (syncPlaybackFrame(safeTimeSeconds, forcePreviewState)) {
+      onTimeChange?.(Math.round(safeTimeSeconds * 1000));
+    }
+  }
+
+  function armPostSeekPlaybackGuard(confirmedTimeSeconds: number): void {
+    lastConfirmedSeekFileId = file?.id ?? null;
+    lastConfirmedSeekTimeSeconds = confirmedTimeSeconds;
+    postSeekGuardUntilMs = performance.now() + POST_SEEK_PLAYBACK_SYNC_GUARD_MS;
+  }
+
+  function clearPostSeekPlaybackGuard(): void {
+    lastConfirmedSeekFileId = null;
+    lastConfirmedSeekTimeSeconds = null;
+    postSeekGuardUntilMs = Number.NEGATIVE_INFINITY;
+  }
+
+  function shouldSuppressCurrentPostSeekPlaybackSync(candidateTimeSeconds: number): boolean {
+    const currentFileId = file?.id ?? null;
+    if (!currentFileId || lastConfirmedSeekFileId !== currentFileId) {
+      return false;
+    }
+
+    return shouldSuppressPostSeekPlaybackSync(
+      candidateTimeSeconds,
+      lastConfirmedSeekTimeSeconds,
+      performance.now(),
+      postSeekGuardUntilMs,
+      POST_SEEK_PLAYBACK_SYNC_TOLERANCE_SECONDS,
+    );
   }
 
   function clearSeekFallbackTimer(): void {
@@ -452,6 +519,7 @@
     seekSession.startScrub(targetTimeSeconds, videoEl ? !videoEl.paused : false);
     clearSeekFallbackTimer();
     playbackClock?.stop();
+    clearPostSeekPlaybackGuard();
 
     if (videoEl && !videoEl.paused) {
       videoEl.pause();
@@ -467,6 +535,7 @@
     clearSeekFallbackTimer();
     clearPendingPreviewSeek();
     playbackClock?.stop();
+    clearPostSeekPlaybackGuard();
     return createSeekToken();
   }
 
@@ -486,7 +555,12 @@
     scrubRestoreTimeSeconds = null;
 
     if (completion.targetTimeSeconds !== null && videoEl) {
-      syncPlaybackFrame(confirmedTimeSeconds ?? completion.targetTimeSeconds, true);
+      const confirmedSeekTimeSeconds = normalizePlaybackTimeSeconds(
+        confirmedTimeSeconds ?? completion.targetTimeSeconds,
+      );
+      if (syncPlaybackFrame(confirmedSeekTimeSeconds, true)) {
+        armPostSeekPlaybackGuard(confirmedSeekTimeSeconds);
+      }
     }
 
     if (completion.shouldResumePlayback && videoEl) {

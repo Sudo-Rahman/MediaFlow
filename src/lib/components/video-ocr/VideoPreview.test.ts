@@ -4,6 +4,7 @@ import {
   PREVIEW_SEEK_THROTTLE_MS,
   getPreviewSeekThrottleDelay,
   getPreviewKeyboardAction,
+  shouldSuppressPostSeekPlaybackSync,
   shouldApplySeekToken,
   shouldTogglePreviewPlaybackFromClick,
 } from './VideoPreview.svelte';
@@ -41,5 +42,21 @@ describe('VideoPreview interactions', () => {
     expect(getPreviewSeekThrottleDelay(200, 100)).toBe(20);
     expect(getPreviewSeekThrottleDelay(250, 100)).toBe(0);
     expect(getPreviewSeekThrottleDelay(50, Number.NEGATIVE_INFINITY)).toBe(0);
+  });
+
+  it('suppresses stale playback syncs during the post-seek guard window', () => {
+    expect(shouldSuppressPostSeekPlaybackSync(1.85, 351.864, 1_200, 2_000, 1)).toBe(true);
+  });
+
+  it('accepts playback frames close to the confirmed seek target during the guard window', () => {
+    expect(shouldSuppressPostSeekPlaybackSync(351.935, 351.864, 1_200, 2_000, 1)).toBe(false);
+  });
+
+  it('accepts playback syncs after the post-seek guard window expires', () => {
+    expect(shouldSuppressPostSeekPlaybackSync(1.85, 351.864, 2_001, 2_000, 1)).toBe(false);
+  });
+
+  it('keeps normal playback sync behavior when there is no recent confirmed seek', () => {
+    expect(shouldSuppressPostSeekPlaybackSync(1.85, null, 1_200, 2_000, 1)).toBe(false);
   });
 });

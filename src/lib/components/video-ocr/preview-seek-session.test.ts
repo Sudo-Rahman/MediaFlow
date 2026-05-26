@@ -39,6 +39,24 @@ describe('preview seek session', () => {
     expect(session.resolvePlaybackFrame(79.9)).toBe('complete');
   });
 
+  it('does not request playback resume for a paused scrub seek', () => {
+    const session = createPreviewSeekSession();
+
+    session.startScrub(10, false);
+    session.startCommit(80);
+
+    expect(session.complete()).toEqual({ targetTimeSeconds: 80, shouldResumePlayback: false });
+  });
+
+  it('requests playback resume for a scrub seek that started while playing', () => {
+    const session = createPreviewSeekSession();
+
+    session.startScrub(10, true);
+    session.startCommit(80);
+
+    expect(session.complete()).toEqual({ targetTimeSeconds: 80, shouldResumePlayback: true });
+  });
+
   it('completes a committed seek only when playback reaches the latest target', () => {
     const session = createPreviewSeekSession();
 

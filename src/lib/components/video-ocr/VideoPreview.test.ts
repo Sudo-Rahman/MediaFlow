@@ -5,8 +5,10 @@ import {
   createPreviewChangeTimes,
   getPreviewSeekThrottleDelay,
   getPreviewKeyboardAction,
+  shouldRenderPreviewOverlayInline,
   shouldSuppressPostSeekPlaybackSync,
   shouldApplySeekToken,
+  shouldTogglePreviewFullscreenFromDoubleClick,
   shouldTogglePreviewPlaybackFromClick,
 } from './VideoPreview.svelte';
 import type { OcrSubtitle, VideoOcrSelection } from '$lib/types';
@@ -31,6 +33,17 @@ describe('VideoPreview interactions', () => {
     expect(shouldTogglePreviewPlaybackFromClick(0, false)).toBe(true);
     expect(shouldTogglePreviewPlaybackFromClick(2, false)).toBe(false);
     expect(shouldTogglePreviewPlaybackFromClick(0, true)).toBe(false);
+  });
+
+  it('toggles fullscreen only from primary double-clicks while preview interactions are enabled', () => {
+    expect(shouldTogglePreviewFullscreenFromDoubleClick(0, false)).toBe(true);
+    expect(shouldTogglePreviewFullscreenFromDoubleClick(2, false)).toBe(false);
+    expect(shouldTogglePreviewFullscreenFromDoubleClick(0, true)).toBe(false);
+  });
+
+  it('renders preview overlays inline while fullscreen is active', () => {
+    expect(shouldRenderPreviewOverlayInline(true)).toBe(true);
+    expect(shouldRenderPreviewOverlayInline(false)).toBe(false);
   });
 
   it('applies delayed seek work only for the active seek token', () => {

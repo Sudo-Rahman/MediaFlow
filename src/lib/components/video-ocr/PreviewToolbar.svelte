@@ -14,7 +14,8 @@
     saveDisabled?: boolean;
     oncancel?: () => void;
     onsave?: () => void;
-    accessory?: Snippet;
+    accessory?: Snippet<[boolean]>;
+    accessoryInline?: boolean;
     class?: string;
   }
 
@@ -27,6 +28,7 @@
     oncancel,
     onsave,
     accessory,
+    accessoryInline = false,
     class: className = '',
   }: PreviewToolbarProps = $props();
 </script>
@@ -42,7 +44,7 @@
   {#if accessory || showCancel || showSave}
     <div class="flex shrink-0 items-center gap-2">
       {#if accessory}
-        {@render accessory()}
+        {@render accessory(accessoryInline)}
       {/if}
       {#if showCancel}
         <Tooltip.Root>

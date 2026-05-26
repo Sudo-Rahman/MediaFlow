@@ -15,6 +15,7 @@
     showDraft?: boolean;
     draftName?: string;
     disabled?: boolean;
+    renderPopoverInline?: boolean;
     onSelectVersion?: (versionId: string | null) => void | Promise<void>;
     class?: string;
   }
@@ -25,6 +26,7 @@
     showDraft = false,
     draftName = 'Draft Version',
     disabled = false,
+    renderPopoverInline = false,
     onSelectVersion,
     class: className = '',
   }: OcrVersionSelectorProps = $props();
@@ -74,7 +76,12 @@
         </Button>
       {/snippet}
     </Popover.Trigger>
-    <Popover.Content align="end" sideOffset={6} class="w-80 max-w-[calc(100vw-2rem)] p-2">
+    <Popover.Content
+      align="end"
+      sideOffset={6}
+      portalProps={{ disabled: renderPopoverInline }}
+      class="w-80 max-w-[calc(100vw-2rem)] p-2"
+    >
       <div class="px-2 py-1.5">
         <p class="text-xs font-medium text-muted-foreground">OCR version</p>
       </div>

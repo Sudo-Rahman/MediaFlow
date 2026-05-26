@@ -63,6 +63,7 @@
   let timelineRef = $state<OcrTimelineApi | null>(null);
   let workspaceEl = $state<HTMLDivElement | null>(null);
   let paletteOpen = $state(false);
+  let previewFullscreen = $state(false);
   let palettePosition = $state<FloatingPalettePosition>({ x: 16, y: 16 });
   let palettePositionInitialized = $state(false);
 
@@ -217,14 +218,28 @@
   }
 </script>
 
-{#snippet versionSelector()}
+{#snippet versionSelector(renderPopoverInline: boolean)}
   {#if file}
     <OcrVersionSelector
       versions={file.ocrVersions}
       activeVersionId={file.activeOcrVersionId}
       showDraft={hasDraftVersion}
       draftName={draftVersionName ?? `Draft Version ${file.ocrVersions.length + 1}`}
+      {renderPopoverInline}
       onSelectVersion={(versionId) => onSelectVersion(file.id, versionId)}
+    />
+  {/if}
+{/snippet}
+
+{#snippet activeCuePalette()}
+  {#if file && paletteOpen}
+    <FloatingOcrCuePalette
+      summary={activeCueSummary}
+      position={palettePosition}
+      onPositionChange={(position) => {
+        palettePosition = position;
+      }}
+      onClose={closeCuePalette}
     />
   {/if}
 {/snippet}
@@ -245,9 +260,13 @@
     {activeCueSummary}
     {paletteOpen}
     toolbarAccessory={versionSelector}
+    fullscreenOverlay={activeCuePalette}
     onTimeChange={handleTimeChange}
     onPlaybackFrame={handlePlaybackFrame}
     onOpenCuePalette={openCuePalette}
+    onFullscreenChange={(fullscreen) => {
+      previewFullscreen = fullscreen;
+    }}
     onAddSegmentFromRegion={handleAddSegmentFromRegion}
     onUpdateZoneRegion={handleUpdateZoneRegion}
     onSetZoneRole={handleSetZoneRole}
@@ -275,14 +294,7 @@
     />
   {/if}
 
-  {#if file && paletteOpen}
-    <FloatingOcrCuePalette
-      summary={activeCueSummary}
-      position={palettePosition}
-      onPositionChange={(position) => {
-        palettePosition = position;
-      }}
-      onClose={closeCuePalette}
-    />
+  {#if !previewFullscreen}
+    {@render activeCuePalette()}
   {/if}
 </div>

@@ -27,6 +27,14 @@
     return !disabled && button === 0;
   }
 
+  export function shouldTogglePreviewFullscreenFromDoubleClick(button: number, disabled: boolean): boolean {
+    return !disabled && button === 0;
+  }
+
+  export function shouldRenderPreviewOverlayInline(isFullscreen: boolean): boolean {
+    return isFullscreen;
+  }
+
   export const PREVIEW_SEEK_THROTTLE_MS = 120;
   export const POST_SEEK_PLAYBACK_SYNC_GUARD_MS = 1_000;
   export const POST_SEEK_PLAYBACK_SYNC_TOLERANCE_SECONDS = 1;
@@ -143,10 +151,12 @@
     seekRequest?: VideoSeekRequest | null;
     activeCueSummary: ActiveCueSummaryModel;
     paletteOpen?: boolean;
-    toolbarAccessory?: Snippet;
+    toolbarAccessory?: Snippet<[boolean]>;
+    fullscreenOverlay?: Snippet;
     onTimeChange?: (timeMs: number) => void;
     onPlaybackFrame?: (timeMs: number) => void;
     onOpenCuePalette?: () => void;
+    onFullscreenChange?: (fullscreen: boolean) => void;
     onAddSegmentFromRegion?: (region: OcrRegion, startTimeMs: number, endTimeMs: number) => void | Promise<void>;
     onUpdateZoneRegion?: (segmentId: string, zoneId: string, region: OcrRegion) => void | Promise<void>;
     onSetZoneRole?: (segmentId: string, zoneId: string, role: OcrZoneRole) => void | Promise<void>;
@@ -175,9 +185,11 @@
     activeCueSummary,
     paletteOpen = false,
     toolbarAccessory,
+    fullscreenOverlay,
     onTimeChange,
     onPlaybackFrame,
     onOpenCuePalette,
+    onFullscreenChange,
     onAddSegmentFromRegion,
     onUpdateZoneRegion,
     onSetZoneRole,
@@ -278,6 +290,9 @@
   const previewInteractionsDisabled = $derived(isDrawingZone || isEditingZone);
   const previewSelection = $derived(selection ?? file?.ocrSelection ?? { segments: [] });
   const previewSubtitles = $derived(subtitles);
+  const overlayPortalProps = $derived({
+    disabled: shouldRenderPreviewOverlayInline(isFullscreen),
+  });
   const previewChangeTimesMs = $derived.by(() =>
     createPreviewChangeTimes(file?.duration, previewSelection, previewSubtitles),
   );
@@ -956,6 +971,16 @@
     void toggleFullscreen();
   }
 
+  function handlePreviewDoubleClick(event: MouseEvent): void {
+    if (!shouldTogglePreviewFullscreenFromDoubleClick(event.button, previewInteractionsDisabled)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    void toggleFullscreen();
+  }
+
   async function toggleFullscreen(): Promise<void> {
     try {
       if (document.fullscreenElement) {
@@ -973,9 +998,15 @@
 
   function syncFullscreenState(): void {
     const fullscreenElement = document.fullscreenElement;
-    isFullscreen = !!fullscreenElement
+    const nextIsFullscreen = !!fullscreenElement
       && !!previewContainerEl
       && (fullscreenElement === previewContainerEl || previewContainerEl.contains(fullscreenElement));
+    if (nextIsFullscreen === isFullscreen) {
+      return;
+    }
+
+    isFullscreen = nextIsFullscreen;
+    onFullscreenChange?.(nextIsFullscreen);
   }
 
   function describeVideoPlaybackError(error: MediaError | null): string {
@@ -1227,6 +1258,7 @@
         title={previewTitle}
         description={previewDescription}
         accessory={toolbarAccessory}
+        accessoryInline={isFullscreen}
         showCancel={previewLayers.showToolbarActions}
         showSave={previewLayers.showToolbarActions && isEditingZone}
         saveDisabled={!editingRegion}
@@ -1242,6 +1274,7 @@
           tabindex={0}
           aria-label="Video preview player"
           onclick={handlePreviewSurfaceClick}
+          ondblclick={handlePreviewDoubleClick}
           oncontextmenu={handlePreviewContextMenu}
           onkeydown={handlePreviewSurfaceKeydown}
         >
@@ -1281,6 +1314,7 @@
                 detections={liveDetections}
                 detectionCount={liveDetectionCount}
                 selection={previewSelection}
+                renderPopoverInline={isFullscreen}
               />
             {/if}
           </div>
@@ -1303,7 +1337,7 @@
             />
           {/if}
         </ContextMenu.Trigger>
-        <ContextMenu.Content class="w-64">
+        <ContextMenu.Content portalProps={overlayPortalProps} class="w-64">
           {#if previewLayers.showPassiveZones}
             {#if contextZone}
               {@const menuZone = contextZone}
@@ -1342,6 +1376,9 @@
           {paletteOpen}
           onOpenPalette={onOpenCuePalette}
         />
+      {/if}
+      {#if isFullscreen && fullscreenOverlay}
+        {@render fullscreenOverlay()}
       {/if}
       <PreviewPlayerControls
         bind:this={playerControlsRef}

@@ -10,8 +10,12 @@
     showOptionsPanel: boolean;
   }
 
-  export function getVideoOcrLayoutState(optionsPanelWidth: string, previewExpanded: boolean): VideoOcrLayoutState {
-    if (previewExpanded) {
+  export function getVideoOcrLayoutState(
+    optionsPanelWidth: string,
+    previewExpanded: boolean,
+    previewAvailable: boolean,
+  ): VideoOcrLayoutState {
+    if (previewExpanded && previewAvailable) {
       return {
         rootClass: 'grid h-full overflow-hidden grid-cols-[minmax(0,1fr)]',
         optionsWidth: '0rem',
@@ -142,7 +146,11 @@
     selectedFile ? videoOcrStore.getLiveDetectionCount(selectedFile.id) : 0,
   );
   const optionsPanelWidth = $derived(optionsPanelCompact ? '0rem' : '20rem');
-  const videoOcrLayout = $derived(getVideoOcrLayoutState(optionsPanelWidth, previewExpanded));
+  const previewMediaAvailable = $derived(Boolean(selectedFile?.previewPath));
+  const effectivePreviewExpanded = $derived(previewExpanded && previewMediaAvailable);
+  const videoOcrLayout = $derived(
+    getVideoOcrLayoutState(optionsPanelWidth, previewExpanded, previewMediaAvailable),
+  );
   const optionsPanelClass = $derived(
     optionsPanelCompact
       ? 'pointer-events-none translate-x-3 border-transparent opacity-0'
@@ -1274,11 +1282,11 @@
         liveDetections={selectedLiveDetections}
         liveDetectionCount={selectedLiveDetectionCount}
         {dialogsOpen}
-        {previewExpanded}
+        previewExpanded={effectivePreviewExpanded}
         hasDraftVersion={selectedHasDraftVersion}
         draftVersionName={selectedDraftVersionName}
         onPreviewExpandedChange={(expanded) => {
-          previewExpanded = expanded;
+          previewExpanded = expanded && previewMediaAvailable;
         }}
         onSelectVersion={handleSelectOcrVersion}
         onAddSegmentFromRegion={handleAddSegmentFromRegion}

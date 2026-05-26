@@ -2,19 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   shouldCommitSeekOnPointerEnd,
-  shouldRenderVolumePopoverInline,
   shouldSyncSeekUiFromCurrentTime,
 } from './PreviewPlayerControls.svelte';
 
 describe('PreviewPlayerControls', () => {
-  it('keeps the volume popover in its normal portal while expanded preview is active', () => {
-    expect(shouldRenderVolumePopoverInline(true)).toBe(false);
-  });
-
-  it('keeps the default popover portal outside expanded preview', () => {
-    expect(shouldRenderVolumePopoverInline(false)).toBe(false);
-  });
-
   it('commits seek drags only on pointerup', () => {
     expect(shouldCommitSeekOnPointerEnd('pointerup')).toBe(true);
     expect(shouldCommitSeekOnPointerEnd('pointercancel')).toBe(false);

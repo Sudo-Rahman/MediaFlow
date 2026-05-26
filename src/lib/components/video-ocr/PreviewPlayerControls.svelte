@@ -9,10 +9,6 @@
     oncancelseek?: () => void;
   }
 
-  export function shouldRenderVolumePopoverInline(_isExpanded: boolean): boolean {
-    return false;
-  }
-
   export type SeekPointerEndType = 'pointerup' | 'pointercancel';
 
   export function shouldCommitSeekOnPointerEnd(type: SeekPointerEndType): boolean {
@@ -87,9 +83,7 @@
   const safeVolume = $derived(Number.isFinite(volume) ? Math.min(Math.max(0, volume), 1) : 0);
   const volumePercent = $derived(Math.round(safeVolume * 100));
   const controlsDisabled = $derived(disabled || safeDuration <= 0);
-  const volumePopoverPortalProps = $derived({
-    disabled: shouldRenderVolumePopoverInline(expanded),
-  });
+  const volumePopoverPortalProps = { disabled: false };
 
   function formatTime(timeSeconds: number): string {
     const totalSeconds = Math.max(0, Math.floor(Number.isFinite(timeSeconds) ? timeSeconds : 0));

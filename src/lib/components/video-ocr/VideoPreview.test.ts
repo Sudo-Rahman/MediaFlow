@@ -7,7 +7,6 @@ import {
   createPreviewChangeTimes,
   getPreviewSeekThrottleDelay,
   getPreviewKeyboardAction,
-  shouldRenderPreviewOverlayInline,
   shouldSuppressPostSeekPlaybackSync,
   shouldApplySeekToken,
   shouldTogglePreviewExpandedFromDoubleClick,
@@ -60,11 +59,6 @@ describe('VideoPreview interactions', () => {
     expect(shouldTogglePreviewExpandedFromDoubleClick(0, false)).toBe(true);
     expect(shouldTogglePreviewExpandedFromDoubleClick(2, false)).toBe(false);
     expect(shouldTogglePreviewExpandedFromDoubleClick(0, true)).toBe(false);
-  });
-
-  it('keeps preview overlays in normal portals while expanded preview is active', () => {
-    expect(shouldRenderPreviewOverlayInline(true)).toBe(false);
-    expect(shouldRenderPreviewOverlayInline(false)).toBe(false);
   });
 
   it('applies delayed seek work only for the active seek token', () => {

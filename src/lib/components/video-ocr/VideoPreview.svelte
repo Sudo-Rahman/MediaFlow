@@ -35,10 +35,6 @@
     return !disabled && button === 0;
   }
 
-  export function shouldRenderPreviewOverlayInline(_isExpanded: boolean): boolean {
-    return false;
-  }
-
   export const PREVIEW_SEEK_THROTTLE_MS = 120;
   export const PREVIEW_CLICK_TOGGLE_DELAY_MS = 180;
   export const POST_SEEK_PLAYBACK_SYNC_GUARD_MS = 1_000;
@@ -170,6 +166,13 @@
   import { createPreviewPlaybackClock } from './preview-playback-clock';
   import { getPreviewLayerState } from './preview-layer-state';
   import { createPreviewSeekSession } from './preview-seek-session';
+  import {
+    calculateVideoBounds,
+    findTopmostZoneAtPoint,
+    getVideoPoint,
+    regionToContainerStyle,
+    type PreviewVideoBounds,
+  } from './preview-zone-geometry';
 
   interface VideoSeekRequest {
     fileId: string;
@@ -276,7 +279,7 @@
   
   // Video bounds within container (for letterboxed videos)
   // These are relative values (0-1) within the container
-  let videoBounds = $state({ x: 0, y: 0, width: 1, height: 1 });
+  let videoBounds = $state<PreviewVideoBounds>({ x: 0, y: 0, width: 1, height: 1 });
 
   onDestroy(() => {
     previewClickToggle.clear();
@@ -334,10 +337,8 @@
   const previewInteractionsDisabled = $derived(isDrawingZone || isEditingZone);
   const previewSelection = $derived(selection ?? file?.ocrSelection ?? { segments: [] });
   const previewSubtitles = $derived(subtitles);
-  const renderOverlayInline = $derived(shouldRenderPreviewOverlayInline(expanded));
-  const overlayPortalProps = $derived({
-    disabled: renderOverlayInline,
-  });
+  const renderOverlayInline = false;
+  const overlayPortalProps = { disabled: false };
   const previewChangeTimesMs = $derived.by(() =>
     createPreviewChangeTimes(file?.duration, previewSelection, previewSubtitles),
   );
@@ -1132,40 +1133,10 @@
     if (!videoEl || !containerEl) return;
     
     const containerRect = containerEl.getBoundingClientRect();
-    const videoWidth = videoEl.videoWidth;
-    const videoHeight = videoEl.videoHeight;
-    
-    if (videoWidth === 0 || videoHeight === 0 || containerRect.width === 0 || containerRect.height === 0) return;
-    
-    const videoRatio = videoWidth / videoHeight;
-    const containerRatio = containerRect.width / containerRect.height;
-    
-    let displayWidth: number;
-    let displayHeight: number;
-    let offsetX: number;
-    let offsetY: number;
-    
-    if (videoRatio > containerRatio) {
-      // Video is wider than container - letterbox top/bottom
-      displayWidth = containerRect.width;
-      displayHeight = containerRect.width / videoRatio;
-      offsetX = 0;
-      offsetY = (containerRect.height - displayHeight) / 2;
-    } else {
-      // Video is taller than container - letterbox left/right
-      displayHeight = containerRect.height;
-      displayWidth = containerRect.height * videoRatio;
-      offsetX = (containerRect.width - displayWidth) / 2;
-      offsetY = 0;
-    }
-    
-    // Convert to relative values (0-1)
-    videoBounds = {
-      x: offsetX / containerRect.width,
-      y: offsetY / containerRect.height,
-      width: displayWidth / containerRect.width,
-      height: displayHeight / containerRect.height,
-    };
+    videoBounds = calculateVideoBounds(
+      { width: containerRect.width, height: containerRect.height },
+      { width: videoEl.videoWidth, height: videoEl.videoHeight },
+    );
   }
 
   function handleZoneRole(segmentId: string, zoneId: string, role: OcrZoneRole): void {
@@ -1187,40 +1158,11 @@
       return null;
     }
 
-    const rect = containerEl.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0 || videoBounds.width <= 0 || videoBounds.height <= 0) {
-      return null;
-    }
-
-    const containerX = (event.clientX - rect.left) / rect.width;
-    const containerY = (event.clientY - rect.top) / rect.height;
-    if (
-      containerX < videoBounds.x
-      || containerX > videoBounds.x + videoBounds.width
-      || containerY < videoBounds.y
-      || containerY > videoBounds.y + videoBounds.height
-    ) {
-      return null;
-    }
-
-    return {
-      x: (containerX - videoBounds.x) / videoBounds.width,
-      y: (containerY - videoBounds.y) / videoBounds.height,
-    };
+    return getVideoPoint(event, containerEl.getBoundingClientRect(), videoBounds);
   }
 
   function findZoneAtEvent(event: MouseEvent): VisibleZoneEntry | undefined {
-    const point = videoPointFromEvent(event);
-    if (!point) {
-      return undefined;
-    }
-
-    return [...visibleZoneEntries].reverse().find((entry) => (
-      point.x >= entry.region.x
-      && point.x <= entry.region.x + entry.region.width
-      && point.y >= entry.region.y
-      && point.y <= entry.region.y + entry.region.height
-    ));
+    return findTopmostZoneAtPoint(videoPointFromEvent(event), visibleZoneEntries);
   }
 
   function handlePreviewContextMenu(event: MouseEvent): void {
@@ -1232,15 +1174,6 @@
     }
 
     contextZone = findZoneAtEvent(event);
-  }
-
-  function regionToContainerStyle(region: OcrRegion): string {
-    const left = videoBounds.x * 100 + region.x * videoBounds.width * 100;
-    const top = videoBounds.y * 100 + region.y * videoBounds.height * 100;
-    const width = region.width * videoBounds.width * 100;
-    const height = region.height * videoBounds.height * 100;
-
-    return `left: ${left}%; top: ${top}%; width: ${width}%; height: ${height}%;`;
   }
 
   function zoneClass(role: OcrZoneRole): string {
@@ -1305,7 +1238,7 @@
             {#each visibleZoneEntries as entry (`${entry.segmentId}:${entry.zoneId}`)}
               <div
                 class={zoneClass(entry.role)}
-                style={regionToContainerStyle(entry.region)}
+                style={regionToContainerStyle(entry.region, videoBounds)}
                 aria-hidden="true"
               >
                 <span class="absolute left-1 top-1 rounded-sm bg-background/85 px-1.5 py-0.5 text-[10px] font-medium text-foreground shadow-sm">

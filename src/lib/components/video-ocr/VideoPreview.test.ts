@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   PREVIEW_SEEK_THROTTLE_MS,
+  createPreviewChangeTimes,
   getPreviewSeekThrottleDelay,
   getPreviewKeyboardAction,
   shouldSuppressPostSeekPlaybackSync,
   shouldApplySeekToken,
   shouldTogglePreviewPlaybackFromClick,
 } from './VideoPreview.svelte';
+import type { OcrSubtitle, VideoOcrSelection } from '$lib/types';
 
 describe('VideoPreview interactions', () => {
   it('maps space to playback toggle', () => {
@@ -58,5 +60,42 @@ describe('VideoPreview interactions', () => {
 
   it('keeps normal playback sync behavior when there is no recent confirmed seek', () => {
     expect(shouldSuppressPostSeekPlaybackSync(1.85, null, 1_200, 2_000, 1)).toBe(false);
+  });
+
+  it('builds preview change buckets from the active subtitles instead of the latest file version', () => {
+    const selection: VideoOcrSelection = {
+      segments: [
+        {
+          id: 'segment-1',
+          startTimeMs: 1_000,
+          endTimeMs: 5_000,
+          zones: [
+            {
+              id: 'zone-1',
+              role: 'main_subtitle',
+              region: { x: 0, y: 0.75, width: 1, height: 0.25 },
+            },
+          ],
+        },
+      ],
+    };
+    const activeSubtitles: OcrSubtitle[] = [
+      {
+        id: 'active-subtitle',
+        text: 'Active version',
+        startTime: 2_000,
+        endTime: 3_000,
+        confidence: 0.9,
+      },
+    ];
+
+    expect(createPreviewChangeTimes(10, selection, activeSubtitles)).toEqual([
+      0,
+      1_000,
+      2_000,
+      3_001,
+      5_000,
+      10_000,
+    ]);
   });
 });

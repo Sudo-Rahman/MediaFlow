@@ -224,6 +224,7 @@ describe('OCR storage', () => {
       createdAt: '2026-05-14T00:00:00.000Z',
       mode: 'full_pipeline',
       configSnapshot: { ...DEFAULT_OCR_CONFIG, frameRate: 12 },
+      selectionSnapshot: data.ocrSelection,
       rawFrameRate: 12,
       rawOcr: [
         {
@@ -335,6 +336,100 @@ describe('OCR storage', () => {
 
     expect(data?.ocrSelection).toEqual(ocrSelection);
     expect(data?.ocrVersions[0].rawFrameRate).toBe(12);
+  });
+
+  it('saves OCR version selection snapshots', async () => {
+    saveMediaflowDataMock.mockResolvedValueOnce(true);
+    loadMediaflowDataMock.mockResolvedValueOnce(null);
+    const ocrSelection = createDefaultVideoOcrSelection(60_000);
+    const selectionSnapshot = createDefaultVideoOcrSelection(30_000);
+    selectionSnapshot.segments[0].zones[0].region.y = 0.42;
+    const data: VideoOcrPersistenceData = {
+      version: 2,
+      videoPath: '/movie.mp4',
+      activeOcrVersionId: 'ocr-v-1',
+      ocrSelection,
+      ocrVersions: [
+        {
+          id: 'ocr-v-1',
+          name: 'Version 1',
+          createdAt: '2026-05-14T00:00:00.000Z',
+          mode: 'full_pipeline',
+          configSnapshot: DEFAULT_OCR_CONFIG,
+          selectionSnapshot,
+          rawOcr: [],
+          finalSubtitles: [],
+        },
+      ],
+      createdAt: '2026-05-14T00:00:00.000Z',
+      updatedAt: '2026-05-14T00:00:00.000Z',
+    };
+
+    await saveOcrData('/movie.mp4', data);
+
+    const saved = saveMediaflowDataMock.mock.calls[0]?.[1] as { videoOcr?: VideoOcrPersistenceData };
+    expect(saved.videoOcr?.activeOcrVersionId).toBe('ocr-v-1');
+    expect(saved.videoOcr?.ocrVersions[0].selectionSnapshot).toEqual(selectionSnapshot);
+  });
+
+  it('loads legacy OCR versions without snapshots using the persisted selection fallback', async () => {
+    const ocrSelection = createDefaultVideoOcrSelection(60_000);
+    loadMediaflowDataMock.mockResolvedValueOnce({
+      version: 1,
+      videoOcr: {
+        version: 2,
+        videoPath: '/movie.mp4',
+        ocrSelection,
+        ocrVersions: [
+          {
+            id: 'ocr-v-1',
+            name: 'Version 1',
+            createdAt: '2026-05-14T00:00:00.000Z',
+            mode: 'full_pipeline',
+            configSnapshot: { ...DEFAULT_OCR_CONFIG, frameRate: 12 },
+            rawOcr: [],
+            finalSubtitles: [],
+          },
+        ],
+        createdAt: '2026-05-14T00:00:00.000Z',
+        updatedAt: '2026-05-14T00:00:00.000Z',
+      },
+    });
+
+    const data = await loadOcrData('/movie.mp4');
+
+    expect(data?.activeOcrVersionId).toBeUndefined();
+    expect(data?.ocrVersions[0].selectionSnapshot).toEqual(ocrSelection);
+  });
+
+  it('ignores invalid persisted OCR active version ids on load', async () => {
+    const ocrSelection = createDefaultVideoOcrSelection(60_000);
+    loadMediaflowDataMock.mockResolvedValueOnce({
+      version: 1,
+      videoOcr: {
+        version: 2,
+        videoPath: '/movie.mp4',
+        activeOcrVersionId: 'missing-version',
+        ocrSelection,
+        ocrVersions: [
+          {
+            id: 'ocr-v-1',
+            name: 'Version 1',
+            createdAt: '2026-05-14T00:00:00.000Z',
+            mode: 'full_pipeline',
+            configSnapshot: { ...DEFAULT_OCR_CONFIG, frameRate: 12 },
+            rawOcr: [],
+            finalSubtitles: [],
+          },
+        ],
+        createdAt: '2026-05-14T00:00:00.000Z',
+        updatedAt: '2026-05-14T00:00:00.000Z',
+      },
+    });
+
+    const data = await loadOcrData('/movie.mp4');
+
+    expect(data?.activeOcrVersionId).toBeUndefined();
   });
 
   it('rejects malformed preview metadata on load', async () => {

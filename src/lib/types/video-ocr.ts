@@ -32,6 +32,7 @@ export interface OcrVideoFile {
   
   // OCR selection segments and zones (relative coordinates 0-1)
   ocrSelection: VideoOcrSelection;
+  activeOcrVersionId?: string | null;
   
   // OCR results
   ocrVersions: OcrVersion[];
@@ -171,6 +172,7 @@ export interface OcrVersion {
   createdAt: string;
   mode: OcrRetryMode;
   configSnapshot: OcrConfig;
+  selectionSnapshot?: VideoOcrSelection;
   rawFrameRate?: number;
   rawOcr: OcrRawFrame[];
   finalSubtitles: OcrSubtitle[];
@@ -343,6 +345,7 @@ export interface VideoOcrPersistenceData {
   previewSourceIdentity?: OcrPreviewSourceIdentity;
   previewVersion?: string;
   ocrSelection: VideoOcrSelection;
+  activeOcrVersionId?: string | null;
   ocrVersions: OcrVersion[];
   createdAt: string;
   updatedAt: string;

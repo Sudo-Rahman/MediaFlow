@@ -63,6 +63,10 @@ function isOcrVersion(value: unknown): value is OcrVersion {
     && isOcrRetryMode(value.mode)
     && isRecord(value.configSnapshot)
     && toFinitePositiveNumber(value.configSnapshot.frameRate) !== null
+    && (
+      value.selectionSnapshot === undefined
+      || isValidOcrSelectionValue(value.selectionSnapshot)
+    )
     && Array.isArray(value.rawOcr)
     && value.rawOcr.every(isOcrRawFrame)
     && Array.isArray(value.finalSubtitles)
@@ -132,6 +136,14 @@ function isOcrSegment(value: unknown): value is OcrSegment {
     && value.zones.every(isOcrZone);
 }
 
+function isValidOcrSelectionValue(value: unknown): value is VideoOcrSelection {
+  if (!isRecord(value) || !Array.isArray(value.segments) || !value.segments.every(isOcrSegment)) {
+    return false;
+  }
+
+  return isSemanticallyValidOcrSelection({ segments: value.segments });
+}
+
 function isOcrPreviewSourceIdentity(value: unknown): value is OcrPreviewSourceIdentity {
   return isRecord(value)
     && typeof value.path === 'string'
@@ -158,7 +170,7 @@ function isVideoOcrPersistenceData(value: unknown): value is VideoOcrPersistence
   }
 
   const selection = value.ocrSelection;
-  if (!isRecord(selection) || !Array.isArray(selection.segments) || !selection.segments.every(isOcrSegment)) {
+  if (!isValidOcrSelectionValue(selection)) {
     return false;
   }
 
@@ -171,6 +183,11 @@ function isVideoOcrPersistenceData(value: unknown): value is VideoOcrPersistence
     && (
       value.previewSourceIdentity === undefined
       || isOcrPreviewSourceIdentity(value.previewSourceIdentity)
+    )
+    && (
+      value.activeOcrVersionId === undefined
+      || value.activeOcrVersionId === null
+      || typeof value.activeOcrVersionId === 'string'
     )
     && isSemanticallyValidOcrSelection(ocrSelection)
     && Array.isArray(value.ocrVersions)
@@ -271,7 +288,10 @@ function sanitizeOcrResultMetadata(
   };
 }
 
-function normalizeAndSanitizeOcrVersion(version: OcrVersion): OcrVersion {
+function normalizeAndSanitizeOcrVersion(
+  version: OcrVersion,
+  fallbackSelection: VideoOcrSelection,
+): OcrVersion {
   const normalized = normalizeOcrVersion(version);
   return {
     id: normalized.id,
@@ -279,10 +299,29 @@ function normalizeAndSanitizeOcrVersion(version: OcrVersion): OcrVersion {
     createdAt: normalized.createdAt,
     mode: normalized.mode,
     configSnapshot: sanitizeOcrConfig(normalized.configSnapshot),
+    selectionSnapshot: sanitizeOcrSelection(normalized.selectionSnapshot ?? fallbackSelection),
     rawFrameRate: normalized.rawFrameRate,
     rawOcr: normalized.rawOcr.map(sanitizeOcrRawFrame),
     finalSubtitles: normalized.finalSubtitles.map(sanitizeOcrSubtitle),
   };
+}
+
+function sanitizeActiveOcrVersionId(
+  activeOcrVersionId: string | null | undefined,
+  versions: readonly OcrVersion[],
+): string | null | undefined {
+  if (activeOcrVersionId === null) {
+    return null;
+  }
+
+  if (
+    typeof activeOcrVersionId === 'string'
+    && versions.some((version) => version.id === activeOcrVersionId)
+  ) {
+    return activeOcrVersionId;
+  }
+
+  return undefined;
 }
 
 function toFiniteNonNegativeNumber(value: unknown): number | null {
@@ -398,6 +437,7 @@ export function createOcrVersion(
   rawOcr: OcrRawFrame[],
   finalSubtitles: OcrSubtitle[],
   rawFrameRate?: number,
+  selectionSnapshot?: VideoOcrSelection,
 ): OcrVersion {
   return {
     id: generateVersionId(),
@@ -405,6 +445,7 @@ export function createOcrVersion(
     createdAt: new Date().toISOString(),
     mode,
     configSnapshot: { ...configSnapshot },
+    ...(selectionSnapshot ? { selectionSnapshot: sanitizeOcrSelection(selectionSnapshot) } : {}),
     rawFrameRate: toFinitePositiveNumber(rawFrameRate) ?? undefined,
     rawOcr: [...rawOcr],
     finalSubtitles: [...finalSubtitles],
@@ -447,14 +488,20 @@ export async function loadOcrData(videoPath: string): Promise<VideoOcrPersistenc
     throw new Error(LEGACY_OCR_DATA_ERROR);
   }
 
+  const ocrSelection = sanitizeOcrSelection(videoOcr.ocrSelection);
+  const ocrVersions = videoOcr.ocrVersions.map((version) =>
+    normalizeAndSanitizeOcrVersion(version, ocrSelection),
+  );
+
   return {
     version: 2,
     videoPath: videoOcr.videoPath,
     previewPath: videoOcr.previewPath,
     previewSourceIdentity: sanitizePreviewSourceIdentity(videoOcr.previewSourceIdentity),
     previewVersion: videoOcr.previewVersion,
-    ocrSelection: sanitizeOcrSelection(videoOcr.ocrSelection),
-    ocrVersions: videoOcr.ocrVersions.map(normalizeAndSanitizeOcrVersion),
+    ocrSelection,
+    activeOcrVersionId: sanitizeActiveOcrVersionId(videoOcr.activeOcrVersionId, ocrVersions),
+    ocrVersions,
     createdAt: videoOcr.createdAt,
     updatedAt: videoOcr.updatedAt,
   };
@@ -478,7 +525,10 @@ export async function saveOcrData(
       previewSourceIdentity: sanitizePreviewSourceIdentity(data.previewSourceIdentity),
       previewVersion: data.previewVersion,
       ocrSelection: sanitizeOcrSelection(data.ocrSelection),
-      ocrVersions: data.ocrVersions.map(normalizeAndSanitizeOcrVersion),
+      activeOcrVersionId: sanitizeActiveOcrVersionId(data.activeOcrVersionId, data.ocrVersions),
+      ocrVersions: data.ocrVersions.map((version) =>
+        normalizeAndSanitizeOcrVersion(version, data.ocrSelection),
+      ),
       createdAt: data.createdAt || now,
       updatedAt: now,
     },
@@ -506,6 +556,7 @@ export async function addOcrVersion(
 
   data.ocrVersions = [...data.ocrVersions, version];
   data.ocrSelection = options.ocrSelection;
+  data.activeOcrVersionId = version.id;
 
   if (options.previewPath !== undefined) {
     data.previewPath = options.previewPath;

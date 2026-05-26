@@ -12,6 +12,7 @@ export { default as OcrZoneContextMenu } from './OcrZoneContextMenu.svelte';
 export { default as OcrResultDialog } from './OcrResultDialog.svelte';
 export { default as OcrRetryDialog } from './OcrRetryDialog.svelte';
 export { default as OcrRetryAllDialog } from './OcrRetryAllDialog.svelte';
+export { default as OcrVersionSelector } from './OcrVersionSelector.svelte';
 export { default as VideoOcrDialogs } from './VideoOcrDialogs.svelte';
 export { default as VideoOcrSidebar } from './VideoOcrSidebar.svelte';
 export { default as VideoOcrWorkspace } from './VideoOcrWorkspace.svelte';

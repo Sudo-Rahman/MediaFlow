@@ -1,4 +1,6 @@
 <script lang="ts" module>
+  import type { OcrSubtitle, VideoOcrSelection } from '$lib/types';
+
   export type PreviewKeyboardAction = 'toggle-playback' | 'skip-backward' | 'skip-forward';
 
   export function getPreviewKeyboardAction(key: string, disabled: boolean): PreviewKeyboardAction | null {
@@ -68,10 +70,44 @@
 
     return Math.max(0, throttleMs - Math.max(0, nowMs - lastSeekWriteMs));
   }
+
+  export function createPreviewChangeTimes(
+    durationSeconds: number | undefined,
+    selection: VideoOcrSelection,
+    subtitles: OcrSubtitle[],
+  ): number[] {
+    const changeTimes = new Set<number>([0]);
+    const durationMs = Math.max(0, Math.round((durationSeconds ?? 0) * 1000));
+
+    if (durationMs > 0) {
+      changeTimes.add(durationMs);
+    }
+
+    for (const segment of selection.segments) {
+      addPreviewChangeTime(changeTimes, segment.startTimeMs, durationMs);
+      addPreviewChangeTime(changeTimes, segment.endTimeMs, durationMs);
+    }
+
+    for (const subtitle of subtitles) {
+      addPreviewChangeTime(changeTimes, subtitle.startTime, durationMs);
+      addPreviewChangeTime(changeTimes, subtitle.endTime + 1, durationMs);
+    }
+
+    return Array.from(changeTimes).sort((left, right) => left - right);
+  }
+
+  function addPreviewChangeTime(changeTimes: Set<number>, timeMs: number, durationMs: number): void {
+    if (!Number.isFinite(timeMs)) {
+      return;
+    }
+
+    const roundedTimeMs = Math.max(0, Math.round(timeMs));
+    changeTimes.add(durationMs > 0 ? Math.min(roundedTimeMs, durationMs) : roundedTimeMs);
+  }
 </script>
 
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, type Snippet } from 'svelte';
   import { convertFileSrc } from '@tauri-apps/api/core';
 
   import type { OcrRegion, OcrVideoFile, OcrZoneFrame, OcrZoneRole } from '$lib/types';
@@ -98,6 +134,8 @@
 
   interface VideoPreviewProps {
     file?: OcrVideoFile;
+    selection?: VideoOcrSelection;
+    subtitles?: OcrSubtitle[];
     liveDetections?: OcrZoneFrame[];
     liveDetectionCount?: number;
     showSubtitles?: boolean;
@@ -105,6 +143,7 @@
     seekRequest?: VideoSeekRequest | null;
     activeCueSummary: ActiveCueSummaryModel;
     paletteOpen?: boolean;
+    toolbarAccessory?: Snippet;
     onTimeChange?: (timeMs: number) => void;
     onPlaybackFrame?: (timeMs: number) => void;
     onOpenCuePalette?: () => void;
@@ -126,6 +165,8 @@
 
   let {
     file,
+    selection,
+    subtitles = [],
     liveDetections = [],
     liveDetectionCount = 0,
     showSubtitles = true,
@@ -133,6 +174,7 @@
     seekRequest = null,
     activeCueSummary,
     paletteOpen = false,
+    toolbarAccessory,
     onTimeChange,
     onPlaybackFrame,
     onOpenCuePalette,
@@ -234,7 +276,11 @@
   const previewLayers = $derived(getPreviewLayerState({ isDrawingZone, isEditingZone }));
   const activeRegion = $derived(isEditingZone ? editingRegion : drawingRegion);
   const previewInteractionsDisabled = $derived(isDrawingZone || isEditingZone);
-  const previewChangeTimesMs = $derived.by(() => createPreviewChangeTimes(file));
+  const previewSelection = $derived(selection ?? file?.ocrSelection ?? { segments: [] });
+  const previewSubtitles = $derived(subtitles);
+  const previewChangeTimesMs = $derived.by(() =>
+    createPreviewChangeTimes(file?.duration, previewSelection, previewSubtitles),
+  );
 
   // Get video source URL
   const videoSrc = $derived(
@@ -644,7 +690,7 @@
       return [];
     }
 
-    return file.ocrSelection.segments.flatMap((segment) => {
+    return previewSelection.segments.flatMap((segment) => {
       if (timeMs < segment.startTimeMs || timeMs >= segment.endTimeMs) {
         return [];
       }
@@ -657,40 +703,6 @@
         label: zone.label ?? `Zone ${zoneIndex + 1}`,
       }));
     });
-  }
-
-  function createPreviewChangeTimes(videoFile: OcrVideoFile | undefined): number[] {
-    if (!videoFile) {
-      return [0];
-    }
-
-    const changeTimes = new Set<number>([0]);
-    const durationMs = Math.max(0, Math.round((videoFile.duration ?? 0) * 1000));
-
-    if (durationMs > 0) {
-      changeTimes.add(durationMs);
-    }
-
-    for (const segment of videoFile.ocrSelection.segments) {
-      addPreviewChangeTime(changeTimes, segment.startTimeMs, durationMs);
-      addPreviewChangeTime(changeTimes, segment.endTimeMs, durationMs);
-    }
-
-    for (const subtitle of videoFile.ocrVersions.at(-1)?.finalSubtitles ?? []) {
-      addPreviewChangeTime(changeTimes, subtitle.startTime, durationMs);
-      addPreviewChangeTime(changeTimes, subtitle.endTime + 1, durationMs);
-    }
-
-    return Array.from(changeTimes).sort((left, right) => left - right);
-  }
-
-  function addPreviewChangeTime(changeTimes: Set<number>, timeMs: number, durationMs: number): void {
-    if (!Number.isFinite(timeMs)) {
-      return;
-    }
-
-    const roundedTimeMs = Math.max(0, Math.round(timeMs));
-    changeTimes.add(durationMs > 0 ? Math.min(roundedTimeMs, durationMs) : roundedTimeMs);
   }
 
   function getPreviewStateKey(timeMs: number): string {
@@ -1214,6 +1226,7 @@
       <PreviewToolbar
         title={previewTitle}
         description={previewDescription}
+        accessory={toolbarAccessory}
         showCancel={previewLayers.showToolbarActions}
         showSave={previewLayers.showToolbarActions && isEditingZone}
         saveDisabled={!editingRegion}
@@ -1267,7 +1280,7 @@
               <LiveOcrHoverCard
                 detections={liveDetections}
                 detectionCount={liveDetectionCount}
-                selection={file.ocrSelection}
+                selection={previewSelection}
               />
             {/if}
           </div>

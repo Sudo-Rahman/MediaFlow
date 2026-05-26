@@ -9,6 +9,7 @@ import type {
   OcrConfig,
   OcrRegion,
   OcrSegment,
+  OcrSubtitle,
   OcrZoneRole,
   OcrVersion,
   OcrProgress,
@@ -78,6 +79,7 @@ function createEmptyVideoFile(path: string, id?: string): OcrVideoFile {
     size: 0,
     status: 'pending',
     ocrSelection: createDefaultVideoOcrSelection(defaultDurationMs),
+    activeOcrVersionId: null,
     ocrVersions: [],
   };
 }
@@ -97,10 +99,140 @@ function cloneSelection(selection: VideoOcrSelection): VideoOcrSelection {
   return normalizeOcrZoneLabels({ segments: selection.segments.map(cloneSegment) });
 }
 
+function cloneOcrSubtitle(subtitle: OcrSubtitle): OcrSubtitle {
+  return {
+    ...subtitle,
+    ...(subtitle.region ? { region: { ...subtitle.region } } : {}),
+  };
+}
+
+function cloneOcrVersion(version: OcrVersion): OcrVersion {
+  return {
+    ...version,
+    configSnapshot: { ...version.configSnapshot },
+    ...(version.selectionSnapshot ? { selectionSnapshot: cloneSelection(version.selectionSnapshot) } : {}),
+    rawOcr: version.rawOcr.map((frame) => ({
+      ...frame,
+      ...(frame.region ? { region: { ...frame.region } } : {}),
+    })),
+    finalSubtitles: version.finalSubtitles.map(cloneOcrSubtitle),
+  };
+}
+
+function normalizeActiveVersionId(
+  versions: readonly OcrVersion[],
+  activeVersionId: string | null | undefined,
+): string | null {
+  if (activeVersionId === null) {
+    return null;
+  }
+
+  if (activeVersionId && versions.some((version) => version.id === activeVersionId)) {
+    return activeVersionId;
+  }
+
+  return versions.at(-1)?.id ?? null;
+}
+
+function getActiveVersionForFile(file: OcrVideoFile): OcrVersion | null {
+  if (file.activeOcrVersionId === null) {
+    return null;
+  }
+
+  if (file.activeOcrVersionId) {
+    return file.ocrVersions.find((version) => version.id === file.activeOcrVersionId)
+      ?? file.ocrVersions.at(-1)
+      ?? null;
+  }
+
+  return file.ocrVersions.at(-1) ?? null;
+}
+
+function getVersionSelection(file: OcrVideoFile, version: OcrVersion): VideoOcrSelection {
+  return cloneSelection(version.selectionSnapshot ?? file.ocrSelection);
+}
+
+function getActiveSelectionForFile(file: OcrVideoFile): VideoOcrSelection {
+  const activeVersion = getActiveVersionForFile(file);
+  return activeVersion ? getVersionSelection(file, activeVersion) : cloneSelection(file.ocrSelection);
+}
+
+function areRegionsEqual(left: OcrRegion, right: OcrRegion): boolean {
+  return left.x === right.x
+    && left.y === right.y
+    && left.width === right.width
+    && left.height === right.height;
+}
+
+function areSelectionsEqual(left: VideoOcrSelection, right: VideoOcrSelection): boolean {
+  if (left.segments.length !== right.segments.length) {
+    return false;
+  }
+
+  return left.segments.every((leftSegment, segmentIndex) => {
+    const rightSegment = right.segments[segmentIndex];
+    if (
+      leftSegment.id !== rightSegment.id
+      || leftSegment.startTimeMs !== rightSegment.startTimeMs
+      || leftSegment.endTimeMs !== rightSegment.endTimeMs
+      || leftSegment.zones.length !== rightSegment.zones.length
+    ) {
+      return false;
+    }
+
+    return leftSegment.zones.every((leftZone, zoneIndex) => {
+      const rightZone = rightSegment.zones[zoneIndex];
+      return leftZone.id === rightZone.id
+        && leftZone.role === rightZone.role
+        && leftZone.label === rightZone.label
+        && areRegionsEqual(leftZone.region, rightZone.region);
+    });
+  });
+}
+
+function hasDraftSelectionForFile(file: OcrVideoFile): boolean {
+  if (file.ocrVersions.length === 0) {
+    return false;
+  }
+
+  if (file.activeOcrVersionId === null) {
+    return true;
+  }
+
+  return !file.ocrVersions.some((version) =>
+    areSelectionsEqual(file.ocrSelection, version.selectionSnapshot ?? file.ocrSelection),
+  );
+}
+
+function branchFileToDraftSelection(file: OcrVideoFile): OcrVideoFile {
+  const activeVersion = getActiveVersionForFile(file);
+  if (!activeVersion) {
+    return {
+      ...file,
+      activeOcrVersionId: file.ocrVersions.length > 0 ? null : file.activeOcrVersionId ?? null,
+      ocrSelection: cloneSelection(file.ocrSelection),
+    };
+  }
+
+  return {
+    ...file,
+    activeOcrVersionId: null,
+    ocrSelection: getVersionSelection(file, activeVersion),
+  };
+}
+
+function withSelectionSnapshot(version: OcrVersion, selection: VideoOcrSelection): OcrVersion {
+  return {
+    ...cloneOcrVersion(version),
+    selectionSnapshot: cloneSelection(version.selectionSnapshot ?? selection),
+  };
+}
+
 function cloneVideoFile(file: OcrVideoFile): OcrVideoFile {
   return {
     ...file,
     ocrSelection: cloneSelection(file.ocrSelection),
+    ocrVersions: file.ocrVersions.map(cloneOcrVersion),
   };
 }
 
@@ -129,6 +261,35 @@ export const videoOcrStore = {
 
   get selectedFile(): OcrVideoFile | undefined {
     return videoFiles.find(f => f.id === selectedFileId);
+  },
+
+  get activeSelectedOcrVersion(): OcrVersion | null {
+    const file = this.selectedFile;
+    return file ? getActiveVersionForFile(file) : null;
+  },
+
+  getActiveOcrVersion(fileId: string): OcrVersion | null {
+    const file = videoFiles.find((entry) => entry.id === fileId);
+    return file ? getActiveVersionForFile(file) : null;
+  },
+
+  getActiveOcrSelection(fileId: string): VideoOcrSelection {
+    const file = videoFiles.find((entry) => entry.id === fileId);
+    return file ? getActiveSelectionForFile(file) : { segments: [] };
+  },
+
+  getActiveOcrSubtitles(fileId: string): OcrSubtitle[] {
+    return this.getActiveOcrVersion(fileId)?.finalSubtitles.map(cloneOcrSubtitle) ?? [];
+  },
+
+  hasDraftOcrVersion(fileId: string): boolean {
+    const file = videoFiles.find((entry) => entry.id === fileId);
+    return file ? hasDraftSelectionForFile(file) : false;
+  },
+
+  getDraftOcrVersionName(fileId: string): string {
+    const file = videoFiles.find((entry) => entry.id === fileId);
+    return `Draft Version ${(file?.ocrVersions.length ?? 0) + 1}`;
   },
 
   get readyFiles(): OcrVideoFile[] {
@@ -231,6 +392,8 @@ export const videoOcrStore = {
       })
       .map((file) => ({
         ...file,
+        ocrVersions: (file.ocrVersions ?? []).map(cloneOcrVersion),
+        activeOcrVersionId: normalizeActiveVersionId(file.ocrVersions ?? [], file.activeOcrVersionId),
         ocrSelection: file.ocrSelection
           ? cloneSelection(file.ocrSelection)
           : createDefaultVideoOcrSelection(file.duration ? Math.round(file.duration * 1000) : 1),
@@ -268,6 +431,19 @@ export const videoOcrStore = {
     }
   },
 
+  selectOcrVersion(fileId: string, versionId: string | null) {
+    videoFiles = videoFiles.map((file) => {
+      if (file.id !== fileId) {
+        return file;
+      }
+
+      return {
+        ...file,
+        activeOcrVersionId: normalizeActiveVersionId(file.ocrVersions, versionId),
+      };
+    });
+  },
+
   updateFile(id: string, updates: Partial<OcrVideoFile>) {
     videoFiles = videoFiles.map(f => {
       if (f.id !== id) {
@@ -276,9 +452,26 @@ export const videoOcrStore = {
 
       const { ocrSelection, ...updatesWithoutSelection } = updates;
       const durationMs = updates.duration ? Math.round(updates.duration * 1000) : undefined;
+      const { ocrVersions, activeOcrVersionId, ...remainingUpdates } = updatesWithoutSelection;
+      const nextVersions = ocrVersions === undefined
+        ? f.ocrVersions.map(cloneOcrVersion)
+        : ocrVersions.map(cloneOcrVersion);
+      const nextActiveOcrVersionId = activeOcrVersionId === undefined
+        ? normalizeActiveVersionId(nextVersions, f.activeOcrVersionId)
+        : normalizeActiveVersionId(nextVersions, activeOcrVersionId);
       const nextUpdates = ocrSelection === undefined
-        ? { ...updatesWithoutSelection, ocrSelection: cloneSelection(f.ocrSelection) }
-        : { ...updatesWithoutSelection, ocrSelection: cloneSelection(ocrSelection) };
+        ? {
+            ...remainingUpdates,
+            ocrVersions: nextVersions,
+            activeOcrVersionId: nextActiveOcrVersionId,
+            ocrSelection: cloneSelection(f.ocrSelection),
+          }
+        : {
+            ...remainingUpdates,
+            ocrVersions: nextVersions,
+            activeOcrVersionId: nextActiveOcrVersionId,
+            ocrSelection: cloneSelection(ocrSelection),
+          };
       const nextFile = { ...f, ...nextUpdates };
       if (
         ocrSelection === undefined
@@ -411,7 +604,7 @@ export const videoOcrStore = {
   setOcrSelection(fileId: string, selection: VideoOcrSelection) {
     videoFiles = videoFiles.map(f =>
       f.id === fileId
-        ? { ...f, ocrSelection: cloneSelection(selection) }
+        ? { ...branchFileToDraftSelection(f), ocrSelection: cloneSelection(selection) }
         : f
     );
   },
@@ -422,11 +615,12 @@ export const videoOcrStore = {
         return f;
       }
 
+      const draftFile = branchFileToDraftSelection(f);
       return {
-        ...f,
+        ...draftFile,
         ocrSelection: normalizeOcrZoneLabels({
           segments: [
-            ...f.ocrSelection.segments.map(cloneSegment),
+            ...draftFile.ocrSelection.segments.map(cloneSegment),
             cloneSegment(segment),
           ],
         }),
@@ -440,10 +634,11 @@ export const videoOcrStore = {
         return f;
       }
 
+      const draftFile = branchFileToDraftSelection(f);
       return {
-        ...f,
+        ...draftFile,
         ocrSelection: {
-          segments: f.ocrSelection.segments.map((segment) => {
+          segments: draftFile.ocrSelection.segments.map((segment) => {
             if (segment.id !== segmentId) {
               return cloneSegment(segment);
             }
@@ -469,10 +664,11 @@ export const videoOcrStore = {
         return f;
       }
 
+      const draftFile = branchFileToDraftSelection(f);
       return {
-        ...f,
+        ...draftFile,
         ocrSelection: {
-          segments: f.ocrSelection.segments.map((segment) => {
+          segments: draftFile.ocrSelection.segments.map((segment) => {
             if (segment.id !== segmentId) {
               return cloneSegment(segment);
             }
@@ -498,10 +694,11 @@ export const videoOcrStore = {
         return f;
       }
 
+      const draftFile = branchFileToDraftSelection(f);
       return {
-        ...f,
+        ...draftFile,
         ocrSelection: normalizeOcrZoneLabels({
-          segments: f.ocrSelection.segments.map((segment) => {
+          segments: draftFile.ocrSelection.segments.map((segment) => {
             if (segment.id !== segmentId) {
               return cloneSegment(segment);
             }
@@ -534,10 +731,11 @@ export const videoOcrStore = {
         return f;
       }
 
+      const draftFile = branchFileToDraftSelection(f);
       return {
-        ...f,
+        ...draftFile,
         ocrSelection: {
-          segments: f.ocrSelection.segments.map((segment) => (
+          segments: draftFile.ocrSelection.segments.map((segment) => (
             segment.id === segmentId
               ? {
                   ...segment,
@@ -643,13 +841,18 @@ export const videoOcrStore = {
   setOcrVersions(fileId: string, versions: OcrVersion[]) {
     this.clearLiveDetections(fileId);
     videoFiles = videoFiles.map(f =>
-      f.id === fileId ? {
-        ...f,
-        ocrVersions: [...versions],
-        status: versions.length > 0 ? 'completed' as const : f.status,
-        progress: undefined,
-        error: undefined,
-      } : f
+      f.id === fileId
+        ? {
+            ...f,
+            ocrVersions: versions.map((version) =>
+              withSelectionSnapshot(version, version.selectionSnapshot ?? f.ocrSelection),
+            ),
+            activeOcrVersionId: normalizeActiveVersionId(versions, versions.at(-1)?.id ?? null),
+            status: versions.length > 0 ? 'completed' as const : f.status,
+            progress: undefined,
+            error: undefined,
+          }
+        : f
     );
   },
 
@@ -660,9 +863,11 @@ export const videoOcrStore = {
         return f;
       }
 
+      const versionWithSnapshot = withSelectionSnapshot(version, f.ocrSelection);
       return {
         ...f,
-        ocrVersions: [...f.ocrVersions, version],
+        ocrVersions: [...f.ocrVersions.map(cloneOcrVersion), versionWithSnapshot],
+        activeOcrVersionId: versionWithSnapshot.id,
         status: 'completed' as const,
         progress: undefined,
         error: undefined,

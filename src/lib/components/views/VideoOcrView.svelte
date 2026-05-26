@@ -97,6 +97,18 @@
   const persistenceQueues = new Map<string, Promise<void>>();
 
   const selectedFile = $derived(videoOcrStore.selectedFile ?? null);
+  const selectedActiveSelection = $derived(
+    selectedFile ? videoOcrStore.getActiveOcrSelection(selectedFile.id) : null,
+  );
+  const selectedActiveSubtitles = $derived(
+    selectedFile ? videoOcrStore.getActiveOcrSubtitles(selectedFile.id) : [],
+  );
+  const selectedHasDraftVersion = $derived(
+    selectedFile ? videoOcrStore.hasDraftOcrVersion(selectedFile.id) : false,
+  );
+  const selectedDraftVersionName = $derived(
+    selectedFile ? videoOcrStore.getDraftOcrVersionName(selectedFile.id) : null,
+  );
   const selectedLiveDetections = $derived(
     selectedFile ? videoOcrStore.getLiveDetections(selectedFile.id) : [],
   );
@@ -405,6 +417,7 @@
         previewSourceIdentity: latestFile.previewSourceIdentity,
         previewVersion: latestFile.previewVersion,
         ocrSelection: latestFile.ocrSelection,
+        activeOcrVersionId: latestFile.activeOcrVersionId,
         ocrVersions: latestFile.ocrVersions,
         createdAt: existingData?.createdAt ?? now,
         updatedAt: now,
@@ -436,6 +449,12 @@
 
     if (persisted.ocrVersions.length > 0) {
       videoOcrStore.setOcrVersions(file.id, persisted.ocrVersions);
+      videoOcrStore.selectOcrVersion(
+        file.id,
+        persisted.activeOcrVersionId === undefined
+          ? persisted.ocrVersions.at(-1)?.id ?? null
+          : persisted.activeOcrVersionId,
+      );
       markPersistedOcrVersions(file.path, persisted.ocrVersions);
     }
   }
@@ -1039,6 +1058,11 @@
     resultDialogOpen = true;
   }
 
+  function handleSelectOcrVersion(fileId: string, versionId: string | null): void {
+    videoOcrStore.selectOcrVersion(fileId, versionId);
+    void persistFileData(fileId);
+  }
+
   function handleRetryFile(file: OcrVideoFile): void {
     retryDialogFileId = file.id;
     retryDialogOpen = true;
@@ -1104,7 +1128,8 @@
       return;
     }
 
-    const totalZones = file.ocrSelection.segments.reduce(
+    const activeSelection = videoOcrStore.getActiveOcrSelection(fileId);
+    const totalZones = activeSelection.segments.reduce(
       (count, segment) => count + segment.zones.length,
       0,
     );
@@ -1114,7 +1139,7 @@
     }
 
     const nextSelection: VideoOcrSelection = {
-      segments: file.ocrSelection.segments
+      segments: activeSelection.segments
         .map((segment) => ({
           ...segment,
           zones: segment.id === segmentId
@@ -1205,9 +1230,14 @@
     <div class="h-full min-w-0 min-h-0 overflow-hidden">
       <VideoOcrWorkspace
         file={selectedFile}
+        activeSelection={selectedActiveSelection}
+        activeSubtitles={selectedActiveSubtitles}
         liveDetections={selectedLiveDetections}
         liveDetectionCount={selectedLiveDetectionCount}
         {dialogsOpen}
+        hasDraftVersion={selectedHasDraftVersion}
+        draftVersionName={selectedDraftVersionName}
+        onSelectVersion={handleSelectOcrVersion}
         onAddSegmentFromRegion={handleAddSegmentFromRegion}
         onUpdateZoneRegion={handleUpdateZoneRegion}
         onSetZoneRole={handleSetZoneRole}

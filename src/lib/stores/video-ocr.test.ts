@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import type { OcrVideoFile, OcrZoneFrame } from '$lib/types';
-import { DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
+import type { OcrVideoFile, OcrVersion, OcrZoneFrame, VideoOcrSelection } from '$lib/types';
+import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
 import { createOcrSegmentFromZone, DEFAULT_MAIN_SUBTITLE_REGION } from '$lib/utils';
 
 import { videoOcrStore } from './video-ocr.svelte';
@@ -577,6 +577,106 @@ describe('video OCR store', () => {
 
     expect(videoOcrStore.getLiveDetections(file.id)).toEqual([]);
   });
+
+  it('switches active OCR selection and subtitles when selecting versions', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    const firstSelection = createSelection('segment-1', 'zone-1', 0.72);
+    const secondSelection = createSelection('segment-2', 'zone-2', 0.32);
+
+    videoOcrStore.addOcrVersion(file.id, createVersion('version-1', 'Version 1', firstSelection, 'First result'));
+    videoOcrStore.addOcrVersion(file.id, createVersion('version-2', 'Version 2', secondSelection, 'Second result'));
+
+    expect(videoOcrStore.getActiveOcrSelection(file.id).segments[0].id).toBe('segment-2');
+    expect(videoOcrStore.getActiveOcrSubtitles(file.id)[0].text).toBe('Second result');
+
+    videoOcrStore.selectOcrVersion(file.id, 'version-1');
+
+    expect(videoOcrStore.videoFiles[0].activeOcrVersionId).toBe('version-1');
+    expect(videoOcrStore.getActiveOcrSelection(file.id).segments[0].id).toBe('segment-1');
+    expect(videoOcrStore.getActiveOcrSelection(file.id).segments[0].zones[0].region.y).toBe(0.72);
+    expect(videoOcrStore.getActiveOcrSubtitles(file.id)[0].text).toBe('First result');
+  });
+
+  it('branches a selected completed OCR version into a draft before zone edits', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    const firstSelection = createSelection('segment-1', 'zone-1', 0.72);
+    const secondSelection = createSelection('segment-2', 'zone-2', 0.32);
+
+    videoOcrStore.addOcrVersion(file.id, createVersion('version-1', 'Version 1', firstSelection, 'First result'));
+    videoOcrStore.addOcrVersion(file.id, createVersion('version-2', 'Version 2', secondSelection, 'Second result'));
+    videoOcrStore.selectOcrVersion(file.id, 'version-1');
+    videoOcrStore.setOcrZoneRegion(file.id, 'segment-1', 'zone-1', {
+      x: 0.2,
+      y: 0.5,
+      width: 0.4,
+      height: 0.2,
+    });
+
+    expect(videoOcrStore.videoFiles[0].activeOcrVersionId).toBeNull();
+    expect(videoOcrStore.hasDraftOcrVersion(file.id)).toBe(true);
+    expect(videoOcrStore.getDraftOcrVersionName(file.id)).toBe('Draft Version 3');
+    expect(videoOcrStore.getActiveOcrSelection(file.id).segments[0].zones[0].region).toEqual({
+      x: 0.2,
+      y: 0.5,
+      width: 0.4,
+      height: 0.2,
+    });
+    expect(videoOcrStore.videoFiles[0].ocrVersions[0].selectionSnapshot?.segments[0].zones[0].region.y).toBe(0.72);
+  });
+
+  it('keeps a draft selectable after switching back to a completed OCR version', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    const firstSelection = createSelection('segment-1', 'zone-1', 0.72);
+    const secondSelection = createSelection('segment-2', 'zone-2', 0.32);
+
+    videoOcrStore.addOcrVersion(file.id, createVersion('version-1', 'Version 1', firstSelection, 'First result'));
+    videoOcrStore.addOcrVersion(file.id, createVersion('version-2', 'Version 2', secondSelection, 'Second result'));
+    videoOcrStore.selectOcrVersion(file.id, 'version-1');
+    videoOcrStore.setOcrZoneRegion(file.id, 'segment-1', 'zone-1', {
+      x: 0.2,
+      y: 0.5,
+      width: 0.4,
+      height: 0.2,
+    });
+
+    videoOcrStore.selectOcrVersion(file.id, 'version-2');
+
+    expect(videoOcrStore.videoFiles[0].activeOcrVersionId).toBe('version-2');
+    expect(videoOcrStore.hasDraftOcrVersion(file.id)).toBe(true);
+    expect(videoOcrStore.getActiveOcrSelection(file.id).segments[0].id).toBe('segment-2');
+
+    videoOcrStore.selectOcrVersion(file.id, null);
+
+    expect(videoOcrStore.getActiveOcrSelection(file.id).segments[0].zones[0].region).toEqual({
+      x: 0.2,
+      y: 0.5,
+      width: 0.4,
+      height: 0.2,
+    });
+  });
+
+  it('turns the active draft selection into the next completed OCR version snapshot', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    const firstSelection = createSelection('segment-1', 'zone-1', 0.72);
+
+    videoOcrStore.addOcrVersion(file.id, createVersion('version-1', 'Version 1', firstSelection, 'First result'));
+    videoOcrStore.setOcrZoneRegion(file.id, 'segment-1', 'zone-1', {
+      x: 0.2,
+      y: 0.5,
+      width: 0.4,
+      height: 0.2,
+    });
+    videoOcrStore.addOcrVersion(file.id, createVersion('version-2', 'Version 2', undefined, 'Second result'));
+
+    expect(videoOcrStore.videoFiles[0].activeOcrVersionId).toBe('version-2');
+    expect(videoOcrStore.hasDraftOcrVersion(file.id)).toBe(false);
+    expect(videoOcrStore.videoFiles[0].ocrVersions[1].selectionSnapshot?.segments[0].zones[0].region).toEqual({
+      x: 0.2,
+      y: 0.5,
+      width: 0.4,
+      height: 0.2,
+    });
+  });
 });
 
 function createLiveDetection(text: string, frameIndex = 1): OcrZoneFrame {
@@ -589,5 +689,58 @@ function createLiveDetection(text: string, frameIndex = 1): OcrZoneFrame {
     region: DEFAULT_MAIN_SUBTITLE_REGION,
     text,
     confidence: 0.87,
+  };
+}
+
+function createSelection(segmentId: string, zoneId: string, y: number): VideoOcrSelection {
+  return {
+    segments: [
+      {
+        id: segmentId,
+        startTimeMs: 0,
+        endTimeMs: 60_000,
+        zones: [
+          {
+            id: zoneId,
+            role: 'main_subtitle',
+            label: 'Zone 1',
+            region: { x: 0.1, y, width: 0.8, height: 0.15 },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function createVersion(
+  id: string,
+  name: string,
+  selectionSnapshot: VideoOcrSelection | undefined,
+  text: string,
+): OcrVersion {
+  return {
+    id,
+    name,
+    createdAt: '2026-05-20T10:00:00.000Z',
+    mode: 'full_pipeline',
+    configSnapshot: DEFAULT_OCR_CONFIG,
+    rawOcr: [
+      {
+        frameIndex: 0,
+        timeMs: 1_000,
+        text,
+        confidence: 0.9,
+      },
+    ],
+    finalSubtitles: [
+      {
+        id: `subtitle-${id}`,
+        text,
+        startTime: 1_000,
+        endTime: 2_000,
+        confidence: 0.9,
+      },
+    ],
+    ...(selectionSnapshot ? { selectionSnapshot } : {}),
   };
 }

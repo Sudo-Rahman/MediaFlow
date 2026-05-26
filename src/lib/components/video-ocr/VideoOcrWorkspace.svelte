@@ -1,9 +1,10 @@
 <script lang="ts">
-  import type { OcrRegion, OcrVideoFile, OcrZoneFrame, OcrZoneRole } from '$lib/types';
+  import type { OcrRegion, OcrSubtitle, OcrVideoFile, OcrZoneFrame, OcrZoneRole, VideoOcrSelection } from '$lib/types';
   import type { OcrTimelineApi } from './OcrTimeline.svelte';
 
   import FloatingOcrCuePalette from './FloatingOcrCuePalette.svelte';
   import OcrTimeline from './OcrTimeline.svelte';
+  import OcrVersionSelector from './OcrVersionSelector.svelte';
   import VideoPreview from './VideoPreview.svelte';
   import {
     getTopRightFloatingPalettePosition,
@@ -14,9 +15,14 @@
 
   interface VideoOcrWorkspaceProps {
     file: OcrVideoFile | null;
+    activeSelection?: VideoOcrSelection | null;
+    activeSubtitles?: OcrSubtitle[];
     liveDetections: OcrZoneFrame[];
     liveDetectionCount: number;
     dialogsOpen: boolean;
+    hasDraftVersion?: boolean;
+    draftVersionName?: string | null;
+    onSelectVersion: (fileId: string, versionId: string | null) => void | Promise<void>;
     onAddSegmentFromRegion: (
       fileId: string,
       region: OcrRegion,
@@ -33,9 +39,14 @@
 
   let {
     file,
+    activeSelection = null,
+    activeSubtitles = [],
     liveDetections,
     liveDetectionCount,
     dialogsOpen,
+    hasDraftVersion = false,
+    draftVersionName = null,
+    onSelectVersion,
     onAddSegmentFromRegion,
     onUpdateZoneRegion,
     onSetZoneRole,
@@ -57,6 +68,7 @@
 
   const durationMs = $derived(Math.round((file?.duration ?? 0) * 1000));
   const currentTimeMs = $derived(playbackTime.fileId === file?.id ? playbackTime.timeMs : 0);
+  const workspaceSelection = $derived(activeSelection ?? file?.ocrSelection ?? { segments: [] });
   const selectedSegmentId = $derived(
     selectedZone && selectedZone.fileId === file?.id ? selectedZone.segmentId : null,
   );
@@ -64,9 +76,9 @@
     selectedZone && selectedZone.fileId === file?.id ? selectedZone.zoneId : null,
   );
   const hasOnScreenTextZones = $derived(
-    file?.ocrSelection.segments.some((segment) =>
+    workspaceSelection.segments.some((segment) =>
       segment.zones.some((zone) => zone.role === 'on_screen_text'),
-    ) ?? false,
+    ),
   );
   const workspaceRowsClass = $derived.by(() => {
     if (!file) {
@@ -78,8 +90,8 @@
       : 'grid-rows-[minmax(0,1fr)_minmax(7rem,22vh)]';
   });
   const activeCueSummary = $derived.by(() => buildActiveCueSummary({
-    subtitles: file?.ocrVersions.at(-1)?.finalSubtitles ?? [],
-    selection: file?.ocrSelection ?? { segments: [] },
+    subtitles: activeSubtitles,
+    selection: workspaceSelection,
     timeMs: currentTimeMs,
     selectedZoneId,
   }));
@@ -205,12 +217,26 @@
   }
 </script>
 
+{#snippet versionSelector()}
+  {#if file}
+    <OcrVersionSelector
+      versions={file.ocrVersions}
+      activeVersionId={file.activeOcrVersionId}
+      showDraft={hasDraftVersion}
+      draftName={draftVersionName ?? `Draft Version ${file.ocrVersions.length + 1}`}
+      onSelectVersion={(versionId) => onSelectVersion(file.id, versionId)}
+    />
+  {/if}
+{/snippet}
+
 <div
   bind:this={workspaceEl}
   class={`relative h-full min-w-0 min-h-0 overflow-hidden p-4 grid gap-2 ${workspaceRowsClass}`}
 >
   <VideoPreview
     file={file ?? undefined}
+    selection={workspaceSelection}
+    subtitles={activeSubtitles}
     {liveDetections}
     {liveDetectionCount}
     showSubtitles={!dialogsOpen}
@@ -218,6 +244,7 @@
     {seekRequest}
     {activeCueSummary}
     {paletteOpen}
+    toolbarAccessory={versionSelector}
     onTimeChange={handleTimeChange}
     onPlaybackFrame={handlePlaybackFrame}
     onOpenCuePalette={openCuePalette}
@@ -232,7 +259,7 @@
   {#if file}
     <OcrTimeline
       bind:this={timelineRef}
-      selection={file.ocrSelection}
+      selection={workspaceSelection}
       {durationMs}
       {currentTimeMs}
       {selectedSegmentId}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import { Check, X } from '@lucide/svelte';
 
   import { Button } from '$lib/components/ui/button';
@@ -13,6 +14,7 @@
     saveDisabled?: boolean;
     oncancel?: () => void;
     onsave?: () => void;
+    accessory?: Snippet;
     class?: string;
   }
 
@@ -24,6 +26,7 @@
     saveDisabled = false,
     oncancel,
     onsave,
+    accessory,
     class: className = '',
   }: PreviewToolbarProps = $props();
 </script>
@@ -36,8 +39,11 @@
     {/if}
   </div>
 
-  {#if showCancel || showSave}
+  {#if accessory || showCancel || showSave}
     <div class="flex shrink-0 items-center gap-2">
+      {#if accessory}
+        {@render accessory()}
+      {/if}
       {#if showCancel}
         <Tooltip.Root>
           <Tooltip.Trigger>

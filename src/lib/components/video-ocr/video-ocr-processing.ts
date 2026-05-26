@@ -79,6 +79,14 @@ export function getPreferredRawVersion(file: OcrVideoFile): OcrVersion | null {
   return getLatestRawVersion(file);
 }
 
+export function willRetryFallbackToFullPipeline(file: OcrVideoFile, mode: OcrRetryMode): boolean {
+  return mode !== 'full_pipeline' && !getPreferredRawVersion(file);
+}
+
+export function canRunOcrRetryMode(file: OcrVideoFile, mode: OcrRetryMode): boolean {
+  return !willRetryFallbackToFullPipeline(file, mode);
+}
+
 export function summarizeOcrFiles(files: OcrVideoFile[]): VideoOcrFileSummary {
   const startTargets: OcrVideoFile[] = [];
   const retryTargets: OcrVideoFile[] = [];

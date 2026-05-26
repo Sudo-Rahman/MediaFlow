@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OcrPipelineResult, OcrRawFrame, OcrVideoFile, OcrVersion, VideoOcrSelection } from '$lib/types';
 import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
 import { videoOcrStore } from '$lib/stores';
-import { processVideoOcrFile, summarizeOcrFiles } from './video-ocr-processing';
+import {
+  canRunOcrRetryMode,
+  processVideoOcrFile,
+  summarizeOcrFiles,
+  willRetryFallbackToFullPipeline,
+} from './video-ocr-processing';
 
 const invokeMock = vi.hoisted(() => vi.fn());
 
@@ -328,6 +333,38 @@ describe('video OCR file summary', () => {
 
     expect(summary.retryTargets.map((file) => file.id)).toEqual(['video-1', 'draft-file']);
     expect(summary.retryAllMissingRawCount).toBe(2);
+  });
+
+  it('reports full pipeline fallback for partial retry dialogs when the active entry has no raw OCR', () => {
+    const sourceSelection = selectionWithZone('segment-1', 'zone-1', 0.44);
+    const draftFile = videoFile({
+      activeOcrVersionId: null,
+      ocrVersions: [
+        rawVersion('version-1', sourceSelection, 'available raw from completed version'),
+      ],
+    });
+    const noRawActiveFile = videoFile({
+      activeOcrVersionId: 'version-1',
+      ocrVersions: [
+        { ...rawVersion('version-1', sourceSelection, 'no raw active'), rawOcr: [] },
+        rawVersion('version-2', selectionWithZone('segment-2', 'zone-2', 0.7), 'latest raw'),
+      ],
+    });
+    const rawActiveFile = videoFile({
+      activeOcrVersionId: 'version-2',
+      ocrVersions: [
+        { ...rawVersion('version-1', sourceSelection, 'no raw inactive'), rawOcr: [] },
+        rawVersion('version-2', selectionWithZone('segment-2', 'zone-2', 0.7), 'active raw'),
+      ],
+    });
+
+    expect(willRetryFallbackToFullPipeline(draftFile, 'cleanup_only')).toBe(true);
+    expect(willRetryFallbackToFullPipeline(noRawActiveFile, 'cleanup_and_ai')).toBe(true);
+    expect(willRetryFallbackToFullPipeline(rawActiveFile, 'ai_only')).toBe(false);
+    expect(willRetryFallbackToFullPipeline(draftFile, 'full_pipeline')).toBe(false);
+    expect(canRunOcrRetryMode(draftFile, 'cleanup_only')).toBe(false);
+    expect(canRunOcrRetryMode(draftFile, 'full_pipeline')).toBe(true);
+    expect(canRunOcrRetryMode(rawActiveFile, 'ai_only')).toBe(true);
   });
 
   it('stores the same selection snapshot that was sent to the full OCR pipeline', async () => {

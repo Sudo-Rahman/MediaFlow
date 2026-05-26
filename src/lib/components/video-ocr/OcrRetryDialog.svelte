@@ -5,6 +5,7 @@
   import { DEFAULT_OCR_CONFIG, OCR_LANGUAGES } from '$lib/types/video-ocr';
   import { LlmProviderModelSelector } from '$lib/components/llm';
   import { RetryVersionDialogShell } from '$lib/components/shared';
+  import { canRunOcrRetryMode, willRetryFallbackToFullPipeline } from './video-ocr-processing';
 
   import * as Field from '$lib/components/ui/field';
   import * as Item from '$lib/components/ui/item';
@@ -45,7 +46,8 @@
   const minCueDurationSliderId = `${idPrefix}-min-cue-duration`;
   const filterUrlSwitchId = `${idPrefix}-filter-url`;
 
-  const hasRawVersion = $derived((file?.ocrVersions ?? []).some((version) => version.rawOcr.length > 0));
+  const willFallbackToFullPipeline = $derived(file ? willRetryFallbackToFullPipeline(file, mode) : false);
+  const canRunSelectedMode = $derived(file ? canRunOcrRetryMode(file, mode) : false);
   const showPipelineOptions = $derived(mode === 'full_pipeline');
   const showCleanupOptions = $derived(mode === 'full_pipeline' || mode === 'cleanup_only' || mode === 'cleanup_and_ai');
   const showAiOptions = $derived(
@@ -63,7 +65,7 @@
   });
 
   function handleConfirm() {
-    if (!file) {
+    if (!file || !canRunSelectedMode) {
       return;
     }
 
@@ -103,6 +105,7 @@
   bind:versionName
   versionNamePlaceholder="Version 1"
   confirmLabel="Run"
+  confirmDisabled={!canRunSelectedMode}
   maxWidthClass="max-w-xl"
   onConfirm={handleConfirm}
 >
@@ -128,15 +131,15 @@
       </Select.Root>
     </Field.Field>
 
-    {#if mode !== 'full_pipeline' && !hasRawVersion}
+    {#if willFallbackToFullPipeline}
       <Item.Root variant="outline" size="xs" class="border-amber-500/40 text-amber-700 dark:text-amber-300">
         <Item.Media>
           <AlertTriangle class="size-4" />
         </Item.Media>
         <Item.Content>
-          <Item.Title>Raw OCR is unavailable</Item.Title>
-          <Item.Description>
-            No persisted raw OCR found for this file. The run will automatically fall back to full pipeline.
+          <Item.Title>This retry needs full pipeline</Item.Title>
+          <Item.Description class="line-clamp-none">
+            Partial retry needs raw OCR for the active version. Select Full pipeline to process the current zones.
           </Item.Description>
         </Item.Content>
       </Item.Root>

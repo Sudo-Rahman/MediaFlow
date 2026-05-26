@@ -24,6 +24,7 @@ import {
   toRustOcrFrames,
 } from '$lib/utils';
 import { logAndToast } from '$lib/utils/log-toast';
+import { getRetryRawSource } from './ocr-version-state';
 
 export interface ProcessVideoOcrFileOptions {
   file: OcrVideoFile;
@@ -67,16 +68,7 @@ export function getLatestRawVersion(file: OcrVideoFile): OcrVersion | null {
 }
 
 export function getPreferredRawVersion(file: OcrVideoFile): OcrVersion | null {
-  if (file.activeOcrVersionId === null) {
-    return null;
-  }
-
-  if (file.activeOcrVersionId) {
-    const activeVersion = file.ocrVersions.find((version) => version.id === file.activeOcrVersionId);
-    return activeVersion && activeVersion.rawOcr.length > 0 ? activeVersion : null;
-  }
-
-  return getLatestRawVersion(file);
+  return getRetryRawSource(file);
 }
 
 export function willRetryFallbackToFullPipeline(file: OcrVideoFile, mode: OcrRetryMode): boolean {

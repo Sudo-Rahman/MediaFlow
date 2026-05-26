@@ -325,6 +325,12 @@ describe('video OCR file summary', () => {
         id: 'draft-file',
         status: 'completed',
         activeOcrVersionId: null,
+        draft: {
+          baseVersionId: 'version-3',
+          selection: sourceSelection,
+          dirty: true,
+          updatedAt: '2026-05-26T12:00:00.000Z',
+        },
         ocrVersions: [
           rawVersion('version-3', sourceSelection, 'draft fallback raw'),
         ],
@@ -339,6 +345,12 @@ describe('video OCR file summary', () => {
     const sourceSelection = selectionWithZone('segment-1', 'zone-1', 0.44);
     const draftFile = videoFile({
       activeOcrVersionId: null,
+      draft: {
+        baseVersionId: 'version-1',
+        selection: sourceSelection,
+        dirty: true,
+        updatedAt: '2026-05-26T12:00:00.000Z',
+      },
       ocrVersions: [
         rawVersion('version-1', sourceSelection, 'available raw from completed version'),
       ],

@@ -630,6 +630,7 @@ describe('video OCR store', () => {
     });
 
     expect(videoOcrStore.videoFiles[0].activeOcrVersionId).toBeNull();
+    expect(videoOcrStore.videoFiles[0].draft?.baseVersionId).toBe('version-1');
     expect(videoOcrStore.hasDraftOcrVersion(file.id)).toBe(true);
     expect(videoOcrStore.getDraftOcrVersionName(file.id)).toBe('Draft Version 3');
     expect(videoOcrStore.getActiveOcrSelection(file.id).segments[0].zones[0].region).toEqual({
@@ -659,6 +660,7 @@ describe('video OCR store', () => {
     videoOcrStore.selectOcrVersion(file.id, 'version-2');
 
     expect(videoOcrStore.videoFiles[0].activeOcrVersionId).toBe('version-2');
+    expect(videoOcrStore.videoFiles[0].draft?.baseVersionId).toBe('version-1');
     expect(videoOcrStore.hasDraftOcrVersion(file.id)).toBe(true);
     expect(videoOcrStore.getActiveOcrSelection(file.id).segments[0].id).toBe('segment-2');
 
@@ -686,6 +688,7 @@ describe('video OCR store', () => {
     videoOcrStore.addOcrVersion(file.id, createVersion('version-2', 'Version 2', undefined, 'Second result'));
 
     expect(videoOcrStore.videoFiles[0].activeOcrVersionId).toBe('version-2');
+    expect(videoOcrStore.videoFiles[0].draft).toBeUndefined();
     expect(videoOcrStore.hasDraftOcrVersion(file.id)).toBe(false);
     expect(videoOcrStore.videoFiles[0].ocrVersions[1].selectionSnapshot?.segments[0].zones[0].region).toEqual({
       x: 0.2,

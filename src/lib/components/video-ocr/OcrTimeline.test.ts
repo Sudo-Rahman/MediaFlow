@@ -158,6 +158,7 @@ describe('OcrTimeline seek interactions', () => {
 
   it('computes clamped auto-pan edge widths', () => {
     expect(getOcrTimelineAutoPanEdgeWidth(300)).toBe(60);
+    expect(getOcrTimelineAutoPanEdgeWidth(833.5)).toBeCloseTo(100.02, 6);
     expect(getOcrTimelineAutoPanEdgeWidth(1_000)).toBe(120);
     expect(getOcrTimelineAutoPanEdgeWidth(2_000)).toBe(150);
   });
@@ -171,7 +172,7 @@ describe('OcrTimeline seek interactions', () => {
       durationMs: 120_000,
     });
     expect(leftIntent.direction).toBe(-1);
-    expect(leftIntent.pressure).toBeCloseTo(0.666, 3);
+    expect(leftIntent.pressure).toBeCloseTo(2 / 3, 6);
 
     const rightIntent = getOcrTimelineAutoPanIntent({
       pointerClientX: 960,
@@ -181,7 +182,7 @@ describe('OcrTimeline seek interactions', () => {
       durationMs: 120_000,
     });
     expect(rightIntent.direction).toBe(1);
-    expect(rightIntent.pressure).toBeCloseTo(0.666, 3);
+    expect(rightIntent.pressure).toBeCloseTo(2 / 3, 6);
 
     expect(getOcrTimelineAutoPanIntent({
       pointerClientX: 500,

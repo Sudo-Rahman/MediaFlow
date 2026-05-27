@@ -193,12 +193,7 @@
 
   export function getOcrTimelineAutoPanEdgeWidth(trackWidthPx: number): number {
     const safeTrackWidthPx = Number.isFinite(trackWidthPx) ? Math.max(0, trackWidthPx) : 0;
-    return Math.max(60, Math.min(150, Math.round(safeTrackWidthPx * 0.12)));
-  }
-
-  function getOcrTimelineAutoPanPressure(rawPressure: number): number {
-    const clampedPressure = Math.max(0, Math.min(1, rawPressure));
-    return Math.floor(clampedPressure * 1000) / 1000;
+    return Math.max(60, Math.min(150, safeTrackWidthPx * 0.12));
   }
 
   export function getOcrTimelineAutoPanIntent(input: OcrTimelineAutoPanInput): OcrTimelineAutoPanIntent {
@@ -217,14 +212,14 @@
     if (localX < edgeWidth) {
       return {
         direction: -1,
-        pressure: getOcrTimelineAutoPanPressure((edgeWidth - localX) / edgeWidth),
+        pressure: Math.max(0, Math.min(1, (edgeWidth - localX) / edgeWidth)),
       };
     }
 
     if (localX > trackWidth - edgeWidth) {
       return {
         direction: 1,
-        pressure: getOcrTimelineAutoPanPressure((localX - (trackWidth - edgeWidth)) / edgeWidth),
+        pressure: Math.max(0, Math.min(1, (localX - (trackWidth - edgeWidth)) / edgeWidth)),
       };
     }
 

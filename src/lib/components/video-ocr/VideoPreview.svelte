@@ -1209,8 +1209,8 @@
       <ContextMenu.Root bind:open={contextMenuOpen}>
         <ContextMenu.Trigger
           bind:ref={containerEl}
-          class="relative min-h-0 flex-1 overflow-hidden bg-black outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-0"
-          role="application"
+          class="relative min-h-0 flex-1 overflow-hidden bg-black outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          role="region"
           tabindex={0}
           aria-label="Video preview player"
           onclick={handlePreviewSurfaceClick}

@@ -352,6 +352,7 @@
   let lastPreviewSegmentEdit: OcrTimelineSegmentEdit | null = null;
   let editingLabel = $state<{ segmentId: string; zoneId: string; value: string } | null>(null);
   let pendingCutTarget = $state<PendingCutTarget | null>(null);
+  let suppressNextCutContextMenu = false;
   let timelineRootEl = $state<HTMLDivElement | null>(null);
   let timelineTrackWidthPx = $state(0);
   let playbackTimeLabelEl = $state<HTMLSpanElement | null>(null);
@@ -608,6 +609,7 @@
   function startPreciseCut(block: RoleBlock): void {
     stopDrag(undefined, 'pointercancel');
     cancelLabelEditing();
+    suppressNextCutContextMenu = false;
     onSelect?.(block.segmentId, block.zoneId);
 
     pendingCutTarget = {
@@ -624,6 +626,23 @@
 
   function cancelPreciseCut(): void {
     pendingCutTarget = null;
+  }
+
+  function hasVisiblePendingCutTarget(target: PendingCutTarget): boolean {
+    return selection.segments.some((segment) =>
+      segment.id === target.segmentId
+      && segment.startTimeMs === target.startTimeMs
+      && segment.endTimeMs === target.endTimeMs
+      && blockOverlapsViewport({
+        id: `${target.segmentId}:${target.zoneId}`,
+        segmentId: target.segmentId,
+        zoneId: target.zoneId,
+        label: target.label,
+        startTimeMs: segment.startTimeMs,
+        endTimeMs: segment.endTimeMs,
+      })
+      && segment.zones.some((zone) => zone.id === target.zoneId),
+    );
   }
 
   function updatePreciseCutPointer(event: PointerEvent, trackEl: HTMLElement): void {
@@ -647,6 +666,11 @@
   function confirmPreciseCut(event?: PointerEvent): void {
     const target = pendingCutTarget;
     if (!target) {
+      return;
+    }
+
+    if (!hasVisiblePendingCutTarget(target)) {
+      cancelPreciseCut();
       return;
     }
 
@@ -687,7 +711,14 @@
     }
 
     event.preventDefault();
+    event.stopPropagation();
     if (event.button !== 0) {
+      suppressNextCutContextMenu = true;
+      cancelPreciseCut();
+      return;
+    }
+
+    if (!hasVisiblePendingCutTarget(pendingCutTarget)) {
       cancelPreciseCut();
       return;
     }
@@ -697,13 +728,24 @@
   }
 
   function handlePreciseCutContextMenu(event: MouseEvent): void {
-    if (!pendingCutTarget) {
+    if (!pendingCutTarget && !suppressNextCutContextMenu) {
       return;
     }
 
     event.preventDefault();
+    event.stopPropagation();
+    suppressNextCutContextMenu = false;
     cancelPreciseCut();
   }
+
+  $effect(() => {
+    const target = pendingCutTarget;
+    if (!target || hasVisiblePendingCutTarget(target)) {
+      return;
+    }
+
+    cancelPreciseCut();
+  });
 
   $effect(() => {
     if (!editingLabel || !labelInputEl) {

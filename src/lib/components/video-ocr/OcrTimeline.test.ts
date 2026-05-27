@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   attachOcrTimelineDragListeners,
+  formatOcrTimelinePreciseTime,
+  getOcrTimelineAutoPanEdgeWidth,
+  getOcrTimelineAutoPanIntent,
   getOcrTimelineSegmentEditForPointerTime,
   getOcrTimelineRollbackSegmentEdit,
+  isValidOcrTimelineCutTime,
   shouldCancelTimelineSeekOnPointerEnd,
   shouldCommitTimelineSegmentEditOnPointerEnd,
   shouldCommitTimelineSeekOnPointerEnd,
@@ -150,5 +154,62 @@ describe('OcrTimeline seek interactions', () => {
       endTimeMs: 3_000,
       seekTimeMs: 3_000,
     });
+  });
+
+  it('computes clamped auto-pan edge widths', () => {
+    expect(getOcrTimelineAutoPanEdgeWidth(300)).toBe(60);
+    expect(getOcrTimelineAutoPanEdgeWidth(1_000)).toBe(120);
+    expect(getOcrTimelineAutoPanEdgeWidth(2_000)).toBe(150);
+  });
+
+  it('computes auto-pan intent from pointer pressure near track edges', () => {
+    const leftIntent = getOcrTimelineAutoPanIntent({
+      pointerClientX: 40,
+      trackLeft: 0,
+      trackWidth: 1_000,
+      viewportWindowMs: 30_000,
+      durationMs: 120_000,
+    });
+    expect(leftIntent.direction).toBe(-1);
+    expect(leftIntent.pressure).toBeCloseTo(0.666, 3);
+
+    const rightIntent = getOcrTimelineAutoPanIntent({
+      pointerClientX: 960,
+      trackLeft: 0,
+      trackWidth: 1_000,
+      viewportWindowMs: 30_000,
+      durationMs: 120_000,
+    });
+    expect(rightIntent.direction).toBe(1);
+    expect(rightIntent.pressure).toBeCloseTo(0.666, 3);
+
+    expect(getOcrTimelineAutoPanIntent({
+      pointerClientX: 500,
+      trackLeft: 0,
+      trackWidth: 1_000,
+      viewportWindowMs: 30_000,
+      durationMs: 120_000,
+    })).toEqual({ direction: 0, pressure: 0 });
+  });
+
+  it('does not auto-pan when the full duration is already visible', () => {
+    expect(getOcrTimelineAutoPanIntent({
+      pointerClientX: 20,
+      trackLeft: 0,
+      trackWidth: 1_000,
+      viewportWindowMs: 120_000,
+      durationMs: 120_000,
+    })).toEqual({ direction: 0, pressure: 0 });
+  });
+
+  it('formats precise timeline timestamps with milliseconds', () => {
+    expect(formatOcrTimelinePreciseTime(606_240)).toBe('10:06.240');
+    expect(formatOcrTimelinePreciseTime(3_661_007)).toBe('1:01:01.007');
+  });
+
+  it('validates cut times strictly inside segment boundaries', () => {
+    expect(isValidOcrTimelineCutTime(1_000, 1_000, 5_000)).toBe(false);
+    expect(isValidOcrTimelineCutTime(4_999, 1_000, 5_000)).toBe(true);
+    expect(isValidOcrTimelineCutTime(5_000, 1_000, 5_000)).toBe(false);
   });
 });

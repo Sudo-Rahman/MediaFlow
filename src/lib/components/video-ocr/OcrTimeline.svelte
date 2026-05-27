@@ -47,6 +47,19 @@
     ) => void;
   }
 
+  export interface OcrTimelineAutoPanInput {
+    pointerClientX: number;
+    trackLeft: number;
+    trackWidth: number;
+    viewportWindowMs: number;
+    durationMs: number;
+  }
+
+  export interface OcrTimelineAutoPanIntent {
+    direction: -1 | 0 | 1;
+    pressure: number;
+  }
+
   export function attachOcrTimelineDragListeners(
     target: OcrTimelineDragListenerTarget,
     listeners: OcrTimelineDragListeners,
@@ -176,6 +189,70 @@
 
   export function shouldSyncTimelinePlaybackFromCurrentTime(isSeekDragging: boolean): boolean {
     return !isSeekDragging;
+  }
+
+  export function getOcrTimelineAutoPanEdgeWidth(trackWidthPx: number): number {
+    const safeTrackWidthPx = Number.isFinite(trackWidthPx) ? Math.max(0, trackWidthPx) : 0;
+    return Math.max(60, Math.min(150, Math.round(safeTrackWidthPx * 0.12)));
+  }
+
+  function getOcrTimelineAutoPanPressure(rawPressure: number): number {
+    const clampedPressure = Math.max(0, Math.min(1, rawPressure));
+    return Math.floor(clampedPressure * 1000) / 1000;
+  }
+
+  export function getOcrTimelineAutoPanIntent(input: OcrTimelineAutoPanInput): OcrTimelineAutoPanIntent {
+    const trackWidth = Number.isFinite(input.trackWidth) ? Math.max(0, input.trackWidth) : 0;
+    const viewportWindowMs = Number.isFinite(input.viewportWindowMs) ? Math.max(1, input.viewportWindowMs) : 1;
+    const durationMs = Number.isFinite(input.durationMs) ? Math.max(1, input.durationMs) : 1;
+
+    if (trackWidth <= 0 || viewportWindowMs >= durationMs) {
+      return { direction: 0, pressure: 0 };
+    }
+
+    const edgeWidth = getOcrTimelineAutoPanEdgeWidth(trackWidth);
+    const pointerX = Number.isFinite(input.pointerClientX) ? input.pointerClientX : input.trackLeft;
+    const localX = pointerX - input.trackLeft;
+
+    if (localX < edgeWidth) {
+      return {
+        direction: -1,
+        pressure: getOcrTimelineAutoPanPressure((edgeWidth - localX) / edgeWidth),
+      };
+    }
+
+    if (localX > trackWidth - edgeWidth) {
+      return {
+        direction: 1,
+        pressure: getOcrTimelineAutoPanPressure((localX - (trackWidth - edgeWidth)) / edgeWidth),
+      };
+    }
+
+    return { direction: 0, pressure: 0 };
+  }
+
+  export function formatOcrTimelinePreciseTime(timeMs: number): string {
+    const safeTimeMs = Number.isFinite(timeMs) ? Math.max(0, Math.round(timeMs)) : 0;
+    const totalSeconds = Math.floor(safeTimeMs / 1000);
+    const milliseconds = safeTimeMs % 1000;
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
+    }
+
+    return `${minutes}:${seconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
+  }
+
+  export function isValidOcrTimelineCutTime(cutTimeMs: number, startTimeMs: number, endTimeMs: number): boolean {
+    if (!Number.isFinite(cutTimeMs) || !Number.isFinite(startTimeMs) || !Number.isFinite(endTimeMs)) {
+      return false;
+    }
+
+    const safeCutTimeMs = Math.round(cutTimeMs);
+    return safeCutTimeMs > Math.round(startTimeMs) && safeCutTimeMs < Math.round(endTimeMs);
   }
 </script>
 

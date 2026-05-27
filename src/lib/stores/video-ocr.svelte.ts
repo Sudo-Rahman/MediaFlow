@@ -116,6 +116,36 @@ function cloneLiveDetection(detection: OcrZoneFrame): OcrZoneFrame {
   };
 }
 
+function buildSplitZoneLabel(label: string | undefined, suffix: 'A' | 'B'): string {
+  const baseLabel = label?.trim() || 'Zone';
+  return `${baseLabel} ${suffix}`;
+}
+
+function cloneSplitSegment(
+  segment: OcrSegment,
+  zoneIndex: number,
+  startTimeMs: number,
+  endTimeMs: number,
+  suffix: 'A' | 'B',
+): OcrSegment {
+  const zone = segment.zones[zoneIndex];
+
+  return {
+    ...cloneOcrSegment(segment),
+    id: `${segment.id}-${suffix.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    startTimeMs,
+    endTimeMs,
+    zones: [
+      {
+        ...zone,
+        id: `${zone.id}-${suffix.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        label: buildSplitZoneLabel(zone.label, suffix),
+        region: { ...zone.region },
+      },
+    ],
+  };
+}
+
 // ============================================================================
 // STORE EXPORT
 // ============================================================================
@@ -614,6 +644,61 @@ export const videoOcrStore = {
         )),
       });
     });
+  },
+
+  cutOcrZone(fileId: string, segmentId: string, zoneId: string, cutTimeMs: number, durationMs: number): boolean {
+    const safeDurationMs = Number.isFinite(durationMs) && durationMs > 0 ? Math.round(durationMs) : 1;
+    const safeCutTimeMs = Number.isFinite(cutTimeMs)
+      ? Math.max(0, Math.min(Math.round(cutTimeMs), safeDurationMs))
+      : 0;
+    let didCut = false;
+
+    videoFiles = videoFiles.map(f => {
+      if (f.id !== fileId) {
+        return f;
+      }
+
+      const draftFile = branchOcrDraftFromRenderedSelection(f);
+      const sourceSegment = draftFile.ocrSelection.segments.find((segment) => segment.id === segmentId);
+      const zoneIndex = sourceSegment?.zones.findIndex((zone) => zone.id === zoneId) ?? -1;
+
+      if (!sourceSegment || zoneIndex === -1) {
+        return draftFile;
+      }
+      if (safeCutTimeMs <= sourceSegment.startTimeMs || safeCutTimeMs >= sourceSegment.endTimeMs) {
+        return draftFile;
+      }
+
+      didCut = true;
+      const leftSegment = cloneSplitSegment(sourceSegment, zoneIndex, sourceSegment.startTimeMs, safeCutTimeMs, 'A');
+      const rightSegment = cloneSplitSegment(sourceSegment, zoneIndex, safeCutTimeMs, sourceSegment.endTimeMs, 'B');
+      const nextSegments = draftFile.ocrSelection.segments.flatMap((segment) => {
+        if (segment.id !== segmentId) {
+          return [cloneOcrSegment(segment)];
+        }
+
+        const remainingZones = segment.zones
+          .filter((zone) => zone.id !== zoneId)
+          .map((zone) => ({ ...zone, region: { ...zone.region } }));
+
+        if (remainingZones.length === 0) {
+          return [leftSegment, rightSegment];
+        }
+
+        return [
+          {
+            ...segment,
+            zones: remainingZones,
+          },
+          leftSegment,
+          rightSegment,
+        ];
+      });
+
+      return replaceOcrDraftSelection(draftFile, { segments: nextSegments });
+    });
+
+    return didCut;
   },
 
   // -------------------------------------------------------------------------

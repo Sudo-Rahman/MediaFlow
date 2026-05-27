@@ -261,6 +261,107 @@ describe('video OCR store', () => {
     expect(updatedSegment.zones[0].region).toEqual(segment.zones[0].region);
   });
 
+  it('cuts a single-zone OCR segment into two labeled segments', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    videoOcrStore.updateFile(file.id, { duration: 120 });
+    const segment = videoOcrStore.videoFiles[0].ocrSelection.segments[0];
+    const zone = segment.zones[0];
+
+    const didCut = videoOcrStore.cutOcrZone(file.id, segment.id, zone.id, 30_000, 120_000);
+
+    expect(didCut).toBe(true);
+    expect(videoOcrStore.videoFiles[0].ocrSelection.segments).toHaveLength(2);
+    expect(videoOcrStore.videoFiles[0].ocrSelection.segments).toEqual([
+      expect.objectContaining({
+        startTimeMs: 0,
+        endTimeMs: 30_000,
+        zones: [
+          expect.objectContaining({
+            role: zone.role,
+            region: zone.region,
+            label: 'Zone 1 A',
+          }),
+        ],
+      }),
+      expect.objectContaining({
+        startTimeMs: 30_000,
+        endTimeMs: 120_000,
+        zones: [
+          expect.objectContaining({
+            role: zone.role,
+            region: zone.region,
+            label: 'Zone 1 B',
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  it('cuts one zone out of a multi-zone segment without changing sibling zone timing', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    videoOcrStore.updateFile(file.id, { duration: 120 });
+    const segment = videoOcrStore.videoFiles[0].ocrSelection.segments[0];
+    const siblingZone = {
+      ...segment.zones[0],
+      id: 'sibling-zone',
+      role: 'on_screen_text' as const,
+      label: 'Sign',
+      region: { x: 0.1, y: 0.1, width: 0.4, height: 0.2 },
+    };
+
+    videoOcrStore.setOcrSelection(file.id, {
+      segments: [
+        {
+          ...segment,
+          zones: [
+            {
+              ...segment.zones[0],
+              label: 'Subtitle',
+            },
+            siblingZone,
+          ],
+        },
+      ],
+    });
+
+    const sourceSegment = videoOcrStore.videoFiles[0].ocrSelection.segments[0];
+    const targetZone = sourceSegment.zones.find((entry) => entry.label === 'Subtitle');
+    expect(targetZone).toBeDefined();
+
+    const didCut = videoOcrStore.cutOcrZone(file.id, sourceSegment.id, targetZone!.id, 45_000, 120_000);
+
+    expect(didCut).toBe(true);
+    expect(videoOcrStore.videoFiles[0].ocrSelection.segments).toEqual([
+      expect.objectContaining({
+        id: sourceSegment.id,
+        startTimeMs: 0,
+        endTimeMs: 120_000,
+        zones: [expect.objectContaining({ id: siblingZone.id, label: 'Sign' })],
+      }),
+      expect.objectContaining({
+        startTimeMs: 0,
+        endTimeMs: 45_000,
+        zones: [expect.objectContaining({ label: 'Subtitle A' })],
+      }),
+      expect.objectContaining({
+        startTimeMs: 45_000,
+        endTimeMs: 120_000,
+        zones: [expect.objectContaining({ label: 'Subtitle B' })],
+      }),
+    ]);
+  });
+
+  it('does not cut at exact segment boundaries', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    videoOcrStore.updateFile(file.id, { duration: 120 });
+    const segment = videoOcrStore.videoFiles[0].ocrSelection.segments[0];
+    const zone = segment.zones[0];
+
+    expect(videoOcrStore.cutOcrZone(file.id, segment.id, zone.id, 0, 120_000)).toBe(false);
+    expect(videoOcrStore.cutOcrZone(file.id, segment.id, zone.id, 120_000, 120_000)).toBe(false);
+    expect(videoOcrStore.videoFiles[0].ocrSelection.segments).toHaveLength(1);
+  });
+
   it('allows OCR-ready files even when preview generation failed', () => {
     const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
 

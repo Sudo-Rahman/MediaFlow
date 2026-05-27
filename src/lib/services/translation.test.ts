@@ -63,6 +63,61 @@ function denseCampaignText(): string {
   ].join('');
 }
 
+function fragmentedCampaignText(): string {
+  return [
+    '{\\pos(646.125,-8.75)\\b1\\blur0.5\\an5\\fs80\\fscy55\\fscx45\\c&H254156&}',
+    'Stu',
+    '{\\c&H415968&}',
+    'den',
+    '{\\c&H35566C&}',
+    't ',
+    '{\\c&H325266&}',
+    'C',
+    '{\\c&H406379&}',
+    'ou',
+    '{\\c&H486B7E&}',
+    'n',
+    '{\\c&H49697E&}',
+    'c',
+    '{\\c&H497489&}',
+    'il ',
+    '{\\c&H517A91&}',
+    'Pre',
+    '{\\c&H5B8396&}',
+    'si',
+    '{\\c&H608A9D&}',
+    'd',
+    '{\\c&H668E99&}',
+    'en',
+    '{\\c&H6890A0&}',
+    'tial ',
+    '{\\c&H6598A7&}',
+    'Elections\\h\\h\\h',
+    '{\\c&H5D869A&}',
+    'Camp',
+    '{\\c&H577F95&}',
+    'aig',
+    '{\\c&H487289&}',
+    'n ',
+    '{\\c&H3C697B&}',
+    'Sp',
+    '{\\c&H395A6E&}',
+    'eec',
+    '{\\c&H2B4C62&}',
+    'h ',
+    '{\\c&H2B4357&}',
+    'As',
+    '{\\c&H2D4558&}',
+    'se',
+    '{\\c&H283D53&}',
+    'm',
+    '{\\c&H283C53&}',
+    'b',
+    '{\\c&H1D3044&}',
+    'ly',
+  ].join('');
+}
+
 function buildAssFixture(includeOpening = true): string {
   const openingLine = includeOpening
     ? 'Dialogue: 0,0:00:05.00,0:00:06.00,Opening-English,,0,0,0,,{\\fad(100,100)}Opening words'
@@ -118,6 +173,34 @@ function parseUserPromptCues(userPrompt: string): Array<{ id: string; text: stri
 
 function allPromptCues(): Array<{ id: string; text: string }> {
   return callLlmMock.mock.calls.flatMap(([request]) => parseUserPromptCues(request.userPrompt));
+}
+
+function normalizeReadableText(value: string): string {
+  return value
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map(line => line.replace(/[^\S\r\n]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripAssReadableText(value: string): string {
+  return normalizeReadableText(
+    value
+      .replace(/\{[^}]*\}/g, '')
+      .replace(/\\N/g, '\n')
+      .replace(/\\n/g, '\n')
+      .replace(/\\h/g, ' ')
+  );
+}
+
+function extractEventText(content: string, style: string): string {
+  const line = content
+    .split(/\r?\n/)
+    .find((candidate) => candidate.startsWith('Dialogue:') && candidate.includes(`,${style},`));
+  return line?.split(',,').at(-1) ?? '';
 }
 
 describe('AI translation ASS visual text planning', () => {
@@ -295,6 +378,81 @@ describe('AI translation ASS visual text planning', () => {
     expect(allPromptCues()).toEqual([
       { id: 'VISUAL_0', text: 'Student Council Presidential Elections Campaign Speech Assembly' },
     ]);
+  });
+
+  it('keeps translated plain visual text readable when tags split source words', async () => {
+    const { buildFullPromptForTokenCount, translateSubtitle } = await import('./translation');
+    const translatedCampaign = 'Discours de campagne du conseil etudiant';
+    const content = buildAssWithEvents([
+      `Dialogue: 0,0:00:01.00,0:00:02.00,CampaignTS,,0,0,0,,${fragmentedCampaignText()}`,
+    ]);
+
+    const prompt = buildFullPromptForTokenCount(content, 'en', 'fr');
+    expect(countOccurrences(prompt, 'Student Council Presidential Elections Campaign Speech Assembly')).toBe(1);
+    expect(prompt).not.toContain('\\c&H254156&');
+
+    callLlmMock.mockImplementation(async (request: { userPrompt: string }) => {
+      const cues = parseUserPromptCues(request.userPrompt);
+      return {
+        content: JSON.stringify({
+          cues: cues.map((cue) => ({
+            id: cue.id,
+            translatedText: cue.text.replace(
+              'Student Council Presidential Elections Campaign Speech Assembly',
+              translatedCampaign
+            ),
+          })),
+        }),
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      };
+    });
+
+    const result = await translateSubtitle(
+      { name: 'fragmented-campaign.ass', path: '/subs/fragmented-campaign.ass', content, format: 'ass', size: 1 },
+      'openai',
+      'gpt-test',
+      'en',
+      'fr'
+    );
+
+    const translatedEventText = extractEventText(result.translatedContent, 'CampaignTS');
+    expect(result.success).toBe(true);
+    expect(translatedEventText).toContain('{\\c&H415968&}');
+    expect(stripAssReadableText(translatedEventText)).toBe(translatedCampaign);
+    expect(stripAssReadableText(translatedEventText)).not.toContain('Disco urs');
+    expect(stripAssReadableText(translatedEventText)).not.toContain('consei letu');
+  });
+
+  it('falls back to the original dense visual skeleton when plain projection has no readable text', async () => {
+    const { translateSubtitle } = await import('./translation');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const content = buildAssWithEvents([
+      `Dialogue: 0,0:00:01.00,0:00:02.00,CampaignTS,,0,0,0,,${fragmentedCampaignText()}`,
+    ]);
+
+    callLlmMock.mockImplementation(async (request: { userPrompt: string }) => {
+      const cues = parseUserPromptCues(request.userPrompt);
+      return {
+        content: JSON.stringify({
+          cues: cues.map((cue) => ({ id: cue.id, translatedText: '' })),
+        }),
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      };
+    });
+
+    const result = await translateSubtitle(
+      { name: 'empty-campaign.ass', path: '/subs/empty-campaign.ass', content, format: 'ass', size: 1 },
+      'openai',
+      'gpt-test',
+      'en',
+      'fr'
+    );
+
+    expect(result.success).toBe(true);
+    expect(extractEventText(result.translatedContent, 'CampaignTS')).toBe(fragmentedCampaignText());
+    expect(warnSpy).not.toHaveBeenCalledWith('Translation validation errors:', expect.anything());
+
+    warnSpy.mockRestore();
   });
 
   it('preserves readable line breaks for dense plain visual prompts', async () => {

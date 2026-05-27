@@ -57,7 +57,7 @@ export function validateTranslation(
 
     // Extract placeholders from translated text
     const translatedPlaceholders = extractPlaceholders(translated.translatedText);
-    const originalPlaceholders = original.placeholders.map(p => p.token);
+    const originalPlaceholders = extractPlaceholders(original.textSkeleton);
 
     // Check count
     if (translatedPlaceholders.length !== originalPlaceholders.length) {

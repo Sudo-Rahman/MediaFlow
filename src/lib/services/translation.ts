@@ -282,16 +282,20 @@ function normalizeReadableSignature(value: string): string {
     .trim();
 }
 
-function getCueReadableText(cue: Cue): string {
-  let readableText = cue.textSkeleton;
+function getReadableTextFromSkeleton(textSkeleton: string, placeholders: Cue['placeholders']): string {
+  let readableText = textSkeleton;
 
-  for (const placeholder of cue.placeholders) {
+  for (const placeholder of placeholders) {
     readableText = readableText
       .split(placeholder.token)
       .join(getReadablePlaceholderReplacement(placeholder));
   }
 
   return normalizeReadablePromptText(readableText);
+}
+
+function getCueReadableText(cue: Cue): string {
+  return getReadableTextFromSkeleton(cue.textSkeleton, cue.placeholders);
 }
 
 function getCueVisibleText(cue: Cue): string {
@@ -806,55 +810,6 @@ function splitSkeletonSegments(textSkeleton: string): Array<{ kind: 'text' | 'pl
   return segments;
 }
 
-function replaceTextPreservingOuterWhitespace(sourceText: string, replacement: string): string {
-  const leadingWhitespace = sourceText.match(/^\s*/)?.[0] ?? '';
-  const trailingWhitespace = sourceText.match(/\s*$/)?.[0] ?? '';
-  return `${leadingWhitespace}${replacement}${trailingWhitespace}`;
-}
-
-function splitTextByWeights(text: string, weights: number[]): string[] {
-  if (weights.length === 0) {
-    return [];
-  }
-
-  if (weights.length === 1) {
-    return [text];
-  }
-
-  const trimmedText = text.trim();
-  const wordTokens = trimmedText.match(/\S+\s*/g);
-  const units = wordTokens && wordTokens.length >= weights.length
-    ? wordTokens
-    : Array.from(trimmedText);
-  if (units.length <= weights.length) {
-    return weights.map((_, index) => (units[index] ?? '').trim());
-  }
-
-  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0) || weights.length;
-  const chunks: string[] = [];
-  let consumedUnitCount = 0;
-  let consumedWeight = 0;
-
-  weights.forEach((weight, index) => {
-    const remainingRuns = weights.length - index - 1;
-    if (index === weights.length - 1) {
-      chunks.push(units.slice(consumedUnitCount).join('').trim());
-      return;
-    }
-
-    consumedWeight += weight;
-    const targetUnitCount = Math.round((units.length * consumedWeight) / totalWeight);
-    const endUnitCount = Math.min(
-      Math.max(targetUnitCount, consumedUnitCount + 1),
-      units.length - remainingRuns
-    );
-    chunks.push(units.slice(consumedUnitCount, endUnitCount).join('').trim());
-    consumedUnitCount = endUnitCount;
-  });
-
-  return chunks;
-}
-
 function projectPlainTranslationIntoSkeleton(occurrence: VisualCueOccurrence, translatedPlainText: string): string {
   if (normalizeReadableSignature(translatedPlainText) === normalizeReadableSignature(occurrence.readableText ?? '')) {
     return occurrence.cue.textSkeleton;
@@ -869,17 +824,14 @@ function projectPlainTranslationIntoSkeleton(occurrence: VisualCueOccurrence, tr
     return occurrence.cue.textSkeleton;
   }
 
-  const replacementChunks = textSegmentIndexes.length === 1
-    ? [translatedPlainText]
-    : splitTextByWeights(
-      translatedPlainText,
-      textSegmentIndexes.map(({ segment }) => Math.max(1, Array.from(segment.value.trim()).length))
-    );
+  const readableTranslation = normalizeReadablePromptText(translatedPlainText);
 
   textSegmentIndexes.forEach(({ segment, index }, replacementIndex) => {
     segments[index] = {
       kind: 'text',
-      value: replaceTextPreservingOuterWhitespace(segment.value, replacementChunks[replacementIndex] ?? '')
+      value: replacementIndex === 0
+        ? `${segment.value.match(/^\s*/)?.[0] ?? ''}${readableTranslation}${segment.value.match(/\s*$/)?.[0] ?? ''}`
+        : ''
     };
   });
 
@@ -896,8 +848,14 @@ function buildPlainVisualTranslatedCue(
     translatedText
   };
   const validation = validateTranslation([occurrence.cue], [translatedCue]);
+  const projectedReadableText = getReadableTextFromSkeleton(translatedText, occurrence.cue.placeholders);
+  const expectedReadableText = normalizeReadableSignature(translatedPlainText);
 
-  if (validation.valid) {
+  if (
+    validation.valid
+    && expectedReadableText.length > 0
+    && normalizeReadableSignature(projectedReadableText) === expectedReadableText
+  ) {
     return { cue: translatedCue, usedFallback: false };
   }
 

@@ -35,6 +35,7 @@
     onSetZoneRole: (fileId: string, segmentId: string, zoneId: string, role: OcrZoneRole) => void | Promise<void>;
     onRenameZone: (fileId: string, segmentId: string, zoneId: string, label: string) => void | Promise<void>;
     onDeleteZone: (fileId: string, segmentId: string, zoneId: string) => void | Promise<void>;
+    onCutZone: (fileId: string, segmentId: string, zoneId: string, cutTimeMs: number) => void | Promise<void>;
     onPreviewTrimSegment: (
       fileId: string,
       segmentId: string,
@@ -67,6 +68,7 @@
     onSetZoneRole,
     onRenameZone,
     onDeleteZone,
+    onCutZone,
     onPreviewTrimSegment,
     onCommitTrimSegment,
     onPlaybackError,
@@ -175,6 +177,14 @@
     if (selectedSegmentId === segmentId && selectedZoneId === zoneId) {
       selectedZone = null;
     }
+  }
+
+  function handleCutZone(segmentId: string, zoneId: string, cutTimeMs: number): void {
+    if (!file) {
+      return;
+    }
+
+    void onCutZone(file.id, segmentId, zoneId, cutTimeMs);
   }
 
   function requestPlaybackSeek(timeMs: number, mode: 'preview' | 'commit' | 'cancel'): void {
@@ -316,6 +326,7 @@
       onSetRole={handleSetZoneRole}
       onRenameZone={handleRenameZone}
       onDeleteZone={handleDeleteZone}
+      onCutZone={handleCutZone}
       onPreviewTrimSegment={handlePreviewTrimSegment}
       onCommitTrimSegment={handleCommitTrimSegment}
     />

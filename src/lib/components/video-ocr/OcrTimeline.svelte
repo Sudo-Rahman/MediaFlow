@@ -283,6 +283,7 @@
     onSetRole?: (segmentId: string, zoneId: string, role: OcrZoneRole) => void;
     onRenameZone?: (segmentId: string, zoneId: string, label: string) => void;
     onDeleteZone?: (segmentId: string, zoneId: string) => void;
+    onCutZone?: (segmentId: string, zoneId: string, cutTimeMs: number) => void;
     onPreviewTrimSegment?: (segmentId: string, startTimeMs: number, endTimeMs: number) => void;
     onCommitTrimSegment?: (segmentId: string, startTimeMs: number, endTimeMs: number) => void;
   }
@@ -301,6 +302,17 @@
     label: string;
     startTimeMs: number;
     endTimeMs: number;
+  }
+
+  interface PendingCutTarget {
+    segmentId: string;
+    zoneId: string;
+    label: string;
+    startTimeMs: number;
+    endTimeMs: number;
+    trackEl: HTMLElement | null;
+    pointerTimeMs: number;
+    pointerTrackY: number;
   }
 
   const TIMELINE_LANE_HEIGHT_PX = 28;
@@ -327,6 +339,7 @@
     onSetRole,
     onRenameZone,
     onDeleteZone,
+    onCutZone,
     onPreviewTrimSegment,
     onCommitTrimSegment,
   }: OcrTimelineProps = $props();
@@ -338,6 +351,7 @@
   let lastAutoPanFrameTimeMs: number | null = null;
   let lastPreviewSegmentEdit: OcrTimelineSegmentEdit | null = null;
   let editingLabel = $state<{ segmentId: string; zoneId: string; value: string } | null>(null);
+  let pendingCutTarget = $state<PendingCutTarget | null>(null);
   let timelineRootEl = $state<HTMLDivElement | null>(null);
   let timelineTrackWidthPx = $state(0);
   let playbackTimeLabelEl = $state<HTMLSpanElement | null>(null);
@@ -591,6 +605,106 @@
     }
   }
 
+  function startPreciseCut(block: RoleBlock): void {
+    stopDrag(undefined, 'pointercancel');
+    cancelLabelEditing();
+    onSelect?.(block.segmentId, block.zoneId);
+
+    pendingCutTarget = {
+      segmentId: block.segmentId,
+      zoneId: block.zoneId,
+      label: block.label,
+      startTimeMs: block.startTimeMs,
+      endTimeMs: block.endTimeMs,
+      trackEl: null,
+      pointerTimeMs: Math.round((block.startTimeMs + block.endTimeMs) / 2),
+      pointerTrackY: TIMELINE_RULER_HEIGHT_PX + TIMELINE_TRACK_PAD_PX,
+    };
+  }
+
+  function cancelPreciseCut(): void {
+    pendingCutTarget = null;
+  }
+
+  function updatePreciseCutPointer(event: PointerEvent, trackEl: HTMLElement): void {
+    if (!pendingCutTarget) {
+      return;
+    }
+
+    const rect = trackEl.getBoundingClientRect();
+    const pointerTrackY = Number.isFinite(event.clientY)
+      ? Math.max(0, Math.min(event.clientY - rect.top, rect.height))
+      : pendingCutTarget.pointerTrackY;
+
+    pendingCutTarget = {
+      ...pendingCutTarget,
+      trackEl,
+      pointerTimeMs: timeFromPointer(event, trackEl),
+      pointerTrackY,
+    };
+  }
+
+  function confirmPreciseCut(event?: PointerEvent): void {
+    const target = pendingCutTarget;
+    if (!target) {
+      return;
+    }
+
+    const trackEl = event?.currentTarget instanceof HTMLElement
+      ? event.currentTarget
+      : target.trackEl;
+    const cutTimeMs = trackEl && event
+      ? timeFromPointer(event, trackEl)
+      : target.pointerTimeMs;
+
+    cancelPreciseCut();
+    if (!isValidOcrTimelineCutTime(cutTimeMs, target.startTimeMs, target.endTimeMs)) {
+      return;
+    }
+
+    onCutZone?.(target.segmentId, target.zoneId, cutTimeMs);
+    onSeek?.(cutTimeMs);
+  }
+
+  function cutTooltipStyle(target: PendingCutTarget): string {
+    const left = viewportPercentage(target.pointerTimeMs);
+    const top = Math.max(TIMELINE_RULER_HEIGHT_PX + 4, target.pointerTrackY + 10);
+
+    return `left: ${left}%; top: ${top}px;`;
+  }
+
+  function handlePreciseCutPointerMove(event: PointerEvent): void {
+    if (!pendingCutTarget || !(event.currentTarget instanceof HTMLElement)) {
+      return;
+    }
+
+    updatePreciseCutPointer(event, event.currentTarget);
+  }
+
+  function handlePreciseCutPointerDown(event: PointerEvent): void {
+    if (!pendingCutTarget || !(event.currentTarget instanceof HTMLElement)) {
+      return;
+    }
+
+    event.preventDefault();
+    if (event.button !== 0) {
+      cancelPreciseCut();
+      return;
+    }
+
+    updatePreciseCutPointer(event, event.currentTarget);
+    confirmPreciseCut(event);
+  }
+
+  function handlePreciseCutContextMenu(event: MouseEvent): void {
+    if (!pendingCutTarget) {
+      return;
+    }
+
+    event.preventDefault();
+    cancelPreciseCut();
+  }
+
   $effect(() => {
     if (!editingLabel || !labelInputEl) {
       return;
@@ -715,6 +829,10 @@
   }
 
   function startSeek(event: PointerEvent): void {
+    if (pendingCutTarget) {
+      return;
+    }
+
     if (event.button !== 0 || !(event.currentTarget instanceof HTMLElement)) {
       return;
     }
@@ -741,6 +859,10 @@
   }
 
   function startMove(event: PointerEvent, block: RoleBlock): void {
+    if (pendingCutTarget) {
+      return;
+    }
+
     if (event.button !== 0) {
       return;
     }
@@ -777,6 +899,10 @@
   }
 
   function startTrim(event: PointerEvent, block: RoleBlock, edge: 'start' | 'end'): void {
+    if (pendingCutTarget) {
+      return;
+    }
+
     if (event.button !== 0) {
       return;
     }
@@ -879,6 +1005,12 @@
   }
 
   function handleTrackKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape' && pendingCutTarget) {
+      event.preventDefault();
+      cancelPreciseCut();
+      return;
+    }
+
     if (!onSeek) {
       return;
     }
@@ -906,7 +1038,10 @@
     }
   }
 
-  onDestroy(() => stopDrag(undefined, 'pointercancel'));
+  onDestroy(() => {
+    cancelPreciseCut();
+    stopDrag(undefined, 'pointercancel');
+  });
 </script>
 
 <div bind:this={timelineRootEl} class="flex h-full min-h-0 flex-col rounded-xl border bg-background/55 p-2.5">
@@ -939,11 +1074,17 @@
           },
         )}
         {@const laneCount = Math.max(1, ...blocks.map((block) => block.lane + 1))}
+        {@const isCutTrack = Boolean(
+          pendingCutTarget
+            && blocks.some((block) =>
+              block.segmentId === pendingCutTarget?.segmentId && block.zoneId === pendingCutTarget.zoneId,
+            ),
+        )}
         <section class="flex min-h-0 flex-col gap-1">
           <div class="shrink-0 text-[11px] font-semibold leading-none text-muted-foreground">{roleConfig.label}</div>
           <ScrollArea class="min-h-0 flex-1 rounded-lg border bg-background/45" scrollbarYClasses="hidden">
             <div
-              class="timeline-track relative min-w-full"
+              class={cn('timeline-track relative min-w-full', isCutTrack && 'cursor-col-resize')}
               data-timeline-track="true"
               role="slider"
               tabindex="0"
@@ -952,9 +1093,12 @@
               aria-valuemax={safeDurationMs}
               aria-valuenow={Math.round(Math.max(0, Math.min(safeDurationMs, currentTimeMs)))}
               style={timelineTrackStyle(laneCount)}
-              onpointerdown={startSeek}
+              onpointerdown={(event) => pendingCutTarget ? handlePreciseCutPointerDown(event) : startSeek(event)}
+              onpointermove={handlePreciseCutPointerMove}
+              onpointercancel={cancelPreciseCut}
               onkeydown={handleTrackKeydown}
               onwheel={handleTimelineWheel}
+              oncontextmenu={handlePreciseCutContextMenu}
             >
               <div
                 class="timeline-ruler pointer-events-none sticky top-0 z-20 h-[var(--timeline-ruler-height)] border-b bg-background/95 shadow-[0_1px_0_hsl(var(--border)/0.8)]"
@@ -989,9 +1133,22 @@
                   {roleConfig.emptyLabel}
                 </div>
               {/if}
+              {#if pendingCutTarget && isCutTrack}
+                <div
+                  class="pointer-events-none absolute bottom-[var(--timeline-track-pad)] top-[calc(var(--timeline-ruler-height)+var(--timeline-track-pad))] z-30 w-0.5 -translate-x-1/2 bg-foreground shadow-[0_0_0_3px_hsl(var(--foreground)/0.12)]"
+                  style={`left: ${viewportPercentage(pendingCutTarget.pointerTimeMs)}%;`}
+                ></div>
+                <div
+                  class="pointer-events-none absolute z-40 -translate-x-1/2 rounded-md border bg-popover px-2 py-1 text-[11px] font-medium text-popover-foreground shadow-md"
+                  style={cutTooltipStyle(pendingCutTarget)}
+                >
+                  {formatOcrTimelinePreciseTime(pendingCutTarget.pointerTimeMs)}
+                </div>
+              {/if}
               {#each blocks as block (block.id)}
                 {@const left = blockStartPercentage(block)}
                 {@const width = blockWidthPercentage(block)}
+                {@const isPendingCutBlock = pendingCutTarget?.segmentId === block.segmentId && pendingCutTarget.zoneId === block.zoneId}
                 <ContextMenu.Root>
                   <ContextMenu.Trigger>
                     {#if editingLabel && editingLabel.segmentId === block.segmentId && editingLabel.zoneId === block.zoneId}
@@ -1024,21 +1181,26 @@
                         type="button"
                         data-timeline-control="true"
                         class={cn(
-                          'timeline-block absolute cursor-grab overflow-hidden rounded-lg border px-2 text-left text-xs font-medium shadow-sm transition-colors hover:bg-accent active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                          'timeline-block absolute overflow-hidden rounded-lg border px-2 text-left text-xs font-medium shadow-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                          pendingCutTarget ? 'cursor-col-resize' : 'cursor-grab active:cursor-grabbing',
                           roleConfig.blockClass,
-                          selectedSegmentId === block.segmentId && selectedZoneId === block.zoneId
+                          ((selectedSegmentId === block.segmentId && selectedZoneId === block.zoneId) || isPendingCutBlock)
                             && 'ring-2 ring-ring ring-offset-1 ring-offset-background',
                         )}
                         style={`--lane: ${block.lane}; left: ${left}%; width: ${width}%;`}
                         title={`${block.label} ${formatTime(block.startTimeMs)}-${formatTime(block.endTimeMs)}`}
                         onpointerdown={(event) => startMove(event, block)}
+                        oncontextmenu={handlePreciseCutContextMenu}
                         ondblclick={(event) => startLabelEditing(event, block)}
                         onclick={() => onSelect?.(block.segmentId, block.zoneId)}
                       >
                         <span
                           data-timeline-control="true"
                           data-timeline-handle="true"
-                          class="absolute inset-y-0 left-0 w-2 cursor-ew-resize bg-foreground/15 opacity-0 transition-opacity hover:opacity-100"
+                          class={cn(
+                            'absolute inset-y-0 left-0 w-2 bg-foreground/15 opacity-0 transition-opacity hover:opacity-100',
+                            pendingCutTarget ? 'cursor-col-resize' : 'cursor-ew-resize',
+                          )}
                           role="presentation"
                           onpointerdown={(event) => startTrim(event, block, 'start')}
                         ></span>
@@ -1046,7 +1208,10 @@
                         <span
                           data-timeline-control="true"
                           data-timeline-handle="true"
-                          class="absolute inset-y-0 right-0 w-2 cursor-ew-resize bg-foreground/15 opacity-0 transition-opacity hover:opacity-100"
+                          class={cn(
+                            'absolute inset-y-0 right-0 w-2 bg-foreground/15 opacity-0 transition-opacity hover:opacity-100',
+                            pendingCutTarget ? 'cursor-col-resize' : 'cursor-ew-resize',
+                          )}
                           role="presentation"
                           onpointerdown={(event) => startTrim(event, block, 'end')}
                         ></span>
@@ -1064,6 +1229,9 @@
                         Set as On-screen text
                       </ContextMenu.Item>
                     {/if}
+                    <ContextMenu.Item onclick={() => startPreciseCut(block)}>
+                      Cut
+                    </ContextMenu.Item>
                     <ContextMenu.Separator />
                     <ContextMenu.Item
                       variant="destructive"

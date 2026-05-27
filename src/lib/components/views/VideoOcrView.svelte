@@ -1218,6 +1218,24 @@
     void persistFileData(fileId);
   }
 
+  function handleCutZone(fileId: string, segmentId: string, zoneId: string, cutTimeMs: number): void {
+    const file = getFreshFile(fileId);
+    if (!file) {
+      return;
+    }
+
+    const didCut = videoOcrStore.cutOcrZone(
+      fileId,
+      segmentId,
+      zoneId,
+      cutTimeMs,
+      Math.round((file.duration ?? 0) * 1000),
+    );
+    if (didCut) {
+      void persistFileData(fileId);
+    }
+  }
+
   function handleDeleteZone(fileId: string, segmentId: string, zoneId: string): void {
     const file = getFreshFile(fileId);
     if (!file) {
@@ -1345,6 +1363,7 @@
         onSetZoneRole={handleSetZoneRole}
         onRenameZone={handleRenameZone}
         onDeleteZone={handleDeleteZone}
+        onCutZone={handleCutZone}
         onPreviewTrimSegment={handlePreviewTrimSegment}
         onCommitTrimSegment={handleCommitTrimSegment}
         onPlaybackError={handlePreviewPlaybackError}

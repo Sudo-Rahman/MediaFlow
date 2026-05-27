@@ -358,19 +358,92 @@ describe('AI translation ASS visual text planning', () => {
     expect(prompt).not.toContain('Itsumo hidamari no you ni');
   });
 
-  it('keeps all theme layers when source language is auto-detect', async () => {
+  it('infers the English source theme layer in auto-detect mode', async () => {
     const { buildFullPromptForTokenCount } = await import('./translation');
     const content = buildAssWithEvents([
       'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-English,,0,0,0,,Like being in the sun',
-      'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-Romaji,,0,0,0,,Itsumo hidamari no you ni',
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-Romanji,,0,0,0,,Itsumo hidamari no you ni',
       'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-Kanji,,0,0,0,,いつも陽だまりのように',
     ]);
 
     const prompt = buildFullPromptForTokenCount(content, 'auto', 'fr');
 
     expect(prompt).toContain('Like being in the sun');
+    expect(prompt).not.toContain('Itsumo hidamari no you ni');
+    expect(prompt).not.toContain('いつも陽だまりのように');
+  });
+
+  it('infers Japanese source theme layers in auto-detect mode', async () => {
+    const { buildFullPromptForTokenCount } = await import('./translation');
+    const content = buildAssWithEvents([
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-JP,,0,0,0,,いつも陽だまりのように',
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-Romaji,,0,0,0,,Itsumo hidamari no you ni',
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-Kanji,,0,0,0,,ひらがな字幕',
+    ]);
+
+    const prompt = buildFullPromptForTokenCount(content, 'auto', 'fr');
+
+    expect(prompt).toContain('いつも陽だまりのように');
+    expect(prompt).not.toContain('Itsumo hidamari no you ni');
+    expect(prompt).not.toContain('ひらがな字幕');
+  });
+
+  it('infers non-English source theme layers in auto-detect mode', async () => {
+    const { buildFullPromptForTokenCount } = await import('./translation');
+    const content = buildAssWithEvents([
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-Portuguese,,0,0,0,,Como estar ao sol',
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-Romaji,,0,0,0,,Itsumo hidamari no you ni',
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-Kanji,,0,0,0,,いつも陽だまりのように',
+    ]);
+
+    const prompt = buildFullPromptForTokenCount(content, 'auto', 'fr');
+
+    expect(prompt).toContain('Como estar ao sol');
+    expect(prompt).not.toContain('Itsumo hidamari no you ni');
+    expect(prompt).not.toContain('いつも陽だまりのように');
+  });
+
+  it('keeps auto-detect theme layers when multiple non-target source layers are present', async () => {
+    const { buildFullPromptForTokenCount } = await import('./translation');
+    const content = buildAssWithEvents([
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-English,,0,0,0,,Like being in the sun',
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-Portuguese,,0,0,0,,Como estar ao sol',
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-Romaji,,0,0,0,,Itsumo hidamari no you ni',
+    ]);
+
+    const prompt = buildFullPromptForTokenCount(content, 'auto', 'fr');
+
+    expect(prompt).toContain('Like being in the sun');
+    expect(prompt).toContain('Como estar ao sol');
+    expect(prompt).toContain('Itsumo hidamari no you ni');
+  });
+
+  it('keeps auto-detect theme layers when no explicit source layer is present', async () => {
+    const { buildFullPromptForTokenCount } = await import('./translation');
+    const content = buildAssWithEvents([
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-Romaji,,0,0,0,,Itsumo hidamari no you ni',
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-Kanji,,0,0,0,,いつも陽だまりのように',
+    ]);
+
+    const prompt = buildFullPromptForTokenCount(content, 'auto', 'fr');
+
     expect(prompt).toContain('Itsumo hidamari no you ni');
     expect(prompt).toContain('いつも陽だまりのように');
+  });
+
+  it('excludes existing target-language theme layers in auto-detect mode', async () => {
+    const { buildFullPromptForTokenCount } = await import('./translation');
+    const content = buildAssWithEvents([
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-English,,0,0,0,,Like being in the sun',
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-French,,0,0,0,,Comme au soleil',
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Ending-Romaji,,0,0,0,,Itsumo hidamari no you ni',
+    ]);
+
+    const prompt = buildFullPromptForTokenCount(content, 'auto', 'fr');
+
+    expect(prompt).toContain('Like being in the sun');
+    expect(prompt).not.toContain('Comme au soleil');
+    expect(prompt).not.toContain('Itsumo hidamari no you ni');
   });
 
   it('keeps all theme layers when no layer matches the selected source language', async () => {

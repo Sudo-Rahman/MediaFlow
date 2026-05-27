@@ -6,6 +6,45 @@
   export type OcrTimelinePointerEndType = 'pointerup' | 'pointercancel';
   export type OcrTimelineDragType = 'seek' | 'move' | 'trim-start' | 'trim-end';
 
+  export interface OcrTimelineDragListeners {
+    pointermove: EventListener;
+    pointerup: EventListener;
+    pointercancel: EventListener;
+  }
+
+  export interface OcrTimelineDragListenerTarget {
+    addEventListener: (
+      type: 'pointermove' | 'pointerup' | 'pointercancel',
+      listener: EventListener,
+      options?: AddEventListenerOptions,
+    ) => void;
+    removeEventListener: (
+      type: 'pointermove' | 'pointerup' | 'pointercancel',
+      listener: EventListener,
+    ) => void;
+  }
+
+  export function attachOcrTimelineDragListeners(
+    target: OcrTimelineDragListenerTarget,
+    listeners: OcrTimelineDragListeners,
+  ): () => void {
+    let isActive = true;
+    target.addEventListener('pointermove', listeners.pointermove);
+    target.addEventListener('pointerup', listeners.pointerup, { once: true });
+    target.addEventListener('pointercancel', listeners.pointercancel, { once: true });
+
+    return () => {
+      if (!isActive) {
+        return;
+      }
+
+      isActive = false;
+      target.removeEventListener('pointermove', listeners.pointermove);
+      target.removeEventListener('pointerup', listeners.pointerup);
+      target.removeEventListener('pointercancel', listeners.pointercancel);
+    };
+  }
+
   export function shouldCommitTimelineSeekOnPointerEnd(
     type: OcrTimelinePointerEndType,
     dragType: OcrTimelineDragType | null,
@@ -19,6 +58,7 @@
 </script>
 
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import type { OcrZoneRole, VideoOcrSelection } from '$lib/types';
   import type { OcrTimelineViewport } from '$lib/utils';
   import {
@@ -107,6 +147,7 @@
   }: OcrTimelineProps = $props();
 
   let activeDrag: TimelineDrag | null = null;
+  let cleanupDragListeners: (() => void) | null = null;
   let editingLabel = $state<{ segmentId: string; zoneId: string; value: string } | null>(null);
   let timelineRootEl = $state<HTMLDivElement | null>(null);
   let playbackTimeLabelEl = $state<HTMLSpanElement | null>(null);
@@ -363,6 +404,20 @@
     (onPreviewSeek ?? onSeek)?.(safeTimeMs);
   }
 
+  function attachActiveDragListeners(): void {
+    cleanupActiveDragListeners();
+    cleanupDragListeners = attachOcrTimelineDragListeners(window, {
+      pointermove: handlePointerMove as EventListener,
+      pointerup: commitDrag as EventListener,
+      pointercancel: cancelDrag as EventListener,
+    });
+  }
+
+  function cleanupActiveDragListeners(): void {
+    cleanupDragListeners?.();
+    cleanupDragListeners = null;
+  }
+
   function handleTimelineWheel(event: WheelEvent): void {
     if (!(event.currentTarget instanceof HTMLElement)) {
       return;
@@ -415,9 +470,7 @@
     event.preventDefault();
     activeDrag = { type: 'seek', trackEl };
     previewSeek(timeFromPointer(event, trackEl));
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', commitDrag, { once: true });
-    window.addEventListener('pointercancel', cancelDrag, { once: true });
+    attachActiveDragListeners();
   }
 
   function startMove(event: PointerEvent, block: RoleBlock): void {
@@ -449,9 +502,7 @@
       offsetMs: pointerTimeMs - block.startTimeMs,
     };
     onSelect?.(block.segmentId, block.zoneId);
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', commitDrag, { once: true });
-    window.addEventListener('pointercancel', cancelDrag, { once: true });
+    attachActiveDragListeners();
   }
 
   function startTrim(event: PointerEvent, block: RoleBlock, edge: 'start' | 'end'): void {
@@ -475,9 +526,7 @@
       startTimeMs: block.startTimeMs,
       endTimeMs: block.endTimeMs,
     };
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', commitDrag, { once: true });
-    window.addEventListener('pointercancel', cancelDrag, { once: true });
+    attachActiveDragListeners();
   }
 
   function handlePointerMove(event: PointerEvent): void {
@@ -523,9 +572,7 @@
   function stopDrag(event: PointerEvent | undefined, type: OcrTimelinePointerEndType): void {
     const finishedDrag = activeDrag;
     activeDrag = null;
-    window.removeEventListener('pointermove', handlePointerMove);
-    window.removeEventListener('pointerup', commitDrag);
-    window.removeEventListener('pointercancel', cancelDrag);
+    cleanupActiveDragListeners();
 
     if (finishedDrag?.type !== 'seek') {
       return;
@@ -567,6 +614,11 @@
       onSeek(Math.min(safeDurationMs, baseTimeMs + stepMs));
     }
   }
+
+  onDestroy(() => {
+    activeDrag = null;
+    cleanupActiveDragListeners();
+  });
 </script>
 
 <div bind:this={timelineRootEl} class="flex h-full min-h-0 flex-col rounded-xl border bg-background/55 p-2.5">

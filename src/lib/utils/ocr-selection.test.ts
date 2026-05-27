@@ -4,6 +4,7 @@ import type { OcrSegment, OcrVersion, VideoOcrSelection } from '$lib/types';
 import {
   DEFAULT_MAIN_SUBTITLE_REGION,
   assignOcrTimelineLanes,
+  assignOcrTimelineRenderedLanes,
   clampRegion,
   createOcrSegmentFromZone,
   createDefaultVideoOcrSelection,
@@ -76,6 +77,65 @@ describe('OCR selection helpers', () => {
     expect(lanes.find((entry) => entry.id === 'a')?.lane).toBe(0);
     expect(lanes.find((entry) => entry.id === 'b')?.lane).toBe(1);
     expect(lanes.find((entry) => entry.id === 'c')?.lane).toBe(0);
+  });
+
+  it('assigns visually colliding timeline blocks to separate lanes', () => {
+    const viewport = createOcrTimelineViewport(120_000, 0, 120_000);
+    const lanes = assignOcrTimelineRenderedLanes(
+      [
+        block('first-short', 10_000, 10_400),
+        block('second-short', 10_800, 11_200),
+      ],
+      {
+        viewport,
+        trackWidthPx: 1_000,
+        minWidthPercent: 5,
+        minGapPx: 4,
+      },
+    );
+
+    expect(lanes.find((entry) => entry.id === 'first-short')?.lane).toBe(0);
+    expect(lanes.find((entry) => entry.id === 'second-short')?.lane).toBe(1);
+  });
+
+  it('keeps longer rendered blocks on earlier lanes when a short block collides visually', () => {
+    const viewport = createOcrTimelineViewport(120_000, 0, 120_000);
+    const lanes = assignOcrTimelineRenderedLanes(
+      [
+        block('short', 20_200, 20_300),
+        block('long', 20_000, 22_000),
+      ],
+      {
+        viewport,
+        trackWidthPx: 1_000,
+        minWidthPercent: 5,
+        minGapPx: 4,
+      },
+    );
+
+    expect(lanes.find((entry) => entry.id === 'long')?.lane).toBe(0);
+    expect(lanes.find((entry) => entry.id === 'short')?.lane).toBe(1);
+  });
+
+  it('falls back to time-based lane assignment without a rendered track width', () => {
+    const viewport = createOcrTimelineViewport(120_000, 0, 120_000);
+    const lanes = assignOcrTimelineRenderedLanes(
+      [
+        block('first-short', 10_000, 10_400),
+        block('second-short', 10_800, 11_200),
+      ],
+      {
+        viewport,
+        trackWidthPx: 0,
+        minWidthPercent: 5,
+        minGapPx: 4,
+      },
+    );
+
+    expect(lanes.map((entry) => ({ id: entry.id, lane: entry.lane }))).toEqual([
+      { id: 'first-short', lane: 0 },
+      { id: 'second-short', lane: 0 },
+    ]);
   });
 
   it('keeps role blocks independently lane-assigned by caller grouping', () => {

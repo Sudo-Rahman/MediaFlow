@@ -52,3 +52,17 @@ export function createOcrResultVersionSnapshot(versions: readonly OcrVersion[]):
     rawOcr: [],
   }));
 }
+
+export function getInitialOcrResultVersionIndex(
+  versions: readonly Pick<OcrVersion, 'id'>[],
+  activeOcrVersionId: string | null | undefined
+): number {
+  if (activeOcrVersionId) {
+    const activeIndex = versions.findIndex((version) => version.id === activeOcrVersionId);
+    if (activeIndex !== -1) {
+      return activeIndex;
+    }
+  }
+
+  return versions.length > 0 ? versions.length - 1 : 0;
+}

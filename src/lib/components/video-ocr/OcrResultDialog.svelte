@@ -14,6 +14,7 @@
   import {
     buildOcrResultVersionLoadKey,
     createOcrResultVersionSnapshot,
+    getInitialOcrResultVersionIndex,
   } from './ocr-result-dialog-state';
   import { buildFormattedOcrPreview } from './ocr-preview-format';
   import { getOcrResultVersionAllowedFormats } from './ocr-versioned-export';
@@ -91,6 +92,7 @@
     loadedVersions = [];
     currentVersionIndex = 0;
     const versionSnapshot = untrack(() => createOcrResultVersionSnapshot(file?.ocrVersions ?? []));
+    const activeOcrVersionId = untrack(() => file?.activeOcrVersionId);
     const runId = loadVersionsRunId;
 
     loadVersionsTimeoutId = window.setTimeout(() => {
@@ -102,7 +104,7 @@
         }
 
         loadedVersions = versionSnapshot;
-        currentVersionIndex = loadedVersions.length > 0 ? loadedVersions.length - 1 : 0;
+        currentVersionIndex = getInitialOcrResultVersionIndex(loadedVersions, activeOcrVersionId);
         versionsLoading = false;
       });
     }, DIALOG_OPEN_SETTLE_MS);

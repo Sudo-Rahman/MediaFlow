@@ -333,6 +333,9 @@
 
   let activeDrag: TimelineDrag | null = null;
   let cleanupDragListeners: (() => void) | null = null;
+  let latestPointerEvent: PointerEvent | null = null;
+  let autoPanAnimationFrame: number | null = null;
+  let lastAutoPanFrameTimeMs: number | null = null;
   let lastPreviewSegmentEdit: OcrTimelineSegmentEdit | null = null;
   let editingLabel = $state<{ segmentId: string; zoneId: string; value: string } | null>(null);
   let timelineRootEl = $state<HTMLDivElement | null>(null);
@@ -622,11 +625,62 @@
       pointerup: commitDrag as EventListener,
       pointercancel: cancelDrag as EventListener,
     });
+    startTimelineAutoPan();
   }
 
   function cleanupActiveDragListeners(): void {
     cleanupDragListeners?.();
     cleanupDragListeners = null;
+    stopTimelineAutoPan();
+    latestPointerEvent = null;
+  }
+
+  function startTimelineAutoPan(): void {
+    stopTimelineAutoPan();
+    lastAutoPanFrameTimeMs = null;
+    autoPanAnimationFrame = requestAnimationFrame(runTimelineAutoPan);
+  }
+
+  function stopTimelineAutoPan(): void {
+    if (autoPanAnimationFrame !== null) {
+      cancelAnimationFrame(autoPanAnimationFrame);
+    }
+    autoPanAnimationFrame = null;
+    lastAutoPanFrameTimeMs = null;
+  }
+
+  function runTimelineAutoPan(frameTimeMs: number): void {
+    autoPanAnimationFrame = null;
+    if (!activeDrag || !latestPointerEvent) {
+      return;
+    }
+
+    const rect = activeDrag.trackEl.getBoundingClientRect();
+    const intent = getOcrTimelineAutoPanIntent({
+      pointerClientX: latestPointerEvent.clientX,
+      trackLeft: rect.left,
+      trackWidth: rect.width,
+      viewportWindowMs,
+      durationMs: safeDurationMs,
+    });
+
+    if (intent.direction !== 0) {
+      const elapsedMs = lastAutoPanFrameTimeMs === null ? 16 : Math.max(0, frameTimeMs - lastAutoPanFrameTimeMs);
+      const panSpeedMsPerSecond = viewportWindowMs * 0.9;
+      const deltaTimeMs = intent.direction * intent.pressure * panSpeedMsPerSecond * (elapsedMs / 1000);
+      const nextViewport = panOcrTimelineViewport(visibleViewport, safeDurationMs, deltaTimeMs);
+
+      if (
+        nextViewport.startTimeMs !== visibleViewport.startTimeMs
+        || nextViewport.endTimeMs !== visibleViewport.endTimeMs
+      ) {
+        timelineViewport = nextViewport;
+        updateActiveDragPreview(latestPointerEvent);
+      }
+    }
+
+    lastAutoPanFrameTimeMs = frameTimeMs;
+    autoPanAnimationFrame = requestAnimationFrame(runTimelineAutoPan);
   }
 
   function handleTimelineWheel(event: WheelEvent): void {
@@ -683,6 +737,7 @@
     lastPreviewSegmentEdit = null;
     previewSeek(timeFromPointer(event, trackEl));
     attachActiveDragListeners();
+    latestPointerEvent = event;
   }
 
   function startMove(event: PointerEvent, block: RoleBlock): void {
@@ -718,6 +773,7 @@
     lastPreviewSegmentEdit = null;
     onSelect?.(block.segmentId, block.zoneId);
     attachActiveDragListeners();
+    latestPointerEvent = event;
   }
 
   function startTrim(event: PointerEvent, block: RoleBlock, edge: 'start' | 'end'): void {
@@ -743,6 +799,7 @@
     };
     lastPreviewSegmentEdit = null;
     attachActiveDragListeners();
+    latestPointerEvent = event;
   }
 
   function previewSegmentEdit(edit: OcrTimelineSegmentEdit): void {
@@ -751,7 +808,7 @@
     onSeek?.(edit.seekTimeMs);
   }
 
-  function handlePointerMove(event: PointerEvent): void {
+  function updateActiveDragPreview(event: PointerEvent): void {
     if (!activeDrag) {
       return;
     }
@@ -763,6 +820,15 @@
     }
 
     previewSegmentEdit(getOcrTimelineSegmentEditForPointerTime(activeDrag, timeMs, safeDurationMs));
+  }
+
+  function handlePointerMove(event: PointerEvent): void {
+    if (!activeDrag) {
+      return;
+    }
+
+    latestPointerEvent = event;
+    updateActiveDragPreview(event);
   }
 
   function commitDrag(event: PointerEvent): void {

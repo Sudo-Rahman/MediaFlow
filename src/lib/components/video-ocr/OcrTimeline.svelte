@@ -254,9 +254,9 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import type { OcrZoneRole, VideoOcrSelection } from '$lib/types';
+  import { assignOcrTimelineRenderedLanes } from '$lib/utils/ocr-selection';
   import type { OcrTimelineViewport } from '$lib/utils';
   import {
-    assignOcrTimelineLanes,
     cn,
     createOcrTimelineMinorTicks,
     createOcrTimelineTicks,
@@ -307,6 +307,8 @@
   const TIMELINE_LANE_GAP_PX = 10;
   const TIMELINE_TRACK_PAD_PX = 6;
   const TIMELINE_RULER_HEIGHT_PX = 18;
+  const TIMELINE_BLOCK_MIN_WIDTH_PERCENT = 1.5;
+  const TIMELINE_BLOCK_MIN_GAP_PX = 4;
 
   type TimelineDrag =
     | { type: 'seek'; trackEl: HTMLElement }
@@ -334,6 +336,7 @@
   let lastPreviewSegmentEdit: OcrTimelineSegmentEdit | null = null;
   let editingLabel = $state<{ segmentId: string; zoneId: string; value: string } | null>(null);
   let timelineRootEl = $state<HTMLDivElement | null>(null);
+  let timelineTrackWidthPx = $state(0);
   let playbackTimeLabelEl = $state<HTMLSpanElement | null>(null);
   let labelInputEl = $state<HTMLInputElement | null>(null);
   let focusedLabelKey: string | null = null;
@@ -388,6 +391,21 @@
 
     lastDurationMs = safeDurationMs;
     timelineViewport = createOcrTimelineViewport(safeDurationMs);
+  });
+
+  $effect(() => {
+    const rootEl = timelineRootEl;
+    if (!rootEl) {
+      return;
+    }
+
+    updateTimelineTrackWidth();
+    const resizeObserver = new ResizeObserver(updateTimelineTrackWidth);
+    resizeObserver.observe(rootEl);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
   });
 
   $effect(() => {
@@ -471,6 +489,12 @@
     }
   }
 
+  function updateTimelineTrackWidth(): void {
+    const trackEl = timelineRootEl?.querySelector<HTMLElement>('[data-timeline-track="true"]') ?? null;
+    const nextWidth = trackEl?.getBoundingClientRect().width ?? 0;
+    timelineTrackWidthPx = Number.isFinite(nextWidth) ? Math.max(0, Math.round(nextWidth)) : 0;
+  }
+
   export function syncPlaybackTime(timeMs: number): void {
     syncTimelinePlaybackDom(timeMs);
   }
@@ -486,7 +510,10 @@
   function blockWidthPercentage(block: RoleBlock): number {
     const visibleStartTimeMs = Math.max(block.startTimeMs, visibleViewport.startTimeMs);
     const visibleEndTimeMs = Math.min(block.endTimeMs, visibleViewport.endTimeMs);
-    return Math.max(1.5, viewportPercentage(visibleEndTimeMs) - viewportPercentage(visibleStartTimeMs));
+    return Math.max(
+      TIMELINE_BLOCK_MIN_WIDTH_PERCENT,
+      viewportPercentage(visibleEndTimeMs) - viewportPercentage(visibleStartTimeMs),
+    );
   }
 
   function formatTime(timeMs: number): string {
@@ -836,7 +863,15 @@
 
     <div class={`grid min-h-0 flex-1 ${roleGridClass} gap-2`}>
       {#each visibleRoles as roleConfig (roleConfig.role)}
-        {@const blocks = assignOcrTimelineLanes(blocksForRole(roleConfig.role).filter(blockOverlapsViewport))}
+        {@const blocks = assignOcrTimelineRenderedLanes(
+          blocksForRole(roleConfig.role).filter(blockOverlapsViewport),
+          {
+            viewport: visibleViewport,
+            trackWidthPx: timelineTrackWidthPx,
+            minWidthPercent: TIMELINE_BLOCK_MIN_WIDTH_PERCENT,
+            minGapPx: TIMELINE_BLOCK_MIN_GAP_PX,
+          },
+        )}
         {@const laneCount = Math.max(1, ...blocks.map((block) => block.lane + 1))}
         <section class="flex min-h-0 flex-col gap-1">
           <div class="shrink-0 text-[11px] font-semibold leading-none text-muted-foreground">{roleConfig.label}</div>
@@ -893,7 +928,7 @@
                 {@const width = blockWidthPercentage(block)}
                 <ContextMenu.Root>
                   <ContextMenu.Trigger>
-                    {#if editingLabel?.segmentId === block.segmentId && editingLabel.zoneId === block.zoneId}
+                    {#if editingLabel && editingLabel.segmentId === block.segmentId && editingLabel.zoneId === block.zoneId}
                       <div
                         data-timeline-control="true"
                         class={cn(

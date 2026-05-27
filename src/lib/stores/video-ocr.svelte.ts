@@ -651,54 +651,53 @@ export const videoOcrStore = {
     const safeCutTimeMs = Number.isFinite(cutTimeMs)
       ? Math.max(0, Math.min(Math.round(cutTimeMs), safeDurationMs))
       : 0;
-    let didCut = false;
+    const file = videoFiles.find((entry) => entry.id === fileId);
 
-    videoFiles = videoFiles.map(f => {
-      if (f.id !== fileId) {
-        return f;
+    if (!file) {
+      return false;
+    }
+
+    const renderedSelection = getRenderedOcrSelection(file);
+    const sourceSegment = renderedSelection.segments.find((segment) => segment.id === segmentId);
+    const zoneIndex = sourceSegment?.zones.findIndex((zone) => zone.id === zoneId) ?? -1;
+
+    if (!sourceSegment || zoneIndex === -1) {
+      return false;
+    }
+    if (safeCutTimeMs <= sourceSegment.startTimeMs || safeCutTimeMs >= sourceSegment.endTimeMs) {
+      return false;
+    }
+
+    const draftFile = branchOcrDraftFromRenderedSelection(file);
+    const leftSegment = cloneSplitSegment(sourceSegment, zoneIndex, sourceSegment.startTimeMs, safeCutTimeMs, 'A');
+    const rightSegment = cloneSplitSegment(sourceSegment, zoneIndex, safeCutTimeMs, sourceSegment.endTimeMs, 'B');
+    const nextSegments = renderedSelection.segments.flatMap((segment) => {
+      if (segment.id !== segmentId) {
+        return [cloneOcrSegment(segment)];
       }
 
-      const draftFile = branchOcrDraftFromRenderedSelection(f);
-      const sourceSegment = draftFile.ocrSelection.segments.find((segment) => segment.id === segmentId);
-      const zoneIndex = sourceSegment?.zones.findIndex((zone) => zone.id === zoneId) ?? -1;
+      const remainingZones = segment.zones
+        .filter((zone) => zone.id !== zoneId)
+        .map((zone) => ({ ...zone, region: { ...zone.region } }));
 
-      if (!sourceSegment || zoneIndex === -1) {
-        return draftFile;
-      }
-      if (safeCutTimeMs <= sourceSegment.startTimeMs || safeCutTimeMs >= sourceSegment.endTimeMs) {
-        return draftFile;
+      if (remainingZones.length === 0) {
+        return [leftSegment, rightSegment];
       }
 
-      didCut = true;
-      const leftSegment = cloneSplitSegment(sourceSegment, zoneIndex, sourceSegment.startTimeMs, safeCutTimeMs, 'A');
-      const rightSegment = cloneSplitSegment(sourceSegment, zoneIndex, safeCutTimeMs, sourceSegment.endTimeMs, 'B');
-      const nextSegments = draftFile.ocrSelection.segments.flatMap((segment) => {
-        if (segment.id !== segmentId) {
-          return [cloneOcrSegment(segment)];
-        }
-
-        const remainingZones = segment.zones
-          .filter((zone) => zone.id !== zoneId)
-          .map((zone) => ({ ...zone, region: { ...zone.region } }));
-
-        if (remainingZones.length === 0) {
-          return [leftSegment, rightSegment];
-        }
-
-        return [
-          {
-            ...segment,
-            zones: remainingZones,
-          },
-          leftSegment,
-          rightSegment,
-        ];
-      });
-
-      return replaceOcrDraftSelection(draftFile, { segments: nextSegments });
+      return [
+        {
+          ...segment,
+          zones: remainingZones,
+        },
+        leftSegment,
+        rightSegment,
+      ];
     });
+    const nextFile = replaceOcrDraftSelection(draftFile, { segments: nextSegments });
 
-    return didCut;
+    videoFiles = videoFiles.map(f => f.id === fileId ? nextFile : f);
+
+    return true;
   },
 
   // -------------------------------------------------------------------------

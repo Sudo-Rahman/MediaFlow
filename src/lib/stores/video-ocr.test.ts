@@ -362,6 +362,42 @@ describe('video OCR store', () => {
     expect(videoOcrStore.videoFiles[0].ocrSelection.segments).toHaveLength(1);
   });
 
+  it('leaves the file untouched when cutting at an invalid rendered segment boundary', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    const selection = createSelection('segment-1', 'zone-1', 0.72);
+    videoOcrStore.addOcrVersion(file.id, createVersion('version-1', 'Version 1', selection, 'First result'));
+    const fileBeforeCut = videoOcrStore.videoFiles[0];
+
+    const didCut = videoOcrStore.cutOcrZone(file.id, 'segment-1', 'zone-1', 0, 60_000);
+
+    expect(didCut).toBe(false);
+    expect(videoOcrStore.videoFiles[0]).toBe(fileBeforeCut);
+    expect(videoOcrStore.hasDraftOcrVersion(file.id)).toBe(false);
+  });
+
+  it('leaves the video files array untouched when cutting a missing file', () => {
+    videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    const filesBeforeCut = videoOcrStore.videoFiles;
+
+    const didCut = videoOcrStore.cutOcrZone('missing-file', 'segment-1', 'zone-1', 30_000, 60_000);
+
+    expect(didCut).toBe(false);
+    expect(videoOcrStore.videoFiles).toBe(filesBeforeCut);
+  });
+
+  it('leaves the file untouched when cutting a missing zone', () => {
+    const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
+    const selection = createSelection('segment-1', 'zone-1', 0.72);
+    videoOcrStore.addOcrVersion(file.id, createVersion('version-1', 'Version 1', selection, 'First result'));
+    const fileBeforeCut = videoOcrStore.videoFiles[0];
+
+    const didCut = videoOcrStore.cutOcrZone(file.id, 'segment-1', 'missing-zone', 30_000, 60_000);
+
+    expect(didCut).toBe(false);
+    expect(videoOcrStore.videoFiles[0]).toBe(fileBeforeCut);
+    expect(videoOcrStore.hasDraftOcrVersion(file.id)).toBe(false);
+  });
+
   it('allows OCR-ready files even when preview generation failed', () => {
     const [file] = videoOcrStore.addFilesFromPaths(['/Users/sr-71/Movies/sample.mp4']);
 

@@ -27,7 +27,7 @@ function rolePriority(role?: OcrZoneRole): number {
 }
 
 function isSubtitleActive(subtitle: OcrSubtitle, timeMs: number): boolean {
-  return timeMs >= subtitle.startTime && timeMs <= subtitle.endTime;
+  return timeMs >= subtitle.startTime && timeMs < subtitle.endTime;
 }
 
 function findZoneContext(

@@ -126,6 +126,51 @@ describe('preview cue helpers', () => {
     expect(summary.extraCueCount).toBe(0);
   });
 
+  it('treats cue end times as exclusive at adjacent boundaries', () => {
+    const summary = buildActiveCueSummary({
+      subtitles: [
+        {
+          id: 'cue-before-boundary',
+          text: 'Before boundary',
+          startTime: 1_000,
+          endTime: 2_000,
+          confidence: 0.9,
+          segmentId: 'segment-main',
+          zoneId: 'zone-main-1',
+          role: 'main_subtitle',
+        },
+        {
+          id: 'cue-at-boundary',
+          text: 'At boundary',
+          startTime: 2_000,
+          endTime: 3_000,
+          confidence: 0.9,
+          segmentId: 'segment-main',
+          zoneId: 'zone-main-1',
+          role: 'main_subtitle',
+        },
+      ],
+      selection,
+      timeMs: 2_000,
+      selectedZoneId: null,
+    });
+
+    expect(summary.activeCues.map((cue) => cue.subtitle.id)).toEqual(['cue-at-boundary']);
+    expect(summary.primaryCue?.subtitle.id).toBe('cue-at-boundary');
+  });
+
+  it('does not keep a cue active at its exact end time', () => {
+    const summary = buildActiveCueSummary({
+      subtitles,
+      selection,
+      timeMs: 4_000,
+      selectedZoneId: null,
+    });
+
+    expect(summary.primaryCue).toBeNull();
+    expect(summary.activeCues).toEqual([]);
+  });
+
   it('uses a neutral label when active cue zone metadata cannot be resolved', () => {
     const summary = buildActiveCueSummary({
       subtitles: [

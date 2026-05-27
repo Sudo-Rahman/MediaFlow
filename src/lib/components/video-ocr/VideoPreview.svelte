@@ -132,7 +132,7 @@
 
     for (const subtitle of subtitles) {
       addPreviewChangeTime(changeTimes, subtitle.startTime, durationMs);
-      addPreviewChangeTime(changeTimes, subtitle.endTime + 1, durationMs);
+      addPreviewChangeTime(changeTimes, subtitle.endTime, durationMs);
     }
 
     return Array.from(changeTimes).sort((left, right) => left - right);

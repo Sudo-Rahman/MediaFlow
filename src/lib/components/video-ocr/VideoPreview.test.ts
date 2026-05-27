@@ -121,7 +121,7 @@ describe('VideoPreview interactions', () => {
       0,
       1_000,
       2_000,
-      3_001,
+      3_000,
       5_000,
       10_000,
     ]);

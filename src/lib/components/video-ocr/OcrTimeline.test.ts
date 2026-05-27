@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   attachOcrTimelineDragListeners,
   getOcrTimelineSegmentEditForPointerTime,
+  getOcrTimelineRollbackSegmentEdit,
   shouldCancelTimelineSeekOnPointerEnd,
   shouldCommitTimelineSegmentEditOnPointerEnd,
   shouldCommitTimelineSeekOnPointerEnd,
+  shouldRollbackTimelineSegmentEditOnPointerEnd,
   shouldSyncTimelinePlaybackFromCurrentTime,
 } from './OcrTimeline.svelte';
 
@@ -69,7 +71,14 @@ describe('OcrTimeline seek interactions', () => {
 
   it('calculates move and trim edits from pointer time', () => {
     expect(getOcrTimelineSegmentEditForPointerTime(
-      { type: 'move', segmentId: 'segment-1', durationMs: 2_000, offsetMs: 500 },
+      {
+        type: 'move',
+        segmentId: 'segment-1',
+        startTimeMs: 1_000,
+        endTimeMs: 3_000,
+        durationMs: 2_000,
+        offsetMs: 500,
+      },
       5_000,
       10_000,
     )).toEqual({
@@ -108,5 +117,38 @@ describe('OcrTimeline seek interactions', () => {
     expect(shouldCommitTimelineSegmentEditOnPointerEnd('pointerup', 'seek', true, true)).toBe(false);
     expect(shouldCommitTimelineSegmentEditOnPointerEnd('pointerup', 'trim-start', false, true)).toBe(false);
     expect(shouldCommitTimelineSegmentEditOnPointerEnd('pointerup', 'trim-end', true, false)).toBe(false);
+  });
+
+  it('rolls back previewed segment edits on pointercancel', () => {
+    expect(shouldRollbackTimelineSegmentEditOnPointerEnd('pointercancel', 'move', true)).toBe(true);
+    expect(shouldRollbackTimelineSegmentEditOnPointerEnd('pointerup', 'move', true)).toBe(false);
+    expect(shouldRollbackTimelineSegmentEditOnPointerEnd('pointercancel', 'move', false)).toBe(false);
+    expect(shouldRollbackTimelineSegmentEditOnPointerEnd('pointercancel', 'seek', true)).toBe(false);
+
+    expect(getOcrTimelineRollbackSegmentEdit({
+      type: 'move',
+      segmentId: 'segment-1',
+      startTimeMs: 1_000,
+      endTimeMs: 3_000,
+      durationMs: 2_000,
+      offsetMs: 400,
+    })).toEqual({
+      segmentId: 'segment-1',
+      startTimeMs: 1_000,
+      endTimeMs: 3_000,
+      seekTimeMs: 1_000,
+    });
+
+    expect(getOcrTimelineRollbackSegmentEdit({
+      type: 'trim-end',
+      segmentId: 'segment-1',
+      startTimeMs: 1_000,
+      endTimeMs: 3_000,
+    })).toEqual({
+      segmentId: 'segment-1',
+      startTimeMs: 1_000,
+      endTimeMs: 3_000,
+      seekTimeMs: 3_000,
+    });
   });
 });

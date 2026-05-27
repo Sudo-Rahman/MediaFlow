@@ -10,6 +10,8 @@
     | {
         type: 'move';
         segmentId: string;
+        startTimeMs: number;
+        endTimeMs: number;
         durationMs: number;
         offsetMs: number;
       }
@@ -147,6 +149,29 @@
       && hasPreviewEdit
       && (dragType === 'move' || dragType === 'trim-start' || dragType === 'trim-end')
     );
+  }
+
+  export function shouldRollbackTimelineSegmentEditOnPointerEnd(
+    type: OcrTimelinePointerEndType,
+    dragType: OcrTimelineDragType | null,
+    hasPreviewEdit: boolean,
+  ): boolean {
+    return (
+      type === 'pointercancel'
+      && hasPreviewEdit
+      && (dragType === 'move' || dragType === 'trim-start' || dragType === 'trim-end')
+    );
+  }
+
+  export function getOcrTimelineRollbackSegmentEdit(
+    drag: OcrTimelineSegmentEditDrag,
+  ): OcrTimelineSegmentEdit {
+    return {
+      segmentId: drag.segmentId,
+      startTimeMs: drag.startTimeMs,
+      endTimeMs: drag.endTimeMs,
+      seekTimeMs: drag.type === 'trim-end' ? drag.endTimeMs : drag.startTimeMs,
+    };
   }
 
   export function shouldSyncTimelinePlaybackFromCurrentTime(isSeekDragging: boolean): boolean {
@@ -586,6 +611,8 @@
       type: 'move',
       trackEl,
       segmentId: block.segmentId,
+      startTimeMs: block.startTimeMs,
+      endTimeMs: block.endTimeMs,
       durationMs: Math.max(1, block.endTimeMs - block.startTimeMs),
       offsetMs: pointerTimeMs - block.startTimeMs,
     };
@@ -667,6 +694,10 @@
         );
         onCommitTrimSegment?.(finalEdit.segmentId, finalEdit.startTimeMs, finalEdit.endTimeMs);
         onSeek?.(finalEdit.seekTimeMs);
+      }
+      if (shouldRollbackTimelineSegmentEditOnPointerEnd(type, finishedDrag.type, hadPreviewSegmentEdit)) {
+        const rollbackEdit = getOcrTimelineRollbackSegmentEdit(finishedDrag);
+        onPreviewTrimSegment?.(rollbackEdit.segmentId, rollbackEdit.startTimeMs, rollbackEdit.endTimeMs);
       }
       return;
     }

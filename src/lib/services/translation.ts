@@ -369,8 +369,17 @@ function hasNonDialogueVisualStyle(normalizedStyle: string): boolean {
     || styleTokens.some(token => NON_DIALOGUE_VISUAL_STYLE_ALIASES.has(token));
 }
 
-function hasTypesettingStyleSuffix(normalizedStyle: string): boolean {
-  return getAssStyleTokens(normalizedStyle).some(token => token.endsWith('ts'));
+function hasTypesettingStyleSuffix(style: string | undefined): boolean {
+  const rawStyle = style?.trim() ?? '';
+  if (!rawStyle) {
+    return false;
+  }
+
+  const tokens = rawStyle.match(/[A-Za-z0-9]+/g) ?? [];
+  return tokens.some(token =>
+    token.toLowerCase() === 'ts'
+    || (token.length > 2 && token.endsWith('TS'))
+  );
 }
 
 function isAssAnimatedNonDialogueEffectCue(cue: Cue): boolean {
@@ -411,7 +420,7 @@ function isAssVisualTextCue(cue: Cue): boolean {
     return false;
   }
 
-  return hasNonDialogueVisualStyle(normalizedStyle) || hasTypesettingStyleSuffix(normalizedStyle);
+  return hasNonDialogueVisualStyle(normalizedStyle) || hasTypesettingStyleSuffix(cue.style);
 }
 
 function shouldUsePlainVisualMode(cue: Cue): boolean {

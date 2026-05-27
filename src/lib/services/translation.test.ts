@@ -144,7 +144,7 @@ function buildAssFixture(includeOpening = true): string {
   ].filter((line): line is string => line !== null).join('\n');
 }
 
-function buildAssWithEvents(events: string[]): string {
+function buildAssWithEvents(events: string[], options: { extraStyles?: string[] } = {}): string {
   return [
     '[Script Info]',
     'Title: Translation test',
@@ -156,6 +156,7 @@ function buildAssWithEvents(events: string[]): string {
     'Style: CampaignTS,Arial,40,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,0,0,5,10,10,10,1',
     'Style: SignTS,Arial,40,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,0,0,5,10,10,10,1',
     'Style: ShowTitleTS,Aubrey,100,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,120,100,0,0,1,0,0,5,10,10,10,1',
+    ...(options.extraStyles ?? []),
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
@@ -609,6 +610,65 @@ describe('AI translation ASS visual text planning', () => {
     expect(prompt).toContain('SS');
     expect(prompt).toContain('plus');
     expect(prompt).toContain('＋');
+  });
+
+  it('keeps Thoughts style dialogue in the main translation plan', async () => {
+    const { buildFullPromptForTokenCount } = await import('./translation');
+    const content = buildAssWithEvents(
+      [
+        'Dialogue: 0,0:00:01.00,0:00:02.00,Thoughts,,0,0,0,,I cannot tell her yet.',
+      ],
+      {
+        extraStyles: [
+          'Style: Thoughts,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,10,1',
+        ],
+      }
+    );
+
+    const prompt = buildFullPromptForTokenCount(content, 'en', 'fr');
+
+    expect(prompt).not.toContain('"id":"VISUAL_0"');
+    expect(prompt).toContain('I cannot tell her yet.');
+  });
+
+  it('keeps Comments style dialogue in the main translation plan', async () => {
+    const { buildFullPromptForTokenCount } = await import('./translation');
+    const content = buildAssWithEvents(
+      [
+        'Dialogue: 0,0:00:01.00,0:00:02.00,Comments,,0,0,0,,That was close.',
+      ],
+      {
+        extraStyles: [
+          'Style: Comments,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,10,1',
+        ],
+      }
+    );
+
+    const prompt = buildFullPromptForTokenCount(content, 'en', 'fr');
+
+    expect(prompt).not.toContain('"id":"VISUAL_0"');
+    expect(prompt).toContain('That was close.');
+  });
+
+  it('keeps explicit TS suffix styles in the visual text plan', async () => {
+    const { buildFullPromptForTokenCount } = await import('./translation');
+    const content = buildAssWithEvents(
+      [
+        'Dialogue: 0,0:00:01.00,0:00:02.00,PollTS,,0,0,0,,{\\pos(100,100)}Candidate\\NName',
+        'Dialogue: 0,0:00:02.00,0:00:03.00,Sign-TS,,0,0,0,,{\\pos(120,100)}Door',
+      ],
+      {
+        extraStyles: [
+          'Style: Sign-TS,Arial,40,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,0,0,5,10,10,10,1',
+        ],
+      }
+    );
+
+    const prompt = buildFullPromptForTokenCount(content, 'en', 'fr');
+
+    expect(prompt).toContain('"id":"VISUAL_0"');
+    expect(prompt).toContain('~p0:Candidate~p1:Name');
+    expect(prompt).toContain('Door');
   });
 
   it('retries canonical visual text in main translation when placeholders are missing', async () => {

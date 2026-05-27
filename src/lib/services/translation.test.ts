@@ -671,6 +671,35 @@ describe('AI translation ASS visual text planning', () => {
     expect(prompt).toContain('Door');
   });
 
+  it('groups numbered TS styles as visual text', async () => {
+    const { buildFullPromptForTokenCount } = await import('./translation');
+    const content = buildAssWithEvents(
+      [
+        'Dialogue: 0,0:08:21.77,0:08:21.89,TS2,,0,0,0,,{\\blur0.7}{\\b1\\pos(651,84)}by Beaver',
+        'Dialogue: 0,0:08:21.89,0:08:21.98,TS2,,0,0,0,,{\\blur0.7}{\\b1\\pos(682.5,330)}by Beaver',
+        'Dialogue: 0,0:08:21.89,0:08:21.98,TS3,,0,0,0,,{\\blur0.7\\fs33\\pos(691.5,205.5)}Three Kingdoms',
+        'Dialogue: 0,0:08:21.98,0:08:22.06,TS3,,0,0,0,,{\\blur0.7\\fs33\\pos(705,298.5)}Three Kingdoms',
+        'Dialogue: 0,0:14:41.86,0:14:44.07,TS4,,0,0,0,,{\\fad(780,0)\\pos(751.5,511.5)}Kibitou City Third Park',
+        'Dialogue: 0,0:16:45.60,0:16:48.32,TS4,,0,0,0,,{\\fad(780,0)\\pos(751.5,511.5)}Kibitou City Third Park',
+      ],
+      {
+        extraStyles: [
+          'Style: TS2,Arial,40,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,0,0,5,10,10,10,1',
+          'Style: TS3,Arial,40,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,0,0,5,10,10,10,1',
+          'Style: TS4,Arial,40,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,0,0,5,10,10,10,1',
+        ],
+      }
+    );
+
+    const prompt = buildFullPromptForTokenCount(content, 'en', 'fr');
+
+    expect(prompt).toContain('"id":"VISUAL_0"');
+    expect(prompt).not.toContain('"id":"ASS_');
+    expect(countOccurrences(prompt, 'by Beaver')).toBe(1);
+    expect(countOccurrences(prompt, 'Three Kingdoms')).toBe(1);
+    expect(countOccurrences(prompt, 'Kibitou City Third Park')).toBe(1);
+  });
+
   it('groups repeated Sign #1 visual text once', async () => {
     const { buildFullPromptForTokenCount } = await import('./translation');
     const content = buildAssWithEvents(

@@ -390,7 +390,8 @@ function hasTypesettingStyleSuffix(style: string | undefined): boolean {
   const tokens = rawStyle.match(/[A-Za-z0-9]+/g) ?? [];
   return tokens.some(token =>
     token.toLowerCase() === 'ts'
-    || (token.length > 2 && token.endsWith('TS'))
+    || /^TS\d+$/.test(token)
+    || (token.length > 2 && /TS\d*$/.test(token))
   );
 }
 

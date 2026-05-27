@@ -98,6 +98,25 @@ describe('OCR selection helpers', () => {
     expect(lanes.find((entry) => entry.id === 'second-short')?.lane).toBe(1);
   });
 
+  it('assigns touching rendered timeline blocks to separate lanes', () => {
+    const viewport = createOcrTimelineViewport(100_000, 0, 100_000);
+    const lanes = assignOcrTimelineRenderedLanes(
+      [
+        block('first', 10_000, 20_000),
+        block('second', 20_000, 30_000),
+      ],
+      {
+        viewport,
+        trackWidthPx: 1_000,
+        minWidthPercent: 0,
+        minGapPx: 0,
+      },
+    );
+
+    expect(lanes.find((entry) => entry.id === 'first')?.lane).toBe(0);
+    expect(lanes.find((entry) => entry.id === 'second')?.lane).toBe(1);
+  });
+
   it('keeps longer rendered blocks on earlier lanes when a short block collides visually', () => {
     const viewport = createOcrTimelineViewport(120_000, 0, 120_000);
     const lanes = assignOcrTimelineRenderedLanes(

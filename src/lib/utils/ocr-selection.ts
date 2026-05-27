@@ -435,7 +435,7 @@ function renderedBoundsOverlap(
   right: RenderedTimelineBounds,
   minGapPx: number,
 ): boolean {
-  return left.leftPx < right.rightPx + minGapPx && right.leftPx < left.rightPx + minGapPx;
+  return left.leftPx <= right.rightPx + minGapPx && right.leftPx <= left.rightPx + minGapPx;
 }
 
 function chooseTimelineTickIntervalMs(windowMs: number): number {

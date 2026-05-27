@@ -5,7 +5,6 @@ export { default as FloatingOcrCuePalette } from './FloatingOcrCuePalette.svelte
 export { default as PreviewToolbar } from './PreviewToolbar.svelte';
 export { default as PreviewPlayerControls } from './PreviewPlayerControls.svelte';
 export { default as RegionSelector } from './RegionSelector.svelte';
-export { default as SubtitleOverlay } from './SubtitleOverlay.svelte';
 export { default as OcrOptionsPanel } from './OcrOptionsPanel.svelte';
 export { default as OcrProgressBar } from './OcrProgressBar.svelte';
 export { default as OcrZoneContextMenu } from './OcrZoneContextMenu.svelte';

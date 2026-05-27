@@ -7,7 +7,6 @@ export interface PreviewLayerState {
   showPassiveZones: boolean;
   showRegionSelector: boolean;
   showToolbarActions: boolean;
-  showGeneratedSubtitleOverlay: boolean;
 }
 
 export function getPreviewLayerState(input: PreviewLayerStateInput): PreviewLayerState {
@@ -17,6 +16,5 @@ export function getPreviewLayerState(input: PreviewLayerStateInput): PreviewLaye
     showPassiveZones: !isSelectingRegion,
     showRegionSelector: isSelectingRegion,
     showToolbarActions: isSelectingRegion,
-    showGeneratedSubtitleOverlay: false,
   };
 }

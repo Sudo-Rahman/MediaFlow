@@ -8,7 +8,6 @@ describe('getPreviewLayerState', () => {
       showPassiveZones: true,
       showRegionSelector: false,
       showToolbarActions: false,
-      showGeneratedSubtitleOverlay: false,
     });
   });
 
@@ -17,7 +16,6 @@ describe('getPreviewLayerState', () => {
       showPassiveZones: false,
       showRegionSelector: true,
       showToolbarActions: true,
-      showGeneratedSubtitleOverlay: false,
     });
   });
 
@@ -26,7 +24,6 @@ describe('getPreviewLayerState', () => {
       showPassiveZones: false,
       showRegionSelector: true,
       showToolbarActions: true,
-      showGeneratedSubtitleOverlay: false,
     });
   });
 });

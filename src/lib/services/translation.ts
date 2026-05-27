@@ -790,9 +790,16 @@ interface VisualExpansionResult {
   fallbackCount: number;
 }
 
-function hasExpectedCanonicalPlaceholders(translatedCanonicalSkeleton: string, placeholderOrder: string[]): boolean {
-  const expectedTokens = placeholderOrder.map((_, index) => getCanonicalPlaceholderToken(index));
-  const translatedTokens = translatedCanonicalSkeleton.match(/~p[0-9a-z]+:/g) ?? [];
+function getCanonicalPlaceholderTokens(value: string): string[] {
+  return value.match(/~p[0-9a-z]+:/g) ?? [];
+}
+
+function hasExpectedCanonicalPlaceholders(
+  translatedCanonicalSkeleton: string,
+  expectedCanonicalSkeleton: string
+): boolean {
+  const expectedTokens = getCanonicalPlaceholderTokens(expectedCanonicalSkeleton);
+  const translatedTokens = getCanonicalPlaceholderTokens(translatedCanonicalSkeleton);
 
   return expectedTokens.length === translatedTokens.length
     && expectedTokens.every((token, index) => translatedTokens[index] === token);
@@ -877,8 +884,7 @@ function expandVisualGroupTranslation(
   translatedPromptText: string
 ): VisualExpansionResult {
   if (group.mode === 'canonicalSkeleton') {
-    const representativePlaceholderOrder = group.occurrences[0]?.placeholderOrder ?? [];
-    if (!hasExpectedCanonicalPlaceholders(translatedPromptText, representativePlaceholderOrder)) {
+    if (!hasExpectedCanonicalPlaceholders(translatedPromptText, group.canonicalSkeleton)) {
       return {
         cues: [],
         unresolvedCues: group.occurrences.map(occurrence => occurrence.cue),

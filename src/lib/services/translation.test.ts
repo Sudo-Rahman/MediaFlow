@@ -712,6 +712,49 @@ describe('AI translation ASS visual text planning', () => {
     warnSpy.mockRestore();
   });
 
+  it('accepts canonical visual placeholders in textual order without retrying', async () => {
+    const { translateSubtitle } = await import('./translation');
+    const content = buildAssWithEvents([
+      'Dialogue: 0,0:00:01.00,0:00:02.00,PollTS,,0,0,0,,Student Council President\\N{\\pos(100,100)}Campaign Speech Assembly',
+    ]);
+
+    callLlmMock.mockImplementation(async (request: { userPrompt: string }) => {
+      const cues = parseUserPromptCues(request.userPrompt);
+      return {
+        content: JSON.stringify({
+          cues: cues.map((cue) => ({
+            id: cue.id,
+            translatedText: cue.text
+              .replace('Student Council President', 'President du conseil etudiant')
+              .replace('Campaign Speech Assembly', 'Assemblee du discours de campagne'),
+          })),
+        }),
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      };
+    });
+
+    const result = await translateSubtitle(
+      { name: 'textual-order.ass', path: '/subs/textual-order.ass', content, format: 'ass', size: 1 },
+      'openai',
+      'gpt-test',
+      'en',
+      'fr'
+    );
+
+    const promptCueBatches = callLlmMock.mock.calls.map(([request]) => parseUserPromptCues(request.userPrompt));
+    expect(result.success).toBe(true);
+    expect(promptCueBatches).toEqual([
+      [{
+        id: 'VISUAL_0',
+        text: 'Student Council President~p1:~p0:Campaign Speech Assembly',
+      }],
+    ]);
+    expect(result.translatedContent).toContain(
+      'President du conseil etudiant\\N{\\pos(100,100)}Assemblee du discours de campagne'
+    );
+    expect(callLlmMock).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps visual text byte-equivalent when the model returns source text unchanged', async () => {
     const { translateSubtitle } = await import('./translation');
     const content = buildAssWithEvents([

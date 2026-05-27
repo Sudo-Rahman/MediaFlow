@@ -639,6 +639,17 @@ function buildAuxiliaryThemeLayerCueIds(
       }
 
       if (sourceCandidateLayers.size !== 1) {
+        const hasTargetLayer = occurrences.some(occurrence => occurrence.layer === targetLang);
+        const hasOnlyTargetAndAuxiliaryLayers = occurrences.every(occurrence =>
+          occurrence.layer === targetLang || occurrence.isAuxiliary
+        );
+
+        if (hasTargetLayer && hasOnlyTargetAndAuxiliaryLayers) {
+          for (const occurrence of occurrences) {
+            auxiliaryCueIds.add(occurrence.cueId);
+          }
+        }
+
         continue;
       }
 

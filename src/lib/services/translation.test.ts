@@ -446,6 +446,23 @@ describe('AI translation ASS visual text planning', () => {
     expect(prompt).not.toContain('Itsumo hidamari no you ni');
   });
 
+  it('skips target-language theme families with only auxiliary sources in auto-detect mode', async () => {
+    const { buildFullPromptForTokenCount } = await import('./translation');
+    const content = buildAssWithEvents([
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Hello there.',
+      'Dialogue: 0,0:00:03.00,0:00:04.00,Ending-English,,0,0,0,,Already translated lyrics',
+      'Dialogue: 0,0:00:03.00,0:00:04.00,Ending-Romaji,,0,0,0,,Mou yakusareta uta',
+      'Dialogue: 0,0:00:03.00,0:00:04.00,Ending-Kanji,,0,0,0,,翻訳済みの歌',
+    ]);
+
+    const prompt = buildFullPromptForTokenCount(content, 'auto', 'en');
+
+    expect(prompt).toContain('Hello there.');
+    expect(prompt).not.toContain('Already translated lyrics');
+    expect(prompt).not.toContain('Mou yakusareta uta');
+    expect(prompt).not.toContain('翻訳済みの歌');
+  });
+
   it('keeps all theme layers when no layer matches the selected source language', async () => {
     const { buildFullPromptForTokenCount } = await import('./translation');
     const content = buildAssWithEvents([

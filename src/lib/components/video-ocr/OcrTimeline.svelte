@@ -52,6 +52,14 @@
     return type === 'pointerup' && dragType === 'seek';
   }
 
+  export function shouldCancelTimelineSeekOnPointerEnd(
+    type: OcrTimelinePointerEndType,
+    dragType: OcrTimelineDragType | null,
+    hasPointerEvent: boolean,
+  ): boolean {
+    return dragType === 'seek' && (!hasPointerEvent || !shouldCommitTimelineSeekOnPointerEnd(type, dragType));
+  }
+
   export function shouldSyncTimelinePlaybackFromCurrentTime(isSeekDragging: boolean): boolean {
     return !isSeekDragging;
   }
@@ -583,8 +591,10 @@
       return;
     }
 
-    syncTimelinePlaybackDom(currentTimeMs);
-    onCancelSeek?.();
+    if (shouldCancelTimelineSeekOnPointerEnd(type, finishedDrag.type, Boolean(event))) {
+      syncTimelinePlaybackDom(currentTimeMs);
+      onCancelSeek?.();
+    }
   }
 
   function handleTrackKeydown(event: KeyboardEvent): void {
@@ -615,10 +625,7 @@
     }
   }
 
-  onDestroy(() => {
-    activeDrag = null;
-    cleanupActiveDragListeners();
-  });
+  onDestroy(() => stopDrag(undefined, 'pointercancel'));
 </script>
 
 <div bind:this={timelineRootEl} class="flex h-full min-h-0 flex-col rounded-xl border bg-background/55 p-2.5">

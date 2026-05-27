@@ -1195,13 +1195,26 @@
     void persistFileData(fileId);
   }
 
-  function handleTrimSegment(fileId: string, segmentId: string, startTimeMs: number, endTimeMs: number): void {
+  function applyTrimSegment(fileId: string, segmentId: string, startTimeMs: number, endTimeMs: number): boolean {
     const file = getFreshFile(fileId);
     if (!file) {
-      return;
+      return false;
     }
 
     videoOcrStore.trimOcrSegment(fileId, segmentId, startTimeMs, endTimeMs, Math.round((file.duration ?? 0) * 1000));
+
+    return true;
+  }
+
+  function handlePreviewTrimSegment(fileId: string, segmentId: string, startTimeMs: number, endTimeMs: number): void {
+    applyTrimSegment(fileId, segmentId, startTimeMs, endTimeMs);
+  }
+
+  function handleCommitTrimSegment(fileId: string, segmentId: string, startTimeMs: number, endTimeMs: number): void {
+    if (!applyTrimSegment(fileId, segmentId, startTimeMs, endTimeMs)) {
+      return;
+    }
+
     void persistFileData(fileId);
   }
 
@@ -1332,7 +1345,8 @@
         onSetZoneRole={handleSetZoneRole}
         onRenameZone={handleRenameZone}
         onDeleteZone={handleDeleteZone}
-        onTrimSegment={handleTrimSegment}
+        onPreviewTrimSegment={handlePreviewTrimSegment}
+        onCommitTrimSegment={handleCommitTrimSegment}
         onPlaybackError={handlePreviewPlaybackError}
       />
     </div>

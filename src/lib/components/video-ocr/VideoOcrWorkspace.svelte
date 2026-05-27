@@ -35,7 +35,18 @@
     onSetZoneRole: (fileId: string, segmentId: string, zoneId: string, role: OcrZoneRole) => void | Promise<void>;
     onRenameZone: (fileId: string, segmentId: string, zoneId: string, label: string) => void | Promise<void>;
     onDeleteZone: (fileId: string, segmentId: string, zoneId: string) => void | Promise<void>;
-    onTrimSegment: (fileId: string, segmentId: string, startTimeMs: number, endTimeMs: number) => void | Promise<void>;
+    onPreviewTrimSegment: (
+      fileId: string,
+      segmentId: string,
+      startTimeMs: number,
+      endTimeMs: number,
+    ) => void | Promise<void>;
+    onCommitTrimSegment: (
+      fileId: string,
+      segmentId: string,
+      startTimeMs: number,
+      endTimeMs: number,
+    ) => void | Promise<void>;
     onPlaybackError: (fileId: string, reason: string) => void | Promise<void>;
   }
 
@@ -56,7 +67,8 @@
     onSetZoneRole,
     onRenameZone,
     onDeleteZone,
-    onTrimSegment,
+    onPreviewTrimSegment,
+    onCommitTrimSegment,
     onPlaybackError,
   }: VideoOcrWorkspaceProps = $props();
 
@@ -192,12 +204,20 @@
     requestPlaybackSeek(currentTimeMs, 'cancel');
   }
 
-  function handleTrimSegment(segmentId: string, startTimeMs: number, endTimeMs: number): void {
+  function handlePreviewTrimSegment(segmentId: string, startTimeMs: number, endTimeMs: number): void {
     if (!file) {
       return;
     }
 
-    void onTrimSegment(file.id, segmentId, startTimeMs, endTimeMs);
+    void onPreviewTrimSegment(file.id, segmentId, startTimeMs, endTimeMs);
+  }
+
+  function handleCommitTrimSegment(segmentId: string, startTimeMs: number, endTimeMs: number): void {
+    if (!file) {
+      return;
+    }
+
+    void onCommitTrimSegment(file.id, segmentId, startTimeMs, endTimeMs);
   }
 
   function getDefaultPalettePosition(): FloatingPalettePosition {
@@ -296,7 +316,8 @@
       onSetRole={handleSetZoneRole}
       onRenameZone={handleRenameZone}
       onDeleteZone={handleDeleteZone}
-      onTrimSegment={handleTrimSegment}
+      onPreviewTrimSegment={handlePreviewTrimSegment}
+      onCommitTrimSegment={handleCommitTrimSegment}
     />
   {/if}
 

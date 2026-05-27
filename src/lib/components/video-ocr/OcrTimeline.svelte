@@ -6,6 +6,27 @@
   export type OcrTimelinePointerEndType = 'pointerup' | 'pointercancel';
   export type OcrTimelineDragType = 'seek' | 'move' | 'trim-start' | 'trim-end';
 
+  export type OcrTimelineSegmentEditDrag =
+    | {
+        type: 'move';
+        segmentId: string;
+        durationMs: number;
+        offsetMs: number;
+      }
+    | {
+        type: 'trim-start' | 'trim-end';
+        segmentId: string;
+        startTimeMs: number;
+        endTimeMs: number;
+      };
+
+  export interface OcrTimelineSegmentEdit {
+    segmentId: string;
+    startTimeMs: number;
+    endTimeMs: number;
+    seekTimeMs: number;
+  }
+
   export interface OcrTimelineDragListeners {
     pointermove: EventListener;
     pointerup: EventListener;
@@ -60,6 +81,74 @@
     return dragType === 'seek' && (!hasPointerEvent || !shouldCommitTimelineSeekOnPointerEnd(type, dragType));
   }
 
+  export function getOcrTimelineSegmentEditForPointerTime(
+    drag: OcrTimelineSegmentEditDrag,
+    pointerTimeMs: number,
+    durationMs: number,
+  ): OcrTimelineSegmentEdit {
+    const safeDurationMs = Number.isFinite(durationMs) && durationMs > 0 ? Math.round(durationMs) : 1;
+    const safePointerTimeMs = Number.isFinite(pointerTimeMs)
+      ? Math.max(0, Math.min(Math.round(pointerTimeMs), safeDurationMs))
+      : 0;
+
+    if (drag.type === 'move') {
+      const safeSegmentDurationMs = Number.isFinite(drag.durationMs)
+        ? Math.max(1, Math.min(Math.round(drag.durationMs), safeDurationMs))
+        : 1;
+      const safeOffsetMs = Number.isFinite(drag.offsetMs) ? Math.round(drag.offsetMs) : 0;
+      const maxStartTimeMs = Math.max(0, safeDurationMs - safeSegmentDurationMs);
+      const startTimeMs = Math.max(0, Math.min(safePointerTimeMs - safeOffsetMs, maxStartTimeMs));
+
+      return {
+        segmentId: drag.segmentId,
+        startTimeMs,
+        endTimeMs: startTimeMs + safeSegmentDurationMs,
+        seekTimeMs: startTimeMs,
+      };
+    }
+
+    const safeStartTimeMs = Number.isFinite(drag.startTimeMs)
+      ? Math.max(0, Math.min(Math.round(drag.startTimeMs), safeDurationMs - 1))
+      : 0;
+    const safeEndTimeMs = Number.isFinite(drag.endTimeMs)
+      ? Math.max(safeStartTimeMs + 1, Math.min(Math.round(drag.endTimeMs), safeDurationMs))
+      : safeStartTimeMs + 1;
+
+    if (drag.type === 'trim-start') {
+      const startTimeMs = Math.max(0, Math.min(safePointerTimeMs, safeEndTimeMs - 1));
+
+      return {
+        segmentId: drag.segmentId,
+        startTimeMs,
+        endTimeMs: safeEndTimeMs,
+        seekTimeMs: startTimeMs,
+      };
+    }
+
+    const endTimeMs = Math.max(safeStartTimeMs + 1, Math.min(safePointerTimeMs, safeDurationMs));
+
+    return {
+      segmentId: drag.segmentId,
+      startTimeMs: safeStartTimeMs,
+      endTimeMs,
+      seekTimeMs: endTimeMs,
+    };
+  }
+
+  export function shouldCommitTimelineSegmentEditOnPointerEnd(
+    type: OcrTimelinePointerEndType,
+    dragType: OcrTimelineDragType | null,
+    hasPointerEvent: boolean,
+    hasPreviewEdit: boolean,
+  ): boolean {
+    return (
+      type === 'pointerup'
+      && hasPointerEvent
+      && hasPreviewEdit
+      && (dragType === 'move' || dragType === 'trim-start' || dragType === 'trim-end')
+    );
+  }
+
   export function shouldSyncTimelinePlaybackFromCurrentTime(isSeekDragging: boolean): boolean {
     return !isSeekDragging;
   }
@@ -97,7 +186,8 @@
     onSetRole?: (segmentId: string, zoneId: string, role: OcrZoneRole) => void;
     onRenameZone?: (segmentId: string, zoneId: string, label: string) => void;
     onDeleteZone?: (segmentId: string, zoneId: string) => void;
-    onTrimSegment?: (segmentId: string, startTimeMs: number, endTimeMs: number) => void;
+    onPreviewTrimSegment?: (segmentId: string, startTimeMs: number, endTimeMs: number) => void;
+    onCommitTrimSegment?: (segmentId: string, startTimeMs: number, endTimeMs: number) => void;
   }
 
   interface RoleConfig {
@@ -123,20 +213,7 @@
 
   type TimelineDrag =
     | { type: 'seek'; trackEl: HTMLElement }
-    | {
-        type: 'move';
-        trackEl: HTMLElement;
-        segmentId: string;
-        durationMs: number;
-        offsetMs: number;
-      }
-    | {
-        type: 'trim-start' | 'trim-end';
-        trackEl: HTMLElement;
-        segmentId: string;
-        startTimeMs: number;
-        endTimeMs: number;
-      };
+    | (OcrTimelineSegmentEditDrag & { trackEl: HTMLElement });
 
   let {
     selection,
@@ -151,11 +228,13 @@
     onSetRole,
     onRenameZone,
     onDeleteZone,
-    onTrimSegment,
+    onPreviewTrimSegment,
+    onCommitTrimSegment,
   }: OcrTimelineProps = $props();
 
   let activeDrag: TimelineDrag | null = null;
   let cleanupDragListeners: (() => void) | null = null;
+  let lastPreviewSegmentEdit: OcrTimelineSegmentEdit | null = null;
   let editingLabel = $state<{ segmentId: string; zoneId: string; value: string } | null>(null);
   let timelineRootEl = $state<HTMLDivElement | null>(null);
   let playbackTimeLabelEl = $state<HTMLSpanElement | null>(null);
@@ -477,6 +556,7 @@
 
     event.preventDefault();
     activeDrag = { type: 'seek', trackEl };
+    lastPreviewSegmentEdit = null;
     previewSeek(timeFromPointer(event, trackEl));
     attachActiveDragListeners();
   }
@@ -509,6 +589,7 @@
       durationMs: Math.max(1, block.endTimeMs - block.startTimeMs),
       offsetMs: pointerTimeMs - block.startTimeMs,
     };
+    lastPreviewSegmentEdit = null;
     onSelect?.(block.segmentId, block.zoneId);
     attachActiveDragListeners();
   }
@@ -534,7 +615,14 @@
       startTimeMs: block.startTimeMs,
       endTimeMs: block.endTimeMs,
     };
+    lastPreviewSegmentEdit = null;
     attachActiveDragListeners();
+  }
+
+  function previewSegmentEdit(edit: OcrTimelineSegmentEdit): void {
+    lastPreviewSegmentEdit = edit;
+    onPreviewTrimSegment?.(edit.segmentId, edit.startTimeMs, edit.endTimeMs);
+    onSeek?.(edit.seekTimeMs);
   }
 
   function handlePointerMove(event: PointerEvent): void {
@@ -548,25 +636,7 @@
       return;
     }
 
-    if (activeDrag.type === 'move') {
-      const maxStartTimeMs = Math.max(0, safeDurationMs - activeDrag.durationMs);
-      const nextStartTimeMs = Math.max(0, Math.min(timeMs - activeDrag.offsetMs, maxStartTimeMs));
-      const nextEndTimeMs = nextStartTimeMs + activeDrag.durationMs;
-      onTrimSegment?.(activeDrag.segmentId, nextStartTimeMs, nextEndTimeMs);
-      onSeek?.(nextStartTimeMs);
-      return;
-    }
-
-    if (activeDrag.type === 'trim-start') {
-      const nextStartTimeMs = Math.max(0, Math.min(timeMs, activeDrag.endTimeMs - 1));
-      onTrimSegment?.(activeDrag.segmentId, nextStartTimeMs, activeDrag.endTimeMs);
-      onSeek?.(nextStartTimeMs);
-      return;
-    }
-
-    const nextEndTimeMs = Math.max(activeDrag.startTimeMs + 1, Math.min(timeMs, safeDurationMs));
-    onTrimSegment?.(activeDrag.segmentId, activeDrag.startTimeMs, nextEndTimeMs);
-    onSeek?.(nextEndTimeMs);
+    previewSegmentEdit(getOcrTimelineSegmentEditForPointerTime(activeDrag, timeMs, safeDurationMs));
   }
 
   function commitDrag(event: PointerEvent): void {
@@ -579,10 +649,25 @@
 
   function stopDrag(event: PointerEvent | undefined, type: OcrTimelinePointerEndType): void {
     const finishedDrag = activeDrag;
+    const hadPreviewSegmentEdit = lastPreviewSegmentEdit !== null;
     activeDrag = null;
+    lastPreviewSegmentEdit = null;
     cleanupActiveDragListeners();
 
-    if (finishedDrag?.type !== 'seek') {
+    if (!finishedDrag) {
+      return;
+    }
+
+    if (finishedDrag.type !== 'seek') {
+      if (event && shouldCommitTimelineSegmentEditOnPointerEnd(type, finishedDrag.type, true, hadPreviewSegmentEdit)) {
+        const finalEdit = getOcrTimelineSegmentEditForPointerTime(
+          finishedDrag,
+          timeFromPointer(event, finishedDrag.trackEl),
+          safeDurationMs,
+        );
+        onCommitTrimSegment?.(finalEdit.segmentId, finalEdit.startTimeMs, finalEdit.endTimeMs);
+        onSeek?.(finalEdit.seekTimeMs);
+      }
       return;
     }
 

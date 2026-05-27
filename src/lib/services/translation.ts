@@ -777,6 +777,7 @@ function expandThemeGroupTranslation(
 
 interface VisualExpansionResult {
   cues: TranslatedCue[];
+  unresolvedCues: Cue[];
   fallbackCount: number;
 }
 
@@ -841,7 +842,7 @@ function projectPlainTranslationIntoSkeleton(occurrence: VisualCueOccurrence, tr
 function buildPlainVisualTranslatedCue(
   occurrence: VisualCueOccurrence,
   translatedPlainText: string
-): { cue: TranslatedCue; usedFallback: boolean } {
+): { cue: TranslatedCue | null; usedFallback: boolean } {
   const translatedText = projectPlainTranslationIntoSkeleton(occurrence, translatedPlainText);
   const translatedCue = {
     id: occurrence.cue.id,
@@ -859,13 +860,7 @@ function buildPlainVisualTranslatedCue(
     return { cue: translatedCue, usedFallback: false };
   }
 
-  return {
-    cue: {
-      id: occurrence.cue.id,
-      translatedText: occurrence.cue.textSkeleton
-    },
-    usedFallback: true
-  };
+  return { cue: null, usedFallback: true };
 }
 
 function expandVisualGroupTranslation(
@@ -876,7 +871,8 @@ function expandVisualGroupTranslation(
     const representativePlaceholderOrder = group.occurrences[0]?.placeholderOrder ?? [];
     if (!hasExpectedCanonicalPlaceholders(translatedPromptText, representativePlaceholderOrder)) {
       return {
-        cues: expandVisualGroupPassthrough(group),
+        cues: [],
+        unresolvedCues: group.occurrences.map(occurrence => occurrence.cue),
         fallbackCount: group.occurrences.length
       };
     }
@@ -889,28 +885,29 @@ function expandVisualGroupTranslation(
           occurrence.placeholderOrder
         )
       })),
+      unresolvedCues: [],
       fallbackCount: 0
     };
   }
 
   let fallbackCount = 0;
-  const cues = group.occurrences.map((occurrence) => {
+  const cues: TranslatedCue[] = [];
+  const unresolvedCues: Cue[] = [];
+
+  for (const occurrence of group.occurrences) {
     const translatedCue = buildPlainVisualTranslatedCue(occurrence, translatedPromptText);
     if (translatedCue.usedFallback) {
       fallbackCount += 1;
+      unresolvedCues.push(occurrence.cue);
+      continue;
     }
 
-    return translatedCue.cue;
-  });
+    if (translatedCue.cue) {
+      cues.push(translatedCue.cue);
+    }
+  }
 
-  return { cues, fallbackCount };
-}
-
-function expandVisualGroupPassthrough(group: VisualSignatureGroup): TranslatedCue[] {
-  return group.occurrences.map(occurrence => ({
-    id: occurrence.cue.id,
-    translatedText: occurrence.cue.textSkeleton
-  }));
+  return { cues, unresolvedCues, fallbackCount };
 }
 
 /**
@@ -1632,6 +1629,7 @@ export async function translateSubtitle(
     const translatedThemeCues: TranslatedCue[] = [];
     const translatedVisualCues: TranslatedCue[] = [];
     const unresolvedThemeCues: Cue[] = [];
+    const unresolvedVisualCues: Cue[] = [];
     const scopeKey = getTranslationMemoryScopeKey(file.path);
 
     if (themeGroups.length > 0) {
@@ -1877,7 +1875,8 @@ export async function translateSubtitle(
       addUsage(totalUsage, visualResult.usage);
 
       const resolvedVisualPromptIds = new Set<string>();
-      let visualFallbackCueCount = 0;
+      let invalidVisualCueCount = 0;
+      let invalidVisualGroupCount = 0;
       for (const translatedCue of visualResult.cues) {
         const group = visualPromptPlan.groupByPromptId.get(translatedCue.id);
         if (!group) {
@@ -1886,24 +1885,30 @@ export async function translateSubtitle(
 
         resolvedVisualPromptIds.add(translatedCue.id);
         const expandedVisualGroup = expandVisualGroupTranslation(group, translatedCue.translatedText);
-        visualFallbackCueCount += expandedVisualGroup.fallbackCount;
+        invalidVisualCueCount += expandedVisualGroup.fallbackCount;
+        if (expandedVisualGroup.unresolvedCues.length > 0) {
+          invalidVisualGroupCount += 1;
+        }
+
         translatedVisualCues.push(...expandedVisualGroup.cues);
+        unresolvedVisualCues.push(...expandedVisualGroup.unresolvedCues);
       }
 
-      const passthroughVisualGroups: VisualSignatureGroup[] = [];
+      const unresolvedVisualGroups: VisualSignatureGroup[] = [];
       for (const [promptId, group] of visualPromptPlan.groupByPromptId.entries()) {
         if (!resolvedVisualPromptIds.has(promptId)) {
-          passthroughVisualGroups.push(group);
-          translatedVisualCues.push(...expandVisualGroupPassthrough(group));
+          unresolvedVisualGroups.push(group);
+          unresolvedVisualCues.push(...group.occurrences.map(occurrence => occurrence.cue));
         }
       }
 
-      if (passthroughVisualGroups.length > 0 || visualFallbackCueCount > 0 || visualResult.error) {
+      const unresolvedVisualGroupCount = unresolvedVisualGroups.length + invalidVisualGroupCount;
+      if (unresolvedVisualGroupCount > 0 || visualResult.error) {
         log(
           'warning',
           'translation',
           'Visual text preflight incomplete',
-          `Resolved ${visualGroups.length - passthroughVisualGroups.length}/${visualGroups.length} ASS visual text signature(s). Unresolved or invalid visual text cues were preserved unchanged. Fallback visual cues: ${visualFallbackCueCount}.${visualResult.error ? `\n\nError: ${visualResult.error}` : ''}`,
+          `Resolved ${visualGroups.length - unresolvedVisualGroupCount}/${visualGroups.length} ASS visual text signature(s). Unresolved or invalid visual text cues will retry in the main translation phase. Retry visual cues: ${unresolvedVisualCues.length}. Invalid visual cues: ${invalidVisualCueCount}.${visualResult.error ? `\n\nError: ${visualResult.error}` : ''}`,
           logContext
         );
       }
@@ -1915,14 +1920,14 @@ export async function translateSubtitle(
       return buildCancelledResult(file);
     }
 
-    const mainPhaseCues = [...cuePlan.mainTranslatableCues, ...unresolvedThemeCues];
+    const mainPhaseCues = [...cuePlan.mainTranslatableCues, ...unresolvedThemeCues, ...unresolvedVisualCues];
     let translatedMainCues: TranslatedCue[] = [];
 
     log(
       'info',
       'translation',
       'Main translation started',
-      `Sending ${mainPhaseCues.length} cue(s) to the main translation phase. Theme cues resolved before main pass: ${translatedThemeCues.length}. Theme fallback cues: ${unresolvedThemeCues.length}. Scope: ${scopeKey}`,
+      `Sending ${mainPhaseCues.length} cue(s) to the main translation phase. Theme cues resolved before main pass: ${translatedThemeCues.length}. Theme fallback cues: ${unresolvedThemeCues.length}. Visual retry cues: ${unresolvedVisualCues.length}. Scope: ${scopeKey}`,
       logContext
     );
 

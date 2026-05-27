@@ -203,6 +203,30 @@ function extractEventText(content: string, style: string): string {
   return line?.split(',,').at(-1) ?? '';
 }
 
+function replaceReadableTextInSkeleton(text: string, replacement: string): string {
+  let replaced = false;
+
+  return text
+    .split(/(⟦[A-Z]+_\d+⟧)/g)
+    .map((part) => {
+      if (/^⟦[A-Z]+_\d+⟧$/.test(part)) {
+        return part;
+      }
+
+      if (part.trim().length === 0) {
+        return part;
+      }
+
+      if (!replaced) {
+        replaced = true;
+        return replacement;
+      }
+
+      return '';
+    })
+    .join('');
+}
+
 describe('AI translation ASS visual text planning', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -334,6 +358,52 @@ describe('AI translation ASS visual text planning', () => {
     expect(allPromptCues()).toEqual([{ id: 'VISUAL_0', text: 'EXIT' }]);
   });
 
+  it('retries missing visual preflight groups in the main translation phase', async () => {
+    const { translateSubtitle } = await import('./translation');
+    const content = buildAssWithEvents([
+      'Dialogue: 0,0:00:01.00,0:00:02.00,SignTS,,0,0,0,,{\\pos(100,100)}EXIT',
+    ]);
+    let callIndex = 0;
+
+    callLlmMock.mockImplementation(async (request: { userPrompt: string }) => {
+      callIndex += 1;
+      const cues = parseUserPromptCues(request.userPrompt);
+
+      if (callIndex === 1) {
+        return {
+          content: JSON.stringify({ cues: [] }),
+          usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+        };
+      }
+
+      return {
+        content: JSON.stringify({
+          cues: cues.map((cue) => ({
+            id: cue.id,
+            translatedText: cue.text.replace('EXIT', 'SORTIE'),
+          })),
+        }),
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      };
+    });
+
+    const result = await translateSubtitle(
+      { name: 'missing-visual.ass', path: '/subs/missing-visual.ass', content, format: 'ass', size: 1 },
+      'openai',
+      'gpt-test',
+      'en',
+      'fr'
+    );
+
+    const promptCueBatches = callLlmMock.mock.calls.map(([request]) => parseUserPromptCues(request.userPrompt));
+    expect(result.success).toBe(true);
+    expect(result.translatedContent).toContain('{\\pos(100,100)}SORTIE');
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
+    expect(promptCueBatches[0]).toEqual([{ id: 'VISUAL_0', text: 'EXIT' }]);
+    expect(promptCueBatches[1]).toHaveLength(1);
+    expect(promptCueBatches[1][0].text).toContain('⟦TAG_0⟧EXIT');
+  });
+
   it('groups dense CampaignTS text by readable text and translates every occurrence', async () => {
     const { buildFullPromptForTokenCount, translateSubtitle } = await import('./translation');
     const campaignText = denseCampaignText();
@@ -423,18 +493,34 @@ describe('AI translation ASS visual text planning', () => {
     expect(stripAssReadableText(translatedEventText)).not.toContain('consei letu');
   });
 
-  it('falls back to the original dense visual skeleton when plain projection has no readable text', async () => {
+  it('retries dense visual text in main translation when plain projection has no readable text', async () => {
     const { translateSubtitle } = await import('./translation');
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const content = buildAssWithEvents([
       `Dialogue: 0,0:00:01.00,0:00:02.00,CampaignTS,,0,0,0,,${fragmentedCampaignText()}`,
     ]);
+    let callIndex = 0;
+    const translatedCampaign = 'Discours de campagne du conseil etudiant';
 
     callLlmMock.mockImplementation(async (request: { userPrompt: string }) => {
+      callIndex += 1;
       const cues = parseUserPromptCues(request.userPrompt);
+
+      if (callIndex === 1) {
+        return {
+          content: JSON.stringify({
+            cues: cues.map((cue) => ({ id: cue.id, translatedText: '' })),
+          }),
+          usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+        };
+      }
+
       return {
         content: JSON.stringify({
-          cues: cues.map((cue) => ({ id: cue.id, translatedText: '' })),
+          cues: cues.map((cue) => ({
+            id: cue.id,
+            translatedText: replaceReadableTextInSkeleton(cue.text, translatedCampaign),
+          })),
         }),
         usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
       };
@@ -449,10 +535,50 @@ describe('AI translation ASS visual text planning', () => {
     );
 
     expect(result.success).toBe(true);
-    expect(extractEventText(result.translatedContent, 'CampaignTS')).toBe(fragmentedCampaignText());
+    expect(stripAssReadableText(extractEventText(result.translatedContent, 'CampaignTS'))).toBe(translatedCampaign);
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
     expect(warnSpy).not.toHaveBeenCalledWith('Translation validation errors:', expect.anything());
 
     warnSpy.mockRestore();
+  });
+
+  it('escapes physical newlines in translated ASS visual text', async () => {
+    const { translateSubtitle } = await import('./translation');
+    const translatedCampaign = 'Discours de campagne\ndu conseil etudiant';
+    const content = buildAssWithEvents([
+      `Dialogue: 0,0:00:01.00,0:00:02.00,CampaignTS,,0,0,0,,${fragmentedCampaignText()}`,
+    ]);
+
+    callLlmMock.mockImplementation(async (request: { userPrompt: string }) => {
+      const cues = parseUserPromptCues(request.userPrompt);
+      return {
+        content: JSON.stringify({
+          cues: cues.map((cue) => ({
+            id: cue.id,
+            translatedText: cue.text.replace(
+              'Student Council Presidential Elections Campaign Speech Assembly',
+              translatedCampaign
+            ),
+          })),
+        }),
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      };
+    });
+
+    const result = await translateSubtitle(
+      { name: 'newline-campaign.ass', path: '/subs/newline-campaign.ass', content, format: 'ass', size: 1 },
+      'openai',
+      'gpt-test',
+      'en',
+      'fr'
+    );
+
+    const eventLine = result.translatedContent
+      .split('\n')
+      .find((line) => line.startsWith('Dialogue:') && line.includes(',CampaignTS,'));
+    expect(result.success).toBe(true);
+    expect(eventLine).toContain('Discours de campagne\\Ndu conseil etudiant');
+    expect(result.translatedContent).not.toContain('Discours de campagne\ndu conseil etudiant');
   });
 
   it('preserves readable line breaks for dense plain visual prompts', async () => {
@@ -485,20 +611,24 @@ describe('AI translation ASS visual text planning', () => {
     expect(prompt).toContain('＋');
   });
 
-  it('falls back to original visual skeleton when canonical placeholders are missing', async () => {
+  it('retries canonical visual text in main translation when placeholders are missing', async () => {
     const { translateSubtitle } = await import('./translation');
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const content = buildAssWithEvents([
       'Dialogue: 0,0:00:01.00,0:00:02.00,PollTS,,0,0,0,,{\\pos(100,100)}Candidate\\NName',
     ]);
+    let callIndex = 0;
 
     callLlmMock.mockImplementation(async (request: { userPrompt: string }) => {
+      callIndex += 1;
       const cues = parseUserPromptCues(request.userPrompt);
       return {
         content: JSON.stringify({
           cues: cues.map((cue) => ({
             id: cue.id,
-            translatedText: cue.text.replace('~p0:Candidate~p1:Name', 'Candidat Nom'),
+            translatedText: callIndex === 1
+              ? cue.text.replace('~p0:Candidate~p1:Name', 'Candidat Nom')
+              : cue.text.replace('Candidate', 'Candidat').replace('Name', 'Nom'),
           })),
         }),
         usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
@@ -514,8 +644,9 @@ describe('AI translation ASS visual text planning', () => {
     );
 
     expect(result.success).toBe(true);
-    expect(result.translatedContent).toContain('{\\pos(100,100)}Candidate\\NName');
-    expect(result.translatedContent).not.toContain('Candidat Nom');
+    expect(result.translatedContent).toContain('{\\pos(100,100)}Candidat\\NNom');
+    expect(result.translatedContent).not.toContain('{\\pos(100,100)}Candidate\\NName');
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
     expect(warnSpy).not.toHaveBeenCalledWith('Translation validation errors:', expect.anything());
 
     warnSpy.mockRestore();

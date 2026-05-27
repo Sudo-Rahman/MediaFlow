@@ -331,7 +331,7 @@ export function reconstructASS(
 }
 
 function formatCueTextForReconstruction(text: string, cue: Cue): string {
-  if ((cue.format === 'ass' || cue.format === 'ssa') && cue.assTextMode === 'plain') {
+  if (cue.format === 'ass' || cue.format === 'ssa') {
     return formatAssPlainText(text);
   }
 

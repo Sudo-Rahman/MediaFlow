@@ -15,16 +15,16 @@ describe('LLM provider availability', () => {
       'openrouter',
     ]);
 
-    expect(normalizeLLMSelection('google', 'gemini-3.1-pro-preview', true)).toEqual({
+    expect(normalizeLLMSelection('google', 'gemini-3.5-flash', true)).toEqual({
       provider: 'google',
-      model: 'gemini-3.1-pro-preview',
+      model: 'gemini-3.5-flash',
     });
   });
 
   it('restricts release builds to MediaFlow models', () => {
     expect(getSelectableLLMProviders(false)).toEqual(['mediaflow']);
 
-    expect(normalizeLLMSelection('google', 'gemini-3.1-pro-preview', false)).toEqual({
+    expect(normalizeLLMSelection('google', 'gemini-3.5-flash', false)).toEqual({
       provider: 'mediaflow',
       model: 'Lite',
     });

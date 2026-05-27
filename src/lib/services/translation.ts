@@ -43,7 +43,7 @@ export const TRANSLATION_SYSTEM_PROMPT = `You are an expert professional subtitl
 ## CRITICAL RULES (MANDATORY)
 1. Return ONLY a valid JSON object with the translated cues
 2. NEVER add, remove, or reorder cues - translate exactly what you receive
-3. PRESERVE ALL PLACEHOLDERS EXACTLY (⟦TAG_0⟧, ⟦BR_0⟧, etc.) - they represent formatting that must not be changed
+3. PRESERVE ALL PLACEHOLDERS EXACTLY (⟦TAG_0⟧, ⟦BR_0⟧, ~p0:, ~p1:, etc.) - they represent formatting that must not be changed
 4. Do NOT merge or split cues
 5. Do NOT add explanations, markdown, or any text outside the JSON
 
@@ -106,7 +106,7 @@ Target: "Tu vois ce que je veux dire ?\nJ'y pense depuis très longtemps." (conc
 ## SELF-CHECK (MANDATORY)
 Before responding, verify:
 □ All cue IDs are preserved unchanged?
-□ All placeholders (⟦TAG_0⟧, ⟦BR_0⟧, etc.) are identical and in correct positions?
+□ All placeholders (⟦TAG_0⟧, ⟦BR_0⟧, ~p0:, ~p1:, etc.) are identical and in correct positions?
 □ Each translation sounds natural when read aloud?
 □ Line lengths respect subtitle constraints (~42 chars/line)?
 □ No cue exceeds reasonable reading speed (~21 chars/second)?
@@ -142,7 +142,59 @@ const KARAOKE_TAG_PATTERN = /\\(?:k|K|kf|ko)\d+/;
 const CANONICAL_PLACEHOLDER_PREFIX = '~p';
 const CANONICAL_PLACEHOLDER_SUFFIX = ':';
 
-type CueRole = 'passthroughNonText' | 'themeCandidate' | 'mainTranslatable';
+type ExplicitLanguageCode = Exclude<LanguageCode, 'auto'>;
+type AssThemeStyleLayer = ExplicitLanguageCode | 'romaji' | 'unknown';
+type CueRole = 'passthroughNonText' | 'passthroughAuxiliaryThemeLayer' | 'themeCandidate' | 'visualTextCandidate' | 'mainTranslatable';
+
+const ASS_STYLE_ROMAJI_LAYER_TOKENS = new Set(['romaji', 'romanji', 'roumaji', 'roma', 'romanized']);
+const ASS_STYLE_AUXILIARY_SCRIPT_LAYER_TOKENS = new Set(['kanji', 'kana', 'hiragana', 'katakana', 'hira', 'kata']);
+const ASS_STYLE_GENERIC_LAYER_TOKENS = new Set([
+  'translation',
+  'translated',
+  'trans',
+  'tl',
+  'layer',
+  'top',
+  'bottom',
+  'upper',
+  'lower',
+  'fx',
+  'kfx'
+]);
+const ASS_STYLE_LANGUAGE_LAYER_ALIASES: Array<{ code: ExplicitLanguageCode; aliases: readonly string[] }> = [
+  { code: 'en', aliases: ['english', 'eng', 'en'] },
+  { code: 'fr', aliases: ['french', 'francais', 'français', 'fra', 'fre', 'fr'] },
+  { code: 'es', aliases: ['spanish', 'espanol', 'español', 'esp', 'es'] },
+  { code: 'de', aliases: ['german', 'deutsch', 'ger', 'de'] },
+  { code: 'it', aliases: ['italian', 'italiano', 'ita', 'it'] },
+  { code: 'pt', aliases: ['portuguese', 'portugues', 'português', 'por', 'pt', 'br', 'brazilian', 'brasileiro', 'ptbr'] },
+  { code: 'ru', aliases: ['russian', 'rus', 'ru'] },
+  { code: 'ja', aliases: ['japanese', 'jap', 'jpn', 'jp', 'ja', 'kanji', 'kana', 'hiragana', 'katakana', 'hira', 'kata', 'nihongo'] },
+  { code: 'ko', aliases: ['korean', 'kor', 'ko', 'kr', 'hangul'] },
+  { code: 'zh-TW', aliases: ['zhtw', 'tw', 'cht', 'hant', 'traditional'] },
+  { code: 'zh', aliases: ['chinese', 'mandarin', 'cn', 'zh', 'zhs', 'hans', 'simplified'] },
+  { code: 'ar', aliases: ['arabic', 'ara', 'ar'] },
+  { code: 'hi', aliases: ['hindi', 'hin', 'hi'] },
+  { code: 'nl', aliases: ['dutch', 'nederlands', 'nl'] },
+  { code: 'pl', aliases: ['polish', 'polski', 'pol', 'pl'] },
+  { code: 'tr', aliases: ['turkish', 'turk', 'tr'] },
+  { code: 'vi', aliases: ['vietnamese', 'viet', 'vi'] },
+  { code: 'th', aliases: ['thai', 'th'] },
+  { code: 'id', aliases: ['indonesian', 'indonesia', 'id'] },
+  { code: 'sv', aliases: ['swedish', 'swe', 'sv'] },
+  { code: 'da', aliases: ['danish', 'dan', 'da'] },
+  { code: 'no', aliases: ['norwegian', 'nor', 'no'] },
+  { code: 'fi', aliases: ['finnish', 'fin', 'fi'] },
+  { code: 'cs', aliases: ['czech', 'cesky', 'cz', 'cs'] },
+  { code: 'ro', aliases: ['romanian', 'ron', 'ro'] },
+  { code: 'hu', aliases: ['hungarian', 'hun', 'hu'] },
+  { code: 'el', aliases: ['greek', 'ell', 'el', 'gr'] },
+  { code: 'he', aliases: ['hebrew', 'heb', 'he'] },
+  { code: 'uk', aliases: ['ukrainian', 'ukr', 'uk'] },
+];
+const ASS_STYLE_LANGUAGE_LAYER_TOKENS = new Set(
+  ASS_STYLE_LANGUAGE_LAYER_ALIASES.flatMap(entry => entry.aliases)
+);
 
 interface AssCueRoleBreakdown {
   eventType: string;
@@ -156,10 +208,14 @@ interface TranslationCueStats {
   totalCues: number;
   passthroughCues: number;
   themeCandidateCues: number;
+  visualTextCandidateCues: number;
+  plainVisualTextCandidateCues: number;
   mainTranslatableCues: number;
   skippedMaskCount: number;
   skippedAssSongFxCount: number;
   skippedAssAnimatedEffectCount: number;
+  skippedAuxiliaryThemeLayerCount: number;
+  skippedAutoInferredThemeLayerCount: number;
   translatedAssKaraokeCommentCount: number;
   protectedAssDrawingSpanCount: number;
   retainedUnknownAssStyleCount: number;
@@ -182,9 +238,30 @@ interface ThemeSignatureGroup {
   occurrences: ThemeCueOccurrence[];
 }
 
+type VisualCueMode = 'canonicalSkeleton' | 'plainText';
+
+interface VisualCueOccurrence {
+  cue: Cue;
+  mode: VisualCueMode;
+  signature: string;
+  promptText: string;
+  canonicalSkeleton: string;
+  placeholderOrder: string[];
+  readableText?: string;
+}
+
+interface VisualSignatureGroup {
+  mode: VisualCueMode;
+  signature: string;
+  promptText: string;
+  canonicalSkeleton: string;
+  occurrences: VisualCueOccurrence[];
+}
+
 interface TranslationCuePlan {
   passthroughCues: TranslatedCue[];
   themeCueOccurrences: ThemeCueOccurrence[];
+  visualCueOccurrences: VisualCueOccurrence[];
   mainTranslatableCues: Cue[];
   stats: TranslationCueStats;
 }
@@ -192,6 +269,11 @@ interface TranslationCuePlan {
 interface ThemePromptPlan {
   promptCues: TranslationCue[];
   groupByPromptId: Map<string, ThemeSignatureGroup>;
+}
+
+interface VisualPromptPlan {
+  promptCues: TranslationCue[];
+  groupByPromptId: Map<string, VisualSignatureGroup>;
 }
 
 interface BatchedTranslationResult {
@@ -216,14 +298,66 @@ function getCanonicalPlaceholderToken(index: number): string {
   return `${CANONICAL_PLACEHOLDER_PREFIX}${index.toString(36)}${CANONICAL_PLACEHOLDER_SUFFIX}`;
 }
 
-function hasVisibleCueText(cue: Cue): boolean {
-  let visibleText = cue.textSkeleton;
+function getPlaceholderType(placeholder: Cue['placeholders'][number]): string {
+  const match = placeholder.token.match(/^⟦([A-Z]+)_\d+⟧$/);
+  return match?.[1] ?? '';
+}
 
-  for (const placeholder of cue.placeholders) {
-    visibleText = visibleText.split(placeholder.token).join('');
+function isTagOrDrawingPlaceholder(placeholder: Cue['placeholders'][number]): boolean {
+  const type = getPlaceholderType(placeholder);
+  return type === 'TAG' || type === 'DRAW';
+}
+
+function getReadablePlaceholderReplacement(placeholder: Cue['placeholders'][number]): string {
+  switch (getPlaceholderType(placeholder)) {
+    case 'BR':
+    case 'SBR':
+      return '\n';
+    case 'HSP':
+      return ' ';
+    default:
+      return '';
+  }
+}
+
+function normalizeReadablePromptText(value: string): string {
+  return value
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map(line => line.replace(/[^\S\r\n]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function normalizeReadableSignature(value: string): string {
+  return normalizeReadablePromptText(value)
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getReadableTextFromSkeleton(textSkeleton: string, placeholders: Cue['placeholders']): string {
+  let readableText = textSkeleton;
+
+  for (const placeholder of placeholders) {
+    readableText = readableText
+      .split(placeholder.token)
+      .join(getReadablePlaceholderReplacement(placeholder));
   }
 
-  return visibleText.trim().length > 0;
+  return normalizeReadablePromptText(readableText);
+}
+
+function getCueReadableText(cue: Cue): string {
+  return getReadableTextFromSkeleton(cue.textSkeleton, cue.placeholders);
+}
+
+function getCueVisibleText(cue: Cue): string {
+  return normalizeReadableSignature(getCueReadableText(cue));
+}
+
+function hasVisibleCueText(cue: Cue): boolean {
+  return getCueVisibleText(cue).length > 0;
 }
 
 function isAssLikeCue(cue: Cue): boolean {
@@ -253,6 +387,64 @@ function hasThemeStyleKeyword(normalizedStyle: string): boolean {
 
 function getAssStyleTokens(normalizedStyle: string): string[] {
   return normalizedStyle.match(/[a-z0-9]+/g) ?? [];
+}
+
+function getAssThemeStyleLayer(style: string | undefined): AssThemeStyleLayer {
+  const normalizedStyle = normalizeAssValue(style);
+  if (!normalizedStyle) {
+    return 'unknown';
+  }
+
+  const styleTokens = getAssStyleTokens(normalizedStyle);
+  const styleTokenSet = new Set(styleTokens);
+  if (styleTokens.some(token => ASS_STYLE_ROMAJI_LAYER_TOKENS.has(token))) {
+    return 'romaji';
+  }
+
+  if (styleTokenSet.has('zh') && styleTokenSet.has('tw')) {
+    return 'zh-TW';
+  }
+
+  for (const entry of ASS_STYLE_LANGUAGE_LAYER_ALIASES) {
+    if (entry.aliases.some(alias => styleTokenSet.has(alias))) {
+      return entry.code;
+    }
+  }
+
+  return 'unknown';
+}
+
+function isAssAuxiliaryThemeLayer(style: string | undefined): boolean {
+  const normalizedStyle = normalizeAssValue(style);
+  if (!normalizedStyle) {
+    return false;
+  }
+
+  const styleTokens = getAssStyleTokens(normalizedStyle);
+  return styleTokens.some(token =>
+    ASS_STYLE_ROMAJI_LAYER_TOKENS.has(token)
+    || ASS_STYLE_AUXILIARY_SCRIPT_LAYER_TOKENS.has(token)
+  );
+}
+
+function isAssThemeFamilyLayerToken(token: string): boolean {
+  return ASS_STYLE_ROMAJI_LAYER_TOKENS.has(token)
+    || ASS_STYLE_AUXILIARY_SCRIPT_LAYER_TOKENS.has(token)
+    || ASS_STYLE_LANGUAGE_LAYER_TOKENS.has(token)
+    || ASS_STYLE_GENERIC_LAYER_TOKENS.has(token)
+    || /^(?:layer|l)\d+$/.test(token);
+}
+
+function getAssThemeFamilyKey(style: string | undefined): string | null {
+  const normalizedStyle = normalizeAssValue(style);
+  if (!normalizedStyle) {
+    return null;
+  }
+
+  const familyTokens = getAssStyleTokens(normalizedStyle)
+    .filter(token => !isAssThemeFamilyLayerToken(token));
+
+  return familyTokens.length > 0 ? familyTokens.join('-') : null;
 }
 
 function hasShortSongStyleAlias(normalizedStyle: string): boolean {
@@ -289,6 +481,32 @@ function hasNonDialogueVisualStyle(normalizedStyle: string): boolean {
     || styleTokens.some(token => NON_DIALOGUE_VISUAL_STYLE_ALIASES.has(token));
 }
 
+function hasSignStyleToken(normalizedStyle: string): boolean {
+  return getAssStyleTokens(normalizedStyle).some(token => token === 'sign' || token === 'signs');
+}
+
+function hasVisualFormattingPlaceholder(cue: Cue): boolean {
+  return cue.placeholders.some(isTagOrDrawingPlaceholder);
+}
+
+function hasSignVisualStyle(cue: Cue, normalizedStyle: string): boolean {
+  return hasSignStyleToken(normalizedStyle) && hasVisualFormattingPlaceholder(cue);
+}
+
+function hasTypesettingStyleSuffix(style: string | undefined): boolean {
+  const rawStyle = style?.trim() ?? '';
+  if (!rawStyle) {
+    return false;
+  }
+
+  const tokens = rawStyle.match(/[A-Za-z0-9]+/g) ?? [];
+  return tokens.some(token =>
+    token.toLowerCase() === 'ts'
+    || /^TS\d+$/.test(token)
+    || (token.length > 2 && /TS\d*$/.test(token))
+  );
+}
+
 function isAssAnimatedNonDialogueEffectCue(cue: Cue): boolean {
   if (!isAssLikeCue(cue)) {
     return false;
@@ -317,6 +535,40 @@ function isKnownAssStyleForStats(cue: Cue): boolean {
     || styleTokens.some(token => DIALOGUE_STYLE_ALIASES.has(token));
 }
 
+function isAssVisualTextCue(cue: Cue): boolean {
+  if (!isAssLikeCue(cue)) {
+    return false;
+  }
+
+  const normalizedStyle = normalizeAssValue(cue.style);
+  if (!normalizedStyle) {
+    return false;
+  }
+
+  return hasNonDialogueVisualStyle(normalizedStyle)
+    || hasTypesettingStyleSuffix(cue.style)
+    || hasSignVisualStyle(cue, normalizedStyle);
+}
+
+function shouldUsePlainVisualMode(cue: Cue): boolean {
+  const readableText = getCueReadableText(cue);
+  const visibleCharacterCount = Array.from(normalizeReadableSignature(readableText)).length;
+  if (visibleCharacterCount === 0) {
+    return false;
+  }
+
+  const tagOrDrawingPlaceholders = cue.placeholders.filter(isTagOrDrawingPlaceholder);
+  const originalTagOrDrawingChars = tagOrDrawingPlaceholders
+    .reduce((sum, placeholder) => sum + placeholder.original.length, 0);
+  const originalTagOrDrawingRatio = cue.textOriginal.length > 0
+    ? originalTagOrDrawingChars / cue.textOriginal.length
+    : 0;
+
+  return tagOrDrawingPlaceholders.length >= 16
+    || originalTagOrDrawingRatio >= 0.55
+    || (visibleCharacterCount >= 20 && tagOrDrawingPlaceholders.length / visibleCharacterCount >= 0.35);
+}
+
 function countAssDrawingSpanPlaceholders(cue: Cue): number {
   return cue.placeholders.filter(placeholder => placeholder.token.startsWith('⟦DRAW_')).length;
 }
@@ -339,6 +591,94 @@ function isThemeCue(cue: Cue): boolean {
   return hasThemeKeyword || hasLayerThemeKeyword || KARAOKE_TAG_PATTERN.test(cue.textOriginal);
 }
 
+function buildAuxiliaryThemeLayerCueIds(
+  cues: Cue[],
+  sourceLang: LanguageCode,
+  targetLang: LanguageCode
+): Set<string> {
+  const auxiliaryCueIds = new Set<string>();
+
+  const occurrencesByFamily = new Map<string, Array<{
+    cueId: string;
+    layer: AssThemeStyleLayer;
+    isAuxiliary: boolean;
+  }>>();
+
+  for (const cue of cues) {
+    if (!isThemeCue(cue)) {
+      continue;
+    }
+
+    const familyKey = getAssThemeFamilyKey(cue.style);
+    if (!familyKey) {
+      continue;
+    }
+
+    const existing = occurrencesByFamily.get(familyKey) ?? [];
+    existing.push({
+      cueId: cue.id,
+      layer: getAssThemeStyleLayer(cue.style),
+      isAuxiliary: isAssAuxiliaryThemeLayer(cue.style)
+    });
+    occurrencesByFamily.set(familyKey, existing);
+  }
+
+  if (sourceLang === 'auto') {
+    for (const occurrences of occurrencesByFamily.values()) {
+      const sourceCandidateLayers = new Set<ExplicitLanguageCode>();
+
+      for (const occurrence of occurrences) {
+        if (
+          occurrence.layer !== 'unknown'
+          && occurrence.layer !== 'romaji'
+          && occurrence.layer !== targetLang
+          && !occurrence.isAuxiliary
+        ) {
+          sourceCandidateLayers.add(occurrence.layer);
+        }
+      }
+
+      if (sourceCandidateLayers.size !== 1) {
+        const hasTargetLayer = occurrences.some(occurrence => occurrence.layer === targetLang);
+        const hasOnlyTargetAndAuxiliaryLayers = occurrences.every(occurrence =>
+          occurrence.layer === targetLang || occurrence.isAuxiliary
+        );
+
+        if (hasTargetLayer && hasOnlyTargetAndAuxiliaryLayers) {
+          for (const occurrence of occurrences) {
+            auxiliaryCueIds.add(occurrence.cueId);
+          }
+        }
+
+        continue;
+      }
+
+      for (const occurrence of occurrences) {
+        if (occurrence.isAuxiliary || occurrence.layer === targetLang) {
+          auxiliaryCueIds.add(occurrence.cueId);
+        }
+      }
+    }
+
+    return auxiliaryCueIds;
+  }
+
+  for (const occurrences of occurrencesByFamily.values()) {
+    const hasSourceLayer = occurrences.some(occurrence => occurrence.layer === sourceLang);
+    if (!hasSourceLayer) {
+      continue;
+    }
+
+    for (const occurrence of occurrences) {
+      if (occurrence.layer !== sourceLang) {
+        auxiliaryCueIds.add(occurrence.cueId);
+      }
+    }
+  }
+
+  return auxiliaryCueIds;
+}
+
 function classifyCueRole(cue: Cue): CueRole {
   const normalizedStyle = normalizeAssValue(cue.style);
   const isAssLike = isAssLikeCue(cue);
@@ -358,6 +698,10 @@ function classifyCueRole(cue: Cue): CueRole {
 
   if (isThemeCue(cue)) {
     return 'themeCandidate';
+  }
+
+  if (isAssVisualTextCue(cue)) {
+    return 'visualTextCandidate';
   }
 
   return 'mainTranslatable';
@@ -415,6 +759,45 @@ function buildCanonicalThemeTemplate(cue: Cue): ThemeCueOccurrence {
   };
 }
 
+function buildCanonicalVisualTemplate(cue: Cue): VisualCueOccurrence {
+  const placeholderOrder = cue.placeholders.map(placeholder => placeholder.token);
+  let canonicalSkeleton = cue.textSkeleton;
+
+  placeholderOrder.forEach((token, index) => {
+    canonicalSkeleton = canonicalSkeleton.split(token).join(getCanonicalPlaceholderToken(index));
+  });
+
+  return {
+    cue,
+    mode: 'canonicalSkeleton',
+    signature: `canonical:${normalizeThemeSignature(canonicalSkeleton)}`,
+    promptText: canonicalSkeleton,
+    canonicalSkeleton,
+    placeholderOrder
+  };
+}
+
+function buildPlainVisualTemplate(cue: Cue): VisualCueOccurrence {
+  const placeholderOrder = cue.placeholders.map(placeholder => placeholder.token);
+  const readableText = getCueReadableText(cue);
+
+  return {
+    cue,
+    mode: 'plainText',
+    signature: `plain:${normalizeReadableSignature(readableText)}`,
+    promptText: readableText,
+    canonicalSkeleton: cue.textSkeleton,
+    placeholderOrder,
+    readableText
+  };
+}
+
+function buildVisualTemplate(cue: Cue): VisualCueOccurrence {
+  return shouldUsePlainVisualMode(cue)
+    ? buildPlainVisualTemplate(cue)
+    : buildCanonicalVisualTemplate(cue);
+}
+
 function applyCanonicalTranslation(
   translatedCanonicalSkeleton: string,
   placeholderOrder: string[]
@@ -430,15 +813,24 @@ function applyCanonicalTranslation(
   return translatedSkeleton;
 }
 
-function buildTranslationCuePlan(cues: Cue[]): TranslationCuePlan {
+function buildTranslationCuePlan(
+  cues: Cue[],
+  sourceLang: LanguageCode,
+  targetLang: LanguageCode
+): TranslationCuePlan {
   const passthroughCues: TranslatedCue[] = [];
   const themeCueOccurrences: ThemeCueOccurrence[] = [];
+  const visualCueOccurrences: VisualCueOccurrence[] = [];
   const mainTranslatableCues: Cue[] = [];
   const assRoleBreakdownByKey = new Map<string, AssCueRoleBreakdown>();
+  const auxiliaryThemeLayerCueIds = buildAuxiliaryThemeLayerCueIds(cues, sourceLang, targetLang);
 
   let skippedMaskCount = 0;
   let skippedAssSongFxCount = 0;
   let skippedAssAnimatedEffectCount = 0;
+  let skippedAuxiliaryThemeLayerCount = 0;
+  let skippedAutoInferredThemeLayerCount = 0;
+  let plainVisualTextCandidateCues = 0;
   let translatedAssKaraokeCommentCount = 0;
   let protectedAssDrawingSpanCount = 0;
   let retainedUnknownAssStyleCount = 0;
@@ -448,27 +840,48 @@ function buildTranslationCuePlan(cues: Cue[]): TranslationCuePlan {
   for (const cue of cues) {
     totalChars += cue.textSkeleton.length;
     protectedAssDrawingSpanCount += countAssDrawingSpanPlaceholders(cue);
-    const role = classifyCueRole(cue);
+    const classifiedRole = classifyCueRole(cue);
+    const role: CueRole = classifiedRole === 'themeCandidate' && auxiliaryThemeLayerCueIds.has(cue.id)
+      ? 'passthroughAuxiliaryThemeLayer'
+      : classifiedRole;
     recordAssCueRoleBreakdown(assRoleBreakdownByKey, cue, role);
 
-    if (role === 'passthroughNonText') {
+    if (role === 'passthroughNonText' || role === 'passthroughAuxiliaryThemeLayer') {
       const normalizedStyle = normalizeAssValue(cue.style);
-      if (normalizedStyle && NON_TRANSLATABLE_ASS_STYLES.has(normalizedStyle)) {
-        skippedMaskCount += 1;
-      }
+      if (role === 'passthroughNonText') {
+        if (normalizedStyle && NON_TRANSLATABLE_ASS_STYLES.has(normalizedStyle)) {
+          skippedMaskCount += 1;
+        }
 
-      if (isAssSongFxCue(cue) && hasVisibleCueText(cue) && !isAssDrawingCue(cue)) {
-        skippedAssSongFxCount += 1;
-      }
+        if (isAssSongFxCue(cue) && hasVisibleCueText(cue) && !isAssDrawingCue(cue)) {
+          skippedAssSongFxCount += 1;
+        }
 
-      if (isAssAnimatedNonDialogueEffectCue(cue) && hasVisibleCueText(cue) && !isAssDrawingCue(cue)) {
-        skippedAssAnimatedEffectCount += 1;
+        if (isAssAnimatedNonDialogueEffectCue(cue) && hasVisibleCueText(cue) && !isAssDrawingCue(cue)) {
+          skippedAssAnimatedEffectCount += 1;
+        }
+      } else {
+        skippedAuxiliaryThemeLayerCount += 1;
+        if (sourceLang === 'auto') {
+          skippedAutoInferredThemeLayerCount += 1;
+        }
       }
 
       passthroughCues.push({
         id: cue.id,
         translatedText: cue.textSkeleton
       });
+      continue;
+    }
+
+    if (role === 'visualTextCandidate') {
+      const visualOccurrence = buildVisualTemplate(cue);
+      if (visualOccurrence.mode === 'plainText') {
+        plainVisualTextCandidateCues += 1;
+      }
+
+      retainedChars += visualOccurrence.promptText.length;
+      visualCueOccurrences.push(visualOccurrence);
       continue;
     }
 
@@ -490,7 +903,7 @@ function buildTranslationCuePlan(cues: Cue[]): TranslationCuePlan {
     mainTranslatableCues.push(cue);
   }
 
-  const passthroughCount = cues.length - (themeCueOccurrences.length + mainTranslatableCues.length);
+  const passthroughCount = cues.length - (themeCueOccurrences.length + visualCueOccurrences.length + mainTranslatableCues.length);
   const estimatedReductionPct = totalChars > 0
     ? Math.round(((totalChars - retainedChars) * 10000) / totalChars) / 100
     : 0;
@@ -498,15 +911,20 @@ function buildTranslationCuePlan(cues: Cue[]): TranslationCuePlan {
   return {
     passthroughCues,
     themeCueOccurrences,
+    visualCueOccurrences,
     mainTranslatableCues,
     stats: {
       totalCues: cues.length,
       passthroughCues: passthroughCount,
       themeCandidateCues: themeCueOccurrences.length,
+      visualTextCandidateCues: visualCueOccurrences.length,
+      plainVisualTextCandidateCues,
       mainTranslatableCues: mainTranslatableCues.length,
       skippedMaskCount,
       skippedAssSongFxCount,
       skippedAssAnimatedEffectCount,
+      skippedAuxiliaryThemeLayerCount,
+      skippedAutoInferredThemeLayerCount,
       translatedAssKaraokeCommentCount,
       protectedAssDrawingSpanCount,
       retainedUnknownAssStyleCount,
@@ -531,6 +949,28 @@ function groupThemeCueOccurrencesBySignature(occurrences: ThemeCueOccurrence[]):
 
     groups.set(occurrence.signature, {
       signature: occurrence.signature,
+      canonicalSkeleton: occurrence.canonicalSkeleton,
+      occurrences: [occurrence]
+    });
+  }
+
+  return Array.from(groups.values());
+}
+
+function groupVisualCueOccurrencesBySignature(occurrences: VisualCueOccurrence[]): VisualSignatureGroup[] {
+  const groups = new Map<string, VisualSignatureGroup>();
+
+  for (const occurrence of occurrences) {
+    const existing = groups.get(occurrence.signature);
+    if (existing) {
+      existing.occurrences.push(occurrence);
+      continue;
+    }
+
+    groups.set(occurrence.signature, {
+      mode: occurrence.mode,
+      signature: occurrence.signature,
+      promptText: occurrence.promptText,
       canonicalSkeleton: occurrence.canonicalSkeleton,
       occurrences: [occurrence]
     });
@@ -576,6 +1016,147 @@ function expandThemeGroupTranslation(
       occurrence.placeholderOrder
     )
   }));
+}
+
+interface VisualExpansionResult {
+  cues: TranslatedCue[];
+  unresolvedCues: Cue[];
+  fallbackCount: number;
+}
+
+function getCanonicalPlaceholderTokens(value: string): string[] {
+  return value.match(/~p[0-9a-z]+:/g) ?? [];
+}
+
+function hasExpectedCanonicalPlaceholders(
+  translatedCanonicalSkeleton: string,
+  expectedCanonicalSkeleton: string
+): boolean {
+  const expectedTokens = getCanonicalPlaceholderTokens(expectedCanonicalSkeleton);
+  const translatedTokens = getCanonicalPlaceholderTokens(translatedCanonicalSkeleton);
+
+  return expectedTokens.length === translatedTokens.length
+    && expectedTokens.every((token, index) => translatedTokens[index] === token);
+}
+
+function splitSkeletonSegments(textSkeleton: string): Array<{ kind: 'text' | 'placeholder'; value: string }> {
+  const segments: Array<{ kind: 'text' | 'placeholder'; value: string }> = [];
+  const placeholderPattern = /⟦[A-Z]+_\d+⟧/g;
+  let cursor = 0;
+
+  for (const match of textSkeleton.matchAll(placeholderPattern)) {
+    const index = match.index ?? 0;
+    if (index > cursor) {
+      segments.push({ kind: 'text', value: textSkeleton.slice(cursor, index) });
+    }
+
+    segments.push({ kind: 'placeholder', value: match[0] });
+    cursor = index + match[0].length;
+  }
+
+  if (cursor < textSkeleton.length) {
+    segments.push({ kind: 'text', value: textSkeleton.slice(cursor) });
+  }
+
+  return segments;
+}
+
+function projectPlainTranslationIntoSkeleton(occurrence: VisualCueOccurrence, translatedPlainText: string): string {
+  if (normalizeReadableSignature(translatedPlainText) === normalizeReadableSignature(occurrence.readableText ?? '')) {
+    return occurrence.cue.textSkeleton;
+  }
+
+  const segments = splitSkeletonSegments(occurrence.cue.textSkeleton);
+  const textSegmentIndexes = segments
+    .map((segment, index) => ({ segment, index }))
+    .filter(({ segment }) => segment.kind === 'text' && segment.value.trim().length > 0);
+
+  if (textSegmentIndexes.length === 0) {
+    return occurrence.cue.textSkeleton;
+  }
+
+  const readableTranslation = normalizeReadablePromptText(translatedPlainText);
+
+  textSegmentIndexes.forEach(({ segment, index }, replacementIndex) => {
+    segments[index] = {
+      kind: 'text',
+      value: replacementIndex === 0
+        ? `${segment.value.match(/^\s*/)?.[0] ?? ''}${readableTranslation}${segment.value.match(/\s*$/)?.[0] ?? ''}`
+        : ''
+    };
+  });
+
+  return segments.map(segment => segment.value).join('');
+}
+
+function buildPlainVisualTranslatedCue(
+  occurrence: VisualCueOccurrence,
+  translatedPlainText: string
+): { cue: TranslatedCue | null; usedFallback: boolean } {
+  const translatedText = projectPlainTranslationIntoSkeleton(occurrence, translatedPlainText);
+  const translatedCue = {
+    id: occurrence.cue.id,
+    translatedText
+  };
+  const validation = validateTranslation([occurrence.cue], [translatedCue]);
+  const projectedReadableText = getReadableTextFromSkeleton(translatedText, occurrence.cue.placeholders);
+  const expectedReadableText = normalizeReadableSignature(translatedPlainText);
+
+  if (
+    validation.valid
+    && expectedReadableText.length > 0
+    && normalizeReadableSignature(projectedReadableText) === expectedReadableText
+  ) {
+    return { cue: translatedCue, usedFallback: false };
+  }
+
+  return { cue: null, usedFallback: true };
+}
+
+function expandVisualGroupTranslation(
+  group: VisualSignatureGroup,
+  translatedPromptText: string
+): VisualExpansionResult {
+  if (group.mode === 'canonicalSkeleton') {
+    if (!hasExpectedCanonicalPlaceholders(translatedPromptText, group.canonicalSkeleton)) {
+      return {
+        cues: [],
+        unresolvedCues: group.occurrences.map(occurrence => occurrence.cue),
+        fallbackCount: group.occurrences.length
+      };
+    }
+
+    return {
+      cues: group.occurrences.map(occurrence => ({
+        id: occurrence.cue.id,
+        translatedText: applyCanonicalTranslation(
+          translatedPromptText,
+          occurrence.placeholderOrder
+        )
+      })),
+      unresolvedCues: [],
+      fallbackCount: 0
+    };
+  }
+
+  let fallbackCount = 0;
+  const cues: TranslatedCue[] = [];
+  const unresolvedCues: Cue[] = [];
+
+  for (const occurrence of group.occurrences) {
+    const translatedCue = buildPlainVisualTranslatedCue(occurrence, translatedPromptText);
+    if (translatedCue.usedFallback) {
+      fallbackCount += 1;
+      unresolvedCues.push(occurrence.cue);
+      continue;
+    }
+
+    if (translatedCue.cue) {
+      cues.push(translatedCue.cue);
+    }
+  }
+
+  return { cues, unresolvedCues, fallbackCount };
 }
 
 /**
@@ -640,6 +1221,22 @@ function buildThemePromptPlan(groups: ThemeSignatureGroup[]): ThemePromptPlan {
   return { promptCues, groupByPromptId };
 }
 
+function buildVisualPromptPlan(groups: VisualSignatureGroup[]): VisualPromptPlan {
+  const promptCues: TranslationCue[] = [];
+  const groupByPromptId = new Map<string, VisualSignatureGroup>();
+
+  groups.forEach((group, index) => {
+    const promptId = `VISUAL_${index.toString(36)}`;
+    promptCues.push({
+      id: promptId,
+      text: group.promptText
+    });
+    groupByPromptId.set(promptId, group);
+  });
+
+  return { promptCues, groupByPromptId };
+}
+
 /**
  * Build user prompt with translation request
  */
@@ -664,10 +1261,11 @@ export function buildFullPromptForTokenCount(
     return TRANSLATION_SYSTEM_PROMPT + '\n\n' + content;
   }
 
-  const cuePlan = buildTranslationCuePlan(parsed.cues);
+  const cuePlan = buildTranslationCuePlan(parsed.cues, sourceLang, targetLang);
   const promptParts: string[] = [];
 
   const themeGroups = groupThemeCueOccurrencesBySignature(cuePlan.themeCueOccurrences);
+  const visualGroups = groupVisualCueOccurrencesBySignature(cuePlan.visualCueOccurrences);
   if (themeGroups.length > 0) {
     const themeRequest = buildTranslationRequest(
       buildThemePromptPlan(themeGroups).promptCues,
@@ -675,6 +1273,15 @@ export function buildFullPromptForTokenCount(
       targetLang
     );
     promptParts.push(`${TRANSLATION_SYSTEM_PROMPT}\n\n${buildUserPrompt(themeRequest)}`);
+  }
+
+  if (visualGroups.length > 0) {
+    const visualRequest = buildTranslationRequest(
+      buildVisualPromptPlan(visualGroups).promptCues,
+      sourceLang,
+      targetLang
+    );
+    promptParts.push(`${TRANSLATION_SYSTEM_PROMPT}\n\n${buildUserPrompt(visualRequest)}`);
   }
 
   if (cuePlan.mainTranslatableCues.length > 0) {
@@ -1246,14 +1853,15 @@ export async function translateSubtitle(
 
     reportProgress({ progress: 10, currentBatch: 0, totalBatches: 0 });
 
-    const cuePlan = buildTranslationCuePlan(parsed.cues);
+    const cuePlan = buildTranslationCuePlan(parsed.cues, sourceLang, targetLang);
     const themeGroups = groupThemeCueOccurrencesBySignature(cuePlan.themeCueOccurrences);
+    const visualGroups = groupVisualCueOccurrencesBySignature(cuePlan.visualCueOccurrences);
 
     log(
       'info',
       'translation',
       'Prepared cues for translation',
-      `Retained ${cuePlan.stats.themeCandidateCues + cuePlan.stats.mainTranslatableCues}/${cuePlan.stats.totalCues} text cues. Theme candidates: ${cuePlan.stats.themeCandidateCues}. Main cues: ${cuePlan.stats.mainTranslatableCues}. Passthrough: ${cuePlan.stats.passthroughCues} (${cuePlan.stats.skippedMaskCount} mask cues, ${cuePlan.stats.skippedAssSongFxCount} ASS song FX cues, ${cuePlan.stats.skippedAssAnimatedEffectCount} animated effect cues). Hidden karaoke comments translated: ${cuePlan.stats.translatedAssKaraokeCommentCount}. Drawing spans protected: ${cuePlan.stats.protectedAssDrawingSpanCount}. Unknown ASS styles retained: ${cuePlan.stats.retainedUnknownAssStyleCount}. Estimated non-text reduction: ${cuePlan.stats.estimatedReductionPct}% (${cuePlan.stats.retainedChars}/${cuePlan.stats.totalChars} chars retained). ASS role breakdown: ${formatAssRoleBreakdownForLog(cuePlan.stats.assRoleBreakdown)}.`,
+      `Retained ${cuePlan.stats.themeCandidateCues + cuePlan.stats.visualTextCandidateCues + cuePlan.stats.mainTranslatableCues}/${cuePlan.stats.totalCues} text cues. Theme candidates: ${cuePlan.stats.themeCandidateCues}. Visual text candidates: ${cuePlan.stats.visualTextCandidateCues} across ${visualGroups.length} unique prompt group(s), ${cuePlan.stats.plainVisualTextCandidateCues} plain readable occurrence(s). Main cues: ${cuePlan.stats.mainTranslatableCues}. Passthrough: ${cuePlan.stats.passthroughCues} (${cuePlan.stats.skippedMaskCount} mask cues, ${cuePlan.stats.skippedAssSongFxCount} ASS song FX cues, ${cuePlan.stats.skippedAssAnimatedEffectCount} animated effect cues, ${cuePlan.stats.skippedAuxiliaryThemeLayerCount} auxiliary theme layer cues, ${cuePlan.stats.skippedAutoInferredThemeLayerCount} auto-inferred auxiliary theme layer cues). Hidden karaoke comments translated: ${cuePlan.stats.translatedAssKaraokeCommentCount}. Drawing spans protected: ${cuePlan.stats.protectedAssDrawingSpanCount}. Unknown ASS styles retained: ${cuePlan.stats.retainedUnknownAssStyleCount}. Estimated non-text reduction: ${cuePlan.stats.estimatedReductionPct}% (${cuePlan.stats.retainedChars}/${cuePlan.stats.totalChars} chars retained). ASS role breakdown: ${formatAssRoleBreakdownForLog(cuePlan.stats.assRoleBreakdown)}.`,
       logContext
     );
 
@@ -1268,7 +1876,9 @@ export async function translateSubtitle(
 
     const totalUsage: LlmUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     const translatedThemeCues: TranslatedCue[] = [];
+    const translatedVisualCues: TranslatedCue[] = [];
     const unresolvedThemeCues: Cue[] = [];
+    const unresolvedVisualCues: Cue[] = [];
     const scopeKey = getTranslationMemoryScopeKey(file.path);
 
     if (themeGroups.length > 0) {
@@ -1479,14 +2089,94 @@ export async function translateSubtitle(
       return buildCancelledResult(file);
     }
 
-    const mainPhaseCues = [...cuePlan.mainTranslatableCues, ...unresolvedThemeCues];
+    if (visualGroups.length > 0) {
+      log(
+        'info',
+        'translation',
+        'Visual text preflight started',
+        `Processing ${cuePlan.visualCueOccurrences.length} ASS visual text occurrence(s) across ${visualGroups.length} unique signature(s). Plain readable visual text occurrences: ${cuePlan.stats.plainVisualTextCandidateCues}. Scope: ${scopeKey}`,
+        logContext
+      );
+
+      const visualPromptPlan = buildVisualPromptPlan(visualGroups);
+      const visualResult = await translatePromptCueBatches({
+        promptCues: visualPromptPlan.promptCues,
+        provider,
+        apiKey,
+        model,
+        sourceLang,
+        targetLang,
+        batchCount,
+        batchConcurrency,
+        signal,
+        logContext,
+        reportProgress,
+        progressStart: 30,
+        progressEnd: 40,
+        phaseLabel: 'Visual text preflight',
+        allowPartial: true
+      });
+
+      if (visualResult.cancelled) {
+        return buildCancelledResult(file);
+      }
+
+      addUsage(totalUsage, visualResult.usage);
+
+      const resolvedVisualPromptIds = new Set<string>();
+      let invalidVisualCueCount = 0;
+      let invalidVisualGroupCount = 0;
+      for (const translatedCue of visualResult.cues) {
+        const group = visualPromptPlan.groupByPromptId.get(translatedCue.id);
+        if (!group) {
+          continue;
+        }
+
+        resolvedVisualPromptIds.add(translatedCue.id);
+        const expandedVisualGroup = expandVisualGroupTranslation(group, translatedCue.translatedText);
+        invalidVisualCueCount += expandedVisualGroup.fallbackCount;
+        if (expandedVisualGroup.unresolvedCues.length > 0) {
+          invalidVisualGroupCount += 1;
+        }
+
+        translatedVisualCues.push(...expandedVisualGroup.cues);
+        unresolvedVisualCues.push(...expandedVisualGroup.unresolvedCues);
+      }
+
+      const unresolvedVisualGroups: VisualSignatureGroup[] = [];
+      for (const [promptId, group] of visualPromptPlan.groupByPromptId.entries()) {
+        if (!resolvedVisualPromptIds.has(promptId)) {
+          unresolvedVisualGroups.push(group);
+          unresolvedVisualCues.push(...group.occurrences.map(occurrence => occurrence.cue));
+        }
+      }
+
+      const unresolvedVisualGroupCount = unresolvedVisualGroups.length + invalidVisualGroupCount;
+      if (unresolvedVisualGroupCount > 0 || visualResult.error) {
+        log(
+          'warning',
+          'translation',
+          'Visual text preflight incomplete',
+          `Resolved ${visualGroups.length - unresolvedVisualGroupCount}/${visualGroups.length} ASS visual text signature(s). Unresolved or invalid visual text cues will retry in the main translation phase. Retry visual cues: ${unresolvedVisualCues.length}. Invalid visual cues: ${invalidVisualCueCount}.${visualResult.error ? `\n\nError: ${visualResult.error}` : ''}`,
+          logContext
+        );
+      }
+    } else {
+      reportProgress({ progress: 40, currentBatch: 0, totalBatches: 0 });
+    }
+
+    if (signal?.aborted) {
+      return buildCancelledResult(file);
+    }
+
+    const mainPhaseCues = [...cuePlan.mainTranslatableCues, ...unresolvedThemeCues, ...unresolvedVisualCues];
     let translatedMainCues: TranslatedCue[] = [];
 
     log(
       'info',
       'translation',
       'Main translation started',
-      `Sending ${mainPhaseCues.length} cue(s) to the main translation phase. Theme cues resolved before main pass: ${translatedThemeCues.length}. Theme fallback cues: ${unresolvedThemeCues.length}. Scope: ${scopeKey}`,
+      `Sending ${mainPhaseCues.length} cue(s) to the main translation phase. Theme cues resolved before main pass: ${translatedThemeCues.length}. Theme fallback cues: ${unresolvedThemeCues.length}. Visual retry cues: ${unresolvedVisualCues.length}. Scope: ${scopeKey}`,
       logContext
     );
 
@@ -1503,7 +2193,7 @@ export async function translateSubtitle(
         signal,
         logContext,
         reportProgress,
-        progressStart: 35,
+        progressStart: 45,
         progressEnd: 85,
         phaseLabel: 'Main translation',
         allowPartial: false
@@ -1533,6 +2223,7 @@ export async function translateSubtitle(
 
     const allTranslatedCues: TranslatedCue[] = [
       ...translatedThemeCues,
+      ...translatedVisualCues,
       ...translatedMainCues,
       ...cuePlan.passthroughCues
     ];

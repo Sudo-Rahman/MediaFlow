@@ -193,6 +193,36 @@ describe('OcrTimeline seek interactions', () => {
     })).toEqual({ direction: 0, pressure: 0 });
   });
 
+  it('keeps narrow-track auto-pan edges from overlapping', () => {
+    expect(getOcrTimelineAutoPanIntent({
+      pointerClientX: 50,
+      trackLeft: 0,
+      trackWidth: 100,
+      viewportWindowMs: 30_000,
+      durationMs: 120_000,
+    })).toEqual({ direction: 0, pressure: 0 });
+
+    const leftIntent = getOcrTimelineAutoPanIntent({
+      pointerClientX: 10,
+      trackLeft: 0,
+      trackWidth: 100,
+      viewportWindowMs: 30_000,
+      durationMs: 120_000,
+    });
+    expect(leftIntent.direction).toBe(-1);
+    expect(leftIntent.pressure).toBeGreaterThan(0);
+
+    const rightIntent = getOcrTimelineAutoPanIntent({
+      pointerClientX: 90,
+      trackLeft: 0,
+      trackWidth: 100,
+      viewportWindowMs: 30_000,
+      durationMs: 120_000,
+    });
+    expect(rightIntent.direction).toBe(1);
+    expect(rightIntent.pressure).toBeGreaterThan(0);
+  });
+
   it('does not auto-pan when the full duration is already visible', () => {
     expect(getOcrTimelineAutoPanIntent({
       pointerClientX: 20,

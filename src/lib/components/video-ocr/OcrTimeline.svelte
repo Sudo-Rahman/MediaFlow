@@ -205,7 +205,7 @@
       return { direction: 0, pressure: 0 };
     }
 
-    const edgeWidth = getOcrTimelineAutoPanEdgeWidth(trackWidth);
+    const edgeWidth = Math.min(getOcrTimelineAutoPanEdgeWidth(trackWidth), trackWidth / 2);
     const pointerX = Number.isFinite(input.pointerClientX) ? input.pointerClientX : input.trackLeft;
     const localX = pointerX - input.trackLeft;
 

@@ -874,10 +874,9 @@
       return;
     }
 
-    if (videoEl.paused) {
-      if (seekSession.targetMatches(videoEl.currentTime)) {
-        finishSeekSession(videoEl.currentTime, true, activeSeekToken);
-      }
+    const confirmedTimeSeconds = seekSession.resolveNativeSeekedTime(videoEl.currentTime);
+    if (confirmedTimeSeconds !== null) {
+      finishSeekSession(confirmedTimeSeconds, true, activeSeekToken);
       return;
     }
 

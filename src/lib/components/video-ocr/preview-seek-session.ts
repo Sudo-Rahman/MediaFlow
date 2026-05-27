@@ -15,6 +15,7 @@ export interface PreviewSeekSession {
   complete: () => PreviewSeekCompletion;
   clear: () => void;
   resolvePlaybackFrame: (timeSeconds: number) => PreviewSeekFrameAction;
+  resolveNativeSeekedTime: (timeSeconds: number) => number | null;
   targetMatches: (timeSeconds: number) => boolean;
 }
 
@@ -97,6 +98,14 @@ export function createPreviewSeekSession(): PreviewSeekSession {
       }
 
       return targetMatches(timeSeconds) ? 'complete' : 'suppress';
+    },
+
+    resolveNativeSeekedTime(timeSeconds: number): number | null {
+      if (mode !== 'committing' || pendingTargetTimeSeconds === null) {
+        return null;
+      }
+
+      return Number.isFinite(timeSeconds) ? normalizeTimeSeconds(timeSeconds) : pendingTargetTimeSeconds;
     },
 
     targetMatches,

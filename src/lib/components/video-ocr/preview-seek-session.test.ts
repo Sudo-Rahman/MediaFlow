@@ -71,6 +71,31 @@ describe('preview seek session', () => {
     expect(session.resolvePlaybackFrame(80.2)).toBe('suppress');
   });
 
+  it('accepts native seeked completion for committed seeks outside playback frame tolerance', () => {
+    const session = createPreviewSeekSession();
+
+    session.startCommit(80);
+
+    expect(session.resolvePlaybackFrame(80.2)).toBe('suppress');
+    expect(session.resolveNativeSeekedTime(80.2)).toBe(80.2);
+  });
+
+  it('does not complete scrub previews from native seeked events', () => {
+    const session = createPreviewSeekSession();
+
+    session.startScrub(80, true);
+
+    expect(session.resolveNativeSeekedTime(80)).toBeNull();
+  });
+
+  it('falls back to the pending target when native seeked time is invalid', () => {
+    const session = createPreviewSeekSession();
+
+    session.startCommit(80);
+
+    expect(session.resolveNativeSeekedTime(Number.NaN)).toBe(80);
+  });
+
   it('returns the pending target when completed', () => {
     const session = createPreviewSeekSession();
 

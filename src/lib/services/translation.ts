@@ -142,7 +142,58 @@ const KARAOKE_TAG_PATTERN = /\\(?:k|K|kf|ko)\d+/;
 const CANONICAL_PLACEHOLDER_PREFIX = '~p';
 const CANONICAL_PLACEHOLDER_SUFFIX = ':';
 
-type CueRole = 'passthroughNonText' | 'themeCandidate' | 'visualTextCandidate' | 'mainTranslatable';
+type ExplicitLanguageCode = Exclude<LanguageCode, 'auto'>;
+type AssThemeStyleLayer = ExplicitLanguageCode | 'romaji' | 'unknown';
+type CueRole = 'passthroughNonText' | 'passthroughAuxiliaryThemeLayer' | 'themeCandidate' | 'visualTextCandidate' | 'mainTranslatable';
+
+const ASS_STYLE_ROMAJI_LAYER_TOKENS = new Set(['romaji', 'romanji', 'roumaji', 'roma', 'romanized']);
+const ASS_STYLE_GENERIC_LAYER_TOKENS = new Set([
+  'translation',
+  'translated',
+  'trans',
+  'tl',
+  'layer',
+  'top',
+  'bottom',
+  'upper',
+  'lower',
+  'fx',
+  'kfx'
+]);
+const ASS_STYLE_LANGUAGE_LAYER_ALIASES: Array<{ code: ExplicitLanguageCode; aliases: readonly string[] }> = [
+  { code: 'en', aliases: ['english', 'eng', 'en'] },
+  { code: 'fr', aliases: ['french', 'francais', 'français', 'fra', 'fre', 'fr'] },
+  { code: 'es', aliases: ['spanish', 'espanol', 'español', 'esp', 'es'] },
+  { code: 'de', aliases: ['german', 'deutsch', 'ger', 'de'] },
+  { code: 'it', aliases: ['italian', 'italiano', 'ita', 'it'] },
+  { code: 'pt', aliases: ['portuguese', 'portugues', 'português', 'por', 'pt', 'br', 'brazilian', 'brasileiro', 'ptbr'] },
+  { code: 'ru', aliases: ['russian', 'rus', 'ru'] },
+  { code: 'ja', aliases: ['japanese', 'jap', 'jpn', 'jp', 'ja', 'kanji', 'kana', 'hiragana', 'katakana', 'hira', 'kata', 'nihongo'] },
+  { code: 'ko', aliases: ['korean', 'kor', 'ko', 'kr', 'hangul'] },
+  { code: 'zh-TW', aliases: ['zhtw', 'tw', 'cht', 'hant', 'traditional'] },
+  { code: 'zh', aliases: ['chinese', 'mandarin', 'cn', 'zh', 'zhs', 'hans', 'simplified'] },
+  { code: 'ar', aliases: ['arabic', 'ara', 'ar'] },
+  { code: 'hi', aliases: ['hindi', 'hin', 'hi'] },
+  { code: 'nl', aliases: ['dutch', 'nederlands', 'nl'] },
+  { code: 'pl', aliases: ['polish', 'polski', 'pol', 'pl'] },
+  { code: 'tr', aliases: ['turkish', 'turk', 'tr'] },
+  { code: 'vi', aliases: ['vietnamese', 'viet', 'vi'] },
+  { code: 'th', aliases: ['thai', 'th'] },
+  { code: 'id', aliases: ['indonesian', 'indonesia', 'id'] },
+  { code: 'sv', aliases: ['swedish', 'swe', 'sv'] },
+  { code: 'da', aliases: ['danish', 'dan', 'da'] },
+  { code: 'no', aliases: ['norwegian', 'nor', 'no'] },
+  { code: 'fi', aliases: ['finnish', 'fin', 'fi'] },
+  { code: 'cs', aliases: ['czech', 'cesky', 'cz', 'cs'] },
+  { code: 'ro', aliases: ['romanian', 'ron', 'ro'] },
+  { code: 'hu', aliases: ['hungarian', 'hun', 'hu'] },
+  { code: 'el', aliases: ['greek', 'ell', 'el', 'gr'] },
+  { code: 'he', aliases: ['hebrew', 'heb', 'he'] },
+  { code: 'uk', aliases: ['ukrainian', 'ukr', 'uk'] },
+];
+const ASS_STYLE_LANGUAGE_LAYER_TOKENS = new Set(
+  ASS_STYLE_LANGUAGE_LAYER_ALIASES.flatMap(entry => entry.aliases)
+);
 
 interface AssCueRoleBreakdown {
   eventType: string;
@@ -162,6 +213,7 @@ interface TranslationCueStats {
   skippedMaskCount: number;
   skippedAssSongFxCount: number;
   skippedAssAnimatedEffectCount: number;
+  skippedAuxiliaryThemeLayerCount: number;
   translatedAssKaraokeCommentCount: number;
   protectedAssDrawingSpanCount: number;
   retainedUnknownAssStyleCount: number;
@@ -335,6 +387,50 @@ function getAssStyleTokens(normalizedStyle: string): string[] {
   return normalizedStyle.match(/[a-z0-9]+/g) ?? [];
 }
 
+function getAssThemeStyleLayer(style: string | undefined): AssThemeStyleLayer {
+  const normalizedStyle = normalizeAssValue(style);
+  if (!normalizedStyle) {
+    return 'unknown';
+  }
+
+  const styleTokens = getAssStyleTokens(normalizedStyle);
+  const styleTokenSet = new Set(styleTokens);
+  if (styleTokens.some(token => ASS_STYLE_ROMAJI_LAYER_TOKENS.has(token))) {
+    return 'romaji';
+  }
+
+  if (styleTokenSet.has('zh') && styleTokenSet.has('tw')) {
+    return 'zh-TW';
+  }
+
+  for (const entry of ASS_STYLE_LANGUAGE_LAYER_ALIASES) {
+    if (entry.aliases.some(alias => styleTokenSet.has(alias))) {
+      return entry.code;
+    }
+  }
+
+  return 'unknown';
+}
+
+function isAssThemeFamilyLayerToken(token: string): boolean {
+  return ASS_STYLE_ROMAJI_LAYER_TOKENS.has(token)
+    || ASS_STYLE_LANGUAGE_LAYER_TOKENS.has(token)
+    || ASS_STYLE_GENERIC_LAYER_TOKENS.has(token)
+    || /^(?:layer|l)\d+$/.test(token);
+}
+
+function getAssThemeFamilyKey(style: string | undefined): string | null {
+  const normalizedStyle = normalizeAssValue(style);
+  if (!normalizedStyle) {
+    return null;
+  }
+
+  const familyTokens = getAssStyleTokens(normalizedStyle)
+    .filter(token => !isAssThemeFamilyLayerToken(token));
+
+  return familyTokens.length > 0 ? familyTokens.join('-') : null;
+}
+
 function hasShortSongStyleAlias(normalizedStyle: string): boolean {
   const styleTokens = normalizedStyle.match(/[a-z0-9]+/g) ?? [];
   return styleTokens.some(token => SHORT_SONG_STYLE_ALIASES.has(token));
@@ -479,6 +575,48 @@ function isThemeCue(cue: Cue): boolean {
   return hasThemeKeyword || hasLayerThemeKeyword || KARAOKE_TAG_PATTERN.test(cue.textOriginal);
 }
 
+function buildAuxiliaryThemeLayerCueIds(cues: Cue[], sourceLang: LanguageCode): Set<string> {
+  const auxiliaryCueIds = new Set<string>();
+  if (sourceLang === 'auto') {
+    return auxiliaryCueIds;
+  }
+
+  const occurrencesByFamily = new Map<string, Array<{ cueId: string; layer: AssThemeStyleLayer }>>();
+
+  for (const cue of cues) {
+    if (!isThemeCue(cue)) {
+      continue;
+    }
+
+    const familyKey = getAssThemeFamilyKey(cue.style);
+    if (!familyKey) {
+      continue;
+    }
+
+    const existing = occurrencesByFamily.get(familyKey) ?? [];
+    existing.push({
+      cueId: cue.id,
+      layer: getAssThemeStyleLayer(cue.style)
+    });
+    occurrencesByFamily.set(familyKey, existing);
+  }
+
+  for (const occurrences of occurrencesByFamily.values()) {
+    const hasSourceLayer = occurrences.some(occurrence => occurrence.layer === sourceLang);
+    if (!hasSourceLayer) {
+      continue;
+    }
+
+    for (const occurrence of occurrences) {
+      if (occurrence.layer !== sourceLang) {
+        auxiliaryCueIds.add(occurrence.cueId);
+      }
+    }
+  }
+
+  return auxiliaryCueIds;
+}
+
 function classifyCueRole(cue: Cue): CueRole {
   const normalizedStyle = normalizeAssValue(cue.style);
   const isAssLike = isAssLikeCue(cue);
@@ -613,16 +751,18 @@ function applyCanonicalTranslation(
   return translatedSkeleton;
 }
 
-function buildTranslationCuePlan(cues: Cue[]): TranslationCuePlan {
+function buildTranslationCuePlan(cues: Cue[], sourceLang: LanguageCode): TranslationCuePlan {
   const passthroughCues: TranslatedCue[] = [];
   const themeCueOccurrences: ThemeCueOccurrence[] = [];
   const visualCueOccurrences: VisualCueOccurrence[] = [];
   const mainTranslatableCues: Cue[] = [];
   const assRoleBreakdownByKey = new Map<string, AssCueRoleBreakdown>();
+  const auxiliaryThemeLayerCueIds = buildAuxiliaryThemeLayerCueIds(cues, sourceLang);
 
   let skippedMaskCount = 0;
   let skippedAssSongFxCount = 0;
   let skippedAssAnimatedEffectCount = 0;
+  let skippedAuxiliaryThemeLayerCount = 0;
   let plainVisualTextCandidateCues = 0;
   let translatedAssKaraokeCommentCount = 0;
   let protectedAssDrawingSpanCount = 0;
@@ -633,21 +773,28 @@ function buildTranslationCuePlan(cues: Cue[]): TranslationCuePlan {
   for (const cue of cues) {
     totalChars += cue.textSkeleton.length;
     protectedAssDrawingSpanCount += countAssDrawingSpanPlaceholders(cue);
-    const role = classifyCueRole(cue);
+    const classifiedRole = classifyCueRole(cue);
+    const role: CueRole = classifiedRole === 'themeCandidate' && auxiliaryThemeLayerCueIds.has(cue.id)
+      ? 'passthroughAuxiliaryThemeLayer'
+      : classifiedRole;
     recordAssCueRoleBreakdown(assRoleBreakdownByKey, cue, role);
 
-    if (role === 'passthroughNonText') {
+    if (role === 'passthroughNonText' || role === 'passthroughAuxiliaryThemeLayer') {
       const normalizedStyle = normalizeAssValue(cue.style);
-      if (normalizedStyle && NON_TRANSLATABLE_ASS_STYLES.has(normalizedStyle)) {
-        skippedMaskCount += 1;
-      }
+      if (role === 'passthroughNonText') {
+        if (normalizedStyle && NON_TRANSLATABLE_ASS_STYLES.has(normalizedStyle)) {
+          skippedMaskCount += 1;
+        }
 
-      if (isAssSongFxCue(cue) && hasVisibleCueText(cue) && !isAssDrawingCue(cue)) {
-        skippedAssSongFxCount += 1;
-      }
+        if (isAssSongFxCue(cue) && hasVisibleCueText(cue) && !isAssDrawingCue(cue)) {
+          skippedAssSongFxCount += 1;
+        }
 
-      if (isAssAnimatedNonDialogueEffectCue(cue) && hasVisibleCueText(cue) && !isAssDrawingCue(cue)) {
-        skippedAssAnimatedEffectCount += 1;
+        if (isAssAnimatedNonDialogueEffectCue(cue) && hasVisibleCueText(cue) && !isAssDrawingCue(cue)) {
+          skippedAssAnimatedEffectCount += 1;
+        }
+      } else {
+        skippedAuxiliaryThemeLayerCount += 1;
       }
 
       passthroughCues.push({
@@ -706,6 +853,7 @@ function buildTranslationCuePlan(cues: Cue[]): TranslationCuePlan {
       skippedMaskCount,
       skippedAssSongFxCount,
       skippedAssAnimatedEffectCount,
+      skippedAuxiliaryThemeLayerCount,
       translatedAssKaraokeCommentCount,
       protectedAssDrawingSpanCount,
       retainedUnknownAssStyleCount,
@@ -1042,7 +1190,7 @@ export function buildFullPromptForTokenCount(
     return TRANSLATION_SYSTEM_PROMPT + '\n\n' + content;
   }
 
-  const cuePlan = buildTranslationCuePlan(parsed.cues);
+  const cuePlan = buildTranslationCuePlan(parsed.cues, sourceLang);
   const promptParts: string[] = [];
 
   const themeGroups = groupThemeCueOccurrencesBySignature(cuePlan.themeCueOccurrences);
@@ -1634,7 +1782,7 @@ export async function translateSubtitle(
 
     reportProgress({ progress: 10, currentBatch: 0, totalBatches: 0 });
 
-    const cuePlan = buildTranslationCuePlan(parsed.cues);
+    const cuePlan = buildTranslationCuePlan(parsed.cues, sourceLang);
     const themeGroups = groupThemeCueOccurrencesBySignature(cuePlan.themeCueOccurrences);
     const visualGroups = groupVisualCueOccurrencesBySignature(cuePlan.visualCueOccurrences);
 
@@ -1642,7 +1790,7 @@ export async function translateSubtitle(
       'info',
       'translation',
       'Prepared cues for translation',
-      `Retained ${cuePlan.stats.themeCandidateCues + cuePlan.stats.visualTextCandidateCues + cuePlan.stats.mainTranslatableCues}/${cuePlan.stats.totalCues} text cues. Theme candidates: ${cuePlan.stats.themeCandidateCues}. Visual text candidates: ${cuePlan.stats.visualTextCandidateCues} across ${visualGroups.length} unique prompt group(s), ${cuePlan.stats.plainVisualTextCandidateCues} plain readable occurrence(s). Main cues: ${cuePlan.stats.mainTranslatableCues}. Passthrough: ${cuePlan.stats.passthroughCues} (${cuePlan.stats.skippedMaskCount} mask cues, ${cuePlan.stats.skippedAssSongFxCount} ASS song FX cues, ${cuePlan.stats.skippedAssAnimatedEffectCount} animated effect cues). Hidden karaoke comments translated: ${cuePlan.stats.translatedAssKaraokeCommentCount}. Drawing spans protected: ${cuePlan.stats.protectedAssDrawingSpanCount}. Unknown ASS styles retained: ${cuePlan.stats.retainedUnknownAssStyleCount}. Estimated non-text reduction: ${cuePlan.stats.estimatedReductionPct}% (${cuePlan.stats.retainedChars}/${cuePlan.stats.totalChars} chars retained). ASS role breakdown: ${formatAssRoleBreakdownForLog(cuePlan.stats.assRoleBreakdown)}.`,
+      `Retained ${cuePlan.stats.themeCandidateCues + cuePlan.stats.visualTextCandidateCues + cuePlan.stats.mainTranslatableCues}/${cuePlan.stats.totalCues} text cues. Theme candidates: ${cuePlan.stats.themeCandidateCues}. Visual text candidates: ${cuePlan.stats.visualTextCandidateCues} across ${visualGroups.length} unique prompt group(s), ${cuePlan.stats.plainVisualTextCandidateCues} plain readable occurrence(s). Main cues: ${cuePlan.stats.mainTranslatableCues}. Passthrough: ${cuePlan.stats.passthroughCues} (${cuePlan.stats.skippedMaskCount} mask cues, ${cuePlan.stats.skippedAssSongFxCount} ASS song FX cues, ${cuePlan.stats.skippedAssAnimatedEffectCount} animated effect cues, ${cuePlan.stats.skippedAuxiliaryThemeLayerCount} auxiliary theme layer cues). Hidden karaoke comments translated: ${cuePlan.stats.translatedAssKaraokeCommentCount}. Drawing spans protected: ${cuePlan.stats.protectedAssDrawingSpanCount}. Unknown ASS styles retained: ${cuePlan.stats.retainedUnknownAssStyleCount}. Estimated non-text reduction: ${cuePlan.stats.estimatedReductionPct}% (${cuePlan.stats.retainedChars}/${cuePlan.stats.totalChars} chars retained). ASS role breakdown: ${formatAssRoleBreakdownForLog(cuePlan.stats.assRoleBreakdown)}.`,
       logContext
     );
 

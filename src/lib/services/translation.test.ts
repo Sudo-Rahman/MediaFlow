@@ -671,6 +671,76 @@ describe('AI translation ASS visual text planning', () => {
     expect(prompt).toContain('Door');
   });
 
+  it('groups repeated Sign #1 visual text once', async () => {
+    const { buildFullPromptForTokenCount } = await import('./translation');
+    const content = buildAssWithEvents(
+      Array.from({ length: 10 }, (_, index) =>
+        `Dialogue: 1,0:00:22.${String(index).padStart(2, '0')},0:00:22.${String(index + 1).padStart(2, '0')},Sign #1,,0,0,0,,{\\fscx${140 + index}\\fscy${140 + index}\\blur0.7\\pos(${500 + index},${900 - index})}Let's Aim For A Dignified School Life!`
+      ),
+      {
+        extraStyles: [
+          'Style: Sign #1,Kozuka Gothic Pr6N B,50,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1',
+        ],
+      }
+    );
+
+    const prompt = buildFullPromptForTokenCount(content, 'en', 'fr');
+
+    expect(prompt).toContain('"id":"VISUAL_0"');
+    expect(countOccurrences(prompt, "Let's Aim For A Dignified School Life!")).toBe(1);
+    expect(prompt).not.toContain('"id":"ASS_');
+  });
+
+  it('groups Sign-CityArch word-split visual text as readable text', async () => {
+    const { buildFullPromptForTokenCount } = await import('./translation');
+    const eventText = [
+      '{\\pos(310,80)\\c&H111111&}Welcome ',
+      '{\\c&H222222&}to ',
+      '{\\c&H333333&}the ',
+      '{\\c&H444444&}city ',
+      '{\\c&H555555&}by ',
+      '{\\c&H666666&}the ',
+      '{\\c&H777777&}sea',
+    ].join('');
+    const content = buildAssWithEvents(
+      Array.from({ length: 4 }, (_, index) =>
+        `Dialogue: 1,0:00:10.${index}0,0:00:10.${index}5,Sign-CityArch,,0,0,0,,${eventText.replace('310,80', `${310 + index},80`)}`
+      ),
+      {
+        extraStyles: [
+          'Style: Sign-CityArch,Iwata Mincho Pro M-Kami,38,&H009EABC7,&H000000FF,&H00000000,&H00000000,-1,0,0,0,80,86,0,0,1,0,0,5,10,10,10,1',
+        ],
+      }
+    );
+
+    const prompt = buildFullPromptForTokenCount(content, 'en', 'fr');
+
+    expect(prompt).toContain('"id":"VISUAL_0"');
+    expect(countOccurrences(prompt, 'Welcome to the city by the sea')).toBe(1);
+    expect(prompt).not.toContain('\\c&H111111&');
+    expect(prompt).not.toContain('Welcome ⟦TAG_');
+  });
+
+  it('keeps unformatted Sign style dialogue in the main translation plan', async () => {
+    const { buildFullPromptForTokenCount } = await import('./translation');
+    const content = buildAssWithEvents(
+      [
+        'Dialogue: 0,0:00:01.00,0:00:02.00,Sign,,0,0,0,,I signed the form.',
+      ],
+      {
+        extraStyles: [
+          'Style: Sign,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,10,1',
+        ],
+      }
+    );
+
+    const prompt = buildFullPromptForTokenCount(content, 'en', 'fr');
+
+    expect(prompt).not.toContain('"id":"VISUAL_0"');
+    expect(prompt).toContain('"id":"ASS_');
+    expect(prompt).toContain('I signed the form.');
+  });
+
   it('retries canonical visual text in main translation when placeholders are missing', async () => {
     const { translateSubtitle } = await import('./translation');
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

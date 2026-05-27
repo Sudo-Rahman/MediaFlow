@@ -369,6 +369,18 @@ function hasNonDialogueVisualStyle(normalizedStyle: string): boolean {
     || styleTokens.some(token => NON_DIALOGUE_VISUAL_STYLE_ALIASES.has(token));
 }
 
+function hasSignStyleToken(normalizedStyle: string): boolean {
+  return getAssStyleTokens(normalizedStyle).some(token => token === 'sign' || token === 'signs');
+}
+
+function hasVisualFormattingPlaceholder(cue: Cue): boolean {
+  return cue.placeholders.some(isTagOrDrawingPlaceholder);
+}
+
+function hasSignVisualStyle(cue: Cue, normalizedStyle: string): boolean {
+  return hasSignStyleToken(normalizedStyle) && hasVisualFormattingPlaceholder(cue);
+}
+
 function hasTypesettingStyleSuffix(style: string | undefined): boolean {
   const rawStyle = style?.trim() ?? '';
   if (!rawStyle) {
@@ -420,7 +432,9 @@ function isAssVisualTextCue(cue: Cue): boolean {
     return false;
   }
 
-  return hasNonDialogueVisualStyle(normalizedStyle) || hasTypesettingStyleSuffix(cue.style);
+  return hasNonDialogueVisualStyle(normalizedStyle)
+    || hasTypesettingStyleSuffix(cue.style)
+    || hasSignVisualStyle(cue, normalizedStyle);
 }
 
 function shouldUsePlainVisualMode(cue: Cue): boolean {

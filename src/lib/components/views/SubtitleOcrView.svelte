@@ -47,6 +47,7 @@
   import {
     buildSubtitleOcrSourceSnapshot,
     filterSubtitleOcrPersistenceForItem,
+    getSubtitleOcrBackendCancelTargets,
     mergeSubtitleOcrPersistenceForItem,
     shouldApplySubtitleOcrProgressEvent,
     summarizeSubtitleOcrItems,
@@ -708,7 +709,8 @@
   }
 
   async function handleCancel(): Promise<void> {
-    const itemIds = Array.from(subtitleOcrStore.processingScopeItemIds);
+    const processingScopeItemIds = subtitleOcrStore.processingScopeItemIds;
+    const itemIds = Array.from(processingScopeItemIds);
     if (itemIds.length === 0) {
       subtitleOcrStore.stopProcessing();
       return;
@@ -719,8 +721,12 @@
     for (const itemId of itemIds) {
       aiCleanupControllers.get(itemId)?.abort();
     }
+    const backendCancelTargets = getSubtitleOcrBackendCancelTargets(
+      processingScopeItemIds,
+      activeBackendItemIds,
+    );
     await Promise.allSettled(
-      itemIds.map((itemId) => invoke('cancel_subtitle_ocr_operation', { itemId })),
+      backendCancelTargets.map((itemId) => invoke('cancel_subtitle_ocr_operation', { itemId })),
     );
   }
 

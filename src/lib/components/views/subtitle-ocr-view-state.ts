@@ -47,6 +47,13 @@ export function shouldApplySubtitleOcrProgressEvent(
   return !cancelRequested && activeBackendItemIds.has(itemId);
 }
 
+export function getSubtitleOcrBackendCancelTargets(
+  processingScopeItemIds: ReadonlySet<string>,
+  activeBackendItemIds: ReadonlySet<string>,
+): string[] {
+  return [...processingScopeItemIds].filter((itemId) => activeBackendItemIds.has(itemId));
+}
+
 export function buildSubtitleOcrSourceSnapshot(
   item: SubtitleOcrSourceItem,
 ): SubtitleOcrSourceSnapshot {

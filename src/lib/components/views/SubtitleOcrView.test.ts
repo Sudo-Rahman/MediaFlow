@@ -9,6 +9,7 @@ import { DEFAULT_SUBTITLE_OCR_CONFIG } from '$lib/types';
 import {
   buildSubtitleOcrSourceSnapshot,
   filterSubtitleOcrPersistenceForItem,
+  getSubtitleOcrBackendCancelTargets,
   mergeSubtitleOcrPersistenceForItem,
   shouldApplySubtitleOcrProgressEvent,
   summarizeSubtitleOcrItems,
@@ -78,6 +79,22 @@ describe('shouldApplySubtitleOcrProgressEvent', () => {
     expect(shouldApplySubtitleOcrProgressEvent('item-1', new Set(['item-1']), false)).toBe(true);
     expect(shouldApplySubtitleOcrProgressEvent('item-1', new Set(), false)).toBe(false);
     expect(shouldApplySubtitleOcrProgressEvent('item-1', new Set(['item-1']), true)).toBe(false);
+  });
+});
+
+describe('getSubtitleOcrBackendCancelTargets', () => {
+  it('excludes queued processing items without an active backend operation', () => {
+    expect(getSubtitleOcrBackendCancelTargets(
+      new Set(['active-item', 'queued-item']),
+      new Set(['active-item']),
+    )).toEqual(['active-item']);
+  });
+
+  it('excludes AI cleanup-only items without an active backend operation', () => {
+    expect(getSubtitleOcrBackendCancelTargets(
+      new Set(['ai-cleanup-item']),
+      new Set(),
+    )).toEqual([]);
   });
 });
 

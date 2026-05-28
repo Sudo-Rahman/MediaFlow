@@ -27,6 +27,16 @@ interface SubtitleOcrItemFields {
   draft?: SubtitleOcrDraft;
 }
 
+interface SubtitleOcrItemUpdates {
+  displayName?: string;
+  status?: SubtitleOcrStatus;
+  size?: number;
+  duration?: number;
+  error?: string;
+  progress?: SubtitleOcrProgress;
+  ocrModelOverride?: SubtitleOcrSourceItem['ocrModelOverride'];
+}
+
 let items = $state.raw<SubtitleOcrSourceItem[]>([]);
 let selectedItemId = $state<string | null>(null);
 let config = $state<SubtitleOcrConfig>({ ...DEFAULT_SUBTITLE_OCR_CONFIG });
@@ -125,7 +135,31 @@ function createDraftFromVersion(version: SubtitleOcrVersion): SubtitleOcrDraft {
   };
 }
 
+function normalizeActiveVersionId(versions: SubtitleOcrVersion[], activeVersionId: string | null): string | null {
+  if (activeVersionId === null) {
+    return null;
+  }
+
+  return versions.some((version) => version.id === activeVersionId)
+    ? activeVersionId
+    : versions[0]?.id ?? null;
+}
+
+function resolveSelectedVersionId(item: SubtitleOcrSourceItem, versionId: string | null): string | null {
+  if (versionId === null) {
+    return null;
+  }
+
+  if (item.versions.some((version) => version.id === versionId)) {
+    return versionId;
+  }
+
+  return normalizeActiveVersionId(item.versions, item.activeVersionId);
+}
+
 function cloneItemFields(item: SubtitleOcrSourceItem): SubtitleOcrItemFields {
+  const versions = item.versions.map(cloneVersion);
+
   return {
     id: item.id,
     displayName: item.displayName,
@@ -134,8 +168,8 @@ function cloneItemFields(item: SubtitleOcrSourceItem): SubtitleOcrItemFields {
     duration: item.duration,
     error: item.error,
     progress: item.progress ? cloneProgress(item.progress) : undefined,
-    versions: item.versions.map(cloneVersion),
-    activeVersionId: item.activeVersionId,
+    versions,
+    activeVersionId: normalizeActiveVersionId(versions, item.activeVersionId),
     draft: item.draft ? cloneDraft(item.draft) : undefined,
   };
 }
@@ -232,6 +266,27 @@ function applyItemUpdates(
   return buildItemFromSnapshot(applySourceUpdates(item, updates), fields);
 }
 
+function applySafeItemUpdates(
+  item: SubtitleOcrSourceItem,
+  updates: SubtitleOcrItemUpdates,
+): SubtitleOcrSourceItem {
+  const fields = cloneItemFields(item);
+
+  if (updates.displayName !== undefined) fields.displayName = updates.displayName;
+  if (updates.status !== undefined) fields.status = updates.status;
+  if (hasOwn(updates, 'size')) fields.size = updates.size;
+  if (hasOwn(updates, 'duration')) fields.duration = updates.duration;
+  if (hasOwn(updates, 'error')) fields.error = updates.error;
+  if (hasOwn(updates, 'progress')) {
+    fields.progress = updates.progress ? cloneProgress(updates.progress) : undefined;
+  }
+
+  return buildItemFromSnapshot(
+    applySourceUpdates(item, { ocrModelOverride: updates.ocrModelOverride }),
+    fields,
+  );
+}
+
 function findItem(itemId: string): SubtitleOcrSourceItem | undefined {
   return items.find((item) => item.id === itemId);
 }
@@ -241,8 +296,8 @@ function findActiveVersion(item: SubtitleOcrSourceItem): SubtitleOcrVersion | un
 }
 
 export const subtitleOcrStore = {
-  get items() {
-    return items;
+  get items(): SubtitleOcrSourceItem[] {
+    return items.map(cloneItem);
   },
 
   get selectedItemId() {
@@ -250,7 +305,8 @@ export const subtitleOcrStore = {
   },
 
   get selectedItem(): SubtitleOcrSourceItem | undefined {
-    return items.find((item) => item.id === selectedItemId);
+    const item = items.find((entry) => entry.id === selectedItemId);
+    return item ? cloneItem(item) : undefined;
   },
 
   get config() {
@@ -310,8 +366,8 @@ export const subtitleOcrStore = {
     config = { ...config, ...updates };
   },
 
-  updateItem(itemId: string, updates: Partial<SubtitleOcrSourceItem>) {
-    items = items.map((item) => (item.id === itemId ? applyItemUpdates(item, updates) : item));
+  updateItem(itemId: string, updates: SubtitleOcrItemUpdates) {
+    items = items.map((item) => (item.id === itemId ? applySafeItemUpdates(item, updates) : item));
   },
 
   setItemStatus(itemId: string, status: SubtitleOcrStatus, error?: string) {
@@ -355,13 +411,14 @@ export const subtitleOcrStore = {
         return item;
       }
 
-      if (versionId !== null && !item.versions.some((version) => version.id === versionId)) {
-        return item;
-      }
+      const nextActiveVersionId = resolveSelectedVersionId(item, versionId);
+      const shouldClearDraft = versionId === null
+        || item.versions.some((version) => version.id === versionId)
+        || nextActiveVersionId !== item.activeVersionId;
 
       return applyItemUpdates(item, {
-        activeVersionId: versionId,
-        draft: undefined,
+        activeVersionId: nextActiveVersionId,
+        ...(shouldClearDraft ? { draft: undefined } : {}),
       });
     });
   },

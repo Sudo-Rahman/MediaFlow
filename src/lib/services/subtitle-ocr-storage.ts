@@ -13,7 +13,7 @@ import type {
   SubtitleOcrVersion,
   SubtitleOcrVobSubPair,
 } from '$lib/types';
-import { DEFAULT_SUBTITLE_OCR_CONFIG, OCR_LANGUAGES } from '$lib/types';
+import { DEFAULT_SUBTITLE_OCR_CONFIG, LLM_PROVIDERS, OCR_LANGUAGES } from '$lib/types';
 import { loadMediaflowData, saveMediaflowData } from './mediaflow-storage';
 
 export interface CreateSubtitleOcrVersionInput {
@@ -28,8 +28,6 @@ export interface CreateSubtitleOcrVersionInput {
   finalCues: SubtitleOcrCue[];
   aiCleanupApplied: boolean;
 }
-
-const LLM_PROVIDERS = new Set(['openai', 'anthropic', 'google', 'openrouter', 'mediaflow']);
 
 function generateVersionId(): string {
   return `subtitle-ocr-v-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -63,6 +61,10 @@ function isOcrLanguage(value: unknown): value is OcrLanguage {
   return typeof value === 'string' && OCR_LANGUAGES.some((language) => language.value === value);
 }
 
+function isLLMProvider(value: unknown): value is SubtitleOcrConfig['aiCleanupProvider'] {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(LLM_PROVIDERS, value);
+}
+
 function isSubtitleOcrModelOverride(value: unknown): value is SubtitleOcrModelOverride {
   return value === 'default' || isOcrLanguage(value);
 }
@@ -76,8 +78,7 @@ function isSubtitleOcrConfig(value: unknown): value is SubtitleOcrConfig {
     && isOcrLanguage(value.ocrModel)
     && typeof value.useGpu === 'boolean'
     && typeof value.aiCleanupEnabled === 'boolean'
-    && typeof value.aiCleanupProvider === 'string'
-    && LLM_PROVIDERS.has(value.aiCleanupProvider)
+    && isLLMProvider(value.aiCleanupProvider)
     && typeof value.aiCleanupModel === 'string';
 }
 

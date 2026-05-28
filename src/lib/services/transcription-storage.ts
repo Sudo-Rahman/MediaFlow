@@ -34,6 +34,7 @@ export async function saveTranscriptionData(audioPath: string, data: Transcripti
       audioToSubs: data,
       videoOcr: existing?.videoOcr,
       translation: existing?.translation,
+      subtitleOcr: existing?.subtitleOcr,
     });
   } catch (error) {
     console.error('Failed to save transcription data:', error);
@@ -51,11 +52,12 @@ export async function deleteTranscriptionData(audioPath: string): Promise<boolea
       return true;
     }
 
-    if (existing.videoOcr || existing.translation) {
+    if (existing.videoOcr || existing.translation || existing.subtitleOcr) {
       return saveMediaflowData(audioPath, {
         version: 1,
         videoOcr: existing.videoOcr,
         translation: existing.translation,
+        subtitleOcr: existing.subtitleOcr,
       });
     }
 

@@ -1,19 +1,9 @@
 use crate::shared::process::terminate_process;
 
-fn remove_output_file(path: &str) {
-    let _ = std::fs::remove_file(path);
-}
-
 #[tauri::command]
 pub(crate) async fn cancel_subtitle_ocr_operation(item_id: String) -> Result<(), String> {
-    super::state::mark_cancelled(&item_id)?;
-
-    if let Some(pid) = super::state::take_operation_pid(&item_id)? {
+    if let Some(pid) = super::state::mark_cancelled(&item_id)? {
         terminate_process(pid);
-    }
-
-    for path in super::state::take_output_paths(&item_id)? {
-        remove_output_file(&path);
     }
 
     Ok(())
@@ -27,14 +17,16 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn cancel_subtitle_ocr_operation_marks_cancelled_and_removes_partial_outputs() {
+    async fn cancel_subtitle_ocr_operation_preserves_registered_outputs_for_owner_cleanup() {
         let dir = tempfile::tempdir().expect("failed to create tempdir");
         let output = dir.path().join("partial.sup");
         std::fs::write(&output, b"partial").expect("failed to write partial output");
         let item_id = "subtitle-item-1".to_string();
 
-        super::super::state::register_operation_pid(&item_id, 0)
-            .expect("pid registration should work");
+        let _ = super::super::state::clear_registered_operation(&item_id);
+        let _ = super::super::state::clear_cancelled(&item_id);
+
+        super::super::state::begin_operation(&item_id).expect("operation should start");
         super::super::state::register_output_paths(
             &item_id,
             vec![output.to_string_lossy().to_string()],
@@ -45,9 +37,14 @@ mod tests {
             .await
             .expect("cancel should succeed");
 
-        assert!(!output.exists());
+        assert!(output.exists());
         assert!(super::super::state::is_operation_cancelled(&item_id));
         assert!(super::super::state::has_registered_operation(&item_id));
+
+        let paths = super::super::state::take_output_paths(&item_id)
+            .expect("owner should be able to take registered output paths");
+        assert_eq!(paths, vec![output.to_string_lossy().to_string()]);
+        let _ = std::fs::remove_file(&output);
 
         super::super::state::clear_registered_operation(&item_id)
             .expect("owner cleanup should clear active operation");

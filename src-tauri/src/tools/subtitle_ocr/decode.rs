@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::fs::File;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
@@ -136,13 +137,9 @@ where
 
     let (container_id, source_key, input): (&str, String, Box<dyn ReadSeek>) = match source {
         BitmapSubtitleSource::Pgs { path } => {
-            let bytes = std::fs::read(path)
-                .map_err(|e| format!("Failed to read PGS subtitle source: {}", e))?;
-            (
-                "pgs",
-                path.to_string_lossy().to_string(),
-                Box::new(Cursor::new(bytes)),
-            )
+            let file = File::open(path)
+                .map_err(|e| format!("Failed to open PGS subtitle source: {}", e))?;
+            ("pgs", path.to_string_lossy().to_string(), Box::new(file))
         }
         BitmapSubtitleSource::VobSub { idx_path, sub_path } => {
             let idx_text = std::fs::read_to_string(idx_path)

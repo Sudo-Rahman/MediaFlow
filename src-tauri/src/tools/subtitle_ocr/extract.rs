@@ -11,6 +11,7 @@ use crate::shared::validation::{validate_media_path, validate_output_path};
 use crate::tools::subtitle_ocr::progress::SubtitleOcrProgressEvent;
 
 const SUBTITLE_OCR_EXTRACT_TIMEOUT: Duration = Duration::from_secs(300);
+const SUBTITLE_OCR_CANCELLED: &str = "Subtitle OCR operation cancelled";
 const VOBSUB_CONTAINER_EXTRACTION_UNSUPPORTED: &str = "Container VobSub extraction is not supported by the bundled FFmpeg path. Import the .idx/.sub pair directly.";
 
 #[tauri::command]
@@ -34,21 +35,24 @@ pub(crate) async fn prepare_subtitle_ocr_track(
     }
 
     super::state::begin_operation(&item_id)?;
-    super::state::register_output_paths(&item_id, registered_paths)?;
-    let result = run_prepare_subtitle_ocr_ffmpeg(
-        &app,
-        &ffmpeg_path,
-        &input_path,
-        &output_path,
-        stream_index,
-        &codec,
-        &item_id,
-    )
-    .await
-    .and_then(|_| {
+    let result = async {
+        if super::state::register_output_paths(&item_id, registered_paths)? {
+            return Err(SUBTITLE_OCR_CANCELLED.to_string());
+        }
+
+        run_prepare_subtitle_ocr_ffmpeg(
+            &app,
+            &ffmpeg_path,
+            &input_path,
+            &output_path,
+            stream_index,
+            &codec,
+            &item_id,
+        )
+        .await?;
+
         if let Some(sidecar_path) = sidecar_path.as_ref() {
             if !sidecar_path.exists() {
-                remove_registered_outputs(&item_id);
                 return Err(format!(
                     "Expected VobSub .sub sidecar not found after extraction: {}",
                     sidecar_path.display()
@@ -56,10 +60,21 @@ pub(crate) async fn prepare_subtitle_ocr_track(
             }
         }
 
-        Ok(())
-    });
+        if super::state::is_operation_cancelled(&item_id) {
+            return Err(SUBTITLE_OCR_CANCELLED.to_string());
+        }
 
+        Ok(())
+    }
+    .await;
+
+    if result.is_err() {
+        remove_registered_outputs(&item_id);
+    }
     let _ = super::state::clear_registered_operation(&item_id);
+    if result.is_ok() {
+        let _ = super::state::clear_cancelled(&item_id);
+    }
     result?;
     Ok(output_path.to_string_lossy().to_string())
 }
@@ -93,7 +108,14 @@ async fn run_prepare_subtitle_ocr_ffmpeg(
         })?;
 
     if let Some(pid) = child.id() {
-        super::state::register_operation_pid(item_id, pid)?;
+        if super::state::register_operation_pid(item_id, pid)? {
+            if let Some(pid) = super::state::take_operation_pid(item_id)? {
+                terminate_process(pid);
+            }
+            return Err(SUBTITLE_OCR_CANCELLED.to_string());
+        }
+    } else if super::state::is_operation_cancelled(item_id) {
+        return Err(SUBTITLE_OCR_CANCELLED.to_string());
     }
 
     let output = match wait_with_output_timeout(
@@ -108,7 +130,6 @@ async fn run_prepare_subtitle_ocr_ffmpeg(
             if let Some(pid) = super::state::take_operation_pid(item_id)? {
                 terminate_process(pid);
             }
-            remove_registered_outputs(item_id);
             return Err(error);
         }
     };
@@ -116,12 +137,10 @@ async fn run_prepare_subtitle_ocr_ffmpeg(
     let _ = super::state::take_operation_pid(item_id)?;
 
     if super::state::is_operation_cancelled(item_id) {
-        remove_registered_outputs(item_id);
-        return Err("Subtitle OCR operation cancelled".to_string());
+        return Err(SUBTITLE_OCR_CANCELLED.to_string());
     }
 
     if !output.status.success() {
-        remove_registered_outputs(item_id);
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("Subtitle OCR extraction failed: {}", stderr));
     }

@@ -9,7 +9,6 @@ const PROGRESS_MIN_PERCENT_STEP: u32 = 5;
 
 #[derive(Debug)]
 struct ProgressState {
-    last_current: u32,
     last_percentage: u32,
     last_emitted_at: Option<Instant>,
 }
@@ -66,7 +65,6 @@ impl SubtitleOcrProgressEmitter {
             phase,
             total,
             state: Arc::new(Mutex::new(ProgressState {
-                last_current: 0,
                 last_percentage: 0,
                 last_emitted_at: None,
             })),
@@ -103,7 +101,6 @@ impl SubtitleOcrProgressEmitter {
             ),
         );
 
-        state.last_current = current;
         state.last_percentage = progress_percentage(current, self.total);
         state.last_emitted_at = Some(now);
     }
@@ -163,7 +160,6 @@ mod tests {
     fn progress_throttle_skips_small_updates_inside_interval() {
         let now = Instant::now();
         let mut state = ProgressState {
-            last_current: 10,
             last_percentage: 10,
             last_emitted_at: Some(now),
         };

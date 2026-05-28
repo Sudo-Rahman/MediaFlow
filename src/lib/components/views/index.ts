@@ -6,4 +6,5 @@ export { default as TranslationView } from './TranslationView.svelte';
 export { default as RenameView } from './RenameView.svelte';
 export { default as AudioToSubsView } from './AudioToSubsView.svelte';
 export { default as VideoOcrView } from './VideoOcrView.svelte';
+export { default as SubtitleOcrView } from './SubtitleOcrView.svelte';
 export { default as TranscodeView } from './TranscodeView.svelte';

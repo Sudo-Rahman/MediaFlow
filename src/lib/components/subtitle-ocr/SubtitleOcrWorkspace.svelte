@@ -42,10 +42,16 @@
   let viewportEndMs = $state(0);
   let viewportScopeKey = $state('');
 
-  const bitmaps = $derived(activeVersion?.bitmaps ?? []);
+  const reviewVersion = $derived(
+    activeVersion
+      ?? item?.versions.find((version) => version.id === item.activeVersionId)
+      ?? item?.versions[0]
+      ?? null,
+  );
+  const bitmaps = $derived(reviewVersion?.bitmaps ?? []);
   const durationMs = $derived(resolveDurationMs(renderedCues, bitmaps));
   const selectedCue = $derived(renderedCues.find((cue) => cue.id === selectedCueId) ?? null);
-  const activeVersionId = $derived(activeVersion?.id ?? item?.activeVersionId ?? null);
+  const activeVersionId = $derived(reviewVersion?.id ?? item?.activeVersionId ?? null);
 
   $effect(() => {
     const nextScopeKey = `${item?.id ?? 'none'}:${activeVersionId ?? 'none'}:${durationMs}:${renderedCues.length}`;
@@ -152,7 +158,7 @@
       </EmptyDescription>
     </EmptyHeader>
   </Empty>
-{:else if !activeVersion}
+{:else if !reviewVersion}
   <Empty class="h-full min-h-96 border-0">
     <EmptyHeader>
       <EmptyTitle>No active version</EmptyTitle>
@@ -169,7 +175,7 @@
           <ScanText class="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
           <h2 class="truncate text-base font-semibold">{item.displayName}</h2>
           <Badge variant="secondary" class="shrink-0">
-            {getVersionModeLabel(activeVersion)}
+            {getVersionModeLabel(reviewVersion)}
           </Badge>
           {#if item.draft?.dirty}
             <Badge variant="outline" class="shrink-0">Draft edits</Badge>
@@ -184,7 +190,7 @@
         <Layers class="size-4 text-muted-foreground" aria-hidden="true" />
         <SubtitleOcrVersionSelector
           versions={item.versions}
-          activeVersionId={activeVersion.id}
+          activeVersionId={reviewVersion.id}
           onSelectVersion={handleSelectVersion}
         />
       </div>

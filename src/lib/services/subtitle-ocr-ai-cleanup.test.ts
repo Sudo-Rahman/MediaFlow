@@ -101,6 +101,29 @@ describe('subtitle OCR AI cleanup', () => {
     expect(result.error).toBeTruthy();
   });
 
+  it.each([
+    ['negative start time', { startTimeMs: -1, endTimeMs: 1000, confidence: 0.5 }],
+    ['negative confidence', { startTimeMs: 0, endTimeMs: 1000, confidence: -0.1 }],
+    ['confidence above one', { startTimeMs: 0, endTimeMs: 1000, confidence: 1.1 }],
+  ])('rejects cleanup cues with %s', async (_caseName, numericFields) => {
+    const { parseSubtitleOcrCleanupResponse } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = parseSubtitleOcrCleanupResponse(JSON.stringify({
+      cues: [
+        {
+          id: 'bad-cue',
+          sourceCueIds: ['cue-1'],
+          text: 'Invalid numbers',
+          ...numericFields,
+        },
+      ],
+    }));
+
+    expect(result.success).toBe(false);
+    expect(result.cues).toEqual([]);
+    expect(result.error).toBeTruthy();
+  });
+
   it('calls the LLM in JSON mode and returns cleaned cues on success', async () => {
     const originalCues = [
       cue({ id: 'cue-1', sourceCueIds: ['raw-1'], startTimeMs: 1000, endTimeMs: 2400, text: 'HeIIo wor1d' }),

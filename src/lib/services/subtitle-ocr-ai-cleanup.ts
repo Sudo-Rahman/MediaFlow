@@ -92,11 +92,12 @@ function parseCleanupCue(value: unknown): SubtitleOcrCue | null {
   if (!Array.isArray(sourceCueIds) || sourceCueIds.some((sourceCueId) => typeof sourceCueId !== 'string')) {
     return null;
   }
-  if (!isFiniteNumber(startTimeMs) || !isFiniteNumber(endTimeMs) || endTimeMs <= startTimeMs) {
+  if (!isFiniteNumber(startTimeMs) || startTimeMs < 0) {
     return null;
   }
   if (typeof text !== 'string' || !text.trim()) return null;
-  if (!isFiniteNumber(confidence)) return null;
+  if (!isFiniteNumber(endTimeMs) || endTimeMs <= startTimeMs) return null;
+  if (!isFiniteNumber(confidence) || confidence < 0 || confidence > 1) return null;
 
   return {
     id,

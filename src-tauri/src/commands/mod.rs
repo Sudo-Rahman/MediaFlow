@@ -20,6 +20,7 @@ pub(crate) use crate::tools::ocr::pipeline as ocr_pipeline;
 pub(crate) use crate::tools::ocr::preview as ocr_preview;
 pub(crate) use crate::tools::ocr::subtitles as ocr_subtitles;
 pub(crate) use crate::tools::power::sleep_inhibit;
+pub(crate) use crate::tools::subtitle_ocr::export as subtitle_ocr_export;
 pub(crate) use crate::tools::tokens::count as tokens;
 pub(crate) use crate::tools::transcode::analysis as transcode_analysis;
 pub(crate) use crate::tools::transcode::cancel as transcode_cancel;

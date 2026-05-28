@@ -113,6 +113,66 @@ function providerDisplayName(provider: LLMProvider): string {
   return LLM_PROVIDERS[provider]?.name || provider;
 }
 
+function buildAllowedSourceCueMap(cues: SubtitleOcrCue[]): Map<string, string> {
+  const sourceCueIdToOriginalCueId = new Map<string, string>();
+
+  for (const cue of cues) {
+    sourceCueIdToOriginalCueId.set(cue.id, cue.id);
+    for (const sourceCueId of cue.sourceCueIds) {
+      sourceCueIdToOriginalCueId.set(sourceCueId, cue.id);
+    }
+  }
+
+  return sourceCueIdToOriginalCueId;
+}
+
+function validateCleanedCueSourceMapping(
+  originalCues: SubtitleOcrCue[],
+  cleanedCues: SubtitleOcrCue[]
+): string | null {
+  if (originalCues.length > 0 && cleanedCues.length === 0) {
+    return 'AI cleanup returned no cues for non-empty input';
+  }
+
+  const allowedSourceCueIds = buildAllowedSourceCueMap(originalCues);
+  const outputIndexByOriginalCueId = new Map<string, number>();
+
+  for (let outputIndex = 0; outputIndex < cleanedCues.length; outputIndex += 1) {
+    const cue = cleanedCues[outputIndex];
+
+    if (cue.sourceCueIds.length === 0) {
+      return `AI cleanup cue "${cue.id}" has no source cue IDs`;
+    }
+
+    const sourceCueIdsInOutput = new Set<string>();
+    const originalCueIdsInOutput = new Set<string>();
+
+    for (const sourceCueId of cue.sourceCueIds) {
+      if (sourceCueIdsInOutput.has(sourceCueId)) {
+        return `AI cleanup cue "${cue.id}" references source cue ID "${sourceCueId}" more than once`;
+      }
+
+      const originalCueId = allowedSourceCueIds.get(sourceCueId);
+      if (!originalCueId) {
+        return `AI cleanup referenced unknown source cue ID "${sourceCueId}"`;
+      }
+
+      sourceCueIdsInOutput.add(sourceCueId);
+      originalCueIdsInOutput.add(originalCueId);
+    }
+
+    for (const originalCueId of originalCueIdsInOutput) {
+      if (outputIndexByOriginalCueId.has(originalCueId)) {
+        return `AI cleanup referenced original cue "${originalCueId}" in more than one output cue`;
+      }
+
+      outputIndexByOriginalCueId.set(originalCueId, outputIndex);
+    }
+  }
+
+  return null;
+}
+
 export function buildSubtitleOcrCleanupPrompt(cues: SubtitleOcrCue[]): string {
   return `Clean OCR output from bitmap subtitles.
 
@@ -243,6 +303,13 @@ export async function cleanupSubtitleOcrCuesWithAi(
       const parsed = parseSubtitleOcrCleanupResponse(response.content);
       if (!parsed.success) {
         return failureResult(originalCues, parsed.error ?? 'Invalid AI cleanup response', {
+          usage: response.usage,
+        });
+      }
+
+      const sourceMappingError = validateCleanedCueSourceMapping(originalCues, parsed.cues);
+      if (sourceMappingError) {
+        return failureResult(originalCues, sourceMappingError, {
           usage: response.usage,
         });
       }

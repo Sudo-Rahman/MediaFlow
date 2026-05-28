@@ -166,6 +166,137 @@ describe('subtitle OCR AI cleanup', () => {
     });
   });
 
+  it('returns original cues when AI returns no cues for non-empty input', async () => {
+    const originalCues = [cue()];
+    const usage = { promptTokens: 8, completionTokens: 2, totalTokens: 10 };
+    callLlmMock.mockResolvedValue({
+      content: JSON.stringify({ cues: [] }),
+      usage,
+    });
+    const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.cues).toEqual(originalCues);
+    expect(result.error).toContain('returned no cues');
+    expect(result.usage).toEqual(usage);
+  });
+
+  it('returns original cues when AI invents a source cue ID', async () => {
+    const originalCues = [cue({ id: 'cue-1', sourceCueIds: ['raw-1'] })];
+    callLlmMock.mockResolvedValue({
+      content: JSON.stringify({
+        cues: [
+          cue({
+            id: 'clean-1',
+            sourceCueIds: ['invented-raw-1'],
+            text: 'Hello world.',
+          }),
+        ],
+      }),
+    });
+    const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.cues).toEqual(originalCues);
+    expect(result.error).toContain('unknown source cue ID');
+  });
+
+  it('returns original cues when AI omits source cue IDs on an output cue', async () => {
+    const originalCues = [cue({ id: 'cue-1', sourceCueIds: ['raw-1'] })];
+    callLlmMock.mockResolvedValue({
+      content: JSON.stringify({
+        cues: [
+          cue({
+            id: 'clean-1',
+            sourceCueIds: [],
+            text: 'Hello world.',
+          }),
+        ],
+      }),
+    });
+    const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.cues).toEqual(originalCues);
+    expect(result.error).toContain('no source cue IDs');
+  });
+
+  it('returns original cues when AI reuses a source cue across output cues', async () => {
+    const originalCues = [
+      cue({ id: 'cue-1', sourceCueIds: ['raw-1'] }),
+      cue({ id: 'cue-2', sourceCueIds: ['raw-2'], startTimeMs: 2400, endTimeMs: 3600 }),
+    ];
+    callLlmMock.mockResolvedValue({
+      content: JSON.stringify({
+        cues: [
+          cue({ id: 'clean-1', sourceCueIds: ['raw-1'], text: 'Hello world.' }),
+          cue({
+            id: 'clean-2',
+            sourceCueIds: ['raw-1'],
+            startTimeMs: 2400,
+            endTimeMs: 3600,
+            text: 'Hello again.',
+          }),
+        ],
+      }),
+    });
+    const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.cues).toEqual(originalCues);
+    expect(result.error).toContain('more than one output cue');
+  });
+
+  it('accepts a valid merged source cue mapping', async () => {
+    const originalCues = [
+      cue({ id: 'cue-1', sourceCueIds: ['raw-1'], startTimeMs: 1000, endTimeMs: 2400 }),
+      cue({ id: 'cue-2', sourceCueIds: ['raw-2'], startTimeMs: 2400, endTimeMs: 3600 }),
+    ];
+    const mergedCue = cue({
+      id: 'clean-1',
+      sourceCueIds: ['cue-1', 'raw-2'],
+      startTimeMs: 1000,
+      endTimeMs: 3600,
+      text: 'Hello world.',
+      confidence: 0.95,
+    });
+    callLlmMock.mockResolvedValue({
+      content: JSON.stringify({ cues: [mergedCue] }),
+    });
+    const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    expect(result).toEqual({
+      success: true,
+      cues: [mergedCue],
+      usage: undefined,
+    });
+  });
+
   it('does not require an API key for the MediaFlow provider', async () => {
     settingsStoreMock.getLLMApiKey.mockReturnValue('');
     callLlmMock.mockResolvedValue({

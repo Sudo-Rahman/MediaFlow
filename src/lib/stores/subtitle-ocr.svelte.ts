@@ -37,6 +37,10 @@ interface SubtitleOcrItemUpdates {
   ocrModelOverride?: SubtitleOcrSourceItem['ocrModelOverride'];
 }
 
+interface ReplaceSubtitleOcrItemVersionsOptions {
+  status?: SubtitleOcrStatus;
+}
+
 let items = $state.raw<SubtitleOcrSourceItem[]>([]);
 let selectedItemId = $state<string | null>(null);
 let config = $state<SubtitleOcrConfig>({ ...DEFAULT_SUBTITLE_OCR_CONFIG });
@@ -310,7 +314,7 @@ export const subtitleOcrStore = {
   },
 
   get config() {
-    return config;
+    return cloneConfig(config);
   },
 
   get isProcessing() {
@@ -322,7 +326,7 @@ export const subtitleOcrStore = {
   },
 
   get processingScopeItemIds() {
-    return processingScopeItemIds;
+    return new Set(processingScopeItemIds);
   },
 
   reset() {
@@ -370,6 +374,18 @@ export const subtitleOcrStore = {
     items = items.map((item) => (item.id === itemId ? applySafeItemUpdates(item, updates) : item));
   },
 
+  removeItem(itemId: string) {
+    const removedIndex = items.findIndex((item) => item.id === itemId);
+    if (removedIndex === -1) {
+      return;
+    }
+
+    items = items.filter((item) => item.id !== itemId);
+    if (selectedItemId === itemId) {
+      selectedItemId = items[removedIndex]?.id ?? items[removedIndex - 1]?.id ?? null;
+    }
+  },
+
   setItemStatus(itemId: string, status: SubtitleOcrStatus, error?: string) {
     items = items.map((item) => {
       if (item.id !== itemId) {
@@ -398,6 +414,31 @@ export const subtitleOcrStore = {
         status: 'completed',
         versions: [...item.versions.map(cloneVersion), nextVersion],
         activeVersionId: nextVersion.id,
+        draft: undefined,
+        progress: undefined,
+        error: undefined,
+      });
+    });
+  },
+
+  replaceItemVersions(
+    itemId: string,
+    versions: SubtitleOcrVersion[],
+    activeVersionId: string | null,
+    options: ReplaceSubtitleOcrItemVersionsOptions = {},
+  ) {
+    const nextVersions = versions.map(cloneVersion);
+    const nextActiveVersionId = normalizeActiveVersionId(nextVersions, activeVersionId);
+
+    items = items.map((item) => {
+      if (item.id !== itemId) {
+        return item;
+      }
+
+      return applyItemUpdates(item, {
+        ...(options.status !== undefined ? { status: options.status } : {}),
+        versions: nextVersions,
+        activeVersionId: nextActiveVersionId,
         draft: undefined,
         progress: undefined,
         error: undefined,

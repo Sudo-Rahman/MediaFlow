@@ -186,6 +186,33 @@ describe('subtitle OCR storage', () => {
     expect(version.sourceSnapshot).not.toHaveProperty('track');
   });
 
+  it('preserves raw OCR cache keys when creating versions', () => {
+    const rawOcr = [{
+      ...rawCue('cue-1'),
+      cacheKey: 'raw-cache-cue-1',
+    }];
+
+    const version = createSubtitleOcrVersion({
+      name: 'Version 1',
+      mode: 'full_ocr',
+      configSnapshot: DEFAULT_SUBTITLE_OCR_CONFIG,
+      effectiveOcrModel: 'multi',
+      sourceSnapshot: sourceSnapshot(),
+      bitmaps: [],
+      rawOcr,
+      stabilizedCues: [],
+      finalCues: [],
+      aiCleanupApplied: false,
+    });
+
+    rawOcr[0].cacheKey = 'mutated-cache';
+
+    expect(version.rawOcr[0]).toMatchObject({
+      cueId: 'cue-1',
+      cacheKey: 'raw-cache-cue-1',
+    });
+  });
+
   it('returns null for unsupported persistence versions', () => {
     expect(sanitizeSubtitleOcrPersistenceData({ version: 99 })).toBeNull();
   });
@@ -205,6 +232,26 @@ describe('subtitle OCR storage', () => {
     });
 
     expect(sanitized).toEqual(data);
+  });
+
+  it('sanitizes valid persistence data and preserves optional raw OCR cache keys', () => {
+    const data = persistenceData();
+
+    const sanitized = sanitizeSubtitleOcrPersistenceData({
+      ...data,
+      versions: [{
+        ...data.versions[0],
+        rawOcr: [{
+          ...data.versions[0].rawOcr[0],
+          cacheKey: 'raw-cache-cue-1',
+        }],
+      }],
+    });
+
+    expect(sanitized?.versions[0]?.rawOcr[0]).toMatchObject({
+      cueId: 'cue-1',
+      cacheKey: 'raw-cache-cue-1',
+    });
   });
 
   it('rejects persisted data with an invalid active version id', () => {

@@ -63,6 +63,7 @@ export interface SubtitleOcrRawCue {
   cueId: string;
   startTimeMs: number;
   endTimeMs: number;
+  cacheKey?: string;
   boxes: SubtitleOcrRawBox[];
   text: string;
   confidence: number;
@@ -100,6 +101,13 @@ export interface SubtitleOcrVersion {
   stabilizedCues: SubtitleOcrCue[];
   finalCues: SubtitleOcrCue[];
   aiCleanupApplied: boolean;
+}
+
+export interface SubtitleOcrPipelineResult {
+  decodedCues: SubtitleOcrCueBitmap[];
+  rawOcrCues: SubtitleOcrRawCue[];
+  stabilizedCues: SubtitleOcrCue[];
+  finalCues: SubtitleOcrCue[];
 }
 
 export interface SubtitleOcrDraft {

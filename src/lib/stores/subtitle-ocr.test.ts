@@ -155,6 +155,34 @@ describe('subtitleOcrStore', () => {
     expect(subtitleOcrStore.getActiveCues('a')[0]?.text).toBe('one');
   });
 
+  it('replaces hydrated versions and active id without forcing completed status', () => {
+    const hydratedVersion = version('v1', 'hydrated');
+    subtitleOcrStore.addItems([source('a')]);
+    subtitleOcrStore.replaceItemVersions('a', [hydratedVersion], hydratedVersion.id);
+
+    hydratedVersion.finalCues[0].text = 'mutated';
+
+    expect(subtitleOcrStore.selectedItem).toMatchObject({
+      id: 'a',
+      status: 'ready',
+      activeVersionId: 'v1',
+    });
+    expect(subtitleOcrStore.getActiveVersion('a')?.finalCues[0]?.text).toBe('hydrated');
+  });
+
+  it('can set a status while replacing hydrated versions', () => {
+    const hydratedVersion = version('v1', 'hydrated');
+    subtitleOcrStore.addItems([source('a')]);
+    subtitleOcrStore.replaceItemVersions('a', [hydratedVersion], hydratedVersion.id, {
+      status: 'completed',
+    });
+
+    expect(subtitleOcrStore.selectedItem).toMatchObject({
+      status: 'completed',
+      activeVersionId: 'v1',
+    });
+  });
+
   it('normalizes invalid selected version ids', () => {
     const item = source('a');
     item.versions = [version('v1', 'one')];
@@ -217,6 +245,31 @@ describe('subtitleOcrStore', () => {
 
     expect(subtitleOcrStore.selectedItem?.displayName).toBe('a.sup');
     expect(subtitleOcrStore.getActiveVersion('a')?.finalCues[0]?.text).toBe('before');
+  });
+
+  it('returns a cloned processing scope set', () => {
+    subtitleOcrStore.startProcessing(['a', 'b']);
+
+    const scope = subtitleOcrStore.processingScopeItemIds;
+    scope.delete('a');
+
+    expect([...subtitleOcrStore.processingScopeItemIds]).toEqual(['a', 'b']);
+  });
+
+  it('removes items and moves selection to the next available item', () => {
+    subtitleOcrStore.addItems([source('a'), source('b'), source('c')]);
+    subtitleOcrStore.selectItem('b');
+
+    subtitleOcrStore.removeItem('b');
+
+    expect(subtitleOcrStore.items.map((item) => item.id)).toEqual(['a', 'c']);
+    expect(subtitleOcrStore.selectedItem?.id).toBe('c');
+
+    subtitleOcrStore.removeItem('c');
+    subtitleOcrStore.removeItem('a');
+
+    expect(subtitleOcrStore.items).toEqual([]);
+    expect(subtitleOcrStore.selectedItemId).toBeNull();
   });
 
   it('updates only safe item metadata through updateItem', () => {

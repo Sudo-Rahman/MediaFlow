@@ -148,6 +148,7 @@ function isSubtitleOcrRawCue(value: unknown): value is SubtitleOcrRawCue {
     && isFiniteNonNegativeNumber(value.startTimeMs)
     && isFiniteNonNegativeNumber(value.endTimeMs)
     && value.endTimeMs > value.startTimeMs
+    && isOptionalString(value.cacheKey)
     && Array.isArray(value.boxes)
     && value.boxes.every(isSubtitleOcrRawBox)
     && typeof value.text === 'string'
@@ -268,6 +269,7 @@ function cloneRawCue(rawCue: SubtitleOcrRawCue): SubtitleOcrRawCue {
     cueId: rawCue.cueId,
     startTimeMs: rawCue.startTimeMs,
     endTimeMs: rawCue.endTimeMs,
+    ...(rawCue.cacheKey !== undefined ? { cacheKey: rawCue.cacheKey } : {}),
     boxes: rawCue.boxes.map(cloneRawBox),
     text: rawCue.text,
     confidence: rawCue.confidence,

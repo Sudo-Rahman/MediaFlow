@@ -1,4 +1,9 @@
-import type { SubtitleOcrStatus } from '$lib/types';
+import type {
+  SubtitleOcrPersistenceData,
+  SubtitleOcrSourceItem,
+  SubtitleOcrSourceSnapshot,
+  SubtitleOcrStatus,
+} from '$lib/types';
 
 interface SubtitleOcrSummaryItem {
   status: SubtitleOcrStatus;
@@ -32,4 +37,77 @@ export function summarizeSubtitleOcrItems(
     },
     { readyCount: 0, retryableCount: 0, scanningCount: 0 },
   );
+}
+
+export function buildSubtitleOcrSourceSnapshot(
+  item: SubtitleOcrSourceItem,
+): SubtitleOcrSourceSnapshot {
+  switch (item.sourceKind) {
+    case 'container_track':
+      return {
+        sourceKind: 'container_track',
+        sourcePath: item.sourcePath,
+        ocrModelOverride: item.ocrModelOverride,
+        track: { ...item.track },
+      };
+    case 'standalone_sup':
+      return {
+        sourceKind: 'standalone_sup',
+        sourcePath: item.sourcePath,
+        ocrModelOverride: item.ocrModelOverride,
+      };
+    case 'standalone_vobsub':
+      return {
+        sourceKind: 'standalone_vobsub',
+        sourcePath: item.sourcePath,
+        ocrModelOverride: item.ocrModelOverride,
+        pair: { ...item.pair },
+      };
+  }
+}
+
+function sourceSnapshotMatchesItem(
+  item: SubtitleOcrSourceItem,
+  snapshot: SubtitleOcrSourceSnapshot,
+): boolean {
+  if (item.sourceKind !== snapshot.sourceKind) {
+    return false;
+  }
+
+  switch (item.sourceKind) {
+    case 'container_track':
+      return snapshot.sourceKind === 'container_track'
+        && snapshot.sourcePath === item.sourcePath
+        && snapshot.track.streamIndex === item.track.streamIndex;
+    case 'standalone_sup':
+      return snapshot.sourceKind === 'standalone_sup'
+        && snapshot.sourcePath === item.sourcePath;
+    case 'standalone_vobsub':
+      return snapshot.sourceKind === 'standalone_vobsub'
+        && snapshot.pair.idxPath === item.pair.idxPath
+        && snapshot.pair.subPath === item.pair.subPath;
+  }
+}
+
+export function filterSubtitleOcrPersistenceForItem(
+  item: SubtitleOcrSourceItem,
+  data: SubtitleOcrPersistenceData,
+): SubtitleOcrPersistenceData | null {
+  const versions = data.versions.filter((version) => (
+    sourceSnapshotMatchesItem(item, version.sourceSnapshot)
+  ));
+
+  if (versions.length === 0) {
+    return null;
+  }
+
+  const activeVersionId = versions.some((version) => version.id === data.activeVersionId)
+    ? data.activeVersionId
+    : versions[0]?.id ?? null;
+
+  return {
+    ...data,
+    versions,
+    activeVersionId,
+  };
 }

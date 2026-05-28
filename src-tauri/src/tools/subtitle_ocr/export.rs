@@ -1,6 +1,12 @@
 use crate::shared::validation::validate_output_path;
 use crate::tools::subtitle_ocr::SubtitleOcrCue;
 
+enum SubtitleOcrExportFormat {
+    Ass,
+    Srt,
+    Vtt,
+}
+
 #[tauri::command]
 pub(crate) async fn export_subtitle_ocr_version(
     cues: Vec<SubtitleOcrCue>,
@@ -8,17 +14,13 @@ pub(crate) async fn export_subtitle_ocr_version(
     format: String,
 ) -> Result<(), String> {
     validate_output_path(&output_path)?;
+    let format = parse_export_format(&format)?;
+    let cues = validated_sorted_nonblank_cues(&cues)?;
 
-    let content = match format.as_str() {
-        "ass" => format_ass(&cues, 1920, 1080),
-        "srt" => format_srt(&cues),
-        "vtt" => format_vtt(&cues),
-        _ => {
-            return Err(format!(
-                "Unsupported Subtitle OCR export format: {}",
-                format
-            ));
-        }
+    let content = match format {
+        SubtitleOcrExportFormat::Ass => format_ass(&cues, 1920, 1080),
+        SubtitleOcrExportFormat::Srt => format_srt(&cues),
+        SubtitleOcrExportFormat::Vtt => format_vtt(&cues),
     };
 
     std::fs::write(&output_path, content)
@@ -27,7 +29,44 @@ pub(crate) async fn export_subtitle_ocr_version(
     Ok(())
 }
 
-fn format_srt(cues: &[SubtitleOcrCue]) -> String {
+fn parse_export_format(format: &str) -> Result<SubtitleOcrExportFormat, String> {
+    match format {
+        "ass" => Ok(SubtitleOcrExportFormat::Ass),
+        "srt" => Ok(SubtitleOcrExportFormat::Srt),
+        "vtt" => Ok(SubtitleOcrExportFormat::Vtt),
+        _ => Err(format!(
+            "Unsupported Subtitle OCR export format: {}",
+            format
+        )),
+    }
+}
+
+fn validated_sorted_nonblank_cues(cues: &[SubtitleOcrCue]) -> Result<Vec<&SubtitleOcrCue>, String> {
+    for cue in cues {
+        if cue.end_time_ms <= cue.start_time_ms {
+            return Err(format!(
+                "Invalid Subtitle OCR cue time range for cue {}",
+                cue.id
+            ));
+        }
+    }
+
+    let mut sorted = cues
+        .iter()
+        .filter(|cue| !cue.text.trim().is_empty())
+        .collect::<Vec<_>>();
+
+    sorted.sort_by(|a, b| {
+        a.start_time_ms
+            .cmp(&b.start_time_ms)
+            .then_with(|| a.end_time_ms.cmp(&b.end_time_ms))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+
+    Ok(sorted)
+}
+
+fn format_srt(cues: &[&SubtitleOcrCue]) -> String {
     cues.iter()
         .enumerate()
         .map(|(index, cue)| {
@@ -43,7 +82,7 @@ fn format_srt(cues: &[SubtitleOcrCue]) -> String {
         .join("\n")
 }
 
-fn format_vtt(cues: &[SubtitleOcrCue]) -> String {
+fn format_vtt(cues: &[&SubtitleOcrCue]) -> String {
     let mut output = String::from("WEBVTT\n\n");
 
     for cue in cues {
@@ -58,7 +97,7 @@ fn format_vtt(cues: &[SubtitleOcrCue]) -> String {
     output
 }
 
-fn format_ass(cues: &[SubtitleOcrCue], width: u32, height: u32) -> String {
+fn format_ass(cues: &[&SubtitleOcrCue], width: u32, height: u32) -> String {
     let events = cues
         .iter()
         .map(|cue| {
@@ -133,15 +172,19 @@ mod tests {
     use super::export_subtitle_ocr_version;
     use crate::tools::subtitle_ocr::SubtitleOcrCue;
 
-    fn multiline_cue() -> SubtitleOcrCue {
+    fn cue(id: &str, start_time_ms: u64, end_time_ms: u64, text: &str) -> SubtitleOcrCue {
         SubtitleOcrCue {
-            id: "cue-1".to_string(),
+            id: id.to_string(),
             source_cue_ids: vec!["raw-1".to_string()],
-            start_time_ms: 1_000,
-            end_time_ms: 2_500,
-            text: "- Stop.\n- I cannot.".to_string(),
+            start_time_ms,
+            end_time_ms,
+            text: text.to_string(),
             confidence: 0.9,
         }
+    }
+
+    fn multiline_cue() -> SubtitleOcrCue {
+        cue("cue-1", 1_000, 2_500, "- Stop.\n- I cannot.")
     }
 
     #[tokio::test]
@@ -193,5 +236,103 @@ mod tests {
 
         let content = std::fs::read_to_string(output).expect("failed to read export");
         assert!(content.contains("- Stop.\\N- I cannot."));
+    }
+
+    #[tokio::test]
+    async fn invalid_time_range_rejects_with_cue_id() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let output = dir.path().join("subtitle-ocr.srt");
+
+        let error = export_subtitle_ocr_version(
+            vec![cue("bad-cue", 2_000, 2_000, "Bad range")],
+            output.to_string_lossy().to_string(),
+            "srt".to_string(),
+        )
+        .await
+        .expect_err("invalid timing should fail");
+
+        assert!(error.contains("bad-cue"));
+    }
+
+    #[tokio::test]
+    async fn whitespace_only_cue_is_omitted_and_numbering_remains_correct() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let output = dir.path().join("subtitle-ocr.srt");
+
+        export_subtitle_ocr_version(
+            vec![
+                cue("blank", 0, 500, " \n\t "),
+                cue("visible", 1_000, 2_000, "Visible"),
+            ],
+            output.to_string_lossy().to_string(),
+            "srt".to_string(),
+        )
+        .await
+        .expect("export should succeed");
+
+        let content = std::fs::read_to_string(output).expect("failed to read export");
+        assert!(content.starts_with("1\n00:00:01,000 --> 00:00:02,000\nVisible"));
+        assert!(!content.contains("2\n"));
+    }
+
+    #[tokio::test]
+    async fn unsorted_input_exports_chronologically() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let output = dir.path().join("subtitle-ocr.vtt");
+
+        export_subtitle_ocr_version(
+            vec![
+                cue("later", 2_000, 3_000, "Later"),
+                cue("earlier", 500, 1_000, "Earlier"),
+            ],
+            output.to_string_lossy().to_string(),
+            "vtt".to_string(),
+        )
+        .await
+        .expect("export should succeed");
+
+        let content = std::fs::read_to_string(output).expect("failed to read export");
+        let earlier_index = content.find("Earlier").expect("earlier cue should exist");
+        let later_index = content.find("Later").expect("later cue should exist");
+        assert!(earlier_index < later_index);
+    }
+
+    #[tokio::test]
+    async fn unsupported_format_rejects() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let output = dir.path().join("subtitle-ocr.txt");
+
+        let error = export_subtitle_ocr_version(
+            vec![multiline_cue()],
+            output.to_string_lossy().to_string(),
+            "txt".to_string(),
+        )
+        .await
+        .expect_err("unsupported format should fail");
+
+        assert_eq!(error, "Unsupported Subtitle OCR export format: txt");
+    }
+
+    #[tokio::test]
+    async fn ass_escapes_braces_backslashes_and_line_breaks() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let output = dir.path().join("subtitle-ocr.ass");
+
+        export_subtitle_ocr_version(
+            vec![cue(
+                "escaped",
+                1_000,
+                2_000,
+                r"Path C:\Temp\{file}
+Next",
+            )],
+            output.to_string_lossy().to_string(),
+            "ass".to_string(),
+        )
+        .await
+        .expect("export should succeed");
+
+        let content = std::fs::read_to_string(output).expect("failed to read export");
+        assert!(content.contains(r"Path C:\\Temp\\\{file\}\NNext"));
     }
 }

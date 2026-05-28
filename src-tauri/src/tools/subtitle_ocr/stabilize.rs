@@ -1,21 +1,23 @@
 #![allow(dead_code)]
 
+use std::borrow::Cow;
+
 use crate::tools::subtitle_ocr::SubtitleOcrCue;
 
 pub(crate) fn stabilize_cues(cues: &[SubtitleOcrCue]) -> Vec<SubtitleOcrCue> {
     let mut stabilized: Vec<SubtitleOcrCue> = Vec::new();
 
     for cue in cues {
-        let cue_key = normalize_for_compare(&cue.text);
-        if cue_key.is_empty() {
+        if cue.text.trim().is_empty() {
             continue;
         }
 
         if let Some(previous) = stabilized.last_mut() {
-            let previous_key = normalize_for_compare(&previous.text);
             let is_adjacent = cue.start_time_ms <= previous.end_time_ms.saturating_add(250);
 
-            if previous_key == cue_key && is_adjacent {
+            if normalize_line_endings(&previous.text) == normalize_line_endings(&cue.text)
+                && is_adjacent
+            {
                 previous.end_time_ms = previous.end_time_ms.max(cue.end_time_ms);
                 previous.confidence = previous.confidence.max(cue.confidence);
                 previous
@@ -31,28 +33,12 @@ pub(crate) fn stabilize_cues(cues: &[SubtitleOcrCue]) -> Vec<SubtitleOcrCue> {
     stabilized
 }
 
-fn normalize_for_compare(text: &str) -> String {
-    collapse_whitespace(text).to_lowercase()
-}
-
-fn collapse_whitespace(text: &str) -> String {
-    let mut output = String::with_capacity(text.len());
-    let mut last_was_whitespace = false;
-
-    for ch in text.chars() {
-        if ch.is_whitespace() {
-            if !last_was_whitespace && !output.is_empty() {
-                output.push(' ');
-            }
-            last_was_whitespace = true;
-            continue;
-        }
-
-        last_was_whitespace = false;
-        output.push(ch);
+fn normalize_line_endings(text: &str) -> Cow<'_, str> {
+    if text.contains('\r') {
+        Cow::Owned(text.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        Cow::Borrowed(text)
     }
-
-    output.trim().to_string()
 }
 
 #[cfg(test)]
@@ -74,8 +60,8 @@ mod tests {
     #[test]
     fn adjacent_identical_text_merges() {
         let cues = vec![
-            cue("a", 0, 1_000, "Hello  world"),
-            cue("b", 1_200, 2_000, "hello world"),
+            cue("a", 0, 1_000, "Hello world"),
+            cue("b", 1_200, 2_000, "Hello world"),
         ];
 
         let stabilized = stabilize_cues(&cues);
@@ -83,6 +69,19 @@ mod tests {
         assert_eq!(stabilized.len(), 1);
         assert_eq!(stabilized[0].end_time_ms, 2_000);
         assert_eq!(stabilized[0].source_cue_ids, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn case_and_whitespace_differences_do_not_merge() {
+        let cues = vec![
+            cue("a", 0, 1_000, "Hello  world"),
+            cue("b", 1_100, 2_000, "Hello world"),
+            cue("c", 2_100, 3_000, "hello world"),
+        ];
+
+        let stabilized = stabilize_cues(&cues);
+
+        assert_eq!(stabilized.len(), 3);
     }
 
     #[test]

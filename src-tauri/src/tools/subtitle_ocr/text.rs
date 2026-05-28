@@ -91,7 +91,10 @@ pub(crate) fn split_dialogue_dash_fallback(text: &str) -> String {
             let first = text[..index].trim_end();
             let second = text[index..].trim_start();
 
-            if !first.trim().is_empty() && !second.trim().is_empty() {
+            if !first.trim().is_empty()
+                && !second.trim().is_empty()
+                && ends_with_sentence_terminal(first)
+            {
                 return format!("{}\n{}", first, second);
             }
         }
@@ -135,6 +138,13 @@ fn is_dialogue_dash(ch: char) -> bool {
     matches!(ch, '-' | '–' | '—')
 }
 
+fn ends_with_sentence_terminal(text: &str) -> bool {
+    matches!(
+        text.chars().next_back(),
+        Some('.' | '!' | '?' | '…' | '。' | '！' | '？')
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{reconstruct_text_from_boxes, split_dialogue_dash_fallback};
@@ -170,6 +180,21 @@ mod tests {
         let text = split_dialogue_dash_fallback("- Stop. - I cannot.");
 
         assert_eq!(text, "- Stop.\n- I cannot.");
+    }
+
+    #[test]
+    fn dash_fallback_splits_en_dash_and_em_dash_dialogue() {
+        assert_eq!(
+            split_dialogue_dash_fallback("– Stop. — I cannot."),
+            "– Stop.\n— I cannot."
+        );
+    }
+
+    #[test]
+    fn dash_fallback_keeps_leading_dash_sentence_with_internal_dash() {
+        let text = split_dialogue_dash_fallback("- A well-known phrase - not dialogue.");
+
+        assert_eq!(text, "- A well-known phrase - not dialogue.");
     }
 
     #[test]

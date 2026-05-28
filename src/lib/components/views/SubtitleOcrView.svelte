@@ -23,6 +23,7 @@
   import { subtitleOcrStore } from '$lib/stores';
   import type { SubtitleOcrSourceItem, SubtitleOcrTrackMetadata } from '$lib/types';
   import { getFileName } from '$lib/utils/format';
+  import { logAndToast } from '$lib/utils/log-toast';
 
   import { summarizeSubtitleOcrItems } from './subtitle-ocr-view-state';
 
@@ -93,6 +94,23 @@
     for (const warning of warnings) {
       toast.warning(warning);
     }
+  }
+
+  function getSanitizedImportErrorDetails(error: unknown): string {
+    if (error instanceof Error && error.name.trim()) {
+      return `Import failed with ${error.name}.`;
+    }
+
+    return 'Import failed before sources could be added.';
+  }
+
+  function reportImportError(error: unknown): void {
+    logAndToast.error({
+      source: 'system',
+      title: 'Subtitle OCR import failed',
+      details: getSanitizedImportErrorDetails(error),
+      showAction: false,
+    });
   }
 
   function addImportedItems(nextItems: SubtitleOcrSourceItem[]): void {
@@ -234,23 +252,31 @@
   }
 
   async function handleImport(): Promise<void> {
-    const selected = await open({
-      multiple: true,
-      filters: [{
-        name: 'Subtitle OCR sources',
-        extensions: IMPORT_EXTENSIONS,
-      }],
-    });
+    try {
+      const selected = await open({
+        multiple: true,
+        filters: [{
+          name: 'Subtitle OCR sources',
+          extensions: IMPORT_EXTENSIONS,
+        }],
+      });
 
-    if (!selected) {
-      return;
+      if (!selected) {
+        return;
+      }
+
+      await importPaths(Array.isArray(selected) ? selected : [selected]);
+    } catch (error) {
+      reportImportError(error);
     }
-
-    await importPaths(Array.isArray(selected) ? selected : [selected]);
   }
 
   export async function handleFileDrop(paths: string[]): Promise<void> {
-    await importPaths(paths);
+    try {
+      await importPaths(paths);
+    } catch (error) {
+      reportImportError(error);
+    }
   }
 
   function handleSelectItem(itemId: string): void {
@@ -262,12 +288,11 @@
   }
 
   function startPlaceholderRun(itemIds: string[]): void {
-    const activeItemIds = itemIds.filter((itemId) => items.some((item) => item.id === itemId));
-    if (activeItemIds.length === 0 || subtitleOcrStore.isProcessing) {
+    const hasRunnableItem = itemIds.some((itemId) => items.some((item) => item.id === itemId));
+    if (!hasRunnableItem || subtitleOcrStore.isProcessing) {
       return;
     }
 
-    subtitleOcrStore.startProcessing(activeItemIds);
     // TODO(task 14): call prepare_subtitle_ocr_track/run_subtitle_ocr_pipeline and add real versions.
     toast.info('Subtitle OCR run flow is not connected yet');
   }

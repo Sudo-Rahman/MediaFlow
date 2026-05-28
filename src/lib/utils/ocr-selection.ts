@@ -44,7 +44,6 @@ export interface OcrTimelineRenderedLaneOptions {
   viewport: OcrTimelineViewport;
   trackWidthPx: number;
   minWidthPercent: number;
-  minGapPx: number;
 }
 
 interface RenderedTimelineBounds {
@@ -193,7 +192,6 @@ export function assignOcrTimelineRenderedLanes<T extends TimelineBlock>(
     ? Math.max(0, options.minWidthPercent)
     : 0;
   const minWidthPx = trackWidthPx * (minWidthPercent / 100);
-  const minGapPx = Number.isFinite(options.minGapPx) ? Math.max(0, options.minGapPx) : 0;
   const laneBlocks: RenderedTimelineBounds[][] = [];
   const lanesById = new Map<string, number>();
 
@@ -209,7 +207,7 @@ export function assignOcrTimelineRenderedLanes<T extends TimelineBlock>(
   for (const block of sortedForPlacement) {
     const bounds = getRenderedTimelineBounds(block, options.viewport, trackWidthPx, minWidthPx);
     const laneIndex = laneBlocks.findIndex((lane) =>
-      lane.every((existingBounds) => !renderedBoundsOverlap(existingBounds, bounds, minGapPx)),
+      lane.every((existingBounds) => !renderedBoundsOverlap(existingBounds, bounds)),
     );
     const nextLane = laneIndex === -1 ? laneBlocks.length : laneIndex;
 
@@ -433,9 +431,8 @@ function getRenderedTimelineBounds(
 function renderedBoundsOverlap(
   left: RenderedTimelineBounds,
   right: RenderedTimelineBounds,
-  minGapPx: number,
 ): boolean {
-  return left.leftPx <= right.rightPx + minGapPx && right.leftPx <= left.rightPx + minGapPx;
+  return left.leftPx < right.rightPx && right.leftPx < left.rightPx;
 }
 
 function chooseTimelineTickIntervalMs(windowMs: number): number {

@@ -90,7 +90,6 @@ describe('OCR selection helpers', () => {
         viewport,
         trackWidthPx: 1_000,
         minWidthPercent: 5,
-        minGapPx: 4,
       },
     );
 
@@ -98,7 +97,7 @@ describe('OCR selection helpers', () => {
     expect(lanes.find((entry) => entry.id === 'second-short')?.lane).toBe(1);
   });
 
-  it('assigns touching rendered timeline blocks to separate lanes', () => {
+  it('keeps edge-touching rendered timeline blocks on the same lane', () => {
     const viewport = createOcrTimelineViewport(100_000, 0, 100_000);
     const lanes = assignOcrTimelineRenderedLanes(
       [
@@ -109,12 +108,11 @@ describe('OCR selection helpers', () => {
         viewport,
         trackWidthPx: 1_000,
         minWidthPercent: 0,
-        minGapPx: 0,
       },
     );
 
     expect(lanes.find((entry) => entry.id === 'first')?.lane).toBe(0);
-    expect(lanes.find((entry) => entry.id === 'second')?.lane).toBe(1);
+    expect(lanes.find((entry) => entry.id === 'second')?.lane).toBe(0);
   });
 
   it('keeps longer rendered blocks on earlier lanes when a short block collides visually', () => {
@@ -128,7 +126,6 @@ describe('OCR selection helpers', () => {
         viewport,
         trackWidthPx: 1_000,
         minWidthPercent: 5,
-        minGapPx: 4,
       },
     );
 
@@ -147,7 +144,6 @@ describe('OCR selection helpers', () => {
         viewport,
         trackWidthPx: 0,
         minWidthPercent: 5,
-        minGapPx: 4,
       },
     );
 

@@ -14,6 +14,14 @@ describe('subtitle OCR import helpers', () => {
     expect(getSubtitleOcrImportKind('/subs/French.srt')).toBe('unsupported');
   });
 
+  it('detects supported container extensions', () => {
+    const extensions = ['mkv', 'm2ts', 'vob', 'mp4', 'avi', 'mov', 'webm', 'm4v', 'mks'];
+
+    for (const extension of extensions) {
+      expect(getSubtitleOcrImportKind(`/media/Movie.${extension}`)).toBe('container');
+    }
+  });
+
   it('deduplicates idx and sub into one VobSub pair candidate', () => {
     const pairs = resolveVobSubPairCandidates([
       '/subs/French.idx',

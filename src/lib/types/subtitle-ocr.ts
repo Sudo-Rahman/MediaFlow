@@ -109,6 +109,15 @@ export interface SubtitleOcrDraft {
   updatedAt: string;
 }
 
+export interface SubtitleOcrPersistenceData {
+  version: 1;
+  sourcePath: string;
+  versions: SubtitleOcrVersion[];
+  activeVersionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface SubtitleOcrSourceSnapshotBase {
   sourcePath: string;
   ocrModelOverride: SubtitleOcrModelOverride;

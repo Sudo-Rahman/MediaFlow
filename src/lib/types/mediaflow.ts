@@ -1,4 +1,5 @@
 import type { TranscriptionData } from './deepgram';
+import type { SubtitleOcrPersistenceData } from './subtitle-ocr';
 import type { TranslationPersistenceData } from './translation';
 import type { VideoOcrPersistenceData } from './video-ocr';
 
@@ -7,4 +8,5 @@ export interface MediaflowData {
   audioToSubs?: TranscriptionData;
   videoOcr?: VideoOcrPersistenceData;
   translation?: TranslationPersistenceData;
+  subtitleOcr?: SubtitleOcrPersistenceData;
 }

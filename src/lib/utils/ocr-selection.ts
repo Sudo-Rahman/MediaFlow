@@ -44,11 +44,17 @@ export interface OcrTimelineRenderedLaneOptions {
   viewport: OcrTimelineViewport;
   trackWidthPx: number;
   minWidthPercent: number;
+  minGapPx: number;
 }
 
 interface RenderedTimelineBounds {
   leftPx: number;
   rightPx: number;
+}
+
+interface RenderedTimelinePlacement {
+  bounds: RenderedTimelineBounds;
+  block: TimelineBlock;
 }
 
 export interface OcrTimelineViewport {
@@ -192,7 +198,8 @@ export function assignOcrTimelineRenderedLanes<T extends TimelineBlock>(
     ? Math.max(0, options.minWidthPercent)
     : 0;
   const minWidthPx = trackWidthPx * (minWidthPercent / 100);
-  const laneBlocks: RenderedTimelineBounds[][] = [];
+  const minGapPx = Number.isFinite(options.minGapPx) ? Math.max(0, options.minGapPx) : 0;
+  const laneBlocks: RenderedTimelinePlacement[][] = [];
   const lanesById = new Map<string, number>();
 
   const sortedForPlacement = [...blocks].sort((a, b) => {
@@ -207,14 +214,14 @@ export function assignOcrTimelineRenderedLanes<T extends TimelineBlock>(
   for (const block of sortedForPlacement) {
     const bounds = getRenderedTimelineBounds(block, options.viewport, trackWidthPx, minWidthPx);
     const laneIndex = laneBlocks.findIndex((lane) =>
-      lane.every((existingBounds) => !renderedBoundsOverlap(existingBounds, bounds)),
+      lane.every((existing) => !renderedBlocksCollide(existing, { block, bounds }, minGapPx)),
     );
     const nextLane = laneIndex === -1 ? laneBlocks.length : laneIndex;
 
     if (!laneBlocks[nextLane]) {
       laneBlocks[nextLane] = [];
     }
-    laneBlocks[nextLane].push(bounds);
+    laneBlocks[nextLane].push({ block, bounds });
     lanesById.set(block.id, nextLane);
   }
 
@@ -428,11 +435,28 @@ function getRenderedTimelineBounds(
   };
 }
 
+function renderedBlocksCollide(
+  left: RenderedTimelinePlacement,
+  right: RenderedTimelinePlacement,
+  minGapPx: number,
+): boolean {
+  if (timelineBlocksTouchInTime(left.block, right.block)) {
+    return renderedBoundsOverlap(left.bounds, right.bounds, 0);
+  }
+
+  return renderedBoundsOverlap(left.bounds, right.bounds, minGapPx);
+}
+
 function renderedBoundsOverlap(
   left: RenderedTimelineBounds,
   right: RenderedTimelineBounds,
+  minGapPx: number,
 ): boolean {
-  return left.leftPx < right.rightPx && right.leftPx < left.rightPx;
+  return left.leftPx < right.rightPx + minGapPx && right.leftPx < left.rightPx + minGapPx;
+}
+
+function timelineBlocksTouchInTime(left: TimelineBlock, right: TimelineBlock): boolean {
+  return left.endTimeMs === right.startTimeMs || right.endTimeMs === left.startTimeMs;
 }
 
 function chooseTimelineTickIntervalMs(windowMs: number): number {

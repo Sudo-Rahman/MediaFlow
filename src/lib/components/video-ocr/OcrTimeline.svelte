@@ -320,6 +320,7 @@
   const TIMELINE_TRACK_PAD_PX = 6;
   const TIMELINE_RULER_HEIGHT_PX = 18;
   const TIMELINE_BLOCK_MIN_WIDTH_PERCENT = 1.5;
+  const TIMELINE_BLOCK_MIN_GAP_PX = 4;
 
   type TimelineDrag =
     | { type: 'seek'; trackEl: HTMLElement }
@@ -1111,6 +1112,7 @@
             viewport: visibleViewport,
             trackWidthPx: timelineTrackWidthPx,
             minWidthPercent: TIMELINE_BLOCK_MIN_WIDTH_PERCENT,
+            minGapPx: TIMELINE_BLOCK_MIN_GAP_PX,
           },
         )}
         {@const laneCount = Math.max(1, ...blocks.map((block) => block.lane + 1))}

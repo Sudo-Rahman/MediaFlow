@@ -90,6 +90,7 @@ describe('OCR selection helpers', () => {
         viewport,
         trackWidthPx: 1_000,
         minWidthPercent: 5,
+        minGapPx: 4,
       },
     );
 
@@ -99,20 +100,42 @@ describe('OCR selection helpers', () => {
 
   it('keeps edge-touching rendered timeline blocks on the same lane', () => {
     const viewport = createOcrTimelineViewport(100_000, 0, 100_000);
+    const options = {
+      viewport,
+      trackWidthPx: 1_000,
+      minWidthPercent: 0,
+      minGapPx: 4,
+    };
     const lanes = assignOcrTimelineRenderedLanes(
       [
         block('first', 10_000, 20_000),
         block('second', 20_000, 30_000),
       ],
-      {
-        viewport,
-        trackWidthPx: 1_000,
-        minWidthPercent: 0,
-      },
+      options,
     );
 
     expect(lanes.find((entry) => entry.id === 'first')?.lane).toBe(0);
     expect(lanes.find((entry) => entry.id === 'second')?.lane).toBe(0);
+  });
+
+  it('assigns non-contiguous rendered blocks inside the visual gap to separate lanes', () => {
+    const viewport = createOcrTimelineViewport(100_000, 0, 100_000);
+    const options = {
+      viewport,
+      trackWidthPx: 1_000,
+      minWidthPercent: 0,
+      minGapPx: 4,
+    };
+    const lanes = assignOcrTimelineRenderedLanes(
+      [
+        block('first', 10_000, 20_000),
+        block('second', 20_100, 30_000),
+      ],
+      options,
+    );
+
+    expect(lanes.find((entry) => entry.id === 'first')?.lane).toBe(0);
+    expect(lanes.find((entry) => entry.id === 'second')?.lane).toBe(1);
   });
 
   it('keeps longer rendered blocks on earlier lanes when a short block collides visually', () => {
@@ -126,6 +149,7 @@ describe('OCR selection helpers', () => {
         viewport,
         trackWidthPx: 1_000,
         minWidthPercent: 5,
+        minGapPx: 4,
       },
     );
 
@@ -144,6 +168,7 @@ describe('OCR selection helpers', () => {
         viewport,
         trackWidthPx: 0,
         minWidthPercent: 5,
+        minGapPx: 4,
       },
     );
 

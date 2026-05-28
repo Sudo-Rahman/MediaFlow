@@ -9,6 +9,7 @@ import { DEFAULT_SUBTITLE_OCR_CONFIG } from '$lib/types';
 import {
   buildSubtitleOcrSourceSnapshot,
   filterSubtitleOcrPersistenceForItem,
+  mergeSubtitleOcrPersistenceForItem,
   summarizeSubtitleOcrItems,
 } from './subtitle-ocr-view-state';
 
@@ -109,5 +110,41 @@ describe('filterSubtitleOcrPersistenceForItem', () => {
 
     expect(filtered?.versions).toHaveLength(1);
     expect(filtered?.activeVersionId).toBe('vobsub-v1');
+  });
+});
+
+describe('mergeSubtitleOcrPersistenceForItem', () => {
+  it('preserves versions for other container tracks sharing the same source path', () => {
+    const currentItem = containerItem(3);
+    const currentVersion = version('track-3-new', buildSubtitleOcrSourceSnapshot(currentItem));
+    currentItem.versions = [currentVersion];
+    currentItem.activeVersionId = currentVersion.id;
+
+    const oldCurrentVersion = version('track-3-old', buildSubtitleOcrSourceSnapshot(currentItem));
+    const otherTrackVersion = version(
+      'track-4-existing',
+      buildSubtitleOcrSourceSnapshot(containerItem(4)),
+    );
+    const existingData = persistenceData(
+      [oldCurrentVersion, otherTrackVersion],
+      otherTrackVersion.id,
+    );
+
+    const merged = mergeSubtitleOcrPersistenceForItem(
+      currentItem,
+      existingData,
+      '2026-05-29T10:00:00.000Z',
+    );
+
+    expect(merged).toMatchObject({
+      sourcePath: '/media/movie.mkv',
+      activeVersionId: 'track-3-new',
+      createdAt: existingData.createdAt,
+      updatedAt: '2026-05-29T10:00:00.000Z',
+    });
+    expect(merged.versions.map((entry) => entry.id)).toEqual([
+      'track-4-existing',
+      'track-3-new',
+    ]);
   });
 });

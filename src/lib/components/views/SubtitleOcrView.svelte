@@ -33,7 +33,6 @@
   import type {
     SubtitleOcrCue,
     SubtitleOcrConfig,
-    SubtitleOcrPersistenceData,
     SubtitleOcrPipelineResult,
     SubtitleOcrProgress,
     SubtitleOcrSourceItem,
@@ -48,6 +47,7 @@
   import {
     buildSubtitleOcrSourceSnapshot,
     filterSubtitleOcrPersistenceForItem,
+    mergeSubtitleOcrPersistenceForItem,
     summarizeSubtitleOcrItems,
   } from './subtitle-ocr-view-state';
 
@@ -539,22 +539,6 @@
     }
   }
 
-  function createPersistenceData(
-    item: SubtitleOcrSourceItem,
-    existingData: SubtitleOcrPersistenceData | null,
-  ): SubtitleOcrPersistenceData {
-    const now = new Date().toISOString();
-
-    return {
-      version: 1,
-      sourcePath: item.sourcePath,
-      versions: item.versions,
-      activeVersionId: item.activeVersionId,
-      createdAt: existingData?.createdAt ?? now,
-      updatedAt: existingData?.updatedAt ?? now,
-    };
-  }
-
   async function persistItem(itemId: string): Promise<void> {
     const item = getStoreItem(itemId);
     if (!item) {
@@ -565,7 +549,7 @@
       const existingData = await loadSubtitleOcrData(item.sourcePath);
       const saved = await saveSubtitleOcrData(
         item.sourcePath,
-        createPersistenceData(item, existingData),
+        mergeSubtitleOcrPersistenceForItem(item, existingData, new Date().toISOString()),
       );
 
       if (!saved) {

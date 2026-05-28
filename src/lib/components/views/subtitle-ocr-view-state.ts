@@ -111,3 +111,42 @@ export function filterSubtitleOcrPersistenceForItem(
     activeVersionId,
   };
 }
+
+function resolveMergedActiveVersionId(
+  item: SubtitleOcrSourceItem,
+  existingData: SubtitleOcrPersistenceData | null,
+  versions: SubtitleOcrPersistenceData['versions'],
+): string | null {
+  if (item.activeVersionId && versions.some((version) => version.id === item.activeVersionId)) {
+    return item.activeVersionId;
+  }
+
+  if (
+    existingData?.activeVersionId
+    && versions.some((version) => version.id === existingData.activeVersionId)
+  ) {
+    return existingData.activeVersionId;
+  }
+
+  return versions[0]?.id ?? null;
+}
+
+export function mergeSubtitleOcrPersistenceForItem(
+  item: SubtitleOcrSourceItem,
+  existingData: SubtitleOcrPersistenceData | null,
+  now: string,
+): SubtitleOcrPersistenceData {
+  const existingOtherVersions = existingData?.versions.filter((version) => (
+    !sourceSnapshotMatchesItem(item, version.sourceSnapshot)
+  )) ?? [];
+  const versions = [...existingOtherVersions, ...item.versions];
+
+  return {
+    version: 1,
+    sourcePath: item.sourcePath,
+    versions,
+    activeVersionId: resolveMergedActiveVersionId(item, existingData, versions),
+    createdAt: existingData?.createdAt ?? now,
+    updatedAt: now,
+  };
+}

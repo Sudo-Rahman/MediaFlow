@@ -26,7 +26,10 @@ pub(super) fn begin_operation(item_id: &str) -> Result<(), String> {
         ));
     }
 
-    state.cancelled_items.remove(item_id);
+    if state.cancelled_items.remove(item_id) {
+        return Err("Subtitle OCR operation cancelled".to_string());
+    }
+
     state
         .operations
         .insert(item_id.to_string(), OperationRecord::default());
@@ -65,19 +68,19 @@ pub(super) fn take_output_paths(item_id: &str) -> Result<Vec<String>, String> {
 }
 
 pub(super) fn clear_registered_operation(item_id: &str) -> Result<(), String> {
-    lock_state()?.operations.remove(item_id);
+    let mut state = lock_state()?;
+    if state.operations.remove(item_id).is_some() {
+        state.cancelled_items.remove(item_id);
+    }
     Ok(())
 }
 
 pub(super) fn mark_cancelled(item_id: &str) -> Result<Option<u32>, String> {
     let mut state = lock_state()?;
-    let Some(pid) = state
+    let pid = state
         .operations
         .get_mut(item_id)
-        .map(|operation| operation.pid.take())
-    else {
-        return Ok(None);
-    };
+        .and_then(|operation| operation.pid.take());
 
     state.cancelled_items.insert(item_id.to_string());
     Ok(pid)
@@ -163,6 +166,58 @@ mod tests {
             .expect("cancelled operation cleanup should clear active state");
         super::begin_operation(item_id).expect("new operation after cancellation should start");
         assert!(!super::is_operation_cancelled(item_id));
+        assert!(super::has_registered_operation(item_id));
+
+        let _ = super::clear_registered_operation(item_id);
+        let _ = super::clear_cancelled(item_id);
+    }
+
+    #[test]
+    #[serial]
+    fn cancel_before_begin_causes_next_begin_to_fail_once() {
+        let item_id = "subtitle-ocr-sticky-cancel-before-begin-test";
+        let _ = super::clear_registered_operation(item_id);
+        let _ = super::clear_cancelled(item_id);
+
+        assert_eq!(
+            super::mark_cancelled(item_id).expect("pre-begin cancel should be recorded"),
+            None
+        );
+        assert!(super::is_operation_cancelled(item_id));
+
+        let error = super::begin_operation(item_id)
+            .expect_err("next begin should consume sticky cancellation");
+        assert!(error.contains("cancelled"));
+        assert!(!super::is_operation_cancelled(item_id));
+        assert!(!super::has_registered_operation(item_id));
+
+        super::begin_operation(item_id).expect("later begin should start normally");
+        assert!(super::has_registered_operation(item_id));
+
+        let _ = super::clear_registered_operation(item_id);
+        let _ = super::clear_cancelled(item_id);
+    }
+
+    #[test]
+    #[serial]
+    fn active_cancel_stays_active_until_owner_cleanup_then_allows_reuse() {
+        let item_id = "subtitle-ocr-active-cancel-owner-cleanup-test";
+        let _ = super::clear_registered_operation(item_id);
+        let _ = super::clear_cancelled(item_id);
+
+        super::begin_operation(item_id).expect("operation should start");
+        super::mark_cancelled(item_id).expect("active operation should cancel");
+        assert!(super::is_operation_cancelled(item_id));
+        assert!(super::has_registered_operation(item_id));
+
+        let error = super::begin_operation(item_id)
+            .expect_err("cancelled active operation should remain active until owner cleanup");
+        assert!(error.contains("already active"));
+
+        super::clear_registered_operation(item_id).expect("owner cleanup should clear operation");
+        assert!(!super::is_operation_cancelled(item_id));
+
+        super::begin_operation(item_id).expect("operation should be reusable after owner cleanup");
         assert!(super::has_registered_operation(item_id));
 
         let _ = super::clear_registered_operation(item_id);

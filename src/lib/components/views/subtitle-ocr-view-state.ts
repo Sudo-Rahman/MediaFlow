@@ -39,6 +39,14 @@ export function summarizeSubtitleOcrItems(
   );
 }
 
+export function shouldApplySubtitleOcrProgressEvent(
+  itemId: string,
+  activeBackendItemIds: ReadonlySet<string>,
+  cancelRequested: boolean,
+): boolean {
+  return !cancelRequested && activeBackendItemIds.has(itemId);
+}
+
 export function buildSubtitleOcrSourceSnapshot(
   item: SubtitleOcrSourceItem,
 ): SubtitleOcrSourceSnapshot {

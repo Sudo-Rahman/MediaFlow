@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { SvelteMap } from 'svelte/reactivity';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
@@ -48,6 +48,7 @@
     buildSubtitleOcrSourceSnapshot,
     filterSubtitleOcrPersistenceForItem,
     mergeSubtitleOcrPersistenceForItem,
+    shouldApplySubtitleOcrProgressEvent,
     summarizeSubtitleOcrItems,
   } from './subtitle-ocr-view-state';
 
@@ -81,6 +82,7 @@
   let unlistenSubtitleOcrProgress: UnlistenFn | null = null;
 
   const aiCleanupControllers = new SvelteMap<string, AbortController>();
+  const activeBackendItemIds = new SvelteSet<string>();
   let cancelRequested = false;
 
   const IMPORT_EXTENSIONS = [
@@ -169,6 +171,7 @@
         controller.abort();
       }
       aiCleanupControllers.clear();
+      activeBackendItemIds.clear();
     };
   });
 
@@ -213,6 +216,10 @@
 
   function handleSubtitleOcrProgress(payload: SubtitleOcrProgressEventPayload): void {
     if (!isProgressPhase(payload.phase)) {
+      return;
+    }
+
+    if (!shouldApplySubtitleOcrProgressEvent(payload.itemId, activeBackendItemIds, cancelRequested)) {
       return;
     }
 
@@ -581,6 +588,8 @@
   }
 
   async function processItem(item: SubtitleOcrSourceItem): Promise<ProcessItemResult> {
+    activeBackendItemIds.add(item.id);
+
     try {
       setManualProgress(
         item.id,
@@ -598,6 +607,7 @@
       setManualProgress(item.id, 'decoding', 'Decoding subtitle bitmaps...');
       const { args, config, effectiveOcrModel } = buildPipelineArgs(item, sourcePath);
       const result = await invoke<SubtitleOcrPipelineResult>('run_subtitle_ocr_pipeline', args);
+      activeBackendItemIds.delete(item.id);
       if (cancelRequested) {
         throw new Error('Subtitle OCR operation cancelled');
       }
@@ -638,6 +648,7 @@
       await persistItem(item.id);
       return 'completed';
     } catch (error) {
+      activeBackendItemIds.delete(item.id);
       subtitleOcrStore.setProgress(item.id, undefined);
 
       if (isCancellationError(error) || cancelRequested) {

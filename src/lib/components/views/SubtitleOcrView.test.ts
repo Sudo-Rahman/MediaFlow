@@ -10,6 +10,7 @@ import {
   buildSubtitleOcrSourceSnapshot,
   filterSubtitleOcrPersistenceForItem,
   mergeSubtitleOcrPersistenceForItem,
+  shouldApplySubtitleOcrProgressEvent,
   summarizeSubtitleOcrItems,
 } from './subtitle-ocr-view-state';
 
@@ -69,6 +70,14 @@ describe('summarizeSubtitleOcrItems', () => {
       { status: 'completed', versions: [{}] },
       { status: 'scanning', versions: [] },
     ])).toEqual({ readyCount: 1, retryableCount: 1, scanningCount: 1 });
+  });
+});
+
+describe('shouldApplySubtitleOcrProgressEvent', () => {
+  it('ignores late progress events outside the active backend run', () => {
+    expect(shouldApplySubtitleOcrProgressEvent('item-1', new Set(['item-1']), false)).toBe(true);
+    expect(shouldApplySubtitleOcrProgressEvent('item-1', new Set(), false)).toBe(false);
+    expect(shouldApplySubtitleOcrProgressEvent('item-1', new Set(['item-1']), true)).toBe(false);
   });
 });
 

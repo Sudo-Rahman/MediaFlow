@@ -5,6 +5,7 @@ import { createDefaultVideoOcrSelection } from '$lib/utils';
 import {
   buildOcrResultVersionLoadKey,
   createOcrResultVersionSnapshot,
+  getInitialOcrResultVersionIndex,
 } from './ocr-result-dialog-state';
 
 const configSnapshot: OcrConfig = {
@@ -113,5 +114,19 @@ describe('OCR result dialog state', () => {
     });
     expect(snapshot[0].rawOcr).toEqual([]);
     expect(version.rawOcr).toHaveLength(1);
+  });
+
+  it('uses the active OCR version as the initial result dialog index when available', () => {
+    const versions = [
+      createVersion('ocr-v-1', '2026-05-12T17:00:00.000Z'),
+      createVersion('ocr-v-2', '2026-05-12T17:05:00.000Z'),
+      createVersion('ocr-v-3', '2026-05-12T17:10:00.000Z'),
+    ];
+
+    expect(getInitialOcrResultVersionIndex(versions, 'ocr-v-2')).toBe(1);
+    expect(getInitialOcrResultVersionIndex(versions, null)).toBe(2);
+    expect(getInitialOcrResultVersionIndex(versions, undefined)).toBe(2);
+    expect(getInitialOcrResultVersionIndex(versions, 'missing-version')).toBe(2);
+    expect(getInitialOcrResultVersionIndex([], 'ocr-v-2')).toBe(0);
   });
 });

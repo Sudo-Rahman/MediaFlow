@@ -40,6 +40,23 @@ export interface TimelineBlockWithLane extends TimelineBlock {
   lane: number;
 }
 
+export interface OcrTimelineRenderedLaneOptions {
+  viewport: OcrTimelineViewport;
+  trackWidthPx: number;
+  minWidthPercent: number;
+  minGapPx: number;
+}
+
+interface RenderedTimelineBounds {
+  leftPx: number;
+  rightPx: number;
+}
+
+interface RenderedTimelinePlacement {
+  bounds: RenderedTimelineBounds;
+  block: TimelineBlock;
+}
+
 export interface OcrTimelineViewport {
   startTimeMs: number;
   endTimeMs: number;
@@ -166,6 +183,55 @@ export function assignOcrTimelineLanes<T extends TimelineBlock>(blocks: T[]): Ar
     laneEndTimes[nextLane] = block.endTimeMs;
     return { ...block, lane: nextLane };
   });
+}
+
+export function assignOcrTimelineRenderedLanes<T extends TimelineBlock>(
+  blocks: T[],
+  options: OcrTimelineRenderedLaneOptions,
+): Array<T & { lane: number }> {
+  const trackWidthPx = Number.isFinite(options.trackWidthPx) ? Math.max(0, options.trackWidthPx) : 0;
+  if (trackWidthPx <= 0) {
+    return assignOcrTimelineLanes(blocks);
+  }
+
+  const minWidthPercent = Number.isFinite(options.minWidthPercent)
+    ? Math.max(0, options.minWidthPercent)
+    : 0;
+  const minWidthPx = trackWidthPx * (minWidthPercent / 100);
+  const minGapPx = Number.isFinite(options.minGapPx) ? Math.max(0, options.minGapPx) : 0;
+  const laneBlocks: RenderedTimelinePlacement[][] = [];
+  const lanesById = new Map<string, number>();
+  const timelineTouchingBlockIds = getTimelineTouchingBlockIds(blocks);
+
+  const sortedForPlacement = [...blocks].sort((a, b) => {
+    const durationDelta = (b.endTimeMs - b.startTimeMs) - (a.endTimeMs - a.startTimeMs);
+    if (durationDelta !== 0) {
+      return durationDelta;
+    }
+
+    return a.startTimeMs - b.startTimeMs || a.endTimeMs - b.endTimeMs || a.id.localeCompare(b.id);
+  });
+
+  for (const block of sortedForPlacement) {
+    const bounds = getRenderedTimelineBounds(block, options.viewport, trackWidthPx, minWidthPx);
+    const laneIndex = laneBlocks.findIndex((lane) =>
+      lane.every((existing) =>
+        !renderedBlocksCollide(existing, { block, bounds }, minGapPx, timelineTouchingBlockIds),
+      ),
+    );
+    const nextLane = laneIndex === -1 ? laneBlocks.length : laneIndex;
+
+    if (!laneBlocks[nextLane]) {
+      laneBlocks[nextLane] = [];
+    }
+    laneBlocks[nextLane].push({ block, bounds });
+    lanesById.set(block.id, nextLane);
+  }
+
+  return blocks.map((block) => ({
+    ...block,
+    lane: lanesById.get(block.id) ?? 0,
+  }));
 }
 
 export function createOcrTimelineViewport(
@@ -345,6 +411,73 @@ function normalizeTimeMs(value: number, fallback: number): number {
 
 function normalizePositiveDurationMs(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.max(1, Math.round(value)) : 1;
+}
+
+function getRenderedTimelineBounds(
+  block: TimelineBlock,
+  viewport: OcrTimelineViewport,
+  trackWidthPx: number,
+  minWidthPx: number,
+): RenderedTimelineBounds {
+  const viewportStartTimeMs = normalizeTimeMs(viewport.startTimeMs, 0);
+  const viewportEndTimeMs = Math.max(
+    viewportStartTimeMs + 1,
+    normalizeTimeMs(viewport.endTimeMs, viewportStartTimeMs + 1),
+  );
+  const viewportWindowMs = Math.max(1, viewportEndTimeMs - viewportStartTimeMs);
+  const visibleStartTimeMs = Math.max(block.startTimeMs, viewportStartTimeMs);
+  const visibleEndTimeMs = Math.min(block.endTimeMs, viewportEndTimeMs);
+  const leftRatio = (visibleStartTimeMs - viewportStartTimeMs) / viewportWindowMs;
+  const rightRatio = (visibleEndTimeMs - viewportStartTimeMs) / viewportWindowMs;
+  const leftPx = Math.max(0, Math.min(trackWidthPx, leftRatio * trackWidthPx));
+  const naturalRightPx = Math.max(leftPx, rightRatio * trackWidthPx);
+
+  return {
+    leftPx,
+    rightPx: Math.max(naturalRightPx, leftPx + minWidthPx),
+  };
+}
+
+function renderedBlocksCollide(
+  left: RenderedTimelinePlacement,
+  right: RenderedTimelinePlacement,
+  minGapPx: number,
+  timelineTouchingBlockIds: Set<string>,
+): boolean {
+  if (timelineTouchingBlockIds.has(left.block.id) || timelineTouchingBlockIds.has(right.block.id)) {
+    return renderedBoundsOverlap(left.bounds, right.bounds, 0);
+  }
+
+  return renderedBoundsOverlap(left.bounds, right.bounds, minGapPx);
+}
+
+function renderedBoundsOverlap(
+  left: RenderedTimelineBounds,
+  right: RenderedTimelineBounds,
+  minGapPx: number,
+): boolean {
+  return left.leftPx < right.rightPx + minGapPx && right.leftPx < left.rightPx + minGapPx;
+}
+
+function timelineBlocksTouchInTime(left: TimelineBlock, right: TimelineBlock): boolean {
+  return left.endTimeMs === right.startTimeMs || right.endTimeMs === left.startTimeMs;
+}
+
+function getTimelineTouchingBlockIds(blocks: TimelineBlock[]): Set<string> {
+  const ids = new Set<string>();
+
+  for (let leftIndex = 0; leftIndex < blocks.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < blocks.length; rightIndex += 1) {
+      const left = blocks[leftIndex];
+      const right = blocks[rightIndex];
+      if (left && right && timelineBlocksTouchInTime(left, right)) {
+        ids.add(left.id);
+        ids.add(right.id);
+      }
+    }
+  }
+
+  return ids;
 }
 
 function chooseTimelineTickIntervalMs(windowMs: number): number {

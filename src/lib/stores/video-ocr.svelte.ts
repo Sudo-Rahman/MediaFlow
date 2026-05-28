@@ -9,6 +9,7 @@ import type {
   OcrConfig,
   OcrRegion,
   OcrSegment,
+  OcrSubtitle,
   OcrZoneRole,
   OcrVersion,
   OcrProgress,
@@ -21,6 +22,24 @@ import type {
 } from '$lib/types';
 import { DEFAULT_OCR_CONFIG, DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
 import { clampRegion, createDefaultVideoOcrSelection, getFileName, normalizeOcrZoneLabels } from '$lib/utils';
+import {
+  appendOcrVersionFromRenderedSelection,
+  branchOcrDraftFromRenderedSelection,
+  cloneOcrDraft,
+  cloneOcrSegment,
+  cloneOcrSelection,
+  cloneOcrVersion,
+  cloneOcrVersionedFile,
+  getRenderedOcrSelection,
+  getRenderedOcrSubtitles,
+  getRenderedOcrVersion,
+  getOcrDraftVersionName,
+  hasOcrDraft,
+  normalizeActiveOcrVersionId,
+  replaceOcrDraftSelection,
+  selectOcrVersion as selectOcrVersionState,
+  setOcrVersionsForFile,
+} from '$lib/components/video-ocr/ocr-version-state';
 import { logStore } from './logs.svelte';
 
 // ============================================================================
@@ -86,28 +105,44 @@ function isOcrReadyFile(file: OcrVideoFile): boolean {
   return file.status === 'ready' || file.status === 'completed';
 }
 
-function cloneSegment(segment: OcrSegment): OcrSegment {
-  return {
-    ...segment,
-    zones: segment.zones.map((zone) => ({ ...zone, region: { ...zone.region } })),
-  };
-}
-
-function cloneSelection(selection: VideoOcrSelection): VideoOcrSelection {
-  return normalizeOcrZoneLabels({ segments: selection.segments.map(cloneSegment) });
-}
-
 function cloneVideoFile(file: OcrVideoFile): OcrVideoFile {
-  return {
-    ...file,
-    ocrSelection: cloneSelection(file.ocrSelection),
-  };
+  return cloneOcrVersionedFile(file);
 }
 
 function cloneLiveDetection(detection: OcrZoneFrame): OcrZoneFrame {
   return {
     ...detection,
     region: { ...detection.region },
+  };
+}
+
+function buildSplitZoneLabel(label: string | undefined, suffix: 'A' | 'B'): string {
+  const baseLabel = label?.trim() || 'Zone';
+  return `${baseLabel} ${suffix}`;
+}
+
+function cloneSplitSegment(
+  segment: OcrSegment,
+  zoneIndex: number,
+  startTimeMs: number,
+  endTimeMs: number,
+  suffix: 'A' | 'B',
+): OcrSegment {
+  const zone = segment.zones[zoneIndex];
+
+  return {
+    ...cloneOcrSegment(segment),
+    id: `${segment.id}-${suffix.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    startTimeMs,
+    endTimeMs,
+    zones: [
+      {
+        ...zone,
+        id: `${zone.id}-${suffix.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        label: buildSplitZoneLabel(zone.label, suffix),
+        region: { ...zone.region },
+      },
+    ],
   };
 }
 
@@ -129,6 +164,36 @@ export const videoOcrStore = {
 
   get selectedFile(): OcrVideoFile | undefined {
     return videoFiles.find(f => f.id === selectedFileId);
+  },
+
+  get activeSelectedOcrVersion(): OcrVersion | null {
+    const file = this.selectedFile;
+    return file ? getRenderedOcrVersion(file) : null;
+  },
+
+  getActiveOcrVersion(fileId: string): OcrVersion | null {
+    const file = videoFiles.find((entry) => entry.id === fileId);
+    return file ? getRenderedOcrVersion(file) : null;
+  },
+
+  getActiveOcrSelection(fileId: string): VideoOcrSelection {
+    const file = videoFiles.find((entry) => entry.id === fileId);
+    return file ? getRenderedOcrSelection(file) : { segments: [] };
+  },
+
+  getActiveOcrSubtitles(fileId: string): OcrSubtitle[] {
+    const file = videoFiles.find((entry) => entry.id === fileId);
+    return file ? getRenderedOcrSubtitles(file) : [];
+  },
+
+  hasDraftOcrVersion(fileId: string): boolean {
+    const file = videoFiles.find((entry) => entry.id === fileId);
+    return file ? hasOcrDraft(file) : false;
+  },
+
+  getDraftOcrVersionName(fileId: string): string {
+    const file = videoFiles.find((entry) => entry.id === fileId);
+    return file ? getOcrDraftVersionName(file) : 'Draft Version 1';
   },
 
   get readyFiles(): OcrVideoFile[] {
@@ -229,12 +294,19 @@ export const videoOcrStore = {
         existingPaths.add(file.path);
         return true;
       })
-      .map((file) => ({
-        ...file,
-        ocrSelection: file.ocrSelection
-          ? cloneSelection(file.ocrSelection)
-          : createDefaultVideoOcrSelection(file.duration ? Math.round(file.duration * 1000) : 1),
-      }));
+      .map((file) => {
+        const ocrVersions = (file.ocrVersions ?? []).map(cloneOcrVersion);
+        const draft = file.draft ? cloneOcrDraft(file.draft) : undefined;
+        return {
+          ...file,
+          ocrVersions,
+          draft,
+          activeOcrVersionId: normalizeActiveOcrVersionId(ocrVersions, file.activeOcrVersionId, draft),
+          ocrSelection: file.ocrSelection
+            ? cloneOcrSelection(file.ocrSelection)
+            : createDefaultVideoOcrSelection(file.duration ? Math.round(file.duration * 1000) : 1),
+        };
+      });
     videoFiles = [...videoFiles, ...newFiles];
 
     if (!selectedFileId && newFiles.length > 0) {
@@ -268,20 +340,52 @@ export const videoOcrStore = {
     }
   },
 
+  selectOcrVersion(fileId: string, versionId: string | null) {
+    videoFiles = videoFiles.map((file) => {
+      if (file.id !== fileId) {
+        return file;
+      }
+
+      return selectOcrVersionState(file, versionId);
+    });
+  },
+
   updateFile(id: string, updates: Partial<OcrVideoFile>) {
     videoFiles = videoFiles.map(f => {
       if (f.id !== id) {
         return f;
       }
 
+      const hasOcrSelectionUpdate = Object.prototype.hasOwnProperty.call(updates, 'ocrSelection');
+      const hasOcrVersionsUpdate = Object.prototype.hasOwnProperty.call(updates, 'ocrVersions');
+      const hasActiveVersionUpdate = Object.prototype.hasOwnProperty.call(updates, 'activeOcrVersionId');
+      const hasDraftUpdate = Object.prototype.hasOwnProperty.call(updates, 'draft');
       const { ocrSelection, ...updatesWithoutSelection } = updates;
       const durationMs = updates.duration ? Math.round(updates.duration * 1000) : undefined;
-      const nextUpdates = ocrSelection === undefined
-        ? { ...updatesWithoutSelection, ocrSelection: cloneSelection(f.ocrSelection) }
-        : { ...updatesWithoutSelection, ocrSelection: cloneSelection(ocrSelection) };
-      const nextFile = { ...f, ...nextUpdates };
+      const { ocrVersions, activeOcrVersionId, draft, ...remainingUpdates } = updatesWithoutSelection;
+      const nextVersions = !hasOcrVersionsUpdate || ocrVersions === undefined
+        ? f.ocrVersions
+        : ocrVersions.map(cloneOcrVersion);
+      const nextDraft = hasDraftUpdate
+        ? draft ? cloneOcrDraft(draft) : undefined
+        : f.draft;
+      const nextActiveOcrVersionId = hasActiveVersionUpdate
+        ? normalizeActiveOcrVersionId(nextVersions, activeOcrVersionId, nextDraft)
+        : normalizeActiveOcrVersionId(nextVersions, f.activeOcrVersionId, nextDraft);
+      const nextFile: OcrVideoFile = {
+        ...f,
+        ...remainingUpdates,
+        ocrVersions: nextVersions,
+        activeOcrVersionId: nextActiveOcrVersionId,
+        draft: nextDraft,
+        ocrSelection: hasOcrSelectionUpdate
+          ? ocrSelection !== undefined
+            ? cloneOcrSelection(ocrSelection)
+            : cloneOcrSelection(f.ocrSelection)
+          : f.ocrSelection,
+      };
       if (
-        ocrSelection === undefined
+        !hasOcrSelectionUpdate
         && durationMs
         && f.ocrSelection.segments.length === 1
         && f.ocrSelection.segments[0].endTimeMs === 1
@@ -411,7 +515,7 @@ export const videoOcrStore = {
   setOcrSelection(fileId: string, selection: VideoOcrSelection) {
     videoFiles = videoFiles.map(f =>
       f.id === fileId
-        ? { ...f, ocrSelection: cloneSelection(selection) }
+        ? replaceOcrDraftSelection(f, selection)
         : f
     );
   },
@@ -422,15 +526,13 @@ export const videoOcrStore = {
         return f;
       }
 
-      return {
-        ...f,
-        ocrSelection: normalizeOcrZoneLabels({
-          segments: [
-            ...f.ocrSelection.segments.map(cloneSegment),
-            cloneSegment(segment),
-          ],
-        }),
-      };
+      const draftFile = branchOcrDraftFromRenderedSelection(f);
+      return replaceOcrDraftSelection(draftFile, normalizeOcrZoneLabels({
+        segments: [
+          ...draftFile.ocrSelection.segments.map(cloneOcrSegment),
+          cloneOcrSegment(segment),
+        ],
+      }));
     });
   },
 
@@ -440,25 +542,23 @@ export const videoOcrStore = {
         return f;
       }
 
-      return {
-        ...f,
-        ocrSelection: {
-          segments: f.ocrSelection.segments.map((segment) => {
-            if (segment.id !== segmentId) {
-              return cloneSegment(segment);
-            }
+      const draftFile = branchOcrDraftFromRenderedSelection(f);
+      return replaceOcrDraftSelection(draftFile, {
+        segments: draftFile.ocrSelection.segments.map((segment) => {
+          if (segment.id !== segmentId) {
+            return cloneOcrSegment(segment);
+          }
 
-            return {
-              ...segment,
-              zones: segment.zones.map((zone) => ({
-                ...zone,
-                role: zone.id === zoneId ? role : zone.role,
-                region: { ...zone.region },
-              })),
-            };
-          }),
-        },
-      };
+          return {
+            ...segment,
+            zones: segment.zones.map((zone) => ({
+              ...zone,
+              role: zone.id === zoneId ? role : zone.role,
+              region: { ...zone.region },
+            })),
+          };
+        }),
+      });
     });
   },
 
@@ -469,24 +569,22 @@ export const videoOcrStore = {
         return f;
       }
 
-      return {
-        ...f,
-        ocrSelection: {
-          segments: f.ocrSelection.segments.map((segment) => {
-            if (segment.id !== segmentId) {
-              return cloneSegment(segment);
-            }
+      const draftFile = branchOcrDraftFromRenderedSelection(f);
+      return replaceOcrDraftSelection(draftFile, {
+        segments: draftFile.ocrSelection.segments.map((segment) => {
+          if (segment.id !== segmentId) {
+            return cloneOcrSegment(segment);
+          }
 
-            return {
-              ...segment,
-              zones: segment.zones.map((zone) => ({
-                ...zone,
-                region: zone.id === zoneId ? { ...nextRegion } : { ...zone.region },
-              })),
-            };
-          }),
-        },
-      };
+          return {
+            ...segment,
+            zones: segment.zones.map((zone) => ({
+              ...zone,
+              region: zone.id === zoneId ? { ...nextRegion } : { ...zone.region },
+            })),
+          };
+        }),
+      });
     });
   },
 
@@ -498,25 +596,23 @@ export const videoOcrStore = {
         return f;
       }
 
-      return {
-        ...f,
-        ocrSelection: normalizeOcrZoneLabels({
-          segments: f.ocrSelection.segments.map((segment) => {
-            if (segment.id !== segmentId) {
-              return cloneSegment(segment);
-            }
+      const draftFile = branchOcrDraftFromRenderedSelection(f);
+      return replaceOcrDraftSelection(draftFile, normalizeOcrZoneLabels({
+        segments: draftFile.ocrSelection.segments.map((segment) => {
+          if (segment.id !== segmentId) {
+            return cloneOcrSegment(segment);
+          }
 
-            return {
-              ...segment,
-              zones: segment.zones.map((zone) => ({
-                ...zone,
-                label: zone.id === zoneId ? nextLabel || undefined : zone.label,
-                region: { ...zone.region },
-              })),
-            };
-          }),
+          return {
+            ...segment,
+            zones: segment.zones.map((zone) => ({
+              ...zone,
+              label: zone.id === zoneId ? nextLabel || undefined : zone.label,
+              region: { ...zone.region },
+            })),
+          };
         }),
-      };
+      }));
     });
   },
 
@@ -534,22 +630,74 @@ export const videoOcrStore = {
         return f;
       }
 
-      return {
-        ...f,
-        ocrSelection: {
-          segments: f.ocrSelection.segments.map((segment) => (
-            segment.id === segmentId
-              ? {
-                  ...segment,
-                  startTimeMs: safeStartTimeMs,
-                  endTimeMs: safeEndTimeMs,
-                  zones: segment.zones.map((zone) => ({ ...zone, region: { ...zone.region } })),
-                }
-              : cloneSegment(segment)
-          )),
-        },
-      };
+      const draftFile = branchOcrDraftFromRenderedSelection(f);
+      return replaceOcrDraftSelection(draftFile, {
+        segments: draftFile.ocrSelection.segments.map((segment) => (
+          segment.id === segmentId
+            ? {
+                ...segment,
+                startTimeMs: safeStartTimeMs,
+                endTimeMs: safeEndTimeMs,
+                zones: segment.zones.map((zone) => ({ ...zone, region: { ...zone.region } })),
+              }
+            : cloneOcrSegment(segment)
+        )),
+      });
     });
+  },
+
+  cutOcrZone(fileId: string, segmentId: string, zoneId: string, cutTimeMs: number, durationMs: number): boolean {
+    const safeDurationMs = Number.isFinite(durationMs) && durationMs > 0 ? Math.round(durationMs) : 1;
+    const safeCutTimeMs = Number.isFinite(cutTimeMs)
+      ? Math.max(0, Math.min(Math.round(cutTimeMs), safeDurationMs))
+      : 0;
+    const file = videoFiles.find((entry) => entry.id === fileId);
+
+    if (!file) {
+      return false;
+    }
+
+    const renderedSelection = getRenderedOcrSelection(file);
+    const sourceSegment = renderedSelection.segments.find((segment) => segment.id === segmentId);
+    const zoneIndex = sourceSegment?.zones.findIndex((zone) => zone.id === zoneId) ?? -1;
+
+    if (!sourceSegment || zoneIndex === -1) {
+      return false;
+    }
+    if (safeCutTimeMs <= sourceSegment.startTimeMs || safeCutTimeMs >= sourceSegment.endTimeMs) {
+      return false;
+    }
+
+    const draftFile = branchOcrDraftFromRenderedSelection(file);
+    const leftSegment = cloneSplitSegment(sourceSegment, zoneIndex, sourceSegment.startTimeMs, safeCutTimeMs, 'A');
+    const rightSegment = cloneSplitSegment(sourceSegment, zoneIndex, safeCutTimeMs, sourceSegment.endTimeMs, 'B');
+    const nextSegments = renderedSelection.segments.flatMap((segment) => {
+      if (segment.id !== segmentId) {
+        return [cloneOcrSegment(segment)];
+      }
+
+      const remainingZones = segment.zones
+        .filter((zone) => zone.id !== zoneId)
+        .map((zone) => ({ ...zone, region: { ...zone.region } }));
+
+      if (remainingZones.length === 0) {
+        return [leftSegment, rightSegment];
+      }
+
+      return [
+        {
+          ...segment,
+          zones: remainingZones,
+        },
+        leftSegment,
+        rightSegment,
+      ];
+    });
+    const nextFile = replaceOcrDraftSelection(draftFile, { segments: nextSegments });
+
+    videoFiles = videoFiles.map(f => f.id === fileId ? nextFile : f);
+
+    return true;
   },
 
   // -------------------------------------------------------------------------
@@ -643,13 +791,14 @@ export const videoOcrStore = {
   setOcrVersions(fileId: string, versions: OcrVersion[]) {
     this.clearLiveDetections(fileId);
     videoFiles = videoFiles.map(f =>
-      f.id === fileId ? {
-        ...f,
-        ocrVersions: [...versions],
-        status: versions.length > 0 ? 'completed' as const : f.status,
-        progress: undefined,
-        error: undefined,
-      } : f
+      f.id === fileId
+        ? {
+            ...setOcrVersionsForFile(f, versions),
+            status: versions.length > 0 ? 'completed' as const : f.status,
+            progress: undefined,
+            error: undefined,
+          }
+        : f
     );
   },
 
@@ -661,8 +810,7 @@ export const videoOcrStore = {
       }
 
       return {
-        ...f,
-        ocrVersions: [...f.ocrVersions, version],
+        ...appendOcrVersionFromRenderedSelection(f, version),
         status: 'completed' as const,
         progress: undefined,
         error: undefined,

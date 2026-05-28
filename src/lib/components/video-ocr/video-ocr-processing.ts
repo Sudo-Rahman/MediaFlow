@@ -9,6 +9,7 @@ import type {
   OcrSubtitle,
   OcrVideoFile,
   OcrVersion,
+  VideoOcrSelection,
 } from '$lib/types';
 import { DEFAULT_OCR_WORKER_COUNT } from '$lib/types';
 import type { OcrSubtitleLike } from '$lib/utils';
@@ -23,6 +24,7 @@ import {
   toRustOcrFrames,
 } from '$lib/utils';
 import { logAndToast } from '$lib/utils/log-toast';
+import { getRetryRawSource } from './ocr-version-state';
 
 export interface ProcessVideoOcrFileOptions {
   file: OcrVideoFile;
@@ -65,6 +67,18 @@ export function getLatestRawVersion(file: OcrVideoFile): OcrVersion | null {
   return null;
 }
 
+export function getPreferredRawVersion(file: OcrVideoFile): OcrVersion | null {
+  return getRetryRawSource(file);
+}
+
+export function willRetryFallbackToFullPipeline(file: OcrVideoFile, mode: OcrRetryMode): boolean {
+  return mode !== 'full_pipeline' && !getPreferredRawVersion(file);
+}
+
+export function canRunOcrRetryMode(file: OcrVideoFile, mode: OcrRetryMode): boolean {
+  return !willRetryFallbackToFullPipeline(file, mode);
+}
+
 export function summarizeOcrFiles(files: OcrVideoFile[]): VideoOcrFileSummary {
   const startTargets: OcrVideoFile[] = [];
   const retryTargets: OcrVideoFile[] = [];
@@ -88,7 +102,7 @@ export function summarizeOcrFiles(files: OcrVideoFile[]): VideoOcrFileSummary {
     const isRetryableStatus = file.status !== 'scanning' && !isOcrActiveStatus(file.status);
     if (file.ocrVersions.length > 0 && isRetryableStatus) {
       retryTargets.push(file);
-      if (!getLatestRawVersion(file)) {
+      if (!getPreferredRawVersion(file)) {
         retryAllMissingRawCount += 1;
       }
     }
@@ -251,6 +265,7 @@ async function runFullPipeline(
   config: OcrConfig,
   getFreshFile: (fileId: string) => OcrVideoFile | undefined,
   aiCleanupControllers: Map<string, AbortController>,
+  selectionSnapshot: VideoOcrSelection,
 ): Promise<{ rawOcr: OcrRawFrame[]; finalSubtitles: OcrSubtitle[] }> {
   const current = getFreshFile(file.id) ?? file;
 
@@ -267,7 +282,7 @@ async function runFullPipeline(
     numWorkers: config.threadCount,
     minConfidence: config.confidenceThreshold,
     cleanup: buildCleanupOptions(config, false),
-    selection: current.ocrSelection,
+    selection: selectionSnapshot,
   });
 
   const rawOcr = normalizeOcrRawFrames(pipelineResult.rawOcr);
@@ -313,8 +328,9 @@ export async function processVideoOcrFile({
   let rawFrameRate = runtimeConfig.frameRate;
 
   const freshFile = getFreshFile(file.id) ?? file;
+  const selectionSnapshot = videoOcrStore.getActiveOcrSelection(file.id);
   if (mode !== 'full_pipeline') {
-    const sourceVersion = getLatestRawVersion(freshFile);
+    const sourceVersion = getPreferredRawVersion(freshFile);
     if (!sourceVersion) {
       effectiveMode = 'full_pipeline';
       videoOcrStore.addLog('warning', 'Raw OCR not found. Falling back to full pipeline.', file.id);
@@ -338,6 +354,7 @@ export async function processVideoOcrFile({
         runtimeConfig,
         getFreshFile,
         aiCleanupControllers,
+        selectionSnapshot,
       );
       rawOcr = result.rawOcr;
       finalSubtitles = result.finalSubtitles;
@@ -367,6 +384,7 @@ export async function processVideoOcrFile({
       rawOcr,
       finalSubtitles,
       rawFrameRate,
+      selectionSnapshot,
     );
 
     videoOcrStore.addOcrVersion(file.id, version);

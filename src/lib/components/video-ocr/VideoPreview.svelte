@@ -1,28 +1,204 @@
+<script lang="ts" module>
+  import type { OcrSubtitle, VideoOcrSelection } from '$lib/types';
+
+  export type PreviewKeyboardAction = 'toggle-playback' | 'skip-backward' | 'skip-forward';
+
+  export function getPreviewKeyboardAction(key: string, disabled: boolean): PreviewKeyboardAction | null {
+    if (disabled) {
+      return null;
+    }
+
+    if (key === ' ' || key === 'Spacebar' || key === 'Space') {
+      return 'toggle-playback';
+    }
+
+    if (key === 'ArrowLeft') {
+      return 'skip-backward';
+    }
+
+    if (key === 'ArrowRight') {
+      return 'skip-forward';
+    }
+
+    return null;
+  }
+
+  export function shouldTogglePreviewPlaybackFromClick(
+    button: number,
+    disabled: boolean,
+    clickCount = 1,
+  ): boolean {
+    return !disabled && button === 0 && clickCount === 1;
+  }
+
+  export function shouldTogglePreviewExpandedFromDoubleClick(button: number, disabled: boolean): boolean {
+    return !disabled && button === 0;
+  }
+
+  export const PREVIEW_SEEK_THROTTLE_MS = 120;
+  export const PREVIEW_CLICK_TOGGLE_DELAY_MS = 180;
+  export const POST_SEEK_PLAYBACK_SYNC_GUARD_MS = 1_000;
+  export const POST_SEEK_PLAYBACK_SYNC_TOLERANCE_SECONDS = 1;
+
+  export interface PreviewClickToggleController {
+    queue: (callback: () => void) => void;
+    cancel: () => void;
+    clear: () => void;
+  }
+
+  export function createPreviewClickToggleController(
+    delayMs = PREVIEW_CLICK_TOGGLE_DELAY_MS,
+  ): PreviewClickToggleController {
+    let pendingTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function clear(): void {
+      if (!pendingTimer) {
+        return;
+      }
+
+      clearTimeout(pendingTimer);
+      pendingTimer = undefined;
+    }
+
+    return {
+      queue(callback) {
+        clear();
+        pendingTimer = setTimeout(() => {
+          pendingTimer = undefined;
+          callback();
+        }, delayMs);
+      },
+      cancel: clear,
+      clear,
+    };
+  }
+
+  export function shouldApplySeekToken(candidateToken: number | null, activeToken: number | null): boolean {
+    return candidateToken !== null && candidateToken === activeToken;
+  }
+
+  export function shouldSuppressPostSeekPlaybackSync(
+    candidateTimeSeconds: number,
+    confirmedSeekTimeSeconds: number | null,
+    nowMs: number,
+    guardUntilMs: number,
+    toleranceSeconds: number,
+  ): boolean {
+    if (
+      confirmedSeekTimeSeconds === null
+      || !Number.isFinite(candidateTimeSeconds)
+      || !Number.isFinite(confirmedSeekTimeSeconds)
+      || !Number.isFinite(nowMs)
+      || !Number.isFinite(guardUntilMs)
+      || nowMs > guardUntilMs
+    ) {
+      return false;
+    }
+
+    const safeToleranceSeconds = Number.isFinite(toleranceSeconds)
+      ? Math.max(0, toleranceSeconds)
+      : 0;
+    return Math.abs(candidateTimeSeconds - confirmedSeekTimeSeconds) > safeToleranceSeconds;
+  }
+
+  export function getPreviewSeekThrottleDelay(
+    nowMs: number,
+    lastSeekWriteMs: number,
+    throttleMs = PREVIEW_SEEK_THROTTLE_MS,
+  ): number {
+    if (!Number.isFinite(lastSeekWriteMs)) {
+      return 0;
+    }
+
+    return Math.max(0, throttleMs - Math.max(0, nowMs - lastSeekWriteMs));
+  }
+
+  export function createPreviewChangeTimes(
+    durationSeconds: number | undefined,
+    selection: VideoOcrSelection,
+    subtitles: OcrSubtitle[],
+  ): number[] {
+    const changeTimes = new Set<number>([0]);
+    const durationMs = Math.max(0, Math.round((durationSeconds ?? 0) * 1000));
+
+    if (durationMs > 0) {
+      changeTimes.add(durationMs);
+    }
+
+    for (const segment of selection.segments) {
+      addPreviewChangeTime(changeTimes, segment.startTimeMs, durationMs);
+      addPreviewChangeTime(changeTimes, segment.endTimeMs, durationMs);
+    }
+
+    for (const subtitle of subtitles) {
+      addPreviewChangeTime(changeTimes, subtitle.startTime, durationMs);
+      addPreviewChangeTime(changeTimes, subtitle.endTime, durationMs);
+    }
+
+    return Array.from(changeTimes).sort((left, right) => left - right);
+  }
+
+  function addPreviewChangeTime(changeTimes: Set<number>, timeMs: number, durationMs: number): void {
+    if (!Number.isFinite(timeMs)) {
+      return;
+    }
+
+    const roundedTimeMs = Math.max(0, Math.round(timeMs));
+    changeTimes.add(durationMs > 0 ? Math.min(roundedTimeMs, durationMs) : roundedTimeMs);
+  }
+</script>
+
 <script lang="ts">
+  import { onDestroy, tick, type Snippet } from 'svelte';
   import { convertFileSrc } from '@tauri-apps/api/core';
 
-  import type { OcrRegion, OcrSubtitle, OcrVideoFile, OcrZoneFrame, OcrZoneRole } from '$lib/types';
+  import type { OcrRegion, OcrVideoFile, OcrZoneFrame, OcrZoneRole } from '$lib/types';
   import { cn } from '$lib/utils';
-  import { Button } from '$lib/components/ui/button';
   import * as ContextMenu from '$lib/components/ui/context-menu';
-  import SubtitleOverlay from './SubtitleOverlay.svelte';
+  import ActiveCueSummary from './ActiveCueSummary.svelte';
+  import type { PreviewPlayerControlsApi } from './PreviewPlayerControls.svelte';
+  import PreviewPlayerControls from './PreviewPlayerControls.svelte';
+  import PreviewToolbar from './PreviewToolbar.svelte';
   import RegionSelector from './RegionSelector.svelte';
   import LiveOcrHoverCard from './LiveOcrHoverCard.svelte';
+  import type { ActiveCueSummary as ActiveCueSummaryModel } from './preview-cues';
+  import type { PreviewPlaybackClock } from './preview-playback-clock';
+  import { createPreviewPlaybackClock } from './preview-playback-clock';
+  import { getPreviewLayerState } from './preview-layer-state';
+  import { createPreviewSeekSession } from './preview-seek-session';
+  import {
+    calculateVideoBounds,
+    findTopmostZoneAtPoint,
+    getVideoPoint,
+    regionToContainerStyle,
+    type PreviewVideoBounds,
+  } from './preview-zone-geometry';
 
   interface VideoSeekRequest {
     fileId: string;
     timeMs: number;
     requestId: number;
+    mode?: 'preview' | 'commit' | 'cancel';
   }
 
   interface VideoPreviewProps {
     file?: OcrVideoFile;
+    selection?: VideoOcrSelection;
+    subtitles?: OcrSubtitle[];
     liveDetections?: OcrZoneFrame[];
     liveDetectionCount?: number;
     showSubtitles?: boolean;
     suspendPlayback?: boolean;
     seekRequest?: VideoSeekRequest | null;
+    activeCueSummary: ActiveCueSummaryModel;
+    paletteOpen?: boolean;
+    expanded?: boolean;
+    toolbarAccessory?: Snippet<[boolean]>;
+    expandedOverlay?: Snippet;
     onTimeChange?: (timeMs: number) => void;
+    onPlaybackFrame?: (timeMs: number) => void;
+    onOpenCuePalette?: () => void;
+    onExpandedChange?: (expanded: boolean) => void;
     onAddSegmentFromRegion?: (region: OcrRegion, startTimeMs: number, endTimeMs: number) => void | Promise<void>;
     onUpdateZoneRegion?: (segmentId: string, zoneId: string, region: OcrRegion) => void | Promise<void>;
     onSetZoneRole?: (segmentId: string, zoneId: string, role: OcrZoneRole) => void | Promise<void>;
@@ -41,12 +217,22 @@
 
   let {
     file,
+    selection,
+    subtitles = [],
     liveDetections = [],
     liveDetectionCount = 0,
     showSubtitles = true,
     suspendPlayback = false,
     seekRequest = null,
+    activeCueSummary,
+    paletteOpen = false,
+    expanded = false,
+    toolbarAccessory,
+    expandedOverlay,
     onTimeChange,
+    onPlaybackFrame,
+    onOpenCuePalette,
+    onExpandedChange,
     onAddSegmentFromRegion,
     onUpdateZoneRegion,
     onSetZoneRole,
@@ -56,22 +242,48 @@
   }: VideoPreviewProps = $props();
 
   let videoEl = $state<HTMLVideoElement | null>(null);
+  let previewContainerEl = $state<HTMLDivElement | null>(null);
   let containerEl = $state<HTMLElement | null>(null);
-  let currentTimesByFileId = $state.raw<Record<string, number>>({});
+  let playerControlsRef = $state<PreviewPlayerControlsApi | null>(null);
+  let displayTimesByFileId = $state.raw<Record<string, number>>({});
+  let previewTimesByFileId = $state.raw<Record<string, number>>({});
   let isDrawingZone = $state(false);
+  let isPaused = $state(true);
+  let isMuted = $state(false);
+  let volume = $state(1);
+  let duration = $state(0);
   let drawingStartTimeMs = $state(0);
   let drawingRegion = $state<OcrRegion | undefined>();
   let editingZone = $state<{ segmentId: string; zoneId: string } | null>(null);
   let editingRegion = $state<OcrRegion | undefined>();
   let contextZone = $state<VisibleZoneEntry | undefined>();
+  let contextMenuOpen = $state(false);
   let resumePlayback = $state(false);
   let lastAppliedSeekRequestId = $state<number | null>(null);
-  let isPointerInsidePreview = $state(false);
-  let liveDetectionsHoverOpen = $state(false);
+  let latestPlaybackTimesByFileId: Record<string, number> = {};
+  let previewStateKeysByFileId: Record<string, string> = {};
+  let playbackClock: PreviewPlaybackClock | null = null;
+  let seekReleaseTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingPreviewSeekTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingPreviewSeekTimeSeconds: number | null = null;
+  let pendingPreviewSeekToken: number | null = null;
+  let lastPreviewSeekWriteAtMs = Number.NEGATIVE_INFINITY;
+  let nextSeekToken = 0;
+  let activeSeekToken: number | null = null;
+  let scrubRestoreTimeSeconds: number | null = null;
+  let lastConfirmedSeekFileId: string | null = null;
+  let lastConfirmedSeekTimeSeconds: number | null = null;
+  let postSeekGuardUntilMs = Number.NEGATIVE_INFINITY;
+  const seekSession = createPreviewSeekSession();
+  const previewClickToggle = createPreviewClickToggleController();
   
   // Video bounds within container (for letterboxed videos)
   // These are relative values (0-1) within the container
-  let videoBounds = $state({ x: 0, y: 0, width: 1, height: 1 });
+  let videoBounds = $state<PreviewVideoBounds>({ x: 0, y: 0, width: 1, height: 1 });
+
+  onDestroy(() => {
+    previewClickToggle.clear();
+  });
   
   // Watch containerEl and observe it
   $effect(() => {
@@ -117,22 +329,416 @@
     });
   });
 
-  const currentTime = $derived(file ? currentTimesByFileId[file.id] ?? 0 : 0);
+  const currentTime = $derived(file ? displayTimesByFileId[file.id] ?? 0 : 0);
+  const previewTime = $derived(file ? previewTimesByFileId[file.id] ?? currentTime : currentTime);
   const isEditingZone = $derived(editingZone !== null);
+  const previewLayers = $derived(getPreviewLayerState({ isDrawingZone, isEditingZone }));
   const activeRegion = $derived(isEditingZone ? editingRegion : drawingRegion);
+  const previewInteractionsDisabled = $derived(isDrawingZone || isEditingZone);
+  const previewSelection = $derived(selection ?? file?.ocrSelection ?? { segments: [] });
+  const previewSubtitles = $derived(subtitles);
+  const renderOverlayInline = false;
+  const overlayPortalProps = { disabled: false };
+  const previewChangeTimesMs = $derived.by(() =>
+    createPreviewChangeTimes(file?.duration, previewSelection, previewSubtitles),
+  );
 
   // Get video source URL
   const videoSrc = $derived(
     file?.previewPath ? convertFileSrc(file.previewPath) : undefined
   );
-  const latestSubtitles = $derived(file?.ocrVersions.at(-1)?.finalSubtitles ?? []);
+  const previewTitle = $derived(
+    isEditingZone ? 'Editing OCR zone' : isDrawingZone ? 'Drawing OCR zone' : 'Video preview',
+  );
+  const previewDescription = $derived(
+    isEditingZone
+      ? 'Drag the region or resize it with handles.'
+      : isDrawingZone
+        ? 'Drag over the video image to select an OCR region.'
+        : 'Right-click the video image to add or modify OCR zones.',
+  );
   const visibleZoneEntries = $derived.by(() => {
     if (!file) {
       return [];
     }
 
-    const timeMs = Math.round(currentTime * 1000);
-    return file.ocrSelection.segments.flatMap((segment) => {
+    return getVisibleZoneEntriesAtTime(Math.round(previewTime * 1000));
+  });
+  const hasLiveDetections = $derived(liveDetections.length > 0);
+
+  $effect(() => {
+    if (!videoEl || !file || !seekRequest || seekRequest.fileId !== file.id) {
+      return;
+    }
+
+    if (seekRequest.requestId === lastAppliedSeekRequestId) {
+      return;
+    }
+
+    lastAppliedSeekRequestId = seekRequest.requestId;
+    if (seekRequest.mode === 'cancel') {
+      cancelActiveSeek();
+      return;
+    }
+
+    if (seekRequest.mode === 'preview') {
+      previewSeekToSeconds(seekRequest.timeMs / 1000);
+      return;
+    }
+
+    seekToSeconds(seekRequest.timeMs / 1000);
+  });
+
+  $effect(() => {
+    file;
+    videoEl;
+    duration = getVideoDurationSeconds();
+  });
+
+  $effect(() => {
+    if (!videoEl) {
+      playbackClock?.stop();
+      playbackClock = null;
+      seekSession.clear();
+      clearSeekFallbackTimer();
+      clearPendingPreviewSeek();
+      activeSeekToken = null;
+      scrubRestoreTimeSeconds = null;
+      clearPostSeekPlaybackGuard();
+      return;
+    }
+
+    const clock = createPreviewPlaybackClock({
+      onFrame: ({ timeSeconds }) => {
+        const frameAction = seekSession.resolvePlaybackFrame(timeSeconds);
+        if (frameAction === 'complete') {
+          finishSeekSession(timeSeconds, false);
+          return;
+        }
+
+        if (frameAction === 'suppress') {
+          return;
+        }
+
+        syncPlaybackFrame(timeSeconds);
+      },
+    });
+
+    playbackClock = clock;
+    if (!videoEl.paused) {
+      clock.start(videoEl);
+    }
+
+    return () => {
+      clock.stop();
+      if (playbackClock === clock) {
+        playbackClock = null;
+        seekSession.clear();
+        clearSeekFallbackTimer();
+        clearPendingPreviewSeek();
+        activeSeekToken = null;
+        scrubRestoreTimeSeconds = null;
+        clearPostSeekPlaybackGuard();
+      }
+    };
+  });
+
+  function handlePlaybackPause(): void {
+    playbackClock?.stop();
+    if (!seekSession.isActive) {
+      commitPlaybackTime(getCurrentPlaybackTimeSeconds(), true);
+    }
+    syncPlaybackState();
+  }
+
+  function handlePlaybackPlay(): void {
+    syncPlaybackState();
+    if (videoEl && !seekSession.isActive) {
+      const playbackTimeSeconds = normalizePlaybackTimeSeconds(getCurrentPlaybackTimeSeconds());
+      if (!shouldSuppressCurrentPostSeekPlaybackSync(playbackTimeSeconds)) {
+        syncPlaybackFrame(playbackTimeSeconds, true);
+      }
+      playbackClock?.start(videoEl);
+    }
+  }
+
+  function updateDisplayTimeState(nextTimeSeconds: number): void {
+    if (file) {
+      displayTimesByFileId = { ...displayTimesByFileId, [file.id]: nextTimeSeconds };
+    }
+  }
+
+  function updatePreviewTimeState(nextTimeSeconds: number, force = false): void {
+    if (file) {
+      const nextKey = getPreviewStateKey(Math.round(nextTimeSeconds * 1000));
+      if (!force && previewStateKeysByFileId[file.id] === nextKey) {
+        return;
+      }
+
+      previewStateKeysByFileId[file.id] = nextKey;
+      previewTimesByFileId = { ...previewTimesByFileId, [file.id]: nextTimeSeconds };
+    }
+  }
+
+  function syncPlaybackFrame(
+    nextTimeSeconds: number,
+    forcePreviewState = false,
+    options: { confirmed?: boolean } = {},
+  ): boolean {
+    const safeTimeSeconds = normalizePlaybackTimeSeconds(nextTimeSeconds);
+    const nextTimeMs = Math.round(safeTimeSeconds * 1000);
+    const confirmed = options.confirmed ?? true;
+
+    if (confirmed && shouldSuppressCurrentPostSeekPlaybackSync(safeTimeSeconds)) {
+      return false;
+    }
+
+    if (file && confirmed) {
+      latestPlaybackTimesByFileId[file.id] = safeTimeSeconds;
+    }
+
+    updateDisplayTimeState(safeTimeSeconds);
+    playerControlsRef?.syncPlaybackTime(safeTimeSeconds);
+    onPlaybackFrame?.(nextTimeMs);
+    updatePreviewTimeState(safeTimeSeconds, forcePreviewState);
+    return true;
+  }
+
+  function commitPlaybackTime(nextTimeSeconds: number, forcePreviewState = true): void {
+    const safeTimeSeconds = normalizePlaybackTimeSeconds(nextTimeSeconds);
+    if (syncPlaybackFrame(safeTimeSeconds, forcePreviewState)) {
+      onTimeChange?.(Math.round(safeTimeSeconds * 1000));
+    }
+  }
+
+  function armPostSeekPlaybackGuard(confirmedTimeSeconds: number): void {
+    lastConfirmedSeekFileId = file?.id ?? null;
+    lastConfirmedSeekTimeSeconds = confirmedTimeSeconds;
+    postSeekGuardUntilMs = performance.now() + POST_SEEK_PLAYBACK_SYNC_GUARD_MS;
+  }
+
+  function clearPostSeekPlaybackGuard(): void {
+    lastConfirmedSeekFileId = null;
+    lastConfirmedSeekTimeSeconds = null;
+    postSeekGuardUntilMs = Number.NEGATIVE_INFINITY;
+  }
+
+  function shouldSuppressCurrentPostSeekPlaybackSync(candidateTimeSeconds: number): boolean {
+    const currentFileId = file?.id ?? null;
+    if (!currentFileId || lastConfirmedSeekFileId !== currentFileId) {
+      return false;
+    }
+
+    return shouldSuppressPostSeekPlaybackSync(
+      candidateTimeSeconds,
+      lastConfirmedSeekTimeSeconds,
+      performance.now(),
+      postSeekGuardUntilMs,
+      POST_SEEK_PLAYBACK_SYNC_TOLERANCE_SECONDS,
+    );
+  }
+
+  function clearSeekFallbackTimer(): void {
+    if (!seekReleaseTimer) {
+      return;
+    }
+
+    clearTimeout(seekReleaseTimer);
+    seekReleaseTimer = undefined;
+  }
+
+  function createSeekToken(): number {
+    nextSeekToken += 1;
+    activeSeekToken = nextSeekToken;
+    return nextSeekToken;
+  }
+
+  function clearActiveSeekToken(token: number | null): void {
+    if (shouldApplySeekToken(token, activeSeekToken)) {
+      activeSeekToken = null;
+    }
+  }
+
+  function clearPendingPreviewSeek(): void {
+    if (pendingPreviewSeekTimer) {
+      clearTimeout(pendingPreviewSeekTimer);
+    }
+
+    pendingPreviewSeekTimer = undefined;
+    pendingPreviewSeekTimeSeconds = null;
+    pendingPreviewSeekToken = null;
+  }
+
+  function schedulePreviewFrameSeek(targetTimeSeconds: number, token: number): void {
+    pendingPreviewSeekTimeSeconds = targetTimeSeconds;
+    pendingPreviewSeekToken = token;
+    if (pendingPreviewSeekTimer) {
+      return;
+    }
+
+    const delayMs = getPreviewSeekThrottleDelay(performance.now(), lastPreviewSeekWriteAtMs);
+    pendingPreviewSeekTimer = setTimeout(flushPendingPreviewSeek, delayMs);
+  }
+
+  function flushPendingPreviewSeek(): void {
+    const nextTimeSeconds = pendingPreviewSeekTimeSeconds;
+    const token = pendingPreviewSeekToken;
+    pendingPreviewSeekTimer = undefined;
+    pendingPreviewSeekTimeSeconds = null;
+    pendingPreviewSeekToken = null;
+
+    if (
+      !videoEl
+      || !seekSession.isScrubbing
+      || nextTimeSeconds === null
+      || !shouldApplySeekToken(token, activeSeekToken)
+    ) {
+      return;
+    }
+
+    lastPreviewSeekWriteAtMs = performance.now();
+    videoEl.currentTime = nextTimeSeconds;
+  }
+
+  function beginScrubPreview(targetTimeSeconds: number): number {
+    if (!seekSession.isScrubbing) {
+      scrubRestoreTimeSeconds = file
+        ? latestPlaybackTimesByFileId[file.id] ?? displayTimesByFileId[file.id] ?? getCurrentPlaybackTimeSeconds()
+        : getCurrentPlaybackTimeSeconds();
+      createSeekToken();
+    } else if (activeSeekToken === null) {
+      createSeekToken();
+    }
+
+    seekSession.startScrub(targetTimeSeconds, videoEl ? !videoEl.paused : false);
+    clearSeekFallbackTimer();
+    playbackClock?.stop();
+    clearPostSeekPlaybackGuard();
+
+    if (videoEl && !videoEl.paused) {
+      videoEl.pause();
+      syncPlaybackState();
+    }
+
+    return activeSeekToken ?? createSeekToken();
+  }
+
+  function beginCommittedSeek(targetTimeSeconds: number): number {
+    // Native media seeking is async; keep optimistic UI pinned until a matching frame arrives.
+    seekSession.startCommit(targetTimeSeconds);
+    clearSeekFallbackTimer();
+    clearPendingPreviewSeek();
+    playbackClock?.stop();
+    clearPostSeekPlaybackGuard();
+    return createSeekToken();
+  }
+
+  function finishSeekSession(
+    confirmedTimeSeconds = seekSession.pendingTargetTimeSeconds,
+    restartClock = true,
+    token = activeSeekToken,
+  ): void {
+    if (token !== null && !shouldApplySeekToken(token, activeSeekToken)) {
+      return;
+    }
+
+    const completion = seekSession.complete();
+    clearSeekFallbackTimer();
+    clearPendingPreviewSeek();
+    clearActiveSeekToken(token);
+    scrubRestoreTimeSeconds = null;
+
+    if (completion.targetTimeSeconds !== null && videoEl) {
+      const confirmedSeekTimeSeconds = normalizePlaybackTimeSeconds(
+        confirmedTimeSeconds ?? completion.targetTimeSeconds,
+      );
+      if (syncPlaybackFrame(confirmedSeekTimeSeconds, true)) {
+        armPostSeekPlaybackGuard(confirmedSeekTimeSeconds);
+      }
+    }
+
+    if (completion.shouldResumePlayback && videoEl) {
+      resumePlaybackAfterSeek();
+      return;
+    }
+
+    if (restartClock && videoEl && !videoEl.paused) {
+      playbackClock?.start(videoEl);
+    }
+  }
+
+  function resumePlaybackAfterSeek(): void {
+    if (!videoEl) {
+      return;
+    }
+
+    void videoEl.play()
+      .then(() => {
+        syncPlaybackState();
+        if (videoEl) {
+          playbackClock?.start(videoEl);
+        }
+      })
+      .catch(syncPlaybackState);
+  }
+
+  function scheduleSeekFallback(token: number): void {
+    clearSeekFallbackTimer();
+    seekReleaseTimer = setTimeout(() => {
+      seekReleaseTimer = undefined;
+      if (!shouldApplySeekToken(token, activeSeekToken)) {
+        return;
+      }
+
+      if (!seekSession.isActive || seekSession.pendingTargetTimeSeconds === null) {
+        return;
+      }
+
+      if (seekSession.isScrubbing) {
+        return;
+      }
+
+      if (videoEl?.seeking) {
+        scheduleSeekFallback(token);
+        return;
+      }
+
+      if (videoEl && !videoEl.paused) {
+        playbackClock?.start(videoEl);
+        scheduleSeekFallback(token);
+        return;
+      }
+
+      finishSeekSession(seekSession.pendingTargetTimeSeconds, true, token);
+    }, 750);
+  }
+
+  function normalizePlaybackTimeSeconds(timeSeconds: number): number {
+    const maxTimeSeconds = getVideoDurationSeconds() || Number.MAX_SAFE_INTEGER;
+    return Number.isFinite(timeSeconds)
+      ? Math.max(0, Math.min(timeSeconds, maxTimeSeconds))
+      : 0;
+  }
+
+  function getCurrentPlaybackTimeSeconds(): number {
+    const currentVideoTime = videoEl?.currentTime;
+    if (typeof currentVideoTime === 'number' && Number.isFinite(currentVideoTime)) {
+      return currentVideoTime;
+    }
+
+    if (file) {
+      return latestPlaybackTimesByFileId[file.id] ?? currentTime;
+    }
+
+    return currentTime;
+  }
+
+  function getVisibleZoneEntriesAtTime(timeMs: number): VisibleZoneEntry[] {
+    if (!file) {
+      return [];
+    }
+
+    return previewSelection.segments.flatMap((segment) => {
       if (timeMs < segment.startTimeMs || timeMs >= segment.endTimeMs) {
         return [];
       }
@@ -145,68 +751,269 @@
         label: zone.label ?? `Zone ${zoneIndex + 1}`,
       }));
     });
-  });
-  const hasLiveDetections = $derived(liveDetections.length > 0);
-  const shouldShowZoneHint = $derived(
-    !!file
-      && !isDrawingZone
-      && !isEditingZone
-      && visibleZoneEntries.length === 0
-      && !isPointerInsidePreview
-      && (!hasLiveDetections || !liveDetectionsHoverOpen),
-  );
-
-  $effect(() => {
-    if (!videoEl || !file || !seekRequest || seekRequest.fileId !== file.id) {
-      return;
-    }
-
-    if (seekRequest.requestId === lastAppliedSeekRequestId) {
-      return;
-    }
-
-    lastAppliedSeekRequestId = seekRequest.requestId;
-    const nextTimeSeconds = Math.max(0, seekRequest.timeMs / 1000);
-    videoEl.currentTime = nextTimeSeconds;
-    currentTimesByFileId = { ...currentTimesByFileId, [file.id]: nextTimeSeconds };
-    onTimeChange?.(Math.round(seekRequest.timeMs));
-  });
-
-  function findSubtitleAtTime(subtitles: OcrSubtitle[], timeMs: number): OcrSubtitle | undefined {
-    let left = 0;
-    let right = subtitles.length - 1;
-
-    while (left <= right) {
-      const middle = Math.floor((left + right) / 2);
-      const subtitle = subtitles[middle];
-
-      if (timeMs < subtitle.startTime) {
-        right = middle - 1;
-      } else if (timeMs > subtitle.endTime) {
-        left = middle + 1;
-      } else {
-        return subtitle;
-      }
-    }
-
-    return undefined;
   }
 
-  // Current subtitle based on video time
-  const currentSubtitle = $derived.by(() => {
-    if (!showSubtitles || latestSubtitles.length === 0) return undefined;
-    const timeMs = currentTime * 1000;
-    return findSubtitleAtTime(latestSubtitles, timeMs);
-  });
-
-  function handleTimeUpdate() {
-    if (videoEl) {
-      const nextTime = videoEl.currentTime;
-      if (file) {
-        currentTimesByFileId = { ...currentTimesByFileId, [file.id]: nextTime };
-      }
-      onTimeChange?.(Math.round(nextTime * 1000));
+  function getPreviewStateKey(timeMs: number): string {
+    if (!file) {
+      return '';
     }
+
+    return `${file.id}:${findPreviewChangeBucket(timeMs, previewChangeTimesMs)}`;
+  }
+
+  function findPreviewChangeBucket(timeMs: number, changeTimes: number[]): number {
+    const safeTimeMs = Number.isFinite(timeMs) ? Math.max(0, Math.round(timeMs)) : 0;
+    let low = 0;
+    let high = changeTimes.length;
+
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (changeTimes[middle] <= safeTimeMs) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+
+    return low - 1;
+  }
+
+  function syncPlaybackState(): void {
+    if (!videoEl) {
+      isPaused = true;
+      duration = getVideoDurationSeconds();
+      return;
+    }
+
+    isPaused = videoEl.paused;
+    isMuted = videoEl.muted;
+    volume = Number.isFinite(videoEl.volume) ? videoEl.volume : 1;
+    duration = getVideoDurationSeconds();
+  }
+
+  function getVideoDurationSeconds(): number {
+    const durationSeconds = Number.isFinite(videoEl?.duration) && videoEl?.duration
+      ? videoEl.duration
+      : file?.duration;
+
+    return Math.max(0, durationSeconds ?? 0);
+  }
+
+  function reconcileLoadedMetadataTime(): void {
+    if (!videoEl) {
+      return;
+    }
+
+    const storedTimeSeconds = file
+      ? latestPlaybackTimesByFileId[file.id] ?? displayTimesByFileId[file.id]
+      : undefined;
+    const actualTimeSeconds = Number.isFinite(videoEl.currentTime) ? videoEl.currentTime : 0;
+    const durationSeconds = getVideoDurationSeconds();
+    const hasValidStoredTime = storedTimeSeconds !== undefined
+      && Number.isFinite(storedTimeSeconds)
+      && storedTimeSeconds >= 0
+      && durationSeconds > 0
+      && storedTimeSeconds <= durationSeconds;
+
+    if (hasValidStoredTime) {
+      videoEl.currentTime = storedTimeSeconds;
+      commitPlaybackTime(storedTimeSeconds);
+      return;
+    }
+
+    commitPlaybackTime(actualTimeSeconds);
+  }
+
+  function handleLoadedMetadata(): void {
+    updateVideoBounds();
+    syncPlaybackState();
+    reconcileLoadedMetadataTime();
+    syncPlaybackState();
+  }
+
+  function seekToSeconds(timeSeconds: number): void {
+    if (!videoEl) {
+      return;
+    }
+
+    const maxTimeSeconds = getVideoDurationSeconds();
+    const requestedTimeSeconds = Number.isFinite(timeSeconds) ? timeSeconds : 0;
+    const nextTimeSeconds = Math.min(Math.max(0, requestedTimeSeconds), maxTimeSeconds);
+
+    const token = beginCommittedSeek(nextTimeSeconds);
+    videoEl.currentTime = nextTimeSeconds;
+    syncPlaybackFrame(nextTimeSeconds, true, { confirmed: false });
+    onTimeChange?.(Math.round(nextTimeSeconds * 1000));
+    scheduleSeekFallback(token);
+  }
+
+  function previewSeekToSeconds(timeSeconds: number): void {
+    if (!videoEl) {
+      return;
+    }
+
+    const maxTimeSeconds = getVideoDurationSeconds();
+    const requestedTimeSeconds = Number.isFinite(timeSeconds) ? timeSeconds : 0;
+    const nextTimeSeconds = Math.min(Math.max(0, requestedTimeSeconds), maxTimeSeconds);
+
+    const token = beginScrubPreview(nextTimeSeconds);
+    syncPlaybackFrame(nextTimeSeconds, true, { confirmed: false });
+    schedulePreviewFrameSeek(nextTimeSeconds, token);
+  }
+
+  function handleVideoSeeked(): void {
+    if (seekSession.isScrubbing) {
+      return;
+    }
+
+    if (!seekSession.isActive && seekSession.pendingTargetTimeSeconds === null) {
+      return;
+    }
+
+    if (!videoEl) {
+      return;
+    }
+
+    const confirmedTimeSeconds = seekSession.resolveNativeSeekedTime(videoEl.currentTime);
+    if (confirmedTimeSeconds !== null) {
+      finishSeekSession(confirmedTimeSeconds, true, activeSeekToken);
+      return;
+    }
+
+    playbackClock?.start(videoEl);
+  }
+
+  function handleVideoTimeUpdate(): void {
+    if (!videoEl || videoEl.paused || typeof videoEl.requestVideoFrameCallback === 'function') {
+      return;
+    }
+
+    const timeSeconds = getCurrentPlaybackTimeSeconds();
+    const frameAction = seekSession.resolvePlaybackFrame(timeSeconds);
+    if (frameAction === 'complete') {
+      finishSeekSession(timeSeconds, false, activeSeekToken);
+      return;
+    }
+
+    if (frameAction === 'suppress') {
+      return;
+    }
+
+    syncPlaybackFrame(timeSeconds);
+  }
+
+  function cancelActiveSeek(): void {
+    const restoreTimeSeconds = normalizePlaybackTimeSeconds(scrubRestoreTimeSeconds ?? getCurrentPlaybackTimeSeconds());
+    const shouldResumePlayback = seekSession.shouldResumePlayback;
+    const token = activeSeekToken;
+
+    seekSession.clear();
+    clearSeekFallbackTimer();
+    clearPendingPreviewSeek();
+    clearActiveSeekToken(token);
+    scrubRestoreTimeSeconds = null;
+
+    if (videoEl) {
+      videoEl.currentTime = restoreTimeSeconds;
+    }
+
+    commitPlaybackTime(restoreTimeSeconds, true);
+
+    if (shouldResumePlayback) {
+      resumePlaybackAfterSeek();
+    }
+  }
+
+  function skipBySeconds(deltaSeconds: number): void {
+    seekToSeconds(getCurrentPlaybackTimeSeconds() + deltaSeconds);
+  }
+
+  function handlePreviewSurfaceClick(event: MouseEvent): void {
+    if (!shouldTogglePreviewPlaybackFromClick(event.button, previewInteractionsDisabled, event.detail)) {
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('button, a, input, textarea, select, [role="button"], [data-ignore-preview-toggle]')) {
+      return;
+    }
+
+    previewClickToggle.queue(() => {
+      containerEl?.focus({ preventScroll: true });
+      togglePlayback();
+    });
+  }
+
+  function handlePreviewSurfaceKeydown(event: KeyboardEvent): void {
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+
+    const action = getPreviewKeyboardAction(event.key, previewInteractionsDisabled);
+    if (!action) {
+      return;
+    }
+
+    event.preventDefault();
+    if (action === 'toggle-playback') {
+      togglePlayback();
+      return;
+    }
+
+    skipBySeconds(action === 'skip-backward' ? -10 : 10);
+  }
+
+  function togglePlayback(): void {
+    if (!videoEl) {
+      return;
+    }
+
+    if (videoEl.paused) {
+      void videoEl.play()
+        .then(syncPlaybackState)
+        .catch(syncPlaybackState);
+      return;
+    }
+
+    videoEl.pause();
+    syncPlaybackState();
+  }
+
+  function toggleMute(): void {
+    if (!videoEl) {
+      return;
+    }
+
+    videoEl.muted = !videoEl.muted;
+    syncPlaybackState();
+  }
+
+  function setVolume(nextVolume: number): void {
+    if (!videoEl) {
+      return;
+    }
+
+    const nextClampedVolume = Math.min(Math.max(Number.isFinite(nextVolume) ? nextVolume : 0, 0), 1);
+    videoEl.volume = nextClampedVolume;
+    if (nextClampedVolume > 0) {
+      videoEl.muted = false;
+    }
+    syncPlaybackState();
+  }
+
+  function toggleExpandedPreview(): void {
+    onExpandedChange?.(!expanded);
+  }
+
+  function handlePreviewDoubleClick(event: MouseEvent): void {
+    if (!shouldTogglePreviewExpandedFromDoubleClick(event.button, previewInteractionsDisabled)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    previewClickToggle.cancel();
+    toggleExpandedPreview();
   }
 
   function describeVideoPlaybackError(error: MediaError | null): string {
@@ -238,17 +1045,21 @@
   }
 
   function getVideoDurationMs(): number {
-    const durationSeconds = Number.isFinite(videoEl?.duration) && videoEl?.duration
-      ? videoEl.duration
-      : file?.duration;
-
-    return Math.max(1, Math.round((durationSeconds ?? 0) * 1000));
+    return Math.max(1, Math.round(getVideoDurationSeconds() * 1000));
   }
 
-  function beginZoneDrawing(): void {
+  function closeZoneContextMenu(): void {
+    contextMenuOpen = false;
+    contextZone = undefined;
+  }
+
+  async function beginZoneDrawing(): Promise<void> {
     if (!file || !videoEl) {
       return;
     }
+
+    closeZoneContextMenu();
+    await tick();
 
     drawingStartTimeMs = Math.round(videoEl.currentTime * 1000);
     drawingRegion = undefined;
@@ -261,10 +1072,13 @@
     }
   }
 
-  function beginZoneEditing(entry: VisibleZoneEntry): void {
+  async function beginZoneEditing(entry: VisibleZoneEntry): Promise<void> {
     if (!file || !videoEl) {
       return;
     }
+
+    closeZoneContextMenu();
+    await tick();
 
     isDrawingZone = false;
     drawingRegion = undefined;
@@ -299,63 +1113,38 @@
       return;
     }
 
+    closeZoneContextMenu();
     void onUpdateZoneRegion?.(editingZone.segmentId, editingZone.zoneId, editingRegion);
     editingZone = null;
     editingRegion = undefined;
   }
 
   function cancelRegionSelection(): void {
+    closeZoneContextMenu();
     isDrawingZone = false;
     drawingRegion = undefined;
     editingZone = null;
     editingRegion = undefined;
+    contextZone = undefined;
   }
   
   function updateVideoBounds() {
     if (!videoEl || !containerEl) return;
     
     const containerRect = containerEl.getBoundingClientRect();
-    const videoWidth = videoEl.videoWidth;
-    const videoHeight = videoEl.videoHeight;
-    
-    if (videoWidth === 0 || videoHeight === 0 || containerRect.width === 0 || containerRect.height === 0) return;
-    
-    const videoRatio = videoWidth / videoHeight;
-    const containerRatio = containerRect.width / containerRect.height;
-    
-    let displayWidth: number;
-    let displayHeight: number;
-    let offsetX: number;
-    let offsetY: number;
-    
-    if (videoRatio > containerRatio) {
-      // Video is wider than container - letterbox top/bottom
-      displayWidth = containerRect.width;
-      displayHeight = containerRect.width / videoRatio;
-      offsetX = 0;
-      offsetY = (containerRect.height - displayHeight) / 2;
-    } else {
-      // Video is taller than container - letterbox left/right
-      displayHeight = containerRect.height;
-      displayWidth = containerRect.height * videoRatio;
-      offsetX = (containerRect.width - displayWidth) / 2;
-      offsetY = 0;
-    }
-    
-    // Convert to relative values (0-1)
-    videoBounds = {
-      x: offsetX / containerRect.width,
-      y: offsetY / containerRect.height,
-      width: displayWidth / containerRect.width,
-      height: displayHeight / containerRect.height,
-    };
+    videoBounds = calculateVideoBounds(
+      { width: containerRect.width, height: containerRect.height },
+      { width: videoEl.videoWidth, height: videoEl.videoHeight },
+    );
   }
 
   function handleZoneRole(segmentId: string, zoneId: string, role: OcrZoneRole): void {
+    closeZoneContextMenu();
     void onSetZoneRole?.(segmentId, zoneId, role);
   }
 
   function handleDeleteZone(segmentId: string, zoneId: string): void {
+    closeZoneContextMenu();
     void onDeleteZone?.(segmentId, zoneId);
     if (editingZone?.segmentId === segmentId && editingZone.zoneId === zoneId) {
       editingZone = null;
@@ -368,53 +1157,22 @@
       return null;
     }
 
-    const rect = containerEl.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0 || videoBounds.width <= 0 || videoBounds.height <= 0) {
-      return null;
-    }
-
-    const containerX = (event.clientX - rect.left) / rect.width;
-    const containerY = (event.clientY - rect.top) / rect.height;
-    if (
-      containerX < videoBounds.x
-      || containerX > videoBounds.x + videoBounds.width
-      || containerY < videoBounds.y
-      || containerY > videoBounds.y + videoBounds.height
-    ) {
-      return null;
-    }
-
-    return {
-      x: (containerX - videoBounds.x) / videoBounds.width,
-      y: (containerY - videoBounds.y) / videoBounds.height,
-    };
+    return getVideoPoint(event, containerEl.getBoundingClientRect(), videoBounds);
   }
 
   function findZoneAtEvent(event: MouseEvent): VisibleZoneEntry | undefined {
-    const point = videoPointFromEvent(event);
-    if (!point) {
-      return undefined;
-    }
-
-    return [...visibleZoneEntries].reverse().find((entry) => (
-      point.x >= entry.region.x
-      && point.x <= entry.region.x + entry.region.width
-      && point.y >= entry.region.y
-      && point.y <= entry.region.y + entry.region.height
-    ));
+    return findTopmostZoneAtPoint(videoPointFromEvent(event), visibleZoneEntries);
   }
 
   function handlePreviewContextMenu(event: MouseEvent): void {
+    if (isDrawingZone || isEditingZone) {
+      event.preventDefault();
+      event.stopPropagation();
+      closeZoneContextMenu();
+      return;
+    }
+
     contextZone = findZoneAtEvent(event);
-  }
-
-  function regionToContainerStyle(region: OcrRegion): string {
-    const left = videoBounds.x * 100 + region.x * videoBounds.width * 100;
-    const top = videoBounds.y * 100 + region.y * videoBounds.height * 100;
-    const width = region.width * videoBounds.width * 100;
-    const height = region.height * videoBounds.height * 100;
-
-    return `left: ${left}%; top: ${top}%; width: ${width}%; height: ${height}%;`;
   }
 
   function zoneClass(role: OcrZoneRole): string {
@@ -434,139 +1192,154 @@
 <div class={cn("relative flex flex-col min-h-0 h-full", className)}>
   <!-- Video container - scales to available space -->
   {#if videoSrc}
-    <ContextMenu.Root>
-      <ContextMenu.Trigger
-        bind:ref={containerEl}
-        class="relative bg-black rounded-lg overflow-hidden flex-1 min-h-0"
-        oncontextmenu={handlePreviewContextMenu}
-        onpointerenter={() => {
-          isPointerInsidePreview = true;
-        }}
-        onpointerleave={() => {
-          isPointerInsidePreview = false;
-        }}
-      >
-      <!-- svelte-ignore a11y_media_has_caption -->
-      <video
-        bind:this={videoEl}
-        src={videoSrc}
-        class="w-full h-full object-contain"
-        controls={!isDrawingZone && !isEditingZone}
-        ontimeupdate={handleTimeUpdate}
-        onloadedmetadata={updateVideoBounds}
-        onresize={updateVideoBounds}
-        onerror={handleVideoError}
-      >
-      </video>
+    <div bind:this={previewContainerEl} class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-background">
+      <PreviewToolbar
+        title={previewTitle}
+        description={previewDescription}
+        accessory={toolbarAccessory}
+        accessoryInline={renderOverlayInline}
+        showCancel={previewLayers.showToolbarActions}
+        showSave={previewLayers.showToolbarActions && isEditingZone}
+        saveDisabled={!editingRegion}
+        oncancel={cancelRegionSelection}
+        onsave={saveZoneEditing}
+      />
 
-      <!-- Subtitle overlay - hidden while drawing a zone -->
-      {#if showSubtitles && currentSubtitle && !isDrawingZone}
-        <SubtitleOverlay subtitle={currentSubtitle} />
-      {/if}
-
-      {#if !isDrawingZone && !isEditingZone}
-        {#each visibleZoneEntries as entry (`${entry.segmentId}:${entry.zoneId}`)}
-          <div
-            class={zoneClass(entry.role)}
-            style={regionToContainerStyle(entry.region)}
-            aria-hidden="true"
+      <ContextMenu.Root bind:open={contextMenuOpen}>
+        <ContextMenu.Trigger
+          bind:ref={containerEl}
+          class="relative min-h-0 flex-1 overflow-hidden bg-black outline-none focus:outline-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          role="region"
+          tabindex={0}
+          aria-label="Video preview player"
+          onclick={handlePreviewSurfaceClick}
+          ondblclick={handlePreviewDoubleClick}
+          oncontextmenu={handlePreviewContextMenu}
+          onkeydown={handlePreviewSurfaceKeydown}
+        >
+          <!-- svelte-ignore a11y_media_has_caption -->
+          <video
+            bind:this={videoEl}
+            src={videoSrc}
+            class="h-full w-full object-contain"
+            onplay={handlePlaybackPlay}
+            onpause={handlePlaybackPause}
+            ontimeupdate={handleVideoTimeUpdate}
+            onvolumechange={syncPlaybackState}
+            onloadedmetadata={handleLoadedMetadata}
+            onseeked={handleVideoSeeked}
+            onresize={updateVideoBounds}
+            onerror={handleVideoError}
           >
-            <span class="absolute left-1 top-1 rounded-sm bg-background/85 px-1.5 py-0.5 text-[10px] font-medium text-foreground shadow-sm">
-              {roleLabel(entry.role)}
-            </span>
+          </video>
+
+          {#if previewLayers.showPassiveZones}
+            {#each visibleZoneEntries as entry (`${entry.segmentId}:${entry.zoneId}`)}
+              <div
+                class={zoneClass(entry.role)}
+                style={regionToContainerStyle(entry.region, videoBounds)}
+                aria-hidden="true"
+              >
+                <span class="absolute left-1 top-1 rounded-sm bg-background/85 px-1.5 py-0.5 text-[10px] font-medium text-foreground shadow-sm">
+                  {roleLabel(entry.role)}
+                </span>
+              </div>
+            {/each}
+          {/if}
+
+          <div class="absolute left-3 top-3 flex flex-col items-start gap-2">
+            {#if file && hasLiveDetections && !isDrawingZone}
+              <LiveOcrHoverCard
+                detections={liveDetections}
+                detectionCount={liveDetectionCount}
+                selection={previewSelection}
+                renderPopoverInline={renderOverlayInline}
+              />
+            {/if}
           </div>
-        {/each}
-      {/if}
 
-      <div class="absolute left-3 top-3 flex flex-col items-start gap-2">
-        {#if file && hasLiveDetections && !isDrawingZone}
-          <LiveOcrHoverCard
-            detections={liveDetections}
-            detectionCount={liveDetectionCount}
-            selection={file.ocrSelection}
-            onOpenChange={(open) => {
-              liveDetectionsHoverOpen = open;
-            }}
-          />
-        {/if}
+          <!-- Region selector overlay -->
+          {#if previewLayers.showRegionSelector}
+            <RegionSelector
+              region={activeRegion}
+              {videoBounds}
+              allowCreate={isDrawingZone}
+              onchange={(region) => {
+                if (isEditingZone) {
+                  editingRegion = region;
+                } else {
+                  drawingRegion = region;
+                }
+              }}
+              oncommit={handleRegionCommit}
+              oncancel={cancelRegionSelection}
+            />
+          {/if}
+        </ContextMenu.Trigger>
+        <ContextMenu.Content portalProps={overlayPortalProps} class="w-64">
+          {#if previewLayers.showPassiveZones}
+            {#if contextZone}
+              {@const menuZone = contextZone}
+              <ContextMenu.Item onclick={() => void beginZoneEditing(menuZone)}>
+                Modify zone
+              </ContextMenu.Item>
+              {#if menuZone.role !== 'main_subtitle'}
+                <ContextMenu.Item onclick={() => handleZoneRole(menuZone.segmentId, menuZone.zoneId, 'main_subtitle')}>
+                  Set as Main subtitle
+                </ContextMenu.Item>
+              {/if}
+              {#if menuZone.role !== 'on_screen_text'}
+                <ContextMenu.Item onclick={() => handleZoneRole(menuZone.segmentId, menuZone.zoneId, 'on_screen_text')}>
+                  Set as On-screen text
+                </ContextMenu.Item>
+              {/if}
+              <ContextMenu.Separator />
+              <ContextMenu.Item
+                variant="destructive"
+                onclick={() => handleDeleteZone(menuZone.segmentId, menuZone.zoneId)}
+              >
+                Delete zone
+              </ContextMenu.Item>
+            {:else}
+              <ContextMenu.Item onclick={() => void beginZoneDrawing()}>
+                Add OCR zone from current time
+              </ContextMenu.Item>
+            {/if}
+          {/if}
+        </ContextMenu.Content>
+      </ContextMenu.Root>
 
-        {#if shouldShowZoneHint}
-          <span class="pointer-events-none rounded bg-black/70 px-2 py-1 text-xs text-white shadow-sm">
-            Right-click to add OCR zones
-          </span>
-        {/if}
-      </div>
-
-      <!-- Region selector overlay -->
-      {#if isDrawingZone || isEditingZone}
-        <RegionSelector
-          region={activeRegion}
-          {videoBounds}
-          allowCreate={isDrawingZone}
-          onchange={(region) => {
-            if (isEditingZone) {
-              editingRegion = region;
-            } else {
-              drawingRegion = region;
-            }
-          }}
-          oncommit={handleRegionCommit}
-          oncancel={cancelRegionSelection}
+      {#if showSubtitles}
+        <ActiveCueSummary
+          summary={activeCueSummary}
+          {paletteOpen}
+          onOpenPalette={onOpenCuePalette}
         />
-        <div class="absolute right-3 top-3 flex items-center gap-2">
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onclick={cancelRegionSelection}
-          >
-            Cancel
-          </Button>
-          {#if isEditingZone}
-            <Button
-              type="button"
-              size="sm"
-              disabled={!editingRegion}
-              onclick={saveZoneEditing}
-            >
-              Save
-            </Button>
-          {/if}
-        </div>
       {/if}
-      </ContextMenu.Trigger>
-      <ContextMenu.Content class="w-64">
-        {#if contextZone}
-          {@const menuZone = contextZone}
-          <ContextMenu.Item onclick={() => beginZoneEditing(menuZone)}>
-            Modify zone
-          </ContextMenu.Item>
-          {#if menuZone.role !== 'main_subtitle'}
-            <ContextMenu.Item onclick={() => handleZoneRole(menuZone.segmentId, menuZone.zoneId, 'main_subtitle')}>
-              Set as Main subtitle
-            </ContextMenu.Item>
-          {/if}
-          {#if menuZone.role !== 'on_screen_text'}
-            <ContextMenu.Item onclick={() => handleZoneRole(menuZone.segmentId, menuZone.zoneId, 'on_screen_text')}>
-              Set as On-screen text
-            </ContextMenu.Item>
-          {/if}
-          <ContextMenu.Separator />
-          <ContextMenu.Item
-            variant="destructive"
-            onclick={() => handleDeleteZone(menuZone.segmentId, menuZone.zoneId)}
-          >
-            Delete zone
-          </ContextMenu.Item>
-        {:else}
-          <ContextMenu.Item onclick={beginZoneDrawing}>
-            Add OCR zone from current time
-          </ContextMenu.Item>
-        {/if}
-      </ContextMenu.Content>
-    </ContextMenu.Root>
+      {#if expanded && expandedOverlay}
+        {@render expandedOverlay()}
+      {/if}
+      <PreviewPlayerControls
+        bind:this={playerControlsRef}
+        {currentTime}
+        {duration}
+        paused={isPaused}
+        muted={isMuted}
+        {volume}
+        {expanded}
+        disabled={isDrawingZone || isEditingZone}
+        onpreviewseek={previewSeekToSeconds}
+        onseek={seekToSeconds}
+        oncancelseek={cancelActiveSeek}
+        ontoggleplay={togglePlayback}
+        onskip={skipBySeconds}
+        ontogglemute={toggleMute}
+        onvolumechange={setVolume}
+        onexpand={toggleExpandedPreview}
+      />
+    </div>
   {:else if file}
-    <div class="relative bg-black rounded-lg overflow-hidden flex-1 min-h-0">
+    <div class="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl bg-black">
       <div class="w-full h-full flex items-center justify-center">
         <div class="text-center text-muted-foreground">
           {#if file.status === 'transcoding'}
@@ -584,7 +1357,7 @@
       </div>
     </div>
   {:else}
-    <div class="relative bg-black rounded-lg overflow-hidden flex-1 min-h-0">
+    <div class="relative flex min-h-0 flex-1 overflow-hidden rounded-2xl bg-black">
       <div class="w-full h-full flex items-center justify-center">
         <p class="text-muted-foreground text-sm">Select a video to preview</p>
       </div>

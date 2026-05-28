@@ -12,10 +12,17 @@
     detections: OcrZoneFrame[];
     detectionCount?: number;
     selection?: VideoOcrSelection;
+    renderPopoverInline?: boolean;
     onOpenChange?: (open: boolean) => void;
   }
 
-  let { detections, detectionCount, selection, onOpenChange }: LiveOcrHoverCardProps = $props();
+  let {
+    detections,
+    detectionCount,
+    selection,
+    renderPopoverInline = false,
+    onOpenChange,
+  }: LiveOcrHoverCardProps = $props();
 
   const visibleDetections = $derived(detections.slice(-8).reverse());
   const allDetections = $derived([...detections].reverse());
@@ -97,6 +104,7 @@
     side="bottom"
     sideOffset={6}
     collisionPadding={16}
+    portalProps={{ disabled: renderPopoverInline }}
     class="w-80 overflow-hidden p-0"
   >
     <div class="flex items-center justify-between gap-3 border-b px-3 py-2">

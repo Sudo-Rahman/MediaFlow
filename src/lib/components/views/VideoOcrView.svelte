@@ -2,6 +2,35 @@
   export interface VideoOcrViewApi {
     handleFileDrop: (paths: string[]) => Promise<void>;
   }
+
+  export interface VideoOcrLayoutState {
+    rootClass: string;
+    optionsWidth: string;
+    showFileSidebar: boolean;
+    showOptionsPanel: boolean;
+  }
+
+  export function getVideoOcrLayoutState(
+    optionsPanelWidth: string,
+    previewExpanded: boolean,
+    previewAvailable: boolean,
+  ): VideoOcrLayoutState {
+    if (previewExpanded && previewAvailable) {
+      return {
+        rootClass: 'grid h-full overflow-hidden grid-cols-[minmax(0,1fr)]',
+        optionsWidth: '0rem',
+        showFileSidebar: false,
+        showOptionsPanel: false,
+      };
+    }
+
+    return {
+      rootClass: 'grid h-full overflow-hidden grid-cols-[auto_minmax(0,1fr)_var(--ocr-options-width)] transition-[grid-template-columns] duration-220 ease-out',
+      optionsWidth: optionsPanelWidth,
+      showFileSidebar: true,
+      showOptionsPanel: true,
+    };
+  }
 </script>
 
 <script lang="ts">
@@ -11,6 +40,7 @@
   import { open } from '@tauri-apps/plugin-dialog';
   import { toast } from 'svelte-sonner';
 
+  import * as Sheet from '$lib/components/ui/sheet';
   import type {
     OcrConfig,
     OcrLiveDetectionEvent,
@@ -27,7 +57,12 @@
   import { VIDEO_EXTENSIONS } from '$lib/types';
   import { createAsyncTaskQueue } from '$lib/services/async-task-queue';
   import { scanFile } from '$lib/services/ffprobe';
-  import { generateOcrVersionName, loadOcrData, saveOcrData } from '$lib/services/ocr-storage';
+  import {
+    generateOcrVersionName,
+    isUnsupportedOcrPersistenceError,
+    loadOcrData,
+    saveOcrData,
+  } from '$lib/services/ocr-storage';
   import {
     cancelOcrPreview,
     getReusableOcrPreview,
@@ -56,25 +91,40 @@
 
   const VIDEO_FORMATS = VIDEO_EXTENSIONS.map((ext) => ext.toUpperCase()).join(', ');
   const FILE_PREPARATION_CONCURRENCY = 1;
+  const OPTIONS_PANEL_BREAKPOINT_PX = 1280;
 
   interface VideoOcrViewProps {
     onNavigateToSettings?: () => void;
+    optionsSheetOpen?: boolean;
+    optionsPanelCompact?: boolean;
+    isActive?: boolean;
   }
 
   type RemoveTarget = { mode: 'single'; fileId: string } | { mode: 'all' } | null;
 
-  let { onNavigateToSettings }: VideoOcrViewProps = $props();
+  let {
+    onNavigateToSettings,
+    optionsSheetOpen = $bindable(false),
+    optionsPanelCompact = $bindable(true),
+    isActive = true,
+  }: VideoOcrViewProps = $props();
 
+  let viewContainerEl = $state<HTMLDivElement | null>(null);
   let resultDialogOpen = $state(false);
   let resultDialogFileId = $state<string | null>(null);
   let retryDialogOpen = $state(false);
   let retryDialogFileId = $state<string | null>(null);
   let retryAllDialogOpen = $state(false);
+  let unsupportedDataDialogOpen = $state(false);
+  let unsupportedDataFileName = $state('');
+  let unsupportedDataMessage = $state('');
   let removeDialogOpen = $state(false);
   let removeTarget = $state.raw<RemoveTarget>(null);
   let persistedOcrVersionKeys = $state<Set<string>>(new Set());
+  let previewExpanded = $state(false);
   let unlistenOcrProgress: UnlistenFn | null = null;
   let unlistenOcrLiveDetection: UnlistenFn | null = null;
+  let pendingOptionsLayoutFrame: number | null = null;
   let isDestroyed = false;
 
   const aiCleanupControllers = new Map<string, AbortController>();
@@ -85,11 +135,34 @@
   const persistenceQueues = new Map<string, Promise<void>>();
 
   const selectedFile = $derived(videoOcrStore.selectedFile ?? null);
+  const selectedActiveSelection = $derived(
+    selectedFile ? videoOcrStore.getActiveOcrSelection(selectedFile.id) : null,
+  );
+  const selectedActiveSubtitles = $derived(
+    selectedFile ? videoOcrStore.getActiveOcrSubtitles(selectedFile.id) : [],
+  );
+  const selectedHasDraftVersion = $derived(
+    selectedFile ? videoOcrStore.hasDraftOcrVersion(selectedFile.id) : false,
+  );
+  const selectedDraftVersionName = $derived(
+    selectedFile ? videoOcrStore.getDraftOcrVersionName(selectedFile.id) : null,
+  );
   const selectedLiveDetections = $derived(
     selectedFile ? videoOcrStore.getLiveDetections(selectedFile.id) : [],
   );
   const selectedLiveDetectionCount = $derived(
     selectedFile ? videoOcrStore.getLiveDetectionCount(selectedFile.id) : 0,
+  );
+  const optionsPanelWidth = $derived(optionsPanelCompact ? '0rem' : '20rem');
+  const previewMediaAvailable = $derived(Boolean(selectedFile?.previewPath));
+  const effectivePreviewExpanded = $derived(previewExpanded && previewMediaAvailable);
+  const videoOcrLayout = $derived(
+    getVideoOcrLayoutState(optionsPanelWidth, previewExpanded, previewMediaAvailable),
+  );
+  const optionsPanelClass = $derived(
+    optionsPanelCompact
+      ? 'pointer-events-none translate-x-3 border-transparent opacity-0'
+      : 'translate-x-0 border-border opacity-100',
   );
   const resultDialogFile = $derived(
     resultDialogFileId
@@ -101,7 +174,9 @@
       ? videoOcrStore.videoFiles.find((file) => file.id === retryDialogFileId) ?? null
       : null,
   );
-  const dialogsOpen = $derived(resultDialogOpen || retryDialogOpen || retryAllDialogOpen);
+  const dialogsOpen = $derived(
+    resultDialogOpen || retryDialogOpen || retryAllDialogOpen || unsupportedDataDialogOpen,
+  );
   const fileSummary = $derived.by(() => summarizeOcrFiles(videoOcrStore.videoFiles));
   const startCount = $derived(fileSummary.startTargets.length);
   const retryCount = $derived(fileSummary.retryTargets.length);
@@ -136,6 +211,45 @@
 
   function getFreshFile(fileId: string): OcrVideoFile | undefined {
     return videoOcrStore.videoFiles.find((file) => file.id === fileId);
+  }
+
+  function getObservedInlineSize(entry: ResizeObserverEntry): number {
+    const borderBoxSize = entry.borderBoxSize as
+      | ResizeObserverSize
+      | readonly ResizeObserverSize[]
+      | undefined;
+
+    if (Array.isArray(borderBoxSize)) {
+      return borderBoxSize[0]?.inlineSize ?? entry.contentRect.width;
+    }
+
+    if (borderBoxSize && 'inlineSize' in borderBoxSize) {
+      return borderBoxSize.inlineSize;
+    }
+
+    return entry.contentRect.width;
+  }
+
+  function reportOptionsPanelLayout(width: number): void {
+    const nextCompact = width < OPTIONS_PANEL_BREAKPOINT_PX;
+    if (optionsPanelCompact !== nextCompact) {
+      optionsPanelCompact = nextCompact;
+    }
+
+    if (!nextCompact && optionsSheetOpen) {
+      optionsSheetOpen = false;
+    }
+  }
+
+  function scheduleOptionsPanelLayoutReport(width: number): void {
+    if (pendingOptionsLayoutFrame !== null) {
+      cancelAnimationFrame(pendingOptionsLayoutFrame);
+    }
+
+    pendingOptionsLayoutFrame = requestAnimationFrame(() => {
+      pendingOptionsLayoutFrame = null;
+      reportOptionsPanelLayout(width);
+    });
   }
 
   function createOcrOperationId(fileId: string): string {
@@ -175,6 +289,20 @@
     retryAllDialogOpen = false;
   }
 
+  function closeUnsupportedDataDialog(): void {
+    unsupportedDataDialogOpen = false;
+    unsupportedDataFileName = '';
+    unsupportedDataMessage = '';
+  }
+
+  function showUnsupportedDataDialog(file: OcrVideoFile, error: unknown): void {
+    unsupportedDataFileName = file.name;
+    unsupportedDataMessage = error instanceof Error
+      ? error.message
+      : 'This Video OCR data is not compatible with this MediaFlow version.';
+    unsupportedDataDialogOpen = true;
+  }
+
   function handleRemoveDialogOpenChange(open: boolean): void {
     removeDialogOpen = open;
     if (!open) {
@@ -196,6 +324,7 @@
     closeResultDialog();
     closeRetryDialog();
     closeRetryAllDialog();
+    closeUnsupportedDataDialog();
     handleRemoveDialogOpenChange(false);
   }
 
@@ -333,7 +462,21 @@
     let saved = false;
     const previous = persistenceQueues.get(videoPath) ?? Promise.resolve();
     const next = previous.catch(() => {}).then(async () => {
-      const existingData = await loadOcrData(videoPath);
+      let existingData: VideoOcrPersistenceData | null = null;
+      try {
+        existingData = await loadOcrData(videoPath);
+      } catch (error) {
+        const latestFile = getFreshFile(fileId);
+        if (latestFile && isUnsupportedOcrPersistenceError(error)) {
+          showUnsupportedDataDialog(latestFile, error);
+          videoOcrStore.setFileStatus(latestFile.id, 'error', error.message);
+          saved = false;
+          return;
+        }
+
+        throw error;
+      }
+
       const latestFile = getFreshFile(fileId);
       if (!latestFile || latestFile.path !== videoPath) {
         saved = false;
@@ -348,6 +491,8 @@
         previewSourceIdentity: latestFile.previewSourceIdentity,
         previewVersion: latestFile.previewVersion,
         ocrSelection: latestFile.ocrSelection,
+        activeOcrVersionId: latestFile.activeOcrVersionId,
+        draft: latestFile.draft,
         ocrVersions: latestFile.ocrVersions,
         createdAt: existingData?.createdAt ?? now,
         updatedAt: now,
@@ -375,10 +520,14 @@
       return;
     }
 
-    videoOcrStore.setOcrSelection(file.id, persisted.ocrSelection);
+    videoOcrStore.updateFile(file.id, {
+      ocrSelection: persisted.ocrSelection,
+      ocrVersions: persisted.ocrVersions,
+      activeOcrVersionId: persisted.activeOcrVersionId,
+      draft: persisted.draft,
+    });
 
     if (persisted.ocrVersions.length > 0) {
-      videoOcrStore.setOcrVersions(file.id, persisted.ocrVersions);
       markPersistedOcrVersions(file.path, persisted.ocrVersions);
     }
   }
@@ -482,11 +631,11 @@
         return;
       }
 
-      videoOcrStore.setFileStatus(
-        file.id,
-        'error',
-        error instanceof Error ? error.message : 'Scan failed',
-      );
+      const errorMessage = error instanceof Error ? error.message : 'Scan failed';
+      videoOcrStore.setFileStatus(file.id, 'error', errorMessage);
+      if (isUnsupportedOcrPersistenceError(error)) {
+        showUnsupportedDataDialog(file, error);
+      }
     }
   }
 
@@ -895,6 +1044,12 @@
     toast.info('Cancelling all...');
   }
 
+  function collapsePreviewForRemovedFile(fileId: string): void {
+    if (videoOcrStore.selectedFileId === fileId) {
+      previewExpanded = false;
+    }
+  }
+
   async function handleRequestRemoveFile(fileId: string): Promise<void> {
     const file = getFreshFile(fileId);
     if (!file) {
@@ -904,6 +1059,7 @@
     if (!isOcrActiveStatus(file.status)) {
       resetDialogsForFile(fileId);
       clearPersistedOcrVersionsForPath(file.path);
+      collapsePreviewForRemovedFile(fileId);
       videoOcrStore.removeFile(fileId);
       return;
     }
@@ -917,6 +1073,7 @@
     if (!hasActiveFile) {
       persistedOcrVersionKeys = new Set();
       resetAllDialogs();
+      previewExpanded = false;
       videoOcrStore.clear();
       return;
     }
@@ -951,6 +1108,7 @@
 
       resetDialogsForFile(file.id);
       clearPersistedOcrVersionsForPath(file.path);
+      collapsePreviewForRemovedFile(file.id);
       videoOcrStore.removeFile(file.id);
       removeTarget = null;
       return;
@@ -974,12 +1132,18 @@
 
     persistedOcrVersionKeys = new Set();
     resetAllDialogs();
+    previewExpanded = false;
     videoOcrStore.clear();
   }
 
   function handleViewResult(file: OcrVideoFile): void {
     resultDialogFileId = file.id;
     resultDialogOpen = true;
+  }
+
+  function handleSelectOcrVersion(fileId: string, versionId: string | null): void {
+    videoOcrStore.selectOcrVersion(fileId, versionId);
+    void persistFileData(fileId);
   }
 
   function handleRetryFile(file: OcrVideoFile): void {
@@ -1031,14 +1195,45 @@
     void persistFileData(fileId);
   }
 
-  function handleTrimSegment(fileId: string, segmentId: string, startTimeMs: number, endTimeMs: number): void {
+  function applyTrimSegment(fileId: string, segmentId: string, startTimeMs: number, endTimeMs: number): boolean {
+    const file = getFreshFile(fileId);
+    if (!file) {
+      return false;
+    }
+
+    videoOcrStore.trimOcrSegment(fileId, segmentId, startTimeMs, endTimeMs, Math.round((file.duration ?? 0) * 1000));
+
+    return true;
+  }
+
+  function handlePreviewTrimSegment(fileId: string, segmentId: string, startTimeMs: number, endTimeMs: number): void {
+    applyTrimSegment(fileId, segmentId, startTimeMs, endTimeMs);
+  }
+
+  function handleCommitTrimSegment(fileId: string, segmentId: string, startTimeMs: number, endTimeMs: number): void {
+    if (!applyTrimSegment(fileId, segmentId, startTimeMs, endTimeMs)) {
+      return;
+    }
+
+    void persistFileData(fileId);
+  }
+
+  function handleCutZone(fileId: string, segmentId: string, zoneId: string, cutTimeMs: number): void {
     const file = getFreshFile(fileId);
     if (!file) {
       return;
     }
 
-    videoOcrStore.trimOcrSegment(fileId, segmentId, startTimeMs, endTimeMs, Math.round((file.duration ?? 0) * 1000));
-    void persistFileData(fileId);
+    const didCut = videoOcrStore.cutOcrZone(
+      fileId,
+      segmentId,
+      zoneId,
+      cutTimeMs,
+      Math.round((file.duration ?? 0) * 1000),
+    );
+    if (didCut) {
+      void persistFileData(fileId);
+    }
   }
 
   function handleDeleteZone(fileId: string, segmentId: string, zoneId: string): void {
@@ -1047,7 +1242,8 @@
       return;
     }
 
-    const totalZones = file.ocrSelection.segments.reduce(
+    const activeSelection = videoOcrStore.getActiveOcrSelection(fileId);
+    const totalZones = activeSelection.segments.reduce(
       (count, segment) => count + segment.zones.length,
       0,
     );
@@ -1057,7 +1253,7 @@
     }
 
     const nextSelection: VideoOcrSelection = {
-      segments: file.ocrSelection.segments
+      segments: activeSelection.segments
         .map((segment) => ({
           ...segment,
           zones: segment.id === segmentId
@@ -1076,57 +1272,131 @@
 
     toolImportStore.publishVersionedSource('ocr_versions', 'video-ocr', 'OCR', versionedItems);
   });
+
+  $effect(() => {
+    if (!isActive || !viewContainerEl) {
+      return;
+    }
+
+    const observedElement = viewContainerEl;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) {
+        return;
+      }
+
+      scheduleOptionsPanelLayoutReport(getObservedInlineSize(entry));
+    });
+
+    observer.observe(observedElement);
+    scheduleOptionsPanelLayoutReport(observedElement.getBoundingClientRect().width);
+
+    return () => {
+      observer.disconnect();
+      if (pendingOptionsLayoutFrame !== null) {
+        cancelAnimationFrame(pendingOptionsLayoutFrame);
+        pendingOptionsLayoutFrame = null;
+      }
+    };
+  });
+
 </script>
 
-<div class="h-full flex overflow-hidden">
-  <VideoOcrSidebar
-    files={videoOcrStore.videoFiles}
-    selectedFileId={videoOcrStore.selectedFileId}
-    supportedFormats={VIDEO_FORMATS}
+{#snippet ocrOptionsPanel()}
+  <OcrOptionsPanel
+    config={videoOcrStore.config}
+    {canStart}
+    {canRetryAll}
     isProcessing={videoOcrStore.isProcessing}
-    transcodingCount={fileSummary.transcodingCount}
-    onSelectFile={(fileId) => videoOcrStore.selectFile(fileId)}
-    onRequestRemoveFile={handleRequestRemoveFile}
-    onCancelFile={handleCancelFile}
-    onViewResult={handleViewResult}
-    onRetryFile={handleRetryFile}
-    onAddFiles={handleAddFiles}
-    onClearAll={handleRequestRemoveAll}
+    {startCount}
+    {retryCount}
+    {actionHint}
+    {primaryAction}
+    availableLanguages={videoOcrStore.availableLanguages}
+    onConfigChange={(updates) => videoOcrStore.updateConfig(updates)}
+    onStart={handleStartOcr}
+    onRetryAll={handleOpenRetryAllDialog}
+    onCancel={handleCancelAll}
+    {onNavigateToSettings}
   />
+{/snippet}
 
-  <VideoOcrWorkspace
-    file={selectedFile}
-    liveDetections={selectedLiveDetections}
-    liveDetectionCount={selectedLiveDetectionCount}
-    {dialogsOpen}
-    onAddSegmentFromRegion={handleAddSegmentFromRegion}
-    onUpdateZoneRegion={handleUpdateZoneRegion}
-    onSetZoneRole={handleSetZoneRole}
-    onRenameZone={handleRenameZone}
-    onDeleteZone={handleDeleteZone}
-    onTrimSegment={handleTrimSegment}
-    onPlaybackError={handlePreviewPlaybackError}
-  />
+<div bind:this={viewContainerEl} class="@container/video-ocr h-full overflow-hidden">
+  <div
+    class={videoOcrLayout.rootClass}
+    style:--ocr-options-width={videoOcrLayout.optionsWidth}
+  >
+    {#if videoOcrLayout.showFileSidebar}
+      <VideoOcrSidebar
+        files={videoOcrStore.videoFiles}
+        selectedFileId={videoOcrStore.selectedFileId}
+        supportedFormats={VIDEO_FORMATS}
+        isProcessing={videoOcrStore.isProcessing}
+        transcodingCount={fileSummary.transcodingCount}
+        onSelectFile={(fileId) => videoOcrStore.selectFile(fileId)}
+        onRequestRemoveFile={handleRequestRemoveFile}
+        onCancelFile={handleCancelFile}
+        onViewResult={handleViewResult}
+        onRetryFile={handleRetryFile}
+        onAddFiles={handleAddFiles}
+        onClearAll={handleRequestRemoveAll}
+      />
+    {/if}
 
-  <div class="w-80 border-l overflow-auto flex flex-col p-4">
-    <OcrOptionsPanel
-      config={videoOcrStore.config}
-      {canStart}
-      {canRetryAll}
-      isProcessing={videoOcrStore.isProcessing}
-      {startCount}
-      {retryCount}
-      {actionHint}
-      {primaryAction}
-      availableLanguages={videoOcrStore.availableLanguages}
-      onConfigChange={(updates) => videoOcrStore.updateConfig(updates)}
-      onStart={handleStartOcr}
-      onRetryAll={handleOpenRetryAllDialog}
-      onCancel={handleCancelAll}
-      {onNavigateToSettings}
-    />
+    <div class="h-full min-w-0 min-h-0 overflow-hidden">
+      <VideoOcrWorkspace
+        file={selectedFile}
+        activeSelection={selectedActiveSelection}
+        activeSubtitles={selectedActiveSubtitles}
+        liveDetections={selectedLiveDetections}
+        liveDetectionCount={selectedLiveDetectionCount}
+        {dialogsOpen}
+        previewExpanded={effectivePreviewExpanded}
+        hasDraftVersion={selectedHasDraftVersion}
+        draftVersionName={selectedDraftVersionName}
+        onPreviewExpandedChange={(expanded) => {
+          previewExpanded = expanded && previewMediaAvailable;
+        }}
+        onSelectVersion={handleSelectOcrVersion}
+        onAddSegmentFromRegion={handleAddSegmentFromRegion}
+        onUpdateZoneRegion={handleUpdateZoneRegion}
+        onSetZoneRole={handleSetZoneRole}
+        onRenameZone={handleRenameZone}
+        onDeleteZone={handleDeleteZone}
+        onCutZone={handleCutZone}
+        onPreviewTrimSegment={handlePreviewTrimSegment}
+        onCommitTrimSegment={handleCommitTrimSegment}
+        onPlaybackError={handlePreviewPlaybackError}
+      />
+    </div>
+
+    {#if videoOcrLayout.showOptionsPanel}
+      <aside
+        class={`min-w-0 overflow-hidden border-l transition-[opacity,transform,border-color] duration-200 ease-out ${optionsPanelClass}`}
+        aria-hidden={optionsPanelCompact}
+        inert={optionsPanelCompact ? true : undefined}
+      >
+        <div class="h-full w-80 overflow-auto p-4">
+          {@render ocrOptionsPanel()}
+        </div>
+      </aside>
+    {/if}
   </div>
 </div>
+
+<Sheet.Root open={optionsSheetOpen} onOpenChange={(open) => optionsSheetOpen = open}>
+  <Sheet.Content side="right" class="w-full sm:max-w-sm">
+    <Sheet.Header class="sr-only">
+      <Sheet.Title>OCR Options</Sheet.Title>
+      <Sheet.Description>
+        Adjust OCR language, timing, cleanup, and processing actions.
+      </Sheet.Description>
+    </Sheet.Header>
+    <div class="min-h-0 flex-1 overflow-auto p-4 pt-6">
+      {@render ocrOptionsPanel()}
+    </div>
+  </Sheet.Content>
+</Sheet.Root>
 
 <VideoOcrDialogs
   {resultDialogOpen}
@@ -1134,6 +1404,9 @@
   {retryDialogOpen}
   {retryDialogFile}
   {retryAllDialogOpen}
+  {unsupportedDataDialogOpen}
+  {unsupportedDataFileName}
+  {unsupportedDataMessage}
   {retryCount}
   retryAllMissingRawCount={fileSummary.retryAllMissingRawCount}
   baseConfig={videoOcrStore.config}
@@ -1157,6 +1430,14 @@
   }}
   onRetryAllDialogOpenChange={(open) => {
     retryAllDialogOpen = open;
+  }}
+  onUnsupportedDataDialogOpenChange={(open) => {
+    if (!open) {
+      closeUnsupportedDataDialog();
+      return;
+    }
+
+    unsupportedDataDialogOpen = true;
   }}
   onRetryConfirm={handleRetryConfirm}
   onRetryAllConfirm={handleRetryAllConfirm}

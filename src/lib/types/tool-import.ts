@@ -8,6 +8,7 @@ export type ToolId =
   | 'rename'
   | 'audio-to-subs'
   | 'video-ocr'
+  | 'subtitle-ocr'
   | 'info';
 
 export type ImportableKind =

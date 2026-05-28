@@ -34,6 +34,7 @@ const TARGET_RULES: Record<ToolId, SourceRule[]> = {
   ],
   'audio-to-subs': [{ sourceId: 'extraction_outputs', allowKinds: ['track_audio', 'audio'] }],
   'video-ocr': [],
+  'subtitle-ocr': [],
   info: [
     { sourceId: 'extraction_media', allowKinds: ['media'] },
     { sourceId: 'merge_media', allowKinds: ['media'] },

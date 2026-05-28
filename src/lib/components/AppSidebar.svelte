@@ -9,6 +9,7 @@
     PenLine,
     AudioLines,
     ScanText,
+    Captions,
   } from '@lucide/svelte';
   import type { ComponentProps } from 'svelte';
 
@@ -49,6 +50,11 @@
       id: 'video-ocr',
       title: 'Video OCR',
       icon: ScanText,
+    },
+    {
+      id: 'subtitle-ocr',
+      title: 'Subtitle OCR',
+      icon: Captions,
     },
     {
       id: 'translate',

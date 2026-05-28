@@ -109,15 +109,29 @@ export interface SubtitleOcrDraft {
   updatedAt: string;
 }
 
-export interface SubtitleOcrSourceSnapshot {
-  sourceKind: SubtitleOcrSourceKind;
+interface SubtitleOcrSourceSnapshotBase {
   sourcePath: string;
-  pair?: SubtitleOcrVobSubPair;
-  track?: SubtitleOcrTrackMetadata;
   ocrModelOverride: SubtitleOcrModelOverride;
 }
 
-export interface SubtitleOcrSourceItem extends SubtitleOcrSourceSnapshot {
+export type SubtitleOcrSourceSnapshot =
+  | (SubtitleOcrSourceSnapshotBase & {
+      sourceKind: 'container_track';
+      track: SubtitleOcrTrackMetadata;
+      pair?: never;
+    })
+  | (SubtitleOcrSourceSnapshotBase & {
+      sourceKind: 'standalone_sup';
+      track?: never;
+      pair?: never;
+    })
+  | (SubtitleOcrSourceSnapshotBase & {
+      sourceKind: 'standalone_vobsub';
+      pair: SubtitleOcrVobSubPair;
+      track?: never;
+    });
+
+interface SubtitleOcrSourceItemFields {
   id: string;
   displayName: string;
   status: SubtitleOcrStatus;
@@ -129,6 +143,8 @@ export interface SubtitleOcrSourceItem extends SubtitleOcrSourceSnapshot {
   activeVersionId: string | null;
   draft?: SubtitleOcrDraft;
 }
+
+export type SubtitleOcrSourceItem = SubtitleOcrSourceSnapshot & SubtitleOcrSourceItemFields;
 
 export interface SubtitleOcrProgress {
   phase: 'extracting' | 'decoding' | 'ocr' | 'ai_cleaning';

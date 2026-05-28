@@ -17,6 +17,10 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-quartz-core",
  "ocr-rs",
+ "oxideav-codec",
+ "oxideav-container",
+ "oxideav-core",
+ "oxideav-sub-image",
  "rayon",
  "reqwest 0.12.28",
  "serde",
@@ -3712,6 +3716,44 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
  "ttf-parser",
+]
+
+[[package]]
+name = "oxideav-codec"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7d85f9686d29b25a216aae44c9394d8ea232be2f7b00628f69899e0cdbe643c"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-container"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8536c8d8b3a0426e0250a7f4098ad01efe64b771aa375e0b49989cd5d4a0b273"
+dependencies = [
+ "oxideav-core",
+]
+
+[[package]]
+name = "oxideav-core"
+version = "0.1.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "068fc43174e7aa261fab5a399a6bf206ec3daf324e8df7fb17ecbcba2146a663"
+dependencies = [
+ "bytemuck",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "oxideav-sub-image"
+version = "0.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "670066cd6f07675f4e7cf01008f73cf5634539039e66c2805af3e6180a0e0b81"
+dependencies = [
+ "oxideav-core",
 ]
 
 [[package]]

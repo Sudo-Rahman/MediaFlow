@@ -66,7 +66,7 @@ pub(super) fn resolve_ocr_worker_count_for_backend(requested_workers: u32, use_g
     }
 }
 
-pub(super) fn resolve_ocr_engine_threads(worker_count: usize) -> i32 {
+pub(crate) fn resolve_ocr_engine_threads(worker_count: usize) -> i32 {
     let physical_cores = num_cpus::get_physical();
     let fallback_cores = num_cpus::get();
     let available_cores = physical_cores.max(fallback_cores).max(1);
@@ -77,7 +77,7 @@ pub(super) fn resolve_ocr_engine_threads(worker_count: usize) -> i32 {
 }
 
 /// Create an OCR engine for the given language with specified options.
-pub(super) fn create_ocr_engine(
+pub(crate) fn create_ocr_engine(
     models_dir: &Path,
     language: &str,
     use_gpu: bool,
@@ -149,7 +149,7 @@ pub(super) fn create_ocr_engine(
 }
 
 /// Get the OCR models directory, checking app resources first, then user config
-pub(super) fn get_ocr_models_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn get_ocr_models_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     // First, check if models are in app resources
     if let Ok(resource_dir) = app.path().resource_dir() {
         let models_dir = resource_dir.join(DEFAULT_OCR_MODELS_DIR);

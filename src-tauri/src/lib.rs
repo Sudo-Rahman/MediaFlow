@@ -77,7 +77,12 @@ pub fn run() {
             commands::ocr_pipeline::run_ocr_pipeline,
             commands::ocr_subtitles::generate_subtitles_from_ocr,
             commands::ocr_export::export_ocr_subtitles,
+            commands::subtitle_ocr_import::probe_subtitle_ocr_tracks,
+            commands::subtitle_ocr_extract::prepare_subtitle_ocr_track,
+            commands::subtitle_ocr_decode::decode_subtitle_ocr_bitmaps,
+            commands::subtitle_ocr_ocr::run_subtitle_ocr_pipeline,
             commands::subtitle_ocr_export::export_subtitle_ocr_version,
+            commands::subtitle_ocr_cancel::cancel_subtitle_ocr_operation,
             commands::ocr_cancel::cancel_ocr_operation,
             commands::ocr_models::check_ocr_models,
             // General transcode commands

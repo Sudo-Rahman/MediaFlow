@@ -9,6 +9,7 @@ export { logStore } from './logs.svelte';
 export { infoStore } from './info.svelte';
 export { audioToSubsStore } from './audio-to-subs.svelte';
 export { videoOcrStore } from './video-ocr.svelte';
+export { subtitleOcrStore } from './subtitle-ocr.svelte';
 export { renameStore } from './rename.svelte';
 export { createRenameWorkspaceStore } from './rename.svelte';
 export { toolImportStore } from './tool-import.svelte';

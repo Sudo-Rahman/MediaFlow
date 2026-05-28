@@ -6,6 +6,10 @@ use oxideav_core::{Error as OxideavError, Frame, ReadSeek, RuntimeContext, TimeB
 use crate::shared::validation::validate_media_path;
 use crate::tools::subtitle_ocr::SubtitleOcrDecodedCue;
 
+const DEFAULT_MISSING_CUE_DURATION_MS: u64 = 2_000;
+const MIN_NORMALIZED_CUE_DURATION_MS: u64 = 250;
+const MAX_NORMALIZED_CUE_DURATION_MS: u64 = 10_000;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum BitmapSubtitleSource {
     Pgs {
@@ -185,8 +189,54 @@ pub(super) fn decode_bitmap_subtitle_source(
         .flush()
         .map_err(|e| format!("Failed to flush Subtitle OCR decoder: {}", e))?;
     drain_decoder_frames(decoder.as_mut(), &mut decoded, item_id, &source_key, 0, 0)?;
+    normalize_decoded_cue_timings(&mut decoded);
 
     Ok(decoded)
+}
+
+fn normalize_decoded_cue_timings(cues: &mut [DecodedBitmapCue]) {
+    let mut previous_positive_duration = None;
+
+    for index in 0..cues.len() {
+        let start_time_ms = cues[index].metadata.start_time_ms;
+
+        if cues[index].metadata.end_time_ms <= start_time_ms {
+            let end_time_ms = cues
+                .iter()
+                .skip(index + 1)
+                .find_map(|later| {
+                    (later.metadata.start_time_ms > start_time_ms)
+                        .then_some(later.metadata.start_time_ms)
+                })
+                .unwrap_or_else(|| {
+                    let duration = previous_positive_duration
+                        .unwrap_or(DEFAULT_MISSING_CUE_DURATION_MS)
+                        .clamp(
+                            MIN_NORMALIZED_CUE_DURATION_MS,
+                            MAX_NORMALIZED_CUE_DURATION_MS,
+                        );
+                    start_time_ms.saturating_add(duration)
+                });
+
+            cues[index].metadata.end_time_ms = ensure_end_after_start(start_time_ms, end_time_ms);
+        }
+
+        let duration = cues[index]
+            .metadata
+            .end_time_ms
+            .saturating_sub(cues[index].metadata.start_time_ms);
+        if duration > 0 {
+            previous_positive_duration = Some(duration);
+        }
+    }
+}
+
+fn ensure_end_after_start(start_time_ms: u64, end_time_ms: u64) -> u64 {
+    if end_time_ms > start_time_ms {
+        end_time_ms
+    } else {
+        start_time_ms.saturating_add(1)
+    }
 }
 
 fn drain_decoder_frames(
@@ -342,7 +392,25 @@ fn stable_hash64_bytes(bytes: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{BitmapSubtitleSource, validate_bitmap_subtitle_source};
+    use super::{
+        BitmapSubtitleSource, DecodedBitmapCue, normalize_decoded_cue_timings,
+        validate_bitmap_subtitle_source,
+    };
+    use crate::tools::subtitle_ocr::SubtitleOcrDecodedCue;
+
+    fn decoded_cue(cue_id: &str, start_time_ms: u64, end_time_ms: u64) -> DecodedBitmapCue {
+        DecodedBitmapCue {
+            metadata: SubtitleOcrDecodedCue {
+                cue_id: cue_id.to_string(),
+                start_time_ms,
+                end_time_ms,
+                width: 2,
+                height: 2,
+                cache_key: format!("cache-{cue_id}"),
+            },
+            rgba: Vec::new(),
+        }
+    }
 
     #[test]
     fn validate_bitmap_subtitle_source_accepts_standalone_sup() {
@@ -384,5 +452,30 @@ mod tests {
             .expect_err("missing sub sidecar should fail");
 
         assert!(error.contains("VobSub .sub sidecar not found"));
+    }
+
+    #[test]
+    fn normalize_decoded_cue_timings_uses_later_start_for_middle_missing_duration() {
+        let mut cues = vec![
+            decoded_cue("cue-1", 0, 1_000),
+            decoded_cue("cue-2", 1_500, 1_500),
+            decoded_cue("cue-3", 2_500, 3_000),
+        ];
+
+        normalize_decoded_cue_timings(&mut cues);
+
+        assert_eq!(cues[1].metadata.end_time_ms, 2_500);
+    }
+
+    #[test]
+    fn normalize_decoded_cue_timings_uses_previous_duration_for_final_missing_duration() {
+        let mut cues = vec![
+            decoded_cue("cue-1", 0, 1_000),
+            decoded_cue("cue-2", 3_000, 3_000),
+        ];
+
+        normalize_decoded_cue_timings(&mut cues);
+
+        assert_eq!(cues[1].metadata.end_time_ms, 4_000);
     }
 }

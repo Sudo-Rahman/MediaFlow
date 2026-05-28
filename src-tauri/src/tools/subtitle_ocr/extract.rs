@@ -10,6 +10,7 @@ use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::validation::{validate_media_path, validate_output_path};
 
 const SUBTITLE_OCR_EXTRACT_TIMEOUT: Duration = Duration::from_secs(300);
+const VOBSUB_CONTAINER_EXTRACTION_UNSUPPORTED: &str = "Container VobSub extraction is not supported by the bundled FFmpeg path. Import the .idx/.sub pair directly.";
 
 #[tauri::command]
 pub(crate) async fn prepare_subtitle_ocr_track(
@@ -21,6 +22,7 @@ pub(crate) async fn prepare_subtitle_ocr_track(
 ) -> Result<String, String> {
     validate_media_path(&input_path)?;
     validate_item_id(&item_id)?;
+    ensure_container_extraction_supported(&codec)?;
     let _sleep_guard = SleepInhibitGuard::try_acquire("Subtitle OCR extraction").ok();
     let ffmpeg_path = resolve_ffmpeg_path(&app)?;
     let output_path = subtitle_ocr_temp_output_path(&input_path, stream_index, &codec, &item_id)?;
@@ -151,7 +153,6 @@ fn emit_extract_progress(app: &tauri::AppHandle, item_id: &str, current: u32, me
 pub(super) fn subtitle_ocr_extension_for_codec(codec: &str) -> Option<&'static str> {
     match codec.to_ascii_lowercase().as_str() {
         "hdmv_pgs_subtitle" | "pgs" => Some("sup"),
-        "dvd_subtitle" => Some("idx"),
         _ => None,
     }
 }
@@ -162,6 +163,7 @@ pub(super) fn build_prepare_subtitle_ocr_args(
     stream_index: u32,
     codec: &str,
 ) -> Result<Vec<String>, String> {
+    ensure_container_extraction_supported(codec)?;
     subtitle_ocr_extension_for_codec(codec)
         .ok_or_else(|| format!("Unsupported Subtitle OCR codec: {}", codec))?;
 
@@ -175,12 +177,16 @@ pub(super) fn build_prepare_subtitle_ocr_args(
         "copy".to_string(),
     ];
 
-    if codec.eq_ignore_ascii_case("dvd_subtitle") {
-        args.extend(["-f".to_string(), "vobsub".to_string()]);
-    }
-
     args.push(output_path.to_string());
     Ok(args)
+}
+
+fn ensure_container_extraction_supported(codec: &str) -> Result<(), String> {
+    if codec.eq_ignore_ascii_case("dvd_subtitle") {
+        Err(VOBSUB_CONTAINER_EXTRACTION_UNSUPPORTED.to_string())
+    } else {
+        Ok(())
+    }
 }
 
 fn subtitle_ocr_temp_output_path(
@@ -243,16 +249,13 @@ mod tests {
     use super::{build_prepare_subtitle_ocr_args, subtitle_ocr_extension_for_codec};
 
     #[test]
-    fn subtitle_ocr_extension_for_codec_maps_pgs_and_vobsub() {
+    fn subtitle_ocr_extension_for_codec_maps_pgs_only() {
         assert_eq!(
             subtitle_ocr_extension_for_codec("hdmv_pgs_subtitle"),
             Some("sup")
         );
         assert_eq!(subtitle_ocr_extension_for_codec("pgs"), Some("sup"));
-        assert_eq!(
-            subtitle_ocr_extension_for_codec("dvd_subtitle"),
-            Some("idx")
-        );
+        assert_eq!(subtitle_ocr_extension_for_codec("dvd_subtitle"), None);
     }
 
     #[test]
@@ -281,19 +284,18 @@ mod tests {
     }
 
     #[test]
-    fn build_prepare_subtitle_ocr_args_uses_vobsub_muxer_for_dvd_subtitle() {
-        let args = build_prepare_subtitle_ocr_args(
+    fn build_prepare_subtitle_ocr_args_rejects_dvd_subtitle_container_extraction() {
+        let error = build_prepare_subtitle_ocr_args(
             "/media/input.mkv",
             "/tmp/item-stream-3.idx",
             3,
             "dvd_subtitle",
         )
-        .expect("args should build");
+        .expect_err("container VobSub extraction should be unsupported");
 
-        assert!(args.windows(2).any(|window| window == ["-f", "vobsub"]));
         assert_eq!(
-            args.last().map(String::as_str),
-            Some("/tmp/item-stream-3.idx")
+            error,
+            "Container VobSub extraction is not supported by the bundled FFmpeg path. Import the .idx/.sub pair directly."
         );
     }
 }

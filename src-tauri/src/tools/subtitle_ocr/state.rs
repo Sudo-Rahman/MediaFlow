@@ -11,6 +11,17 @@ static SUBTITLE_OCR_CANCELLED_ITEMS: LazyLock<Mutex<HashSet<String>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
 pub(super) fn begin_operation(item_id: &str) -> Result<(), String> {
+    if SUBTITLE_OCR_ACTIVE_ITEMS
+        .lock()
+        .map_err(|_| "Failed to acquire Subtitle OCR state lock".to_string())?
+        .contains(item_id)
+    {
+        return Err(format!(
+            "Subtitle OCR operation already active for item: {}",
+            item_id
+        ));
+    }
+
     clear_cancelled(item_id)?;
     SUBTITLE_OCR_ACTIVE_ITEMS
         .lock()
@@ -69,10 +80,6 @@ pub(super) fn mark_cancelled(item_id: &str) -> Result<(), String> {
         .lock()
         .map_err(|_| "Failed to acquire Subtitle OCR cancellation lock".to_string())?
         .insert(item_id.to_string());
-    SUBTITLE_OCR_ACTIVE_ITEMS
-        .lock()
-        .map_err(|_| "Failed to acquire Subtitle OCR state lock".to_string())?
-        .remove(item_id);
     Ok(())
 }
 
@@ -106,4 +113,48 @@ pub(super) fn has_registered_operation(item_id: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use serial_test::serial;
+
+    #[test]
+    #[serial]
+    fn begin_operation_rejects_duplicate_active_operation() {
+        let item_id = "subtitle-ocr-duplicate-test";
+        let _ = super::clear_registered_operation(item_id);
+        let _ = super::clear_cancelled(item_id);
+
+        super::begin_operation(item_id).expect("first operation should start");
+        let error = super::begin_operation(item_id)
+            .expect_err("second active operation for the same item should fail");
+
+        assert!(error.contains("already active"));
+
+        let _ = super::clear_registered_operation(item_id);
+        let _ = super::clear_cancelled(item_id);
+    }
+
+    #[test]
+    #[serial]
+    fn begin_operation_waits_for_cancelled_operation_to_clear_before_reuse() {
+        let item_id = "subtitle-ocr-cancel-then-new-test";
+        let _ = super::clear_registered_operation(item_id);
+        let _ = super::clear_cancelled(item_id);
+
+        super::begin_operation(item_id).expect("operation should start");
+        super::mark_cancelled(item_id).expect("operation should cancel");
+        assert!(super::is_operation_cancelled(item_id));
+
+        let error = super::begin_operation(item_id)
+            .expect_err("new operation should wait for cancelled operation cleanup");
+        assert!(error.contains("already active"));
+
+        super::clear_registered_operation(item_id)
+            .expect("cancelled operation cleanup should clear active state");
+        super::begin_operation(item_id).expect("new operation after cancellation should start");
+        assert!(!super::is_operation_cancelled(item_id));
+        assert!(super::has_registered_operation(item_id));
+
+        let _ = super::clear_registered_operation(item_id);
+        let _ = super::clear_cancelled(item_id);
+    }
+}

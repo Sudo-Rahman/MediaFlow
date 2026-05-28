@@ -8,6 +8,7 @@ use crate::shared::process::{terminate_process, tokio_command, wait_with_output_
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::validation::{validate_media_path, validate_output_path};
+use crate::tools::subtitle_ocr::progress::SubtitleOcrProgressEvent;
 
 const SUBTITLE_OCR_EXTRACT_TIMEOUT: Duration = Duration::from_secs(300);
 const VOBSUB_CONTAINER_EXTRACTION_UNSUPPORTED: &str = "Container VobSub extraction is not supported by the bundled FFmpeg path. Import the .idx/.sub pair directly.";
@@ -140,13 +141,7 @@ fn remove_registered_outputs(item_id: &str) {
 fn emit_extract_progress(app: &tauri::AppHandle, item_id: &str, current: u32, message: &str) {
     let _ = app.emit(
         "subtitle-ocr-progress",
-        serde_json::json!({
-            "itemId": item_id,
-            "phase": "extracting",
-            "current": current,
-            "total": 1,
-            "message": message,
-        }),
+        SubtitleOcrProgressEvent::new(item_id, "extracting", current, 1, message),
     );
 }
 

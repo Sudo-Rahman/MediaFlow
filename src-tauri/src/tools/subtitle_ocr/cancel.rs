@@ -27,7 +27,7 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn cancel_subtitle_ocr_operation_removes_state_and_partial_outputs() {
+    async fn cancel_subtitle_ocr_operation_marks_cancelled_and_removes_partial_outputs() {
         let dir = tempfile::tempdir().expect("failed to create tempdir");
         let output = dir.path().join("partial.sup");
         std::fs::write(&output, b"partial").expect("failed to write partial output");
@@ -47,6 +47,12 @@ mod tests {
 
         assert!(!output.exists());
         assert!(super::super::state::is_operation_cancelled(&item_id));
+        assert!(super::super::state::has_registered_operation(&item_id));
+
+        super::super::state::clear_registered_operation(&item_id)
+            .expect("owner cleanup should clear active operation");
         assert!(!super::super::state::has_registered_operation(&item_id));
+        super::super::state::clear_cancelled(&item_id)
+            .expect("test cleanup should clear cancellation flag");
     }
 }

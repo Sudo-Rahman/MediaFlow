@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
@@ -34,10 +35,32 @@ pub(crate) async fn decode_subtitle_ocr_bitmaps(
     sub_path: Option<String>,
     item_id: String,
 ) -> Result<Vec<SubtitleOcrDecodedCue>, String> {
+    if item_id.trim().is_empty() {
+        return Err("Subtitle OCR item id is required".to_string());
+    }
+
     let source =
         validate_bitmap_subtitle_source(&source_path, idx_path.as_deref(), sub_path.as_deref())?;
-    let decoded = decode_bitmap_subtitle_source(&source, &item_id)?;
-    Ok(decoded.into_iter().map(|cue| cue.metadata).collect())
+    super::state::begin_operation(&item_id)?;
+
+    let item_id_for_task = item_id.clone();
+    let join_result = tokio::task::spawn_blocking(move || {
+        let mut decoded_metadata = Vec::new();
+        decode_bitmap_subtitle_source_with_handler(&source, &item_id_for_task, |decoded| {
+            decoded_metadata.push(decoded.metadata);
+            Ok(())
+        })?;
+        Ok(decoded_metadata)
+    })
+    .await;
+
+    let _ = super::state::clear_registered_operation(&item_id);
+    let result = join_result.map_err(|e| format!("Subtitle OCR decode task failed: {}", e))?;
+    if result.is_ok() {
+        let _ = super::state::clear_cancelled(&item_id);
+    }
+
+    result
 }
 
 pub(super) fn validate_bitmap_subtitle_source(
@@ -100,10 +123,14 @@ pub(super) fn validate_bitmap_subtitle_source(
     }
 }
 
-pub(super) fn decode_bitmap_subtitle_source(
+pub(super) fn decode_bitmap_subtitle_source_with_handler<F>(
     source: &BitmapSubtitleSource,
     item_id: &str,
-) -> Result<Vec<DecodedBitmapCue>, String> {
+    mut handler: F,
+) -> Result<(), String>
+where
+    F: FnMut(DecodedBitmapCue) -> Result<(), String>,
+{
     let mut ctx = RuntimeContext::new();
     oxideav_sub_image::register(&mut ctx);
 
@@ -147,8 +174,10 @@ pub(super) fn decode_bitmap_subtitle_source(
         .first_decoder(&stream.params)
         .map_err(|e| format!("Failed to create Subtitle OCR decoder: {}", e))?;
 
-    let mut decoded = Vec::new();
+    let mut cue_index = 0usize;
+    let mut normalizer = StreamingCueTimingNormalizer::new(&mut handler);
     loop {
+        ensure_decode_not_cancelled(item_id)?;
         let packet = match demuxer.next_packet() {
             Ok(packet) => packet,
             Err(OxideavError::Eof) => break,
@@ -177,7 +206,8 @@ pub(super) fn decode_bitmap_subtitle_source(
             .map_err(|e| format!("Failed to decode Subtitle OCR packet: {}", e))?;
         drain_decoder_frames(
             decoder.as_mut(),
-            &mut decoded,
+            &mut normalizer,
+            &mut cue_index,
             item_id,
             &source_key,
             start_time_ms,
@@ -188,47 +218,16 @@ pub(super) fn decode_bitmap_subtitle_source(
     decoder
         .flush()
         .map_err(|e| format!("Failed to flush Subtitle OCR decoder: {}", e))?;
-    drain_decoder_frames(decoder.as_mut(), &mut decoded, item_id, &source_key, 0, 0)?;
-    normalize_decoded_cue_timings(&mut decoded);
-
-    Ok(decoded)
-}
-
-fn normalize_decoded_cue_timings(cues: &mut [DecodedBitmapCue]) {
-    let mut previous_positive_duration = None;
-
-    for index in 0..cues.len() {
-        let start_time_ms = cues[index].metadata.start_time_ms;
-
-        if cues[index].metadata.end_time_ms <= start_time_ms {
-            let end_time_ms = cues
-                .iter()
-                .skip(index + 1)
-                .find_map(|later| {
-                    (later.metadata.start_time_ms > start_time_ms)
-                        .then_some(later.metadata.start_time_ms)
-                })
-                .unwrap_or_else(|| {
-                    let duration = previous_positive_duration
-                        .unwrap_or(DEFAULT_MISSING_CUE_DURATION_MS)
-                        .clamp(
-                            MIN_NORMALIZED_CUE_DURATION_MS,
-                            MAX_NORMALIZED_CUE_DURATION_MS,
-                        );
-                    start_time_ms.saturating_add(duration)
-                });
-
-            cues[index].metadata.end_time_ms = ensure_end_after_start(start_time_ms, end_time_ms);
-        }
-
-        let duration = cues[index]
-            .metadata
-            .end_time_ms
-            .saturating_sub(cues[index].metadata.start_time_ms);
-        if duration > 0 {
-            previous_positive_duration = Some(duration);
-        }
-    }
+    drain_decoder_frames(
+        decoder.as_mut(),
+        &mut normalizer,
+        &mut cue_index,
+        item_id,
+        &source_key,
+        0,
+        0,
+    )?;
+    normalizer.finish()
 }
 
 fn ensure_end_after_start(start_time_ms: u64, end_time_ms: u64) -> u64 {
@@ -239,26 +238,123 @@ fn ensure_end_after_start(start_time_ms: u64, end_time_ms: u64) -> u64 {
     }
 }
 
-fn drain_decoder_frames(
+struct StreamingCueTimingNormalizer<'handler, F>
+where
+    F: FnMut(DecodedBitmapCue) -> Result<(), String>,
+{
+    pending: VecDeque<DecodedBitmapCue>,
+    previous_positive_duration: Option<u64>,
+    handler: &'handler mut F,
+}
+
+impl<F> StreamingCueTimingNormalizer<'_, F>
+where
+    F: FnMut(DecodedBitmapCue) -> Result<(), String>,
+{
+    fn new(handler: &mut F) -> StreamingCueTimingNormalizer<'_, F> {
+        StreamingCueTimingNormalizer {
+            pending: VecDeque::new(),
+            previous_positive_duration: None,
+            handler,
+        }
+    }
+
+    fn push(&mut self, cue: DecodedBitmapCue) -> Result<(), String> {
+        self.flush_ready(Some(cue.metadata.start_time_ms))?;
+        self.pending.push_back(cue);
+        self.flush_ready(None)
+    }
+
+    fn finish(mut self) -> Result<(), String> {
+        while let Some(mut cue) = self.pending.pop_front() {
+            self.normalize_final_missing_duration(&mut cue);
+            self.emit(cue)?;
+        }
+
+        Ok(())
+    }
+
+    fn flush_ready(&mut self, later_start_time_ms: Option<u64>) -> Result<(), String> {
+        loop {
+            let Some(front) = self.pending.front_mut() else {
+                return Ok(());
+            };
+            let start_time_ms = front.metadata.start_time_ms;
+
+            if front.metadata.end_time_ms <= start_time_ms {
+                match later_start_time_ms {
+                    Some(later_start_time_ms) if later_start_time_ms > start_time_ms => {
+                        front.metadata.end_time_ms =
+                            ensure_end_after_start(start_time_ms, later_start_time_ms);
+                    }
+                    _ => return Ok(()),
+                }
+            }
+
+            let cue = self
+                .pending
+                .pop_front()
+                .ok_or_else(|| "Subtitle OCR cue timing queue was empty".to_string())?;
+            self.emit(cue)?;
+        }
+    }
+
+    fn normalize_final_missing_duration(&self, cue: &mut DecodedBitmapCue) {
+        let start_time_ms = cue.metadata.start_time_ms;
+        if cue.metadata.end_time_ms > start_time_ms {
+            return;
+        }
+
+        let duration = self
+            .previous_positive_duration
+            .unwrap_or(DEFAULT_MISSING_CUE_DURATION_MS)
+            .clamp(
+                MIN_NORMALIZED_CUE_DURATION_MS,
+                MAX_NORMALIZED_CUE_DURATION_MS,
+            );
+        cue.metadata.end_time_ms =
+            ensure_end_after_start(start_time_ms, start_time_ms.saturating_add(duration));
+    }
+
+    fn emit(&mut self, cue: DecodedBitmapCue) -> Result<(), String> {
+        let duration = cue
+            .metadata
+            .end_time_ms
+            .saturating_sub(cue.metadata.start_time_ms);
+        if duration > 0 {
+            self.previous_positive_duration = Some(duration);
+        }
+
+        (self.handler)(cue)
+    }
+}
+
+fn drain_decoder_frames<F>(
     decoder: &mut dyn oxideav_core::Decoder,
-    decoded: &mut Vec<DecodedBitmapCue>,
+    normalizer: &mut StreamingCueTimingNormalizer<'_, F>,
+    cue_index: &mut usize,
     item_id: &str,
     source_key: &str,
     start_time_ms: u64,
     end_time_ms: u64,
-) -> Result<(), String> {
+) -> Result<(), String>
+where
+    F: FnMut(DecodedBitmapCue) -> Result<(), String>,
+{
     loop {
+        ensure_decode_not_cancelled(item_id)?;
         match decoder.receive_frame() {
             Ok(Frame::Video(frame)) => {
                 let cue = decoded_frame_to_cue(
                     frame,
-                    decoded.len(),
+                    *cue_index,
                     item_id,
                     source_key,
                     start_time_ms,
                     end_time_ms,
                 )?;
-                decoded.push(cue);
+                *cue_index += 1;
+                normalizer.push(cue)?;
             }
             Ok(_) => {}
             Err(OxideavError::NeedMore | OxideavError::Eof) => break,
@@ -267,6 +363,14 @@ fn drain_decoder_frames(
     }
 
     Ok(())
+}
+
+fn ensure_decode_not_cancelled(item_id: &str) -> Result<(), String> {
+    if super::state::is_operation_cancelled(item_id) {
+        Err("Subtitle OCR operation cancelled".to_string())
+    } else {
+        Ok(())
+    }
 }
 
 fn decoded_frame_to_cue(
@@ -393,8 +497,8 @@ fn stable_hash64_bytes(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        BitmapSubtitleSource, DecodedBitmapCue, normalize_decoded_cue_timings,
-        validate_bitmap_subtitle_source,
+        BitmapSubtitleSource, DecodedBitmapCue, StreamingCueTimingNormalizer,
+        decode_bitmap_subtitle_source_with_handler, validate_bitmap_subtitle_source,
     };
     use crate::tools::subtitle_ocr::SubtitleOcrDecodedCue;
 
@@ -455,27 +559,83 @@ mod tests {
     }
 
     #[test]
-    fn normalize_decoded_cue_timings_uses_later_start_for_middle_missing_duration() {
-        let mut cues = vec![
-            decoded_cue("cue-1", 0, 1_000),
-            decoded_cue("cue-2", 1_500, 1_500),
-            decoded_cue("cue-3", 2_500, 3_000),
-        ];
+    fn streaming_timing_normalizer_uses_later_start_for_middle_missing_duration() {
+        let mut emitted = Vec::new();
+        let mut handler = |cue| {
+            emitted.push(cue);
+            Ok(())
+        };
+        let mut normalizer = StreamingCueTimingNormalizer::new(&mut handler);
 
-        normalize_decoded_cue_timings(&mut cues);
+        normalizer
+            .push(decoded_cue("cue-1", 0, 1_000))
+            .expect("first cue should push");
+        normalizer
+            .push(decoded_cue("cue-2", 1_500, 1_500))
+            .expect("second cue should push");
+        normalizer
+            .push(decoded_cue("cue-3", 2_500, 3_000))
+            .expect("third cue should push");
+        normalizer.finish().expect("normalizer should finish");
 
-        assert_eq!(cues[1].metadata.end_time_ms, 2_500);
+        assert_eq!(emitted[1].metadata.end_time_ms, 2_500);
     }
 
     #[test]
-    fn normalize_decoded_cue_timings_uses_previous_duration_for_final_missing_duration() {
-        let mut cues = vec![
-            decoded_cue("cue-1", 0, 1_000),
-            decoded_cue("cue-2", 3_000, 3_000),
-        ];
+    fn streaming_timing_normalizer_uses_previous_duration_for_final_missing_duration() {
+        let mut emitted = Vec::new();
+        let mut handler = |cue| {
+            emitted.push(cue);
+            Ok(())
+        };
+        let mut normalizer = StreamingCueTimingNormalizer::new(&mut handler);
 
-        normalize_decoded_cue_timings(&mut cues);
+        normalizer
+            .push(decoded_cue("cue-1", 0, 1_000))
+            .expect("first cue should push");
+        normalizer
+            .push(decoded_cue("cue-2", 3_000, 3_000))
+            .expect("second cue should push");
+        normalizer.finish().expect("normalizer should finish");
 
-        assert_eq!(cues[1].metadata.end_time_ms, 4_000);
+        assert_eq!(emitted[1].metadata.end_time_ms, 4_000);
+    }
+
+    #[test]
+    fn decode_bitmap_subtitle_source_with_handler_decodes_vobsub_demo_spu() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let idx = dir.path().join("demo.idx");
+        let sub = dir.path().join("demo.sub");
+        let spu = oxideav_sub_image::vobsub::build_demo_spu(2, 2, &[1, 1, 1, 1]);
+        std::fs::write(&sub, spu).expect("failed to write sub");
+        std::fs::write(
+            &idx,
+            "\
+# VobSub index file
+size: 2x2
+palette: ff0000, 00ff00, 0000ff, ffffff, 000000, 808080, c0c0c0, 404040, 200020, 800080, a0a0a0, 010203, 040506, 070809, 0a0b0c, 0d0e0f
+timestamp: 00:00:01:500, filepos: 000000000
+",
+        )
+        .expect("failed to write idx");
+        let source = BitmapSubtitleSource::VobSub {
+            idx_path: idx,
+            sub_path: sub,
+        };
+        let mut decoded_metadata = Vec::new();
+
+        decode_bitmap_subtitle_source_with_handler(&source, "demo-item", |decoded| {
+            assert_eq!(decoded.metadata.width, 2);
+            assert_eq!(decoded.metadata.height, 2);
+            assert_eq!(decoded.metadata.start_time_ms, 1_500);
+            assert!(decoded.metadata.end_time_ms > decoded.metadata.start_time_ms);
+            assert_eq!(decoded.rgba.len(), 16);
+            decoded_metadata.push(decoded.metadata);
+            Ok(())
+        })
+        .expect("demo VobSub fixture should decode");
+
+        assert_eq!(decoded_metadata.len(), 1);
+        assert_eq!(decoded_metadata[0].end_time_ms, 3_500);
     }
 }

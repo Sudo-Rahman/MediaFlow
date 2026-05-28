@@ -5,7 +5,7 @@ use image::{DynamicImage, RgbaImage};
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::tools::ocr::{create_ocr_engine, get_ocr_models_dir, resolve_ocr_engine_threads};
 use crate::tools::subtitle_ocr::decode::{
-    DecodedBitmapCue, decode_bitmap_subtitle_source, validate_bitmap_subtitle_source,
+    DecodedBitmapCue, decode_bitmap_subtitle_source_with_handler, validate_bitmap_subtitle_source,
 };
 use crate::tools::subtitle_ocr::progress::SubtitleOcrProgressEmitter;
 use crate::tools::subtitle_ocr::stabilize::stabilize_cues;
@@ -18,7 +18,7 @@ use crate::tools::subtitle_ocr::{
 struct PipelineProgress {
     decoding: SubtitleOcrProgressEmitter,
     ocr: SubtitleOcrProgressEmitter,
-    stabilizing: SubtitleOcrProgressEmitter,
+    ai_cleaning: SubtitleOcrProgressEmitter,
 }
 
 #[tauri::command]
@@ -44,7 +44,7 @@ pub(crate) async fn run_subtitle_ocr_pipeline(
     let progress = PipelineProgress {
         decoding: SubtitleOcrProgressEmitter::new(app.clone(), item_id.clone(), "decoding", 1),
         ocr: SubtitleOcrProgressEmitter::new(app.clone(), item_id.clone(), "ocr", 1),
-        stabilizing: SubtitleOcrProgressEmitter::new(app, item_id.clone(), "stabilizing", 1),
+        ai_cleaning: SubtitleOcrProgressEmitter::new(app, item_id.clone(), "ai_cleaning", 1),
     };
 
     let item_id_for_task = item_id.clone();
@@ -59,11 +59,9 @@ pub(crate) async fn run_subtitle_ocr_pipeline(
         )
     });
 
-    let result = task
-        .await
-        .map_err(|e| format!("Subtitle OCR pipeline task failed: {}", e))?;
-
+    let join_result = task.await;
     let _ = super::state::clear_registered_operation(&item_id);
+    let result = join_result.map_err(|e| format!("Subtitle OCR pipeline task failed: {}", e))?;
     if result.is_ok() {
         let _ = super::state::clear_cancelled(&item_id);
     }
@@ -83,28 +81,22 @@ fn run_subtitle_ocr_pipeline_blocking(
     progress
         .decoding
         .emit_force(0, "Decoding bitmap subtitles...");
-    let decoded_cues = decode_bitmap_subtitle_source(source, item_id)?;
-    progress.decoding.emit_force(
-        1,
-        format!("Decoded {} subtitle bitmaps", decoded_cues.len()),
-    );
 
     ensure_not_cancelled(item_id)?;
     let engine_threads = resolve_ocr_engine_threads(1);
     let engine = create_ocr_engine(&models_dir, language, use_gpu, engine_threads, true)?;
-    let total = decoded_cues.len() as u32;
-    let ocr_progress = SubtitleOcrProgressEmitter::new(
-        progress.ocr_app_handle(),
-        item_id.to_string(),
-        "ocr",
-        total.max(1),
-    );
-    ocr_progress.emit_force(0, "Running OCR on subtitle bitmaps...");
+    progress
+        .ocr
+        .emit_force(0, "Running OCR on subtitle bitmaps...");
 
-    let mut raw_ocr_cues = Vec::with_capacity(decoded_cues.len());
-    let mut final_candidates = Vec::with_capacity(decoded_cues.len());
-    for (index, decoded) in decoded_cues.iter().enumerate() {
+    let mut decoded_metadata = Vec::new();
+    let mut raw_ocr_cues = Vec::new();
+    let mut final_candidates = Vec::new();
+    let mut decoded_count = 0u32;
+    decode_bitmap_subtitle_source_with_handler(source, item_id, |decoded| {
         ensure_not_cancelled(item_id)?;
+        decoded_count = decoded_count.saturating_add(1);
+        let metadata = decoded.metadata.clone();
         let raw_cue = ocr_decoded_bitmap(&engine, decoded)?;
         if !raw_cue.text.trim().is_empty() {
             final_candidates.push(SubtitleOcrCue {
@@ -116,43 +108,37 @@ fn run_subtitle_ocr_pipeline_blocking(
                 confidence: raw_cue.confidence,
             });
         }
+        decoded_metadata.push(metadata);
         raw_ocr_cues.push(raw_cue);
-        ocr_progress.emit(
-            (index + 1) as u32,
-            format!(
-                "Processed subtitle bitmap {}/{}",
-                index + 1,
-                decoded_cues.len()
-            ),
+        progress.ocr.emit(
+            0,
+            format!("Processed {} subtitle bitmaps...", decoded_count),
         );
-    }
-    ocr_progress.emit_force(total, "Subtitle bitmap OCR complete");
+        Ok(())
+    })?;
+
+    progress.decoding.emit_force(
+        1,
+        format!("Decoded {} subtitle bitmaps", decoded_metadata.len()),
+    );
+    progress.ocr.emit_force(1, "Subtitle bitmap OCR complete");
 
     ensure_not_cancelled(item_id)?;
     progress
-        .stabilizing
+        .ai_cleaning
         .emit_force(0, "Stabilizing subtitle OCR cues...");
     let stabilized_cues = stabilize_cues(&final_candidates);
-    progress.stabilizing.emit_force(
+    progress.ai_cleaning.emit_force(
         1,
         format!("Stabilized {} subtitle cues", stabilized_cues.len()),
     );
 
     Ok(SubtitleOcrPipelineResult {
-        decoded_cues: decoded_cues
-            .into_iter()
-            .map(|decoded| decoded.metadata)
-            .collect(),
+        decoded_cues: decoded_metadata,
         raw_ocr_cues,
         final_cues: stabilized_cues.clone(),
         stabilized_cues,
     })
-}
-
-impl PipelineProgress {
-    fn ocr_app_handle(&self) -> tauri::AppHandle {
-        self.ocr.app_handle()
-    }
 }
 
 fn ensure_not_cancelled(item_id: &str) -> Result<(), String> {
@@ -165,14 +151,12 @@ fn ensure_not_cancelled(item_id: &str) -> Result<(), String> {
 
 fn ocr_decoded_bitmap(
     engine: &ocr_rs::OcrEngine,
-    decoded: &DecodedBitmapCue,
+    decoded: DecodedBitmapCue,
 ) -> Result<SubtitleOcrRawCue, String> {
-    let image = RgbaImage::from_raw(
-        decoded.metadata.width,
-        decoded.metadata.height,
-        decoded.rgba.clone(),
-    )
-    .ok_or_else(|| "Decoded Subtitle OCR bitmap dimensions did not match RGBA data".to_string())?;
+    let DecodedBitmapCue { metadata, rgba } = decoded;
+    let image = RgbaImage::from_raw(metadata.width, metadata.height, rgba).ok_or_else(|| {
+        "Decoded Subtitle OCR bitmap dimensions did not match RGBA data".to_string()
+    })?;
     let image = DynamicImage::ImageRgba8(image);
     let ocr_results = engine
         .recognize(&image)
@@ -192,10 +176,10 @@ fn ocr_decoded_bitmap(
     let confidence = average_confidence(&boxes);
 
     Ok(SubtitleOcrRawCue {
-        cue_id: decoded.metadata.cue_id.clone(),
-        start_time_ms: decoded.metadata.start_time_ms,
-        end_time_ms: decoded.metadata.end_time_ms,
-        cache_key: decoded.metadata.cache_key.clone(),
+        cue_id: metadata.cue_id,
+        start_time_ms: metadata.start_time_ms,
+        end_time_ms: metadata.end_time_ms,
+        cache_key: metadata.cache_key,
         boxes,
         text,
         confidence,

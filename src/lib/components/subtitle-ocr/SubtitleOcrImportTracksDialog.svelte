@@ -144,67 +144,69 @@
           variant={isSelected ? 'outline' : 'default'}
           size="sm"
           class={cn(
-            'items-start gap-3 hover:bg-muted/50',
+            'relative grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 hover:bg-muted/50 sm:grid-cols-[auto_minmax(0,1fr)_14rem]',
             isSelected && 'border-primary bg-card ring-1 ring-primary/20 hover:bg-card',
           )}
         >
           <button
             type="button"
-            class="flex min-w-0 flex-1 items-start gap-3 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            class="absolute inset-0 z-0 rounded-[inherit] text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
             aria-pressed={isSelected}
+            aria-label={`Select track ${track.streamIndex}`}
             onclick={() => toggleTrack(track.streamIndex)}
-          >
-            <Item.Media class="mt-0.5">
-              <span
-                class={cn(
-                  'flex size-5 items-center justify-center rounded-full border-2',
-                  isSelected ? 'border-primary bg-primary' : 'border-muted-foreground',
-                )}
-              >
-                {#if isSelected}
-                  <Check class="size-3 text-primary-foreground" />
-                {/if}
-              </span>
-            </Item.Media>
+          ></button>
 
-            <Item.Content class="min-w-0">
-              <Item.Title>
-                Track {track.streamIndex}
-              </Item.Title>
-              <Item.Description class="text-xs">
-                {track.codecLabel} bitmap subtitle track
-              </Item.Description>
-              <div class="mt-2 flex flex-wrap gap-1.5">
-                <Badge variant="outline" class="text-[10px] px-1.5 py-0">
-                  Stream {track.streamIndex}
-                </Badge>
-                <Badge variant="outline" class="text-[10px] px-1.5 py-0">
-                  {track.codec}
-                </Badge>
-                {#if track.language}
-                  <Badge variant="secondary" class="text-[10px] px-1.5 py-0">
-                    {track.language}
-                  </Badge>
-                {/if}
-                {#if track.title}
-                  <Badge variant="secondary" class="text-[10px] px-1.5 py-0">
-                    {track.title}
-                  </Badge>
-                {/if}
-                {#if track.forced}
-                  <Badge class="text-[10px] px-1.5 py-0">
-                    Forced
-                  </Badge>
-                {:else if track.default}
-                  <Badge variant="secondary" class="text-[10px] px-1.5 py-0">
-                    Default
-                  </Badge>
-                {/if}
-              </div>
-            </Item.Content>
-          </button>
+          <Item.Media class="relative z-10 col-start-1 row-start-1 mt-0.5 pointer-events-none">
+            <span
+              class={cn(
+                'flex size-5 items-center justify-center rounded-full border-2',
+                isSelected ? 'border-primary bg-primary' : 'border-muted-foreground',
+              )}
+            >
+              {#if isSelected}
+                <Check class="size-3 text-primary-foreground" />
+              {/if}
+            </span>
+          </Item.Media>
 
-          <Field.Field class="basis-full pl-8 sm:basis-56 sm:pl-0">
+          <Item.Content class="relative z-10 col-start-2 row-start-1 min-w-0 pointer-events-none">
+            <Item.Title>
+              Track {track.streamIndex}
+            </Item.Title>
+            <Item.Description class="text-xs">
+              {track.codecLabel} bitmap subtitle track
+            </Item.Description>
+            <div class="mt-2 flex flex-wrap gap-1.5">
+              <Badge variant="outline" class="text-[10px] px-1.5 py-0">
+                Stream {track.streamIndex}
+              </Badge>
+              <Badge variant="outline" class="text-[10px] px-1.5 py-0">
+                {track.codec}
+              </Badge>
+              {#if track.language}
+                <Badge variant="secondary" class="text-[10px] px-1.5 py-0">
+                  {track.language}
+                </Badge>
+              {/if}
+              {#if track.title}
+                <Badge variant="secondary" class="text-[10px] px-1.5 py-0">
+                  {track.title}
+                </Badge>
+              {/if}
+              {#if track.forced}
+                <Badge class="text-[10px] px-1.5 py-0">
+                  Forced
+                </Badge>
+              {/if}
+              {#if track.default}
+                <Badge variant="secondary" class="text-[10px] px-1.5 py-0">
+                  Default
+                </Badge>
+              {/if}
+            </div>
+          </Item.Content>
+
+          <Field.Field class="relative z-20 col-start-2 row-start-2 mt-3 sm:col-start-3 sm:row-start-1 sm:mt-0">
             <Field.FieldLabel for={modelSelectId} class="text-xs">OCR model</Field.FieldLabel>
             <Select.Root
               type="single"

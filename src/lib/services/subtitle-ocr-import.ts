@@ -42,11 +42,7 @@ function stripExtension(path: string): string {
 }
 
 function buildId(prefix: string, key: string): string {
-  let hash = 0;
-  for (let index = 0; index < key.length; index += 1) {
-    hash = ((hash << 5) - hash + key.charCodeAt(index)) | 0;
-  }
-  return `${prefix}-${Math.abs(hash).toString(36)}`;
+  return `${prefix}-${encodeURIComponent(key)}`;
 }
 
 export function getSubtitleOcrImportKind(path: string): SubtitleOcrImportKind {
@@ -115,7 +111,6 @@ export async function buildStandaloneSubtitleOcrItems(
   const warnings: string[] = [];
   const vobSubPaths = paths.filter((path) => getSubtitleOcrImportKind(path) === 'standalone_vobsub_part');
   const pairCandidates = resolveVobSubPairCandidates(vobSubPaths);
-  const consumedVobSubPaths = new Set<string>();
   const consumedSupPaths = new Set<string>();
 
   for (const candidate of pairCandidates) {
@@ -128,7 +123,6 @@ export async function buildStandaloneSubtitleOcrItems(
         idxPath = expectedIdx;
       } else {
         warnings.push(`Missing VobSub pair for ${getFileName(subPath)}. Expected ${expectedIdx}.`);
-        consumedVobSubPaths.add(subPath);
         continue;
       }
     }
@@ -139,15 +133,12 @@ export async function buildStandaloneSubtitleOcrItems(
         subPath = expectedSub;
       } else {
         warnings.push(`Missing VobSub pair for ${getFileName(idxPath)}. Expected ${expectedSub}.`);
-        consumedVobSubPaths.add(idxPath);
         continue;
       }
     }
 
     if (idxPath && subPath) {
       items.push(createVobSubItem({ idxPath, subPath }));
-      consumedVobSubPaths.add(idxPath);
-      consumedVobSubPaths.add(subPath);
     }
   }
 
@@ -155,9 +146,6 @@ export async function buildStandaloneSubtitleOcrItems(
     if (getSubtitleOcrImportKind(path) === 'standalone_sup' && !consumedSupPaths.has(path)) {
       items.push(createSupItem(path));
       consumedSupPaths.add(path);
-    }
-    if (consumedVobSubPaths.has(path)) {
-      continue;
     }
   }
 

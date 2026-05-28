@@ -55,6 +55,7 @@ describe('subtitle OCR import helpers', () => {
 
     expect(items.warnings).toEqual([]);
     expect(exists).toHaveBeenCalledWith('/subs/French.sub');
+    expect(exists).toHaveBeenCalledTimes(1);
     expect(items.items).toHaveLength(1);
     expect(items.items[0]?.sourceKind).toBe('standalone_vobsub');
     expect(items.items[0]?.pair).toEqual({
@@ -70,6 +71,7 @@ describe('subtitle OCR import helpers', () => {
 
     expect(items.warnings).toEqual([]);
     expect(exists).toHaveBeenCalledWith('/subs/French.idx');
+    expect(exists).toHaveBeenCalledTimes(1);
     expect(items.items).toHaveLength(1);
     expect(items.items[0]?.sourceKind).toBe('standalone_vobsub');
     expect(items.items[0]?.pair).toEqual({
@@ -115,5 +117,16 @@ describe('subtitle OCR import helpers', () => {
       sourcePath: '/subs/French.sup',
       displayName: 'French.sup',
     });
+  });
+
+  it('creates distinct IDs for standalone PGS paths that collided under the old hash', async () => {
+    const items = await buildStandaloneSubtitleOcrItems(
+      ['/subs/Aa.sup', '/subs/BB.sup'],
+      async () => false,
+    );
+
+    expect(items.warnings).toEqual([]);
+    expect(items.items).toHaveLength(2);
+    expect(new Set(items.items.map((item) => item.id)).size).toBe(2);
   });
 });

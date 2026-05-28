@@ -35,9 +35,6 @@ importers:
       bits-ui:
         specifier: ^2.18.1
         version: 2.18.1(@internationalized/date@3.12.1)(@sveltejs/kit@2.61.1(@sveltejs/vite-plugin-svelte@7.1.2(svelte@5.55.10)(vite@8.0.14(esbuild@0.27.7)(jiti@2.7.0)))(svelte@5.55.10)(typescript@5.9.3)(vite@8.0.14(esbuild@0.27.7)(jiti@2.7.0)))(svelte@5.55.10)
-      lucide-svelte:
-        specifier: ^0.562.0
-        version: 0.562.0(svelte@5.55.10)
       svelte-dnd-action:
         specifier: ^0.9.69
         version: 0.9.69(svelte@5.55.10)
@@ -1229,12 +1226,6 @@ packages:
 
   locate-character@3.0.0:
     resolution: {integrity: sha512-SW13ws7BjaeJ6p7Q6CO2nchbYEc3X3J6WrmTTDto7yMPqVSZTUyY5Tjbid+Ab8gLnATtygYtiDIJGQRRn2ZOiA==}
-
-  lucide-svelte@0.562.0:
-    resolution: {integrity: sha512-kSJDH/55lf0mun/o4nqWBXOcq0fWYzPeIjbTD97ywoeumAB9kWxtM06gC7oynqjtK3XhAljWSz5RafIzPEYIQA==}
-    deprecated: Package deprecated. Please use @lucide/svelte instead.
-    peerDependencies:
-      svelte: ^3 || ^4 || ^5.0.0-next.42
 
   lz-string@1.5.0:
     resolution: {integrity: sha512-h5bgJWpxJNswbU7qCrV0tIKQCaS3blPDrqKWx+QxzuzL1zGUzij9XCWLrSLsJPu5t+eWA/ycetzYAO5IOMcWAQ==}
@@ -2623,10 +2614,6 @@ snapshots:
       lightningcss-win32-x64-msvc: 1.32.0
 
   locate-character@3.0.0: {}
-
-  lucide-svelte@0.562.0(svelte@5.55.10):
-    dependencies:
-      svelte: 5.55.10
 
   lz-string@1.5.0: {}
 

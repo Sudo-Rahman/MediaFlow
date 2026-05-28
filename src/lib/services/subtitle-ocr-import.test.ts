@@ -14,6 +14,15 @@ describe('subtitle OCR import helpers', () => {
     expect(getSubtitleOcrImportKind('/subs/French.srt')).toBe('unsupported');
   });
 
+  it('treats extension-like filenames without dots as unsupported', () => {
+    expect(getSubtitleOcrImportKind('/subs/sup')).toBe('unsupported');
+    expect(getSubtitleOcrImportKind('/subs/idx')).toBe('unsupported');
+    expect(getSubtitleOcrImportKind('/subs/sub')).toBe('unsupported');
+    expect(getSubtitleOcrImportKind('sup')).toBe('unsupported');
+    expect(getSubtitleOcrImportKind('idx')).toBe('unsupported');
+    expect(getSubtitleOcrImportKind('sub')).toBe('unsupported');
+  });
+
   it('detects supported container extensions', () => {
     const extensions = ['mkv', 'm2ts', 'vob', 'mp4', 'avi', 'mov', 'webm', 'm4v', 'mks'];
 
@@ -45,6 +54,22 @@ describe('subtitle OCR import helpers', () => {
     const items = await buildStandaloneSubtitleOcrItems(['/subs/French.idx'], exists);
 
     expect(items.warnings).toEqual([]);
+    expect(exists).toHaveBeenCalledWith('/subs/French.sub');
+    expect(items.items).toHaveLength(1);
+    expect(items.items[0]?.sourceKind).toBe('standalone_vobsub');
+    expect(items.items[0]?.pair).toEqual({
+      idxPath: '/subs/French.idx',
+      subPath: '/subs/French.sub',
+    });
+  });
+
+  it('resolves missing idx files through the supplied exists callback', async () => {
+    const exists = vi.fn(async (path: string) => path === '/subs/French.idx');
+
+    const items = await buildStandaloneSubtitleOcrItems(['/subs/French.sub'], exists);
+
+    expect(items.warnings).toEqual([]);
+    expect(exists).toHaveBeenCalledWith('/subs/French.idx');
     expect(items.items).toHaveLength(1);
     expect(items.items[0]?.sourceKind).toBe('standalone_vobsub');
     expect(items.items[0]?.pair).toEqual({
@@ -74,6 +99,21 @@ describe('subtitle OCR import helpers', () => {
       displayName: 'French.sup',
       ocrModelOverride: 'default',
       status: 'ready',
+    });
+  });
+
+  it('deduplicates duplicate standalone PGS imports', async () => {
+    const items = await buildStandaloneSubtitleOcrItems(
+      ['/subs/French.sup', '/subs/French.sup'],
+      async () => false,
+    );
+
+    expect(items.warnings).toEqual([]);
+    expect(items.items).toHaveLength(1);
+    expect(items.items[0]).toMatchObject({
+      sourceKind: 'standalone_sup',
+      sourcePath: '/subs/French.sup',
+      displayName: 'French.sup',
     });
   });
 });

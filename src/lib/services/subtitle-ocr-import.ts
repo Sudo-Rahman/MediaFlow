@@ -32,7 +32,9 @@ const CONTAINER_EXTENSIONS = new Set([
 ]);
 
 function getExtension(path: string): string {
-  return path.split('.').pop()?.toLowerCase() ?? '';
+  const name = getFileName(path);
+  const lastDot = name.lastIndexOf('.');
+  return lastDot > 0 ? name.slice(lastDot + 1).toLowerCase() : '';
 }
 
 function stripExtension(path: string): string {
@@ -114,6 +116,7 @@ export async function buildStandaloneSubtitleOcrItems(
   const vobSubPaths = paths.filter((path) => getSubtitleOcrImportKind(path) === 'standalone_vobsub_part');
   const pairCandidates = resolveVobSubPairCandidates(vobSubPaths);
   const consumedVobSubPaths = new Set<string>();
+  const consumedSupPaths = new Set<string>();
 
   for (const candidate of pairCandidates) {
     let idxPath = candidate.idxPath;
@@ -149,8 +152,9 @@ export async function buildStandaloneSubtitleOcrItems(
   }
 
   for (const path of paths) {
-    if (getSubtitleOcrImportKind(path) === 'standalone_sup') {
+    if (getSubtitleOcrImportKind(path) === 'standalone_sup' && !consumedSupPaths.has(path)) {
       items.push(createSupItem(path));
+      consumedSupPaths.add(path);
     }
     if (consumedVobSubPaths.has(path)) {
       continue;

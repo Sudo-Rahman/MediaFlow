@@ -128,6 +128,15 @@
     queueViewportChange(nextStartMs, nextStartMs + nextSpanMs);
   }
 
+  function panViewport(direction: -1 | 1, distanceRatio: number): void {
+    if (safeDurationMs <= 0 || viewportSpanMs <= 0) {
+      return;
+    }
+
+    const deltaMs = Math.max(250, viewportSpanMs * distanceRatio) * direction;
+    queueViewportChange(viewport.startMs + deltaMs, viewport.endMs + deltaMs);
+  }
+
   function handleWheel(event: WheelEvent): void {
     if (safeDurationMs <= 0) {
       return;
@@ -187,6 +196,39 @@
     }
 
     dragState = null;
+  }
+
+  function handleViewportKeydown(event: KeyboardEvent): void {
+    switch (event.key) {
+      case 'ArrowLeft':
+        event.preventDefault();
+        panViewport(-1, event.shiftKey ? 0.25 : 0.1);
+        break;
+      case 'ArrowRight':
+        event.preventDefault();
+        panViewport(1, event.shiftKey ? 0.25 : 0.1);
+        break;
+      case 'ArrowUp':
+      case '+':
+      case '=':
+        event.preventDefault();
+        zoomViewport(0.8);
+        break;
+      case 'ArrowDown':
+      case '-':
+      case '_':
+        event.preventDefault();
+        zoomViewport(1.25);
+        break;
+      case 'Home':
+        event.preventDefault();
+        queueViewportChange(0, viewportSpanMs);
+        break;
+      case 'End':
+        event.preventDefault();
+        queueViewportChange(safeDurationMs - viewportSpanMs, safeDurationMs);
+        break;
+    }
   }
 </script>
 
@@ -274,11 +316,13 @@
         dragState ? 'cursor-grabbing' : 'cursor-grab',
       )}
       style={`left: ${toPercent(viewport.startMs)}%; width: ${Math.max(0.4, toPercent(viewport.endMs) - toPercent(viewport.startMs))}%;`}
-      aria-label="Drag timeline viewport"
+      aria-label="Move timeline viewport"
+      aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Home End"
       onpointerdown={handleViewportPointerDown}
       onpointermove={handleViewportPointerMove}
       onpointerup={handleViewportPointerUp}
       onpointercancel={handleViewportPointerUp}
+      onkeydown={handleViewportKeydown}
     >
       <span class="sr-only">
         Viewport from {formatTime(viewport.startMs)} to {formatTime(viewport.endMs)}

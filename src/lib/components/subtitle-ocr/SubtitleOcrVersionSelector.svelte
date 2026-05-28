@@ -54,7 +54,7 @@
   onValueChange={handleValueChange}
   disabled={versions.length === 0}
 >
-  <Select.Trigger id={selectId} class="w-56 max-w-full">
+  <Select.Trigger id={selectId} class="w-56 max-w-full" aria-label="Subtitle OCR version">
     {activeVersionLabel}
   </Select.Trigger>
   <Select.Content>

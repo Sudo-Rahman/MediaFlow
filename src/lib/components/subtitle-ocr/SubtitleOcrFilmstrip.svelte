@@ -37,7 +37,7 @@
   const TILE_GAP = 10;
   const TILE_HEIGHT = 112;
   const TILE_OVERSCAN = 6;
-  const URL_LIKE_PATH = /^(?:[a-z][a-z\d+\-.]*:|\/\/)/i;
+  const THUMBNAIL_URL_PATH = /^(?:https?:\/\/|data:|blob:|\/\/)/i;
 
   let viewport = $state<HTMLElement | null>(null);
   let applyingViewportScroll = false;
@@ -170,7 +170,7 @@
   }
 
   function resolveThumbnailSrc(thumbnailPath: string): string {
-    return URL_LIKE_PATH.test(thumbnailPath) ? thumbnailPath : convertFileSrc(thumbnailPath);
+    return THUMBNAIL_URL_PATH.test(thumbnailPath) ? thumbnailPath : convertFileSrc(thumbnailPath);
   }
 
   function formatTime(ms: number): string {

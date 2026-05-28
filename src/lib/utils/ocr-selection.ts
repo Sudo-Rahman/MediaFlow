@@ -201,6 +201,7 @@ export function assignOcrTimelineRenderedLanes<T extends TimelineBlock>(
   const minGapPx = Number.isFinite(options.minGapPx) ? Math.max(0, options.minGapPx) : 0;
   const laneBlocks: RenderedTimelinePlacement[][] = [];
   const lanesById = new Map<string, number>();
+  const timelineTouchingBlockIds = getTimelineTouchingBlockIds(blocks);
 
   const sortedForPlacement = [...blocks].sort((a, b) => {
     const durationDelta = (b.endTimeMs - b.startTimeMs) - (a.endTimeMs - a.startTimeMs);
@@ -214,7 +215,9 @@ export function assignOcrTimelineRenderedLanes<T extends TimelineBlock>(
   for (const block of sortedForPlacement) {
     const bounds = getRenderedTimelineBounds(block, options.viewport, trackWidthPx, minWidthPx);
     const laneIndex = laneBlocks.findIndex((lane) =>
-      lane.every((existing) => !renderedBlocksCollide(existing, { block, bounds }, minGapPx)),
+      lane.every((existing) =>
+        !renderedBlocksCollide(existing, { block, bounds }, minGapPx, timelineTouchingBlockIds),
+      ),
     );
     const nextLane = laneIndex === -1 ? laneBlocks.length : laneIndex;
 
@@ -439,8 +442,9 @@ function renderedBlocksCollide(
   left: RenderedTimelinePlacement,
   right: RenderedTimelinePlacement,
   minGapPx: number,
+  timelineTouchingBlockIds: Set<string>,
 ): boolean {
-  if (timelineBlocksTouchInTime(left.block, right.block)) {
+  if (timelineTouchingBlockIds.has(left.block.id) || timelineTouchingBlockIds.has(right.block.id)) {
     return renderedBoundsOverlap(left.bounds, right.bounds, 0);
   }
 
@@ -457,6 +461,23 @@ function renderedBoundsOverlap(
 
 function timelineBlocksTouchInTime(left: TimelineBlock, right: TimelineBlock): boolean {
   return left.endTimeMs === right.startTimeMs || right.endTimeMs === left.startTimeMs;
+}
+
+function getTimelineTouchingBlockIds(blocks: TimelineBlock[]): Set<string> {
+  const ids = new Set<string>();
+
+  for (let leftIndex = 0; leftIndex < blocks.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < blocks.length; rightIndex += 1) {
+      const left = blocks[leftIndex];
+      const right = blocks[rightIndex];
+      if (left && right && timelineBlocksTouchInTime(left, right)) {
+        ids.add(left.id);
+        ids.add(right.id);
+      }
+    }
+  }
+
+  return ids;
 }
 
 function chooseTimelineTickIntervalMs(windowMs: number): number {

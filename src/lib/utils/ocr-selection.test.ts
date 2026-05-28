@@ -138,6 +138,28 @@ describe('OCR selection helpers', () => {
     expect(lanes.find((entry) => entry.id === 'second')?.lane).toBe(1);
   });
 
+  it('keeps cut-adjacent blocks together when a nearby later block is inside the visual gap', () => {
+    const viewport = createOcrTimelineViewport(100_000, 0, 100_000);
+    const options = {
+      viewport,
+      trackWidthPx: 1_000,
+      minWidthPercent: 0,
+      minGapPx: 4,
+    };
+    const lanes = assignOcrTimelineRenderedLanes(
+      [
+        block('zone-1-a', 10_000, 20_000),
+        block('zone-1-b', 20_000, 28_000),
+        block('zone-3', 28_100, 40_000),
+      ],
+      options,
+    );
+
+    expect(lanes.find((entry) => entry.id === 'zone-1-a')?.lane).toBe(0);
+    expect(lanes.find((entry) => entry.id === 'zone-1-b')?.lane).toBe(0);
+    expect(lanes.find((entry) => entry.id === 'zone-3')?.lane).toBe(0);
+  });
+
   it('keeps longer rendered blocks on earlier lanes when a short block collides visually', () => {
     const viewport = createOcrTimelineViewport(120_000, 0, 120_000);
     const lanes = assignOcrTimelineRenderedLanes(

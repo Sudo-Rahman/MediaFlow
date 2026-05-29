@@ -12,6 +12,9 @@
     cues: SubtitleOcrCue[];
     bitmaps: SubtitleOcrCueBitmap[];
     selectedCueId: string | null;
+    viewportStartMs?: number;
+    viewportEndMs?: number;
+    viewportSource?: 'rail' | 'timeline' | 'selection' | null;
     disabled?: boolean;
     onSelectCue: (cueId: string) => void;
     onTextChange: (cueId: string, text: string) => void;
@@ -22,6 +25,9 @@
     cues,
     bitmaps,
     selectedCueId,
+    viewportStartMs = 0,
+    viewportEndMs = 0,
+    viewportSource = null,
     disabled = false,
     onSelectCue,
     onTextChange,
@@ -94,6 +100,33 @@
 
   $effect(() => {
     const element = viewport;
+    const source = viewportSource;
+    const startMs = viewportStartMs;
+    const endMs = viewportEndMs;
+    if (!element || source !== 'timeline' || cues.length === 0) {
+      return;
+    }
+
+    const index = findCueIndexNearestTime(startMs + (endMs - startMs) / 2);
+    if (index < 0) {
+      return;
+    }
+
+    applyingSelectedScroll = true;
+    get(cueVirtualizer).scrollToIndex(index, { align: 'center' });
+
+    const frameId = requestAnimationFrame(() => {
+      applyingSelectedScroll = false;
+    });
+
+    return () => {
+      cancelAnimationFrame(frameId);
+      applyingSelectedScroll = false;
+    };
+  });
+
+  $effect(() => {
+    const element = viewport;
     if (!element) {
       return;
     }
@@ -136,6 +169,33 @@
 
     const safeOffset = Math.max(0, offset);
     return Math.min(cues.length - 1, Math.floor(safeOffset / CARD_SLOT_WIDTH));
+  }
+
+  function findCueIndexNearestTime(timeMs: number): number {
+    if (cues.length === 0) {
+      return -1;
+    }
+
+    const safeTimeMs = Math.max(0, Math.round(timeMs));
+    let nearestIndex = 0;
+    let nearestDistanceMs = Number.POSITIVE_INFINITY;
+
+    for (const [index, cue] of cues.entries()) {
+      if (cue.startTimeMs <= safeTimeMs && safeTimeMs <= cue.endTimeMs) {
+        return index;
+      }
+
+      const distanceMs = safeTimeMs < cue.startTimeMs
+        ? cue.startTimeMs - safeTimeMs
+        : safeTimeMs - cue.endTimeMs;
+
+      if (distanceMs < nearestDistanceMs) {
+        nearestIndex = index;
+        nearestDistanceMs = distanceMs;
+      }
+    }
+
+    return nearestIndex;
   }
 
   function getVisibleViewportFromScroll(element: HTMLElement): { startMs: number; endMs: number } | null {

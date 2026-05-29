@@ -353,6 +353,9 @@
           cues={renderedCues}
           {bitmaps}
           {selectedCueId}
+          {viewportStartMs}
+          {viewportEndMs}
+          viewportSource={activeViewportSource}
           disabled={isProcessing}
           onSelectCue={(cueId) => handleSelectCue(cueId, 'rail')}
           onTextChange={handleCueTextChange}

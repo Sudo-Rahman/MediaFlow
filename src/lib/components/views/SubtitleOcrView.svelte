@@ -6,7 +6,7 @@
 
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+  import { SvelteMap } from 'svelte/reactivity';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
@@ -85,7 +85,7 @@
 
   const aiCleanupControllers = new SvelteMap<string, AbortController>();
   const activeRunIdsByItemId = new SvelteMap<string, string>();
-  const backendCancelableItemIds = new SvelteSet<string>();
+  const backendCancelableRunIdsByItemId = new SvelteMap<string, string>();
   let cancelRequested = false;
 
   const IMPORT_EXTENSIONS = [
@@ -175,7 +175,7 @@
       }
       aiCleanupControllers.clear();
       activeRunIdsByItemId.clear();
-      backendCancelableItemIds.clear();
+      backendCancelableRunIdsByItemId.clear();
     };
   });
 
@@ -498,7 +498,7 @@
     }
 
     setManualProgress(item.id, 'extracting', 'Extracting subtitle track...');
-    backendCancelableItemIds.add(item.id);
+    backendCancelableRunIdsByItemId.set(item.id, runId);
     try {
       return await invoke<string>('prepare_subtitle_ocr_track', {
         inputPath: item.sourcePath,
@@ -508,7 +508,7 @@
         runId,
       });
     } finally {
-      backendCancelableItemIds.delete(item.id);
+      backendCancelableRunIdsByItemId.delete(item.id);
     }
   }
 
@@ -628,9 +628,9 @@
 
       setManualProgress(item.id, 'decoding', 'Decoding subtitle bitmaps...');
       const { args, config, effectiveOcrModel } = buildPipelineArgs(item, sourcePath, runId);
-      backendCancelableItemIds.add(item.id);
+      backendCancelableRunIdsByItemId.set(item.id, runId);
       const result = await invoke<SubtitleOcrPipelineResult>('run_subtitle_ocr_pipeline', args);
-      backendCancelableItemIds.delete(item.id);
+      backendCancelableRunIdsByItemId.delete(item.id);
       activeRunIdsByItemId.delete(item.id);
       if (cancelRequested) {
         throw new Error('Subtitle OCR operation cancelled');
@@ -672,7 +672,7 @@
       await persistItem(item.id);
       return 'completed';
     } catch (error) {
-      backendCancelableItemIds.delete(item.id);
+      backendCancelableRunIdsByItemId.delete(item.id);
       activeRunIdsByItemId.delete(item.id);
       subtitleOcrStore.setProgress(item.id, undefined);
 
@@ -747,10 +747,12 @@
     }
     const backendCancelTargets = getSubtitleOcrBackendCancelTargets(
       processingScopeItemIds,
-      backendCancelableItemIds,
+      backendCancelableRunIdsByItemId,
     );
     await Promise.allSettled(
-      backendCancelTargets.map((itemId) => invoke('cancel_subtitle_ocr_operation', { itemId })),
+      backendCancelTargets.map(({ itemId, runId }) => (
+        invoke('cancel_subtitle_ocr_operation', { itemId, runId })
+      )),
     );
   }
 

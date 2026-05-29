@@ -100,21 +100,21 @@ describe('getSubtitleOcrBackendCancelTargets', () => {
   it('excludes queued processing items without an active backend operation', () => {
     expect(getSubtitleOcrBackendCancelTargets(
       new Set(['active-item', 'queued-item']),
-      new Set(['active-item']),
-    )).toEqual(['active-item']);
+      new Map([['active-item', 'run-active']]),
+    )).toEqual([{ itemId: 'active-item', runId: 'run-active' }]);
   });
 
   it('excludes AI cleanup-only items without an active backend operation', () => {
     expect(getSubtitleOcrBackendCancelTargets(
       new Set(['ai-cleanup-item']),
-      new Set(),
+      new Map(),
     )).toEqual([]);
   });
 
   it('excludes an item in the prepare-to-pipeline gap', () => {
     expect(getSubtitleOcrBackendCancelTargets(
       new Set(['container-track']),
-      new Set(),
+      new Map(),
     )).toEqual([]);
   });
 });

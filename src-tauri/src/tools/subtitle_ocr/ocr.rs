@@ -43,7 +43,7 @@ pub(crate) async fn run_subtitle_ocr_pipeline(
     let source =
         validate_bitmap_subtitle_source(&source_path, idx_path.as_deref(), sub_path.as_deref())?;
     let models_dir = get_ocr_models_dir(&app)?;
-    super::state::begin_operation(&item_id)?;
+    super::state::begin_operation(&item_id, &run_id)?;
 
     let progress = PipelineProgress {
         decoding: SubtitleOcrProgressEmitter::new(
@@ -63,16 +63,18 @@ pub(crate) async fn run_subtitle_ocr_pipeline(
         ai_cleaning: SubtitleOcrProgressEmitter::new(
             app,
             item_id.clone(),
-            run_id,
+            run_id.clone(),
             "ai_cleaning",
             1,
         ),
     };
 
     let item_id_for_task = item_id.clone();
+    let run_id_for_task = run_id.clone();
     let task = tokio::task::spawn_blocking(move || {
         run_subtitle_ocr_pipeline_blocking(
             &item_id_for_task,
+            &run_id_for_task,
             &source,
             models_dir,
             &language,
@@ -82,10 +84,10 @@ pub(crate) async fn run_subtitle_ocr_pipeline(
     });
 
     let join_result = task.await;
-    let _ = super::state::clear_registered_operation(&item_id);
+    let _ = super::state::clear_registered_operation(&item_id, &run_id);
     let result = join_result.map_err(|e| format!("Subtitle OCR pipeline task failed: {}", e))?;
     if result.is_ok() {
-        let _ = super::state::clear_cancelled(&item_id);
+        let _ = super::state::clear_cancelled(&item_id, &run_id);
     }
 
     result
@@ -93,18 +95,19 @@ pub(crate) async fn run_subtitle_ocr_pipeline(
 
 fn run_subtitle_ocr_pipeline_blocking(
     item_id: &str,
+    run_id: &str,
     source: &super::decode::BitmapSubtitleSource,
     models_dir: PathBuf,
     language: &str,
     use_gpu: bool,
     progress: PipelineProgress,
 ) -> Result<SubtitleOcrPipelineResult, String> {
-    ensure_not_cancelled(item_id)?;
+    ensure_not_cancelled(item_id, run_id)?;
     progress
         .decoding
         .emit_force(0, "Decoding bitmap subtitles...");
 
-    ensure_not_cancelled(item_id)?;
+    ensure_not_cancelled(item_id, run_id)?;
     let engine_threads = resolve_ocr_engine_threads(1);
     let engine = create_ocr_engine(&models_dir, language, use_gpu, engine_threads, true)?;
     progress
@@ -115,8 +118,8 @@ fn run_subtitle_ocr_pipeline_blocking(
     let mut raw_ocr_cues = Vec::new();
     let mut final_candidates = Vec::new();
     let mut decoded_count = 0u32;
-    decode_bitmap_subtitle_source_with_handler(source, item_id, |decoded| {
-        ensure_not_cancelled(item_id)?;
+    decode_bitmap_subtitle_source_with_handler(source, item_id, run_id, |decoded| {
+        ensure_not_cancelled(item_id, run_id)?;
         decoded_count = decoded_count.saturating_add(1);
         let metadata = decoded.metadata.clone();
         let raw_cue = ocr_decoded_bitmap(&engine, decoded)?;
@@ -145,7 +148,7 @@ fn run_subtitle_ocr_pipeline_blocking(
     );
     progress.ocr.emit_force(1, "Subtitle bitmap OCR complete");
 
-    ensure_not_cancelled(item_id)?;
+    ensure_not_cancelled(item_id, run_id)?;
     progress
         .ai_cleaning
         .emit_force(0, "Stabilizing subtitle OCR cues...");
@@ -163,8 +166,8 @@ fn run_subtitle_ocr_pipeline_blocking(
     })
 }
 
-fn ensure_not_cancelled(item_id: &str) -> Result<(), String> {
-    if super::state::is_operation_cancelled(item_id) {
+fn ensure_not_cancelled(item_id: &str, run_id: &str) -> Result<(), String> {
+    if super::state::is_operation_cancelled(item_id, run_id) {
         Err("Subtitle OCR operation cancelled".to_string())
     } else {
         Ok(())

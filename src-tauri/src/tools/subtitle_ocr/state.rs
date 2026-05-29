@@ -5,19 +5,45 @@ use std::sync::{LazyLock, Mutex, MutexGuard};
 #[derive(Debug, Default)]
 struct SubtitleOcrState {
     operations: HashMap<String, OperationRecord>,
-    cancelled_items: HashSet<String>,
+    cancelled_runs: HashSet<OperationKey>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct OperationKey {
+    item_id: String,
+    run_id: String,
+}
+
+impl OperationKey {
+    fn new(item_id: &str, run_id: &str) -> Self {
+        Self {
+            item_id: item_id.to_string(),
+            run_id: run_id.to_string(),
+        }
+    }
+}
+
+#[derive(Debug)]
 struct OperationRecord {
+    run_id: String,
     pid: Option<u32>,
     output_paths: Vec<String>,
+}
+
+impl OperationRecord {
+    fn new(run_id: &str) -> Self {
+        Self {
+            run_id: run_id.to_string(),
+            pid: None,
+            output_paths: Vec::new(),
+        }
+    }
 }
 
 static SUBTITLE_OCR_STATE: LazyLock<Mutex<SubtitleOcrState>> =
     LazyLock::new(|| Mutex::new(SubtitleOcrState::default()));
 
-pub(super) fn begin_operation(item_id: &str) -> Result<(), String> {
+pub(super) fn begin_operation(item_id: &str, run_id: &str) -> Result<(), String> {
     let mut state = lock_state()?;
     if state.operations.contains_key(item_id) {
         return Err(format!(
@@ -26,75 +52,113 @@ pub(super) fn begin_operation(item_id: &str) -> Result<(), String> {
         ));
     }
 
-    if state.cancelled_items.remove(item_id) {
+    state
+        .cancelled_runs
+        .retain(|key| key.item_id != item_id || key.run_id == run_id);
+    let key = OperationKey::new(item_id, run_id);
+    if state.cancelled_runs.remove(&key) {
         return Err("Subtitle OCR operation cancelled".to_string());
     }
 
     state
         .operations
-        .insert(item_id.to_string(), OperationRecord::default());
+        .insert(item_id.to_string(), OperationRecord::new(run_id));
     Ok(())
 }
 
-pub(super) fn register_operation_pid(item_id: &str, pid: u32) -> Result<bool, String> {
+pub(super) fn register_operation_pid(
+    item_id: &str,
+    run_id: &str,
+    pid: u32,
+) -> Result<bool, String> {
     let mut state = lock_state()?;
-    let is_cancelled = state.cancelled_items.contains(item_id);
-    let operation = active_operation_mut(&mut state, item_id)?;
+    let is_cancelled = state
+        .cancelled_runs
+        .contains(&OperationKey::new(item_id, run_id));
+    let operation = active_operation_mut(&mut state, item_id, run_id)?;
     operation.pid = Some(pid);
     Ok(is_cancelled)
 }
 
-pub(super) fn register_output_paths(item_id: &str, paths: Vec<String>) -> Result<bool, String> {
+pub(super) fn register_output_paths(
+    item_id: &str,
+    run_id: &str,
+    paths: Vec<String>,
+) -> Result<bool, String> {
     let mut state = lock_state()?;
-    let is_cancelled = state.cancelled_items.contains(item_id);
-    let operation = active_operation_mut(&mut state, item_id)?;
+    let is_cancelled = state
+        .cancelled_runs
+        .contains(&OperationKey::new(item_id, run_id));
+    let operation = active_operation_mut(&mut state, item_id, run_id)?;
     operation.output_paths = paths;
     Ok(is_cancelled)
 }
 
-pub(super) fn take_operation_pid(item_id: &str) -> Result<Option<u32>, String> {
+pub(super) fn take_operation_pid(item_id: &str, run_id: &str) -> Result<Option<u32>, String> {
     Ok(lock_state()?
         .operations
         .get_mut(item_id)
+        .filter(|operation| operation.run_id == run_id)
         .and_then(|operation| operation.pid.take()))
 }
 
-pub(super) fn take_output_paths(item_id: &str) -> Result<Vec<String>, String> {
+pub(super) fn take_output_paths(item_id: &str, run_id: &str) -> Result<Vec<String>, String> {
     Ok(lock_state()?
         .operations
         .get_mut(item_id)
+        .filter(|operation| operation.run_id == run_id)
         .map(|operation| mem::take(&mut operation.output_paths))
         .unwrap_or_default())
 }
 
-pub(super) fn clear_registered_operation(item_id: &str) -> Result<(), String> {
+pub(super) fn clear_registered_operation(item_id: &str, run_id: &str) -> Result<(), String> {
     let mut state = lock_state()?;
-    if state.operations.remove(item_id).is_some() {
-        state.cancelled_items.remove(item_id);
+    if state
+        .operations
+        .get(item_id)
+        .is_some_and(|operation| operation.run_id == run_id)
+    {
+        state.operations.remove(item_id);
+        state
+            .cancelled_runs
+            .remove(&OperationKey::new(item_id, run_id));
     }
     Ok(())
 }
 
-pub(super) fn mark_cancelled(item_id: &str) -> Result<Option<u32>, String> {
+pub(super) fn mark_cancelled(item_id: &str, run_id: &str) -> Result<Option<u32>, String> {
     let mut state = lock_state()?;
-    let pid = state
-        .operations
-        .get_mut(item_id)
-        .and_then(|operation| operation.pid.take());
+    let key = OperationKey::new(item_id, run_id);
 
-    state.cancelled_items.insert(item_id.to_string());
-    Ok(pid)
+    if let Some(operation) = state.operations.get_mut(item_id) {
+        if operation.run_id != run_id {
+            return Ok(None);
+        }
+
+        let pid = operation.pid.take();
+        state.cancelled_runs.insert(key);
+        return Ok(pid);
+    }
+
+    state.cancelled_runs.insert(key);
+    Ok(None)
 }
 
-pub(super) fn clear_cancelled(item_id: &str) -> Result<(), String> {
-    lock_state()?.cancelled_items.remove(item_id);
+pub(super) fn clear_cancelled(item_id: &str, run_id: &str) -> Result<(), String> {
+    lock_state()?
+        .cancelled_runs
+        .remove(&OperationKey::new(item_id, run_id));
     Ok(())
 }
 
-pub(super) fn is_operation_cancelled(item_id: &str) -> bool {
+pub(super) fn is_operation_cancelled(item_id: &str, run_id: &str) -> bool {
     SUBTITLE_OCR_STATE
         .lock()
-        .map(|state| state.cancelled_items.contains(item_id))
+        .map(|state| {
+            state
+                .cancelled_runs
+                .contains(&OperationKey::new(item_id, run_id))
+        })
         .unwrap_or(true)
 }
 
@@ -109,11 +173,21 @@ pub(super) fn has_registered_operation(item_id: &str) -> bool {
 fn active_operation_mut<'state>(
     state: &'state mut SubtitleOcrState,
     item_id: &str,
+    run_id: &str,
 ) -> Result<&'state mut OperationRecord, String> {
-    state
+    let operation = state
         .operations
         .get_mut(item_id)
-        .ok_or_else(|| format!("No active Subtitle OCR operation for item: {}", item_id))
+        .ok_or_else(|| format!("No active Subtitle OCR operation for item: {}", item_id))?;
+
+    if operation.run_id != run_id {
+        return Err(format!(
+            "No active Subtitle OCR operation for item/run: {}/{}",
+            item_id, run_id
+        ));
+    }
+
+    Ok(operation)
 }
 
 fn lock_state() -> Result<MutexGuard<'static, SubtitleOcrState>, String> {
@@ -134,148 +208,213 @@ mod tests {
     #[serial]
     fn begin_operation_rejects_duplicate_active_operation() {
         let item_id = "subtitle-ocr-duplicate-test";
-        let _ = super::clear_registered_operation(item_id);
-        let _ = super::clear_cancelled(item_id);
+        let run_id = "run-1";
+        let _ = super::clear_registered_operation(item_id, run_id);
+        let _ = super::clear_cancelled(item_id, run_id);
 
-        super::begin_operation(item_id).expect("first operation should start");
-        let error = super::begin_operation(item_id)
+        super::begin_operation(item_id, run_id).expect("first operation should start");
+        let error = super::begin_operation(item_id, "run-2")
             .expect_err("second active operation for the same item should fail");
 
         assert!(error.contains("already active"));
 
-        let _ = super::clear_registered_operation(item_id);
-        let _ = super::clear_cancelled(item_id);
+        let _ = super::clear_registered_operation(item_id, run_id);
+        let _ = super::clear_cancelled(item_id, run_id);
     }
 
     #[test]
     #[serial]
     fn begin_operation_waits_for_cancelled_operation_to_clear_before_reuse() {
         let item_id = "subtitle-ocr-cancel-then-new-test";
-        let _ = super::clear_registered_operation(item_id);
-        let _ = super::clear_cancelled(item_id);
+        let run_id = "run-1";
+        let _ = super::clear_registered_operation(item_id, run_id);
+        let _ = super::clear_cancelled(item_id, run_id);
 
-        super::begin_operation(item_id).expect("operation should start");
-        super::mark_cancelled(item_id).expect("operation should cancel");
-        assert!(super::is_operation_cancelled(item_id));
+        super::begin_operation(item_id, run_id).expect("operation should start");
+        super::mark_cancelled(item_id, run_id).expect("operation should cancel");
+        assert!(super::is_operation_cancelled(item_id, run_id));
 
-        let error = super::begin_operation(item_id)
+        let error = super::begin_operation(item_id, "run-2")
             .expect_err("new operation should wait for cancelled operation cleanup");
         assert!(error.contains("already active"));
 
-        super::clear_registered_operation(item_id)
+        super::clear_registered_operation(item_id, run_id)
             .expect("cancelled operation cleanup should clear active state");
-        super::begin_operation(item_id).expect("new operation after cancellation should start");
-        assert!(!super::is_operation_cancelled(item_id));
+        super::begin_operation(item_id, run_id)
+            .expect("new operation after cancellation should start");
+        assert!(!super::is_operation_cancelled(item_id, run_id));
         assert!(super::has_registered_operation(item_id));
 
-        let _ = super::clear_registered_operation(item_id);
-        let _ = super::clear_cancelled(item_id);
+        let _ = super::clear_registered_operation(item_id, run_id);
+        let _ = super::clear_cancelled(item_id, run_id);
     }
 
     #[test]
     #[serial]
     fn cancel_before_begin_causes_next_begin_to_fail_once() {
         let item_id = "subtitle-ocr-sticky-cancel-before-begin-test";
-        let _ = super::clear_registered_operation(item_id);
-        let _ = super::clear_cancelled(item_id);
+        let run_id = "run-1";
+        let _ = super::clear_registered_operation(item_id, run_id);
+        let _ = super::clear_cancelled(item_id, run_id);
 
         assert_eq!(
-            super::mark_cancelled(item_id).expect("pre-begin cancel should be recorded"),
+            super::mark_cancelled(item_id, run_id).expect("pre-begin cancel should be recorded"),
             None
         );
-        assert!(super::is_operation_cancelled(item_id));
+        assert!(super::is_operation_cancelled(item_id, run_id));
 
-        let error = super::begin_operation(item_id)
+        let error = super::begin_operation(item_id, run_id)
             .expect_err("next begin should consume sticky cancellation");
         assert!(error.contains("cancelled"));
-        assert!(!super::is_operation_cancelled(item_id));
+        assert!(!super::is_operation_cancelled(item_id, run_id));
         assert!(!super::has_registered_operation(item_id));
 
-        super::begin_operation(item_id).expect("later begin should start normally");
+        super::begin_operation(item_id, run_id).expect("later begin should start normally");
         assert!(super::has_registered_operation(item_id));
 
-        let _ = super::clear_registered_operation(item_id);
-        let _ = super::clear_cancelled(item_id);
+        let _ = super::clear_registered_operation(item_id, run_id);
+        let _ = super::clear_cancelled(item_id, run_id);
+    }
+
+    #[test]
+    #[serial]
+    fn late_cancel_for_finished_run_does_not_cancel_next_run() {
+        let item_id = "subtitle-ocr-late-cancel-next-run-test";
+        let run_a = "run-a";
+        let run_b = "run-b";
+        let _ = super::clear_registered_operation(item_id, run_a);
+        let _ = super::clear_registered_operation(item_id, run_b);
+        let _ = super::clear_cancelled(item_id, run_a);
+        let _ = super::clear_cancelled(item_id, run_b);
+
+        super::begin_operation(item_id, run_a).expect("run A should start");
+        super::clear_registered_operation(item_id, run_a).expect("run A should finish");
+        assert_eq!(
+            super::mark_cancelled(item_id, run_a).expect("late cancel should be recorded"),
+            None
+        );
+
+        super::begin_operation(item_id, run_b)
+            .expect("run B should ignore stale cancellation for run A");
+
+        assert!(!super::is_operation_cancelled(item_id, run_a));
+        assert!(!super::is_operation_cancelled(item_id, run_b));
+
+        let _ = super::clear_registered_operation(item_id, run_b);
+        let _ = super::clear_cancelled(item_id, run_a);
+        let _ = super::clear_cancelled(item_id, run_b);
     }
 
     #[test]
     #[serial]
     fn active_cancel_stays_active_until_owner_cleanup_then_allows_reuse() {
         let item_id = "subtitle-ocr-active-cancel-owner-cleanup-test";
-        let _ = super::clear_registered_operation(item_id);
-        let _ = super::clear_cancelled(item_id);
+        let run_id = "run-1";
+        let _ = super::clear_registered_operation(item_id, run_id);
+        let _ = super::clear_cancelled(item_id, run_id);
 
-        super::begin_operation(item_id).expect("operation should start");
-        super::mark_cancelled(item_id).expect("active operation should cancel");
-        assert!(super::is_operation_cancelled(item_id));
+        super::begin_operation(item_id, run_id).expect("operation should start");
+        super::mark_cancelled(item_id, run_id).expect("active operation should cancel");
+        assert!(super::is_operation_cancelled(item_id, run_id));
         assert!(super::has_registered_operation(item_id));
 
-        let error = super::begin_operation(item_id)
+        let error = super::begin_operation(item_id, "run-2")
             .expect_err("cancelled active operation should remain active until owner cleanup");
         assert!(error.contains("already active"));
 
-        super::clear_registered_operation(item_id).expect("owner cleanup should clear operation");
-        assert!(!super::is_operation_cancelled(item_id));
+        super::clear_registered_operation(item_id, run_id)
+            .expect("owner cleanup should clear operation");
+        assert!(!super::is_operation_cancelled(item_id, run_id));
 
-        super::begin_operation(item_id).expect("operation should be reusable after owner cleanup");
+        super::begin_operation(item_id, run_id)
+            .expect("operation should be reusable after owner cleanup");
         assert!(super::has_registered_operation(item_id));
 
-        let _ = super::clear_registered_operation(item_id);
-        let _ = super::clear_cancelled(item_id);
+        let _ = super::clear_registered_operation(item_id, run_id);
+        let _ = super::clear_cancelled(item_id, run_id);
+    }
+
+    #[test]
+    #[serial]
+    fn mark_cancelled_ignores_active_operation_with_different_run() {
+        let item_id = "subtitle-ocr-stale-cancel-active-run-test";
+        let active_run_id = "active-run";
+        let stale_run_id = "stale-run";
+        let _ = super::clear_registered_operation(item_id, active_run_id);
+        let _ = super::clear_cancelled(item_id, active_run_id);
+        let _ = super::clear_cancelled(item_id, stale_run_id);
+
+        super::begin_operation(item_id, active_run_id).expect("active run should start");
+        assert_eq!(
+            super::mark_cancelled(item_id, stale_run_id).expect("stale cancel should not fail"),
+            None
+        );
+
+        assert!(!super::is_operation_cancelled(item_id, active_run_id));
+        assert!(!super::is_operation_cancelled(item_id, stale_run_id));
+        assert!(super::has_registered_operation(item_id));
+
+        let _ = super::clear_registered_operation(item_id, active_run_id);
+        let _ = super::clear_cancelled(item_id, active_run_id);
+        let _ = super::clear_cancelled(item_id, stale_run_id);
     }
 
     #[test]
     #[serial]
     fn register_output_paths_reports_prior_cancellation() {
         let item_id = "subtitle-ocr-cancel-before-output-registration-test";
-        let _ = super::clear_registered_operation(item_id);
-        let _ = super::clear_cancelled(item_id);
+        let run_id = "run-1";
+        let _ = super::clear_registered_operation(item_id, run_id);
+        let _ = super::clear_cancelled(item_id, run_id);
 
-        super::begin_operation(item_id).expect("operation should start");
-        super::mark_cancelled(item_id).expect("operation should cancel");
+        super::begin_operation(item_id, run_id).expect("operation should start");
+        super::mark_cancelled(item_id, run_id).expect("operation should cancel");
 
         let is_cancelled = super::register_output_paths(
             item_id,
+            run_id,
             vec!["/tmp/subtitle-ocr-cancelled-output.sup".to_string()],
         )
         .expect("output registration should work");
 
         assert!(is_cancelled);
 
-        let _ = super::take_output_paths(item_id);
-        let _ = super::clear_registered_operation(item_id);
-        let _ = super::clear_cancelled(item_id);
+        let _ = super::take_output_paths(item_id, run_id);
+        let _ = super::clear_registered_operation(item_id, run_id);
+        let _ = super::clear_cancelled(item_id, run_id);
     }
 
     #[test]
     #[serial]
     fn register_operation_pid_reports_prior_cancellation() {
         let item_id = "subtitle-ocr-cancel-before-pid-registration-test";
-        let _ = super::clear_registered_operation(item_id);
-        let _ = super::clear_cancelled(item_id);
+        let run_id = "run-1";
+        let _ = super::clear_registered_operation(item_id, run_id);
+        let _ = super::clear_cancelled(item_id, run_id);
 
-        super::begin_operation(item_id).expect("operation should start");
-        super::mark_cancelled(item_id).expect("operation should cancel");
+        super::begin_operation(item_id, run_id).expect("operation should start");
+        super::mark_cancelled(item_id, run_id).expect("operation should cancel");
 
-        let is_cancelled =
-            super::register_operation_pid(item_id, 42).expect("pid registration should work");
+        let is_cancelled = super::register_operation_pid(item_id, run_id, 42)
+            .expect("pid registration should work");
 
         assert!(is_cancelled);
         assert_eq!(
-            super::take_operation_pid(item_id).expect("pid should be readable by owner"),
+            super::take_operation_pid(item_id, run_id).expect("pid should be readable by owner"),
             Some(42)
         );
 
-        let _ = super::clear_registered_operation(item_id);
-        let _ = super::clear_cancelled(item_id);
+        let _ = super::clear_registered_operation(item_id, run_id);
+        let _ = super::clear_cancelled(item_id, run_id);
     }
 
     #[test]
     #[serial]
     fn begin_operation_allows_exactly_one_concurrent_start_for_same_item() {
         let item_id = "subtitle-ocr-concurrent-begin-test";
-        let _ = super::clear_registered_operation(item_id);
-        let _ = super::clear_cancelled(item_id);
+        let run_id = "run-1";
+        let _ = super::clear_registered_operation(item_id, run_id);
+        let _ = super::clear_cancelled(item_id, run_id);
 
         let thread_count = 64;
         let barrier = Arc::new(Barrier::new(thread_count));
@@ -286,7 +425,7 @@ mod tests {
                 let successes = Arc::clone(&successes);
                 thread::spawn(move || {
                     barrier.wait();
-                    if super::begin_operation(item_id).is_ok() {
+                    if super::begin_operation(item_id, run_id).is_ok() {
                         successes.fetch_add(1, Ordering::SeqCst);
                     }
                 })
@@ -299,7 +438,7 @@ mod tests {
 
         assert_eq!(successes.load(Ordering::SeqCst), 1);
 
-        let _ = super::clear_registered_operation(item_id);
-        let _ = super::clear_cancelled(item_id);
+        let _ = super::clear_registered_operation(item_id, run_id);
+        let _ = super::clear_cancelled(item_id, run_id);
     }
 }

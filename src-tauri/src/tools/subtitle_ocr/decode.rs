@@ -35,30 +35,40 @@ pub(crate) async fn decode_subtitle_ocr_bitmaps(
     idx_path: Option<String>,
     sub_path: Option<String>,
     item_id: String,
+    run_id: String,
 ) -> Result<Vec<SubtitleOcrDecodedCue>, String> {
     if item_id.trim().is_empty() {
         return Err("Subtitle OCR item id is required".to_string());
     }
+    if run_id.trim().is_empty() {
+        return Err("Subtitle OCR run id is required".to_string());
+    }
 
     let source =
         validate_bitmap_subtitle_source(&source_path, idx_path.as_deref(), sub_path.as_deref())?;
-    super::state::begin_operation(&item_id)?;
+    super::state::begin_operation(&item_id, &run_id)?;
 
     let item_id_for_task = item_id.clone();
+    let run_id_for_task = run_id.clone();
     let join_result = tokio::task::spawn_blocking(move || {
         let mut decoded_metadata = Vec::new();
-        decode_bitmap_subtitle_source_with_handler(&source, &item_id_for_task, |decoded| {
-            decoded_metadata.push(decoded.metadata);
-            Ok(())
-        })?;
+        decode_bitmap_subtitle_source_with_handler(
+            &source,
+            &item_id_for_task,
+            &run_id_for_task,
+            |decoded| {
+                decoded_metadata.push(decoded.metadata);
+                Ok(())
+            },
+        )?;
         Ok(decoded_metadata)
     })
     .await;
 
-    let _ = super::state::clear_registered_operation(&item_id);
+    let _ = super::state::clear_registered_operation(&item_id, &run_id);
     let result = join_result.map_err(|e| format!("Subtitle OCR decode task failed: {}", e))?;
     if result.is_ok() {
-        let _ = super::state::clear_cancelled(&item_id);
+        let _ = super::state::clear_cancelled(&item_id, &run_id);
     }
 
     result
@@ -127,6 +137,7 @@ pub(super) fn validate_bitmap_subtitle_source(
 pub(super) fn decode_bitmap_subtitle_source_with_handler<F>(
     source: &BitmapSubtitleSource,
     item_id: &str,
+    run_id: &str,
     mut handler: F,
 ) -> Result<(), String>
 where
@@ -174,7 +185,7 @@ where
     let mut cue_index = 0usize;
     let mut normalizer = StreamingCueTimingNormalizer::new(&mut handler);
     loop {
-        ensure_decode_not_cancelled(item_id)?;
+        ensure_decode_not_cancelled(item_id, run_id)?;
         let packet = match demuxer.next_packet() {
             Ok(packet) => packet,
             Err(OxideavError::Eof) => break,
@@ -206,6 +217,7 @@ where
             &mut normalizer,
             &mut cue_index,
             item_id,
+            run_id,
             &source_key,
             start_time_ms,
             end_time_ms,
@@ -220,6 +232,7 @@ where
         &mut normalizer,
         &mut cue_index,
         item_id,
+        run_id,
         &source_key,
         0,
         0,
@@ -331,6 +344,7 @@ fn drain_decoder_frames<F>(
     normalizer: &mut StreamingCueTimingNormalizer<'_, F>,
     cue_index: &mut usize,
     item_id: &str,
+    run_id: &str,
     source_key: &str,
     start_time_ms: u64,
     end_time_ms: u64,
@@ -339,7 +353,7 @@ where
     F: FnMut(DecodedBitmapCue) -> Result<(), String>,
 {
     loop {
-        ensure_decode_not_cancelled(item_id)?;
+        ensure_decode_not_cancelled(item_id, run_id)?;
         match decoder.receive_frame() {
             Ok(Frame::Video(frame)) => {
                 let cue = decoded_frame_to_cue(
@@ -362,8 +376,8 @@ where
     Ok(())
 }
 
-fn ensure_decode_not_cancelled(item_id: &str) -> Result<(), String> {
-    if super::state::is_operation_cancelled(item_id) {
+fn ensure_decode_not_cancelled(item_id: &str, run_id: &str) -> Result<(), String> {
+    if super::state::is_operation_cancelled(item_id, run_id) {
         Err("Subtitle OCR operation cancelled".to_string())
     } else {
         Ok(())
@@ -621,7 +635,7 @@ timestamp: 00:00:01:500, filepos: 000000000
         };
         let mut decoded_metadata = Vec::new();
 
-        decode_bitmap_subtitle_source_with_handler(&source, "demo-item", |decoded| {
+        decode_bitmap_subtitle_source_with_handler(&source, "demo-item", "demo-run", |decoded| {
             assert_eq!(decoded.metadata.width, 2);
             assert_eq!(decoded.metadata.height, 2);
             assert_eq!(decoded.metadata.start_time_ms, 1_500);

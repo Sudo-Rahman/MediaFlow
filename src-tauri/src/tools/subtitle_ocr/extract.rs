@@ -36,9 +36,9 @@ pub(crate) async fn prepare_subtitle_ocr_track(
         registered_paths.push(sidecar_path.to_string_lossy().to_string());
     }
 
-    super::state::begin_operation(&item_id)?;
+    super::state::begin_operation(&item_id, &run_id)?;
     let result = async {
-        if super::state::register_output_paths(&item_id, registered_paths)? {
+        if super::state::register_output_paths(&item_id, &run_id, registered_paths)? {
             return Err(SUBTITLE_OCR_CANCELLED.to_string());
         }
 
@@ -63,7 +63,7 @@ pub(crate) async fn prepare_subtitle_ocr_track(
             }
         }
 
-        if super::state::is_operation_cancelled(&item_id) {
+        if super::state::is_operation_cancelled(&item_id, &run_id) {
             return Err(SUBTITLE_OCR_CANCELLED.to_string());
         }
 
@@ -72,11 +72,11 @@ pub(crate) async fn prepare_subtitle_ocr_track(
     .await;
 
     if result.is_err() {
-        remove_registered_outputs(&item_id);
+        remove_registered_outputs(&item_id, &run_id);
     }
-    let _ = super::state::clear_registered_operation(&item_id);
+    let _ = super::state::clear_registered_operation(&item_id, &run_id);
     if result.is_ok() {
-        let _ = super::state::clear_cancelled(&item_id);
+        let _ = super::state::clear_cancelled(&item_id, &run_id);
     }
     result?;
     Ok(output_path.to_string_lossy().to_string())
@@ -112,13 +112,13 @@ async fn run_prepare_subtitle_ocr_ffmpeg(
         })?;
 
     if let Some(pid) = child.id() {
-        if super::state::register_operation_pid(item_id, pid)? {
-            if let Some(pid) = super::state::take_operation_pid(item_id)? {
+        if super::state::register_operation_pid(item_id, run_id, pid)? {
+            if let Some(pid) = super::state::take_operation_pid(item_id, run_id)? {
                 terminate_process(pid);
             }
             return Err(SUBTITLE_OCR_CANCELLED.to_string());
         }
-    } else if super::state::is_operation_cancelled(item_id) {
+    } else if super::state::is_operation_cancelled(item_id, run_id) {
         return Err(SUBTITLE_OCR_CANCELLED.to_string());
     }
 
@@ -131,16 +131,16 @@ async fn run_prepare_subtitle_ocr_ffmpeg(
     {
         Ok(output) => output,
         Err(error) => {
-            if let Some(pid) = super::state::take_operation_pid(item_id)? {
+            if let Some(pid) = super::state::take_operation_pid(item_id, run_id)? {
                 terminate_process(pid);
             }
             return Err(error);
         }
     };
 
-    let _ = super::state::take_operation_pid(item_id)?;
+    let _ = super::state::take_operation_pid(item_id, run_id)?;
 
-    if super::state::is_operation_cancelled(item_id) {
+    if super::state::is_operation_cancelled(item_id, run_id) {
         return Err(SUBTITLE_OCR_CANCELLED.to_string());
     }
 
@@ -153,8 +153,8 @@ async fn run_prepare_subtitle_ocr_ffmpeg(
     Ok(())
 }
 
-fn remove_registered_outputs(item_id: &str) {
-    if let Ok(paths) = super::state::take_output_paths(item_id) {
+fn remove_registered_outputs(item_id: &str, run_id: &str) {
+    if let Ok(paths) = super::state::take_output_paths(item_id, run_id) {
         for path in paths {
             let _ = std::fs::remove_file(path);
         }

@@ -16,6 +16,11 @@ export interface SubtitleOcrItemsSummary {
   scanningCount: number;
 }
 
+export interface SubtitleOcrBackendCancelTarget {
+  itemId: string;
+  runId: string;
+}
+
 export function summarizeSubtitleOcrItems(
   items: readonly SubtitleOcrSummaryItem[],
 ): SubtitleOcrItemsSummary {
@@ -55,9 +60,12 @@ export function shouldApplySubtitleOcrProgressEvent(
 
 export function getSubtitleOcrBackendCancelTargets(
   processingScopeItemIds: ReadonlySet<string>,
-  backendCancelableItemIds: ReadonlySet<string>,
-): string[] {
-  return [...processingScopeItemIds].filter((itemId) => backendCancelableItemIds.has(itemId));
+  backendCancelableRunIdsByItemId: ReadonlyMap<string, string>,
+): SubtitleOcrBackendCancelTarget[] {
+  return [...processingScopeItemIds].flatMap((itemId) => {
+    const runId = backendCancelableRunIdsByItemId.get(itemId);
+    return runId ? [{ itemId, runId }] : [];
+  });
 }
 
 export function buildSubtitleOcrSourceSnapshot(

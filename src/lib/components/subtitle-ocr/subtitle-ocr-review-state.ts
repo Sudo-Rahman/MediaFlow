@@ -20,21 +20,22 @@ export interface CueTileWidthOptions {
   pixelsPerSecond?: number;
 }
 
-export interface TimelineBucket {
+export interface TimelineBucket<TCue extends TimedCue = TimedCue> {
+  id: string;
   startMs: number;
   endMs: number;
   cueCount: number;
+  representativeCue: TCue | null;
+  exactCue: TCue | null;
   isGap: boolean;
-  representativeCue: TimedCue | null;
-  exactCue: TimedCue | null;
 }
 
 export interface BuildTimelineBucketsOptions {
   viewport: TimelineViewport;
   durationMs: number;
   timelineWidthPx: number;
-  minBucketWidthPx: number;
-  exactCueMaxViewportSpanMs: number;
+  minBucketWidthPx?: number;
+  exactCueMaxViewportSpanMs?: number;
 }
 
 export type SubtitleOcrReviewMode = 'compact' | 'wide';
@@ -45,6 +46,8 @@ export const DEFAULT_TIMELINE_MIN_SPAN_MS = 1_000;
 const DEFAULT_TILE_MIN_WIDTH = 112;
 const DEFAULT_TILE_MAX_WIDTH = 280;
 const DEFAULT_TILE_PIXELS_PER_SECOND = 52;
+const DEFAULT_TIMELINE_BUCKET_WIDTH_PX = 120;
+const DEFAULT_EXACT_CUE_MAX_VIEWPORT_SPAN_MS = 8_000;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -69,20 +72,20 @@ function cueIntersectsRange(cue: TimedCue, startMs: number, endMs: number): bool
   return normalizeTime(cue.endTimeMs) > startMs && normalizeTime(cue.startTimeMs) < endMs;
 }
 
-function getSortedVisibleCues(
-  cues: readonly TimedCue[],
+function getSortedVisibleCues<TCue extends TimedCue>(
+  cues: readonly TCue[],
   viewport: TimelineViewport,
-): TimedCue[] {
+): TCue[] {
   return [...cues]
     .filter((cue) => cueIntersectsRange(cue, viewport.startMs, viewport.endMs))
     .sort((a, b) => normalizeTime(a.startTimeMs) - normalizeTime(b.startTimeMs));
 }
 
-function getBucketRepresentativeCue(
-  cues: readonly TimedCue[],
+function getBucketRepresentativeCue<TCue extends TimedCue>(
+  cues: readonly TCue[],
   bucketCenterMs: number,
-): TimedCue | null {
-  let representativeCue: TimedCue | null = null;
+): TCue | null {
+  let representativeCue: TCue | null = null;
   let nearestDistanceMs = Number.POSITIVE_INFINITY;
 
   for (const cue of cues) {
@@ -263,10 +266,10 @@ export function panTimelineViewport(
   );
 }
 
-export function buildTimelineBuckets(
-  cues: readonly TimedCue[],
+export function buildTimelineBuckets<TCue extends TimedCue>(
+  cues: readonly TCue[],
   options: BuildTimelineBucketsOptions,
-): TimelineBucket[] {
+): TimelineBucket<TCue>[] {
   const viewport = clampTimelineViewport(
     options.viewport.startMs,
     options.viewport.endMs,
@@ -279,9 +282,12 @@ export function buildTimelineBuckets(
     return [];
   }
 
-  const exactCueMaxViewportSpanMs = Math.max(0, normalizeTime(options.exactCueMaxViewportSpanMs));
+  const exactCueMaxViewportSpanMs = Math.max(
+    0,
+    normalizeTime(options.exactCueMaxViewportSpanMs ?? DEFAULT_EXACT_CUE_MAX_VIEWPORT_SPAN_MS),
+  );
   if (viewportSpanMs <= exactCueMaxViewportSpanMs) {
-    const buckets: TimelineBucket[] = [];
+    const buckets: TimelineBucket<TCue>[] = [];
     const visibleCues = getSortedVisibleCues(cues, viewport);
     let cursorMs = viewport.startMs;
 
@@ -291,23 +297,25 @@ export function buildTimelineBuckets(
 
       if (cursorMs < cueStartMs) {
         buckets.push({
+          id: `gap:${cursorMs}-${cueStartMs}`,
           startMs: cursorMs,
           endMs: cueStartMs,
           cueCount: 0,
-          isGap: true,
           representativeCue: null,
           exactCue: null,
+          isGap: true,
         });
       }
 
       if (cueStartMs < cueEndMs) {
         buckets.push({
+          id: `cue:${cue.id}:${cueStartMs}-${cueEndMs}`,
           startMs: cueStartMs,
           endMs: cueEndMs,
           cueCount: 1,
-          isGap: false,
           representativeCue: cue,
           exactCue: cue,
+          isGap: false,
         });
         cursorMs = cueEndMs;
       }
@@ -315,12 +323,13 @@ export function buildTimelineBuckets(
 
     if (cursorMs < viewport.endMs) {
       buckets.push({
+        id: `gap:${cursorMs}-${viewport.endMs}`,
         startMs: cursorMs,
         endMs: viewport.endMs,
         cueCount: 0,
-        isGap: true,
         representativeCue: null,
         exactCue: null,
+        isGap: true,
       });
     }
 
@@ -328,11 +337,14 @@ export function buildTimelineBuckets(
   }
 
   const safeTimelineWidthPx = Math.max(1, normalizeTime(options.timelineWidthPx));
-  const safeMinBucketWidthPx = Math.max(1, normalizeTime(options.minBucketWidthPx));
+  const safeMinBucketWidthPx = Math.max(
+    1,
+    normalizeTime(options.minBucketWidthPx ?? DEFAULT_TIMELINE_BUCKET_WIDTH_PX),
+  );
   const bucketCount = Math.max(1, Math.floor(safeTimelineWidthPx / safeMinBucketWidthPx));
   const bucketSpanMs = viewportSpanMs / bucketCount;
 
-  return Array.from({ length: bucketCount }, (_, index): TimelineBucket => {
+  return Array.from({ length: bucketCount }, (_, index): TimelineBucket<TCue> => {
     const startMs = Math.round(viewport.startMs + bucketSpanMs * index);
     const endMs = index === bucketCount - 1
       ? viewport.endMs
@@ -341,12 +353,13 @@ export function buildTimelineBuckets(
     const representativeCue = getBucketRepresentativeCue(bucketCues, startMs + (endMs - startMs) / 2);
 
     return {
+      id: `overview:${startMs}-${endMs}`,
       startMs,
       endMs,
       cueCount: bucketCues.length,
-      isGap: bucketCues.length === 0,
       representativeCue,
       exactCue: null,
+      isGap: bucketCues.length === 0,
     };
   });
 }

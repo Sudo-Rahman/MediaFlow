@@ -11,9 +11,14 @@ import {
   toCueTileWidth,
   WIDE_REVIEW_MIN_CENTER_WIDTH_PX,
   zoomTimelineViewport,
+  type BuildTimelineBucketsOptions,
   type TimedCue,
   type TimelineBucket,
 } from './subtitle-ocr-review-state';
+
+interface ReviewedTimedCue extends TimedCue {
+  text: string;
+}
 
 const cues: TimedCue[] = [
   { id: 'cue-1', startTimeMs: 1_000, endTimeMs: 2_000 },
@@ -210,6 +215,25 @@ describe('subtitle OCR review state', () => {
 
       expect(buckets).toHaveLength(1);
       expect(buckets[0]?.representativeCue?.id).toBe('near-center');
+    });
+
+    it('returns stable bucket ids while preserving cue subtypes with optional bucket settings', () => {
+      const reviewedCues: ReviewedTimedCue[] = [
+        { id: 'reviewed-a', startTimeMs: 1_000, endTimeMs: 2_000, text: 'First cue' },
+        { id: 'reviewed-b', startTimeMs: 18_000, endTimeMs: 19_000, text: 'Second cue' },
+      ];
+      const options: BuildTimelineBucketsOptions = {
+        viewport: { startMs: 0, endMs: 50_000 },
+        durationMs: 50_000,
+        timelineWidthPx: 240,
+      };
+      const buckets: TimelineBucket<ReviewedTimedCue>[] = buildTimelineBuckets(reviewedCues, options);
+
+      expect(buckets.map((bucket) => bucket.id)).toEqual([
+        'overview:0-25000',
+        'overview:25000-50000',
+      ]);
+      expect(buckets[0]?.representativeCue?.text).toBe('Second cue');
     });
   });
 });

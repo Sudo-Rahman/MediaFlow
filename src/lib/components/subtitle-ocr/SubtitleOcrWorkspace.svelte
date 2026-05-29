@@ -11,9 +11,15 @@
     SubtitleOcrVersion,
   } from '$lib/types';
   import { buildSubtitleOcrSourceLabel } from '$lib/types';
-  import { clampTimelineViewport, type TimelineViewport } from './subtitle-ocr-review-state';
-  import SubtitleOcrBasket from './SubtitleOcrBasket.svelte';
-  import SubtitleOcrFilmstrip from './SubtitleOcrFilmstrip.svelte';
+  import {
+    centerTimelineViewport,
+    clampTimelineViewport,
+    resolveSubtitleOcrReviewMode,
+    type SubtitleOcrReviewMode,
+    type TimelineViewport,
+  } from './subtitle-ocr-review-state';
+  import SubtitleOcrCueCard from './SubtitleOcrCueCard.svelte';
+  import SubtitleOcrCueRail from './SubtitleOcrCueRail.svelte';
   import SubtitleOcrTimeline from './SubtitleOcrTimeline.svelte';
   import SubtitleOcrVersionSelector from './SubtitleOcrVersionSelector.svelte';
 
@@ -29,7 +35,8 @@
     isProcessing: boolean;
   }
 
-  type ViewportChangeSource = 'filmstrip' | 'timeline';
+  type ViewportChangeSource = 'rail' | 'timeline';
+  type ActiveViewportSource = ViewportChangeSource | 'selection' | null;
 
   let {
     item,
@@ -46,6 +53,10 @@
   let viewportStartMs = $state(0);
   let viewportEndMs = $state(0);
   let viewportScopeKey = $state('');
+  let recenteredSelectionKey = $state('');
+  let activeViewportSource = $state<ActiveViewportSource>(null);
+  let centerElement = $state<HTMLElement | null>(null);
+  let centerWidthPx = $state(0);
 
   const reviewVersion = $derived(
     activeVersion
@@ -57,6 +68,40 @@
   const durationMs = $derived(resolveDurationMs(renderedCues, bitmaps));
   const selectedCue = $derived(renderedCues.find((cue) => cue.id === selectedCueId) ?? null);
   const activeVersionId = $derived(reviewVersion?.id ?? item?.activeVersionId ?? null);
+  const reviewMode: SubtitleOcrReviewMode = $derived(resolveSubtitleOcrReviewMode(centerWidthPx));
+  const bitmapByCueId = $derived.by(() => {
+    const map = new Map<string, SubtitleOcrCueBitmap>();
+    for (const bitmap of bitmaps) {
+      map.set(bitmap.cueId, bitmap);
+    }
+
+    return map;
+  });
+  const selectedCueBitmap = $derived(getCueBitmap(selectedCue));
+  const selectedCueIndex = $derived(
+    selectedCueId ? renderedCues.findIndex((cue) => cue.id === selectedCueId) : -1,
+  );
+  const canSelectPreviousCue = $derived(selectedCueIndex > 0);
+  const canSelectNextCue = $derived(selectedCueIndex >= 0 && selectedCueIndex < renderedCues.length - 1);
+
+  $effect(() => {
+    const element = centerElement;
+    if (!element) {
+      centerWidthPx = 0;
+      return;
+    }
+
+    centerWidthPx = Math.round(element.clientWidth);
+
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      centerWidthPx = Math.round(entry.contentRect.width);
+    });
+    resizeObserver.observe(element);
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  });
 
   $effect(() => {
     const nextScopeKey = `${item?.id ?? 'none'}:${activeVersionId ?? 'none'}:${durationMs}:${renderedCues.length}`;
@@ -65,7 +110,9 @@
     }
 
     viewportScopeKey = nextScopeKey;
+    recenteredSelectionKey = '';
     const nextViewport = createInitialViewport(selectedCue, durationMs);
+    activeViewportSource = 'selection';
     viewportStartMs = nextViewport.startMs;
     viewportEndMs = nextViewport.endMs;
   });
@@ -75,13 +122,19 @@
       return;
     }
 
-    if (selectedCue.startTimeMs >= viewportStartMs && selectedCue.endTimeMs <= viewportEndMs) {
+    const selectionKey = getSelectionRecenterKey(selectedCue.id);
+    if (selectionKey === recenteredSelectionKey) {
       return;
     }
 
-    const spanMs = Math.max(viewportEndMs - viewportStartMs, Math.min(30_000, durationMs));
-    const nextStartMs = selectedCue.startTimeMs - spanMs * 0.25;
-    const nextViewport = clampTimelineViewport(nextStartMs, nextStartMs + spanMs, durationMs);
+    if (activeViewportSource === 'timeline') {
+      recenteredSelectionKey = selectionKey;
+      return;
+    }
+
+    const nextViewport = centerTimelineViewport(selectedCue, resolveViewportSpanMs(), durationMs);
+    recenteredSelectionKey = selectionKey;
+    activeViewportSource = 'selection';
     viewportStartMs = nextViewport.startMs;
     viewportEndMs = nextViewport.endMs;
   });
@@ -99,9 +152,52 @@
     }
 
     const spanMs = Math.min(totalDurationMs, Math.max(10_000, totalDurationMs * 0.12));
-    const startMs = cue ? cue.startTimeMs - spanMs * 0.25 : 0;
 
-    return clampTimelineViewport(startMs, startMs + spanMs, totalDurationMs);
+    return centerTimelineViewport(cue, spanMs, totalDurationMs);
+  }
+
+  function resolveViewportSpanMs(): number {
+    if (durationMs <= 0) {
+      return 0;
+    }
+
+    return Math.max(viewportEndMs - viewportStartMs, Math.min(30_000, durationMs));
+  }
+
+  function getCueBitmap(cue: SubtitleOcrCue | null): SubtitleOcrCueBitmap | null {
+    if (!cue) {
+      return null;
+    }
+
+    const directBitmap = bitmapByCueId.get(cue.id);
+    if (directBitmap) {
+      return directBitmap;
+    }
+
+    for (const sourceCueId of cue.sourceCueIds) {
+      const sourceBitmap = bitmapByCueId.get(sourceCueId);
+      if (sourceBitmap) {
+        return sourceBitmap;
+      }
+    }
+
+    return null;
+  }
+
+  function centerViewportOnCue(cue: SubtitleOcrCue | null): void {
+    if (!cue || durationMs <= 0) {
+      return;
+    }
+
+    const nextViewport = centerTimelineViewport(cue, resolveViewportSpanMs(), durationMs);
+    recenteredSelectionKey = getSelectionRecenterKey(cue.id);
+    activeViewportSource = 'selection';
+    viewportStartMs = nextViewport.startMs;
+    viewportEndMs = nextViewport.endMs;
+  }
+
+  function getSelectionRecenterKey(cueId: string): string {
+    return `${item?.id ?? 'none'}:${activeVersionId ?? 'none'}:${cueId}`;
   }
 
   function formatTime(ms: number): string {
@@ -125,11 +221,49 @@
   function handleViewportChange(
     startMs: number,
     endMs: number,
-    _source: ViewportChangeSource,
+    source: ViewportChangeSource,
   ): void {
     const nextViewport = clampTimelineViewport(startMs, endMs, durationMs);
+    activeViewportSource = source;
     viewportStartMs = nextViewport.startMs;
     viewportEndMs = nextViewport.endMs;
+  }
+
+  function handleSelectCue(cueId: string, source: ActiveViewportSource = 'selection'): void {
+    activeViewportSource = source;
+    onSelectCue(cueId);
+
+    if (source !== 'timeline') {
+      centerViewportOnCue(renderedCues.find((cue) => cue.id === cueId) ?? null);
+    }
+  }
+
+  function handlePreviousCue(): void {
+    if (!canSelectPreviousCue) {
+      return;
+    }
+
+    const cue = renderedCues[selectedCueIndex - 1];
+    if (!cue) {
+      return;
+    }
+
+    onSelectCue(cue.id);
+    centerViewportOnCue(cue);
+  }
+
+  function handleNextCue(): void {
+    if (!canSelectNextCue) {
+      return;
+    }
+
+    const cue = renderedCues[selectedCueIndex + 1];
+    if (!cue) {
+      return;
+    }
+
+    onSelectCue(cue.id);
+    centerViewportOnCue(cue);
   }
 
   function handleSelectVersion(versionId: string): void {
@@ -213,38 +347,47 @@
       </div>
     </header>
 
-    <div class="flex min-h-0 flex-1 flex-col lg:flex-row">
-      <div class="flex min-w-0 flex-1 flex-col">
-        <div class="shrink-0 border-b">
-          <SubtitleOcrFilmstrip
-            bitmaps={bitmaps}
-            cues={renderedCues}
-            selectedCueId={selectedCueId}
-            viewportStartMs={viewportStartMs}
-            viewportEndMs={viewportEndMs}
-            onSelectCue={onSelectCue}
-            onViewportChange={handleViewportChange}
-          />
-        </div>
+    <div bind:this={centerElement} class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      {#if reviewMode === 'wide'}
+        <SubtitleOcrCueRail
+          cues={renderedCues}
+          {bitmaps}
+          {selectedCueId}
+          disabled={isProcessing}
+          onSelectCue={(cueId) => handleSelectCue(cueId, 'rail')}
+          onTextChange={handleCueTextChange}
+          onViewportChange={handleViewportChange}
+        />
 
-        <div class="shrink-0 border-b lg:border-b-0">
+        <div class="shrink-0 border-b">
           <SubtitleOcrTimeline
             cues={renderedCues}
+            bitmaps={bitmaps}
             durationMs={durationMs}
             viewportStartMs={viewportStartMs}
             viewportEndMs={viewportEndMs}
+            {selectedCueId}
             selectedCueStartMs={selectedCue?.startTimeMs}
+            onSelectCue={(cueId) => handleSelectCue(cueId, 'timeline')}
             onViewportChange={handleViewportChange}
           />
         </div>
-      </div>
-
-      <aside class="min-h-0 border-t lg:w-[24rem] lg:border-l lg:border-t-0">
-        <SubtitleOcrBasket
-          cue={selectedCue}
-          onTextChange={handleCueTextChange}
-        />
-      </aside>
+      {:else}
+        <div class="flex min-h-0 flex-1 flex-col overflow-auto">
+          <SubtitleOcrCueCard
+            cue={selectedCue}
+            bitmap={selectedCueBitmap}
+            selected={Boolean(selectedCue)}
+            mode="compact"
+            disabled={isProcessing}
+            cueIndex={selectedCueIndex >= 0 ? selectedCueIndex : undefined}
+            showNavigation
+            onPreviousCue={canSelectPreviousCue ? handlePreviousCue : undefined}
+            onNextCue={canSelectNextCue ? handleNextCue : undefined}
+            onTextChange={handleCueTextChange}
+          />
+        </div>
+      {/if}
     </div>
   </div>
 {/if}

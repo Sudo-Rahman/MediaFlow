@@ -386,6 +386,11 @@ export const subtitleOcrStore = {
     }
   },
 
+  clearItems() {
+    items = [];
+    selectedItemId = null;
+  },
+
   setItemStatus(itemId: string, status: SubtitleOcrStatus, error?: string) {
     items = items.map((item) => {
       if (item.id !== itemId) {

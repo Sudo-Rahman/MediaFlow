@@ -40,6 +40,7 @@
     onRetry: (itemId: string) => void;
     onRetryAiCleanupOnly: (itemId: string) => void;
     onRemove: (itemId: string) => void;
+    onClearAll: () => void;
   }
 
   let {
@@ -52,6 +53,7 @@
     onRetry,
     onRetryAiCleanupOnly,
     onRemove,
+    onClearAll,
   }: SubtitleOcrSidebarProps = $props();
 
   const SUPPORTED_FORMATS = 'MKV, M2TS, VOB, SUP, IDX/SUB';
@@ -133,10 +135,25 @@
 <div class="w-[max(20rem,25vw)] max-w-lg border-r flex flex-col overflow-hidden">
   <div class="p-3 border-b shrink-0 flex items-center justify-between">
     <h2 class="font-semibold">Subtitle Sources ({items.length})</h2>
-    <Button size="sm" onclick={() => void onImport()} disabled={isProcessing}>
-      <Upload class="size-4" />
-      Import
-    </Button>
+    <div class="flex items-center gap-1">
+      {#if items.length > 0}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onclick={onClearAll}
+          class="text-muted-foreground hover:text-destructive"
+          disabled={isProcessing}
+          title="Clear list"
+          aria-label="Clear subtitle sources"
+        >
+          <Trash2 class="size-4" />
+        </Button>
+      {/if}
+      <Button size="sm" onclick={() => void onImport()} disabled={isProcessing}>
+        <Upload class="size-4" />
+        Import
+      </Button>
+    </div>
   </div>
 
   <div class="flex-1 min-h-0 overflow-auto p-2">

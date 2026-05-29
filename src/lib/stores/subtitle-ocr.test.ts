@@ -299,6 +299,16 @@ describe('subtitleOcrStore', () => {
     expect(subtitleOcrStore.selectedItemId).toBeNull();
   });
 
+  it('clears all items and selection', () => {
+    subtitleOcrStore.addItems([source('a'), source('b')]);
+    subtitleOcrStore.selectItem('b');
+
+    subtitleOcrStore.clearItems();
+
+    expect(subtitleOcrStore.items).toEqual([]);
+    expect(subtitleOcrStore.selectedItemId).toBeNull();
+  });
+
   it('updates only safe item metadata through updateItem', () => {
     subtitleOcrStore.addItems([source('a')]);
     subtitleOcrStore.addVersion('a', version('v1', 'one'));

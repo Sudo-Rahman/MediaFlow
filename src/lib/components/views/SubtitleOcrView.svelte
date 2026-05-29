@@ -834,6 +834,11 @@
     subtitleOcrStore.removeItem(itemId);
   }
 
+  function handleClearAll(): void {
+    selectedCueIdsByItemId = {};
+    subtitleOcrStore.clearItems();
+  }
+
   async function handleSaveDraftVersion(itemId: string): Promise<void> {
     const item = getStoreItem(itemId);
     const activeVersion = subtitleOcrStore.getActiveVersion(itemId);
@@ -880,6 +885,7 @@
     onRetry={handleRetry}
     onRetryAiCleanupOnly={(itemId) => void retryAiCleanupOnly(itemId)}
     onRemove={handleRemove}
+    onClearAll={handleClearAll}
   />
 
   <div class="min-w-0 overflow-hidden">

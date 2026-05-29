@@ -40,6 +40,7 @@
     viewportStartMs,
     viewportEndMs,
     selectedCueId = null,
+    selectedCueStartMs,
     onSelectCue = () => {},
     onViewportChange,
   }: SubtitleOcrTimelineProps = $props();
@@ -51,7 +52,7 @@
   let trackElement = $state<HTMLDivElement | null>(null);
   let timelineWidthPx = $state(0);
   let dragState = $state<DragState | null>(null);
-  let suppressNextClick = false;
+  let suppressClickUntilMs = 0;
   let pendingViewport: TimelineViewport | null = null;
   let viewportFrameId: number | null = null;
 
@@ -132,6 +133,22 @@
 
     const bucketSpanMs = Math.max(0, bucket.endMs - bucket.startMs);
     return `${(bucketSpanMs / viewportSpanMs) * 100}%`;
+  }
+
+  function getSelectedMarkerPercent(): number | null {
+    if (selectedCueId !== null) {
+      return null;
+    }
+
+    if (selectedCueStartMs === undefined || viewportSpanMs <= 0) {
+      return null;
+    }
+
+    if (selectedCueStartMs < viewport.startMs || selectedCueStartMs > viewport.endMs) {
+      return null;
+    }
+
+    return ((selectedCueStartMs - viewport.startMs) / viewportSpanMs) * 100;
   }
 
   function queueViewportChange(nextViewport: TimelineViewport): void {
@@ -273,15 +290,24 @@
       target.releasePointerCapture(event.pointerId);
     }
 
-    suppressNextClick = dragState.didDrag;
+    suppressClickUntilMs = dragState.didDrag ? performance.now() + 200 : 0;
     dragState = null;
   }
 
-  function handleBucketClick(bucket: TimelineBucket<SubtitleOcrCue>): void {
-    if (suppressNextClick) {
-      suppressNextClick = false;
+  function handlePointerCancel(event: PointerEvent): void {
+    handlePointerUp(event);
+    suppressClickUntilMs = 0;
+  }
+
+  function handleBucketClick(event: MouseEvent, bucket: TimelineBucket<SubtitleOcrCue>): void {
+    event.stopPropagation();
+
+    if (performance.now() < suppressClickUntilMs) {
+      suppressClickUntilMs = 0;
       return;
     }
+
+    suppressClickUntilMs = 0;
 
     const targetCue = getBucketTargetCue(bucket);
     if (targetCue) {
@@ -313,7 +339,7 @@
   <div
     bind:this={trackElement}
     class={cn(
-      'flex h-20 gap-1 overflow-hidden rounded-lg border bg-muted/30 p-1 outline-none',
+      'relative flex h-20 gap-1 overflow-hidden rounded-lg border bg-muted/30 p-1 outline-none',
       dragState?.didDrag ? 'cursor-grabbing' : 'cursor-grab',
     )}
     role="list"
@@ -322,13 +348,17 @@
     onpointerdown={handlePointerDown}
     onpointermove={handlePointerMove}
     onpointerup={handlePointerUp}
-    onpointercancel={handlePointerUp}
+    onpointercancel={handlePointerCancel}
   >
     {#if buckets.length === 0}
-      <div class="flex min-w-0 flex-1 items-center justify-center text-xs text-muted-foreground">
+      <div
+        role="listitem"
+        class="flex min-w-0 flex-1 items-center justify-center text-xs text-muted-foreground"
+      >
         No cues
       </div>
     {:else}
+      {@const selectedMarkerPercent = getSelectedMarkerPercent()}
       {#each buckets as bucket (bucket.id)}
         {@const bucketCue = getBucketTargetCue(bucket)}
         {@const bucketBitmap = getCueBitmap(bucketCue)}
@@ -349,7 +379,7 @@
             )}
             aria-label={getBucketLabel(bucket)}
             aria-current={bucketCue?.id === selectedCueId ? 'true' : undefined}
-            onclick={() => handleBucketClick(bucket)}
+            onclick={(event) => handleBucketClick(event, bucket)}
           >
             {#if bucketBitmap?.thumbnailPath}
               <img
@@ -381,6 +411,13 @@
           </button>
         </div>
       {/each}
+      {#if selectedMarkerPercent !== null}
+        <div
+          class="pointer-events-none absolute top-1 bottom-1 w-0.5 bg-primary shadow-sm"
+          style={`left: ${selectedMarkerPercent}%;`}
+          aria-hidden="true"
+        ></div>
+      {/if}
     {/if}
   </div>
 </section>

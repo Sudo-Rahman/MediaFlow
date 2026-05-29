@@ -4,7 +4,6 @@
     CheckCircle,
     FileText,
     Loader2,
-    MoreVertical,
     RotateCw,
     ScanText,
     Trash2,
@@ -12,12 +11,11 @@
   } from '@lucide/svelte';
 
   import type { SubtitleOcrSourceItem, SubtitleOcrStatus } from '$lib/types';
-  import { buildSubtitleOcrSourceLabel } from '$lib/types';
+  import { buildSubtitleOcrSourceLabel, hasActiveSubtitleOcrVersion } from '$lib/types';
   import { OCR_LANGUAGES } from '$lib/types/video-ocr';
   import { FileItemCard } from '$lib/components/shared';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
-  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
   import { Progress } from '$lib/components/ui/progress';
   import {
@@ -38,7 +36,6 @@
     onSelectItem: (itemId: string) => void;
     onOpenVersions: (itemId: string) => void;
     onRetry: (itemId: string) => void;
-    onRetryAiCleanupOnly: (itemId: string) => void;
     onRemove: (itemId: string) => void;
     onClearAll: () => void;
   }
@@ -51,7 +48,6 @@
     onSelectItem,
     onOpenVersions,
     onRetry,
-    onRetryAiCleanupOnly,
     onRemove,
     onClearAll,
   }: SubtitleOcrSidebarProps = $props();
@@ -171,7 +167,7 @@
           {@const isSelected = item.id === selectedItemId}
           {@const processing = isItemProcessing(item.status)}
           {@const versionCount = item.versions.length}
-          {@const hasActiveVersion = versionCount > 0 && item.activeVersionId !== null}
+          {@const hasActiveVersion = hasActiveSubtitleOcrVersion(item)}
           <FileItemCard
             title={item.displayName}
             selected={isSelected}
@@ -247,36 +243,22 @@
                   </Button>
                 {/if}
 
-                <DropdownMenu.Root>
-                  <DropdownMenu.Trigger>
-                    {#snippet child({ props })}
-                      <Button
-                        {...props}
-                        variant="ghost"
-                        size="icon"
-                        class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_RETRY_ACTION_CLASS}`}
-                        disabled={isProcessing}
-                        title="Retry"
-                        aria-label={`Retry ${item.displayName}`}
-                      >
-                        <MoreVertical class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
-                      </Button>
-                    {/snippet}
-                  </DropdownMenu.Trigger>
-                  <DropdownMenu.Content align="end" class="w-44">
-                    <DropdownMenu.Item onclick={() => onRetry(item.id)} disabled={isProcessing}>
-                      <RotateCw class="mr-2 size-4" />
-                      Full OCR
-                    </DropdownMenu.Item>
-                    <DropdownMenu.Item
-                      onclick={() => onRetryAiCleanupOnly(item.id)}
-                      disabled={isProcessing || !hasActiveVersion}
-                    >
-                      <ScanText class="mr-2 size-4" />
-                      AI cleanup only
-                    </DropdownMenu.Item>
-                  </DropdownMenu.Content>
-                </DropdownMenu.Root>
+                {#if hasActiveVersion}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_RETRY_ACTION_CLASS}`}
+                    onclick={(event: MouseEvent) => {
+                      event.stopPropagation();
+                      onRetry(item.id);
+                    }}
+                    disabled={isProcessing || processing}
+                    title="Retry"
+                    aria-label={`Retry ${item.displayName}`}
+                  >
+                    <RotateCw class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
+                  </Button>
+                {/if}
 
                 <Button
                   variant="ghost"

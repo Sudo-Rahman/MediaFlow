@@ -17,6 +17,8 @@
     SubtitleOcrImportTracksDialog,
     SubtitleOcrOptionsPanel,
     SubtitleOcrResultDialog,
+    SubtitleOcrRetryAllDialog,
+    SubtitleOcrRetryDialog,
     SubtitleOcrSidebar,
     SubtitleOcrWorkspace,
   } from '$lib/components/subtitle-ocr';
@@ -31,15 +33,16 @@
   } from '$lib/services/subtitle-ocr-storage';
   import { cleanupSubtitleOcrCuesWithAi } from '$lib/services/subtitle-ocr-ai-cleanup';
   import { subtitleOcrStore } from '$lib/stores';
-  import type {
-    SubtitleOcrCue,
-    SubtitleOcrConfig,
-    SubtitleOcrPipelineResult,
-    SubtitleOcrProgress,
-    SubtitleOcrSourceItem,
-    SubtitleOcrStatus,
-    SubtitleOcrTrackMetadata,
-    SubtitleOcrVersion,
+  import {
+    type SubtitleOcrCue,
+    type SubtitleOcrConfig,
+    type SubtitleOcrPipelineResult,
+    type SubtitleOcrProgress,
+    type SubtitleOcrRetryMode,
+    type SubtitleOcrSourceItem,
+    type SubtitleOcrStatus,
+    type SubtitleOcrTrackMetadata,
+    type SubtitleOcrVersion,
   } from '$lib/types';
   import { getFileName } from '$lib/utils/format';
   import { logAndToast } from '$lib/utils/log-toast';
@@ -48,10 +51,11 @@
     buildSubtitleOcrDraftVersionInput,
     buildSubtitleOcrSourceSnapshot,
     filterSubtitleOcrPersistenceForItem,
+    getSubtitleOcrActiveVersionItemIds,
     getSubtitleOcrBackendCancelTargets,
+    getSubtitleOcrVersionedItemIds,
     mergeSubtitleOcrPersistenceForItem,
     resolveSubtitleOcrEffectiveModelForConfig,
-    resolveSubtitleOcrFullRetryConfig,
     shouldApplySubtitleOcrProgressEvent,
     summarizeSubtitleOcrItems,
   } from './subtitle-ocr-view-state';
@@ -84,6 +88,9 @@
   let trackDialogTracks = $state.raw<SubtitleOcrTrackMetadata[]>([]);
   let queuedTrackDialogs = $state.raw<TrackDialogRequest[]>([]);
   let resultDialogOpen = $state(false);
+  let retryAllDialogOpen = $state(false);
+  let retryDialogOpen = $state(false);
+  let retryDialogItemId = $state<string | null>(null);
   let selectedCueIdsByItemId = $state.raw<Record<string, string | null>>({});
   let unlistenSubtitleOcrProgress: UnlistenFn | null = null;
 
@@ -122,13 +129,39 @@
   const renderedCues = $derived(
     selectedItem ? subtitleOcrStore.getRenderedCues(selectedItem.id) : [],
   );
+  const retryDialogItem = $derived(
+    retryDialogItemId
+      ? subtitleOcrStore.items.find((item) => item.id === retryDialogItemId) ?? null
+      : null,
+  );
+  const retryDialogActiveVersion = $derived(
+    retryDialogItem ? subtitleOcrStore.getActiveVersion(retryDialogItem.id) ?? null : null,
+  );
   const selectedCueId = $derived(
     selectedItem
       ? selectedCueIdsByItemId[selectedItem.id] ?? renderedCues[0]?.id ?? null
       : null,
   );
   const summary = $derived.by(() => summarizeSubtitleOcrItems(items));
+  const retryableItemIds = $derived.by(() => getSubtitleOcrVersionedItemIds(items));
+  const aiCleanupRetryableItemIds = $derived.by(() => (
+    getSubtitleOcrActiveVersionItemIds(items)
+  ));
+  const retryCount = $derived(retryableItemIds.length);
+  const aiCleanupRetryCount = $derived(aiCleanupRetryableItemIds.length);
+  const primaryAction = $derived.by<'start' | 'retry'>(() => {
+    if (summary.readyCount > 0) {
+      return 'start';
+    }
+
+    if (retryCount > 0) {
+      return 'retry';
+    }
+
+    return 'start';
+  });
   const canStart = $derived(summary.readyCount > 0 && !subtitleOcrStore.isProcessing);
+  const canRetryAll = $derived(retryCount > 0 && !subtitleOcrStore.isProcessing);
   const actionHint = $derived.by(() => {
     if (summary.scanningCount > 0) {
       return 'Wait for scanning to complete';
@@ -136,10 +169,6 @@
 
     if (items.length === 0) {
       return 'Add subtitle sources to begin';
-    }
-
-    if (summary.retryableCount > 0) {
-      return 'Use Retry on a source to run OCR again';
     }
 
     return 'No sources ready for OCR';
@@ -620,6 +649,7 @@
   async function processItem(
     item: SubtitleOcrSourceItem,
     configOverride?: SubtitleOcrConfig,
+    versionNameOverride?: string,
   ): Promise<ProcessItemResult> {
     const runId = createSubtitleOcrRunId(item.id);
     activeRunIdsByItemId.set(item.id, runId);
@@ -664,7 +694,7 @@
 
       const latestItem = getStoreItem(item.id) ?? item;
       const version = createSubtitleOcrVersion({
-        name: `Version ${latestItem.versions.length + 1}`,
+        name: versionNameOverride ?? `Version ${latestItem.versions.length + 1}`,
         mode: 'full_ocr',
         configSnapshot: config,
         effectiveOcrModel,
@@ -713,6 +743,7 @@
   async function runProcessingItems(
     itemIds: string[],
     configByItemId: ReadonlyMap<string, SubtitleOcrConfig> = new Map(),
+    versionNameByItemId: ReadonlyMap<string, string> = new Map(),
   ): Promise<void> {
     const processableItemIds = getProcessableItemIds(itemIds);
     if (processableItemIds.length === 0 || subtitleOcrStore.isProcessing) {
@@ -733,7 +764,11 @@
           continue;
         }
 
-        const result = await processItem(item, configByItemId.get(itemId));
+        const result = await processItem(
+          item,
+          configByItemId.get(itemId),
+          versionNameByItemId.get(itemId),
+        );
         if (result === 'cancelled') {
           break;
         }
@@ -744,12 +779,29 @@
     }
   }
 
+  function getCurrentRetryableItemIds(): string[] {
+    return getSubtitleOcrVersionedItemIds(subtitleOcrStore.items);
+  }
+
+  function getCurrentAiCleanupRetryableItemIds(): string[] {
+    return getSubtitleOcrActiveVersionItemIds(subtitleOcrStore.items);
+  }
+
   function handleStart(): void {
     void runProcessingItems(
       items
         .filter((item) => item.status === 'ready')
         .map((item) => item.id),
     );
+  }
+
+  function handleOpenRetryAllDialog(): void {
+    if (getCurrentRetryableItemIds().length === 0) {
+      toast.warning('No Subtitle OCR versions available for retry');
+      return;
+    }
+
+    retryAllDialogOpen = true;
   }
 
   async function handleCancel(): Promise<void> {
@@ -776,20 +828,79 @@
     );
   }
 
-  function handleRetry(itemId: string): void {
+  function handleOpenRetryDialog(itemId: string): void {
+    if (subtitleOcrStore.isProcessing) {
+      return;
+    }
+
     subtitleOcrStore.selectItem(itemId);
-    const item = getStoreItem(itemId);
     const activeVersion = subtitleOcrStore.getActiveVersion(itemId);
-    const retryConfig = item
-      ? resolveSubtitleOcrFullRetryConfig(activeVersion, subtitleOcrStore.config)
-      : subtitleOcrStore.config;
-    void runProcessingItems([itemId], new Map([[itemId, retryConfig]]));
+    if (!activeVersion) {
+      return;
+    }
+
+    retryDialogItemId = itemId;
+    retryDialogOpen = true;
   }
 
-  async function retryAiCleanupOnly(itemId: string): Promise<void> {
-    const item = getStoreItem(itemId);
-    const activeVersion = subtitleOcrStore.getActiveVersion(itemId);
-    if (!item || !activeVersion || subtitleOcrStore.isProcessing) {
+  function handleRetryDialogOpenChange(open: boolean): void {
+    retryDialogOpen = open;
+    if (!open) {
+      retryDialogItemId = null;
+    }
+  }
+
+  function handleRetryDialogConfirm(
+    itemId: string,
+    versionName: string,
+    mode: SubtitleOcrRetryMode,
+    config: SubtitleOcrConfig,
+  ): void {
+    if (mode === 'full_ocr') {
+      void runProcessingItems(
+        [itemId],
+        new Map([[itemId, config]]),
+        new Map([[itemId, versionName]]),
+      );
+      return;
+    }
+
+    void runAiCleanupRetry(itemId, versionName, config);
+  }
+
+  function handleRetryAllDialogConfirm(
+    mode: SubtitleOcrRetryMode,
+    config: SubtitleOcrConfig,
+  ): void {
+    const itemIds = getCurrentRetryableItemIds();
+    if (itemIds.length === 0) {
+      toast.warning('No Subtitle OCR versions available for retry');
+      return;
+    }
+
+    if (mode === 'full_ocr') {
+      void runProcessingItems(
+        itemIds,
+        new Map(itemIds.map((itemId) => [itemId, config])),
+      );
+      return;
+    }
+
+    const aiCleanupItemIds = getCurrentAiCleanupRetryableItemIds();
+    if (aiCleanupItemIds.length === 0) {
+      toast.warning('No active Subtitle OCR versions available for AI cleanup retry');
+      return;
+    }
+
+    void runAiCleanupRetryItems(aiCleanupItemIds, config);
+  }
+
+  async function runAiCleanupRetry(
+    itemId: string,
+    versionName: string,
+    config: SubtitleOcrConfig,
+  ): Promise<void> {
+    if (subtitleOcrStore.isProcessing) {
       return;
     }
 
@@ -797,22 +908,69 @@
     subtitleOcrStore.startProcessing([itemId]);
 
     try {
-      const cleanup = await runAiCleanupForItem(itemId, activeVersion.finalCues);
+      await processAiCleanupRetryItem(itemId, versionName, config);
+    } finally {
+      subtitleOcrStore.stopProcessing();
+      cancelRequested = false;
+    }
+  }
+
+  async function runAiCleanupRetryItems(
+    itemIds: string[],
+    config: SubtitleOcrConfig,
+  ): Promise<void> {
+    if (itemIds.length === 0 || subtitleOcrStore.isProcessing) {
+      return;
+    }
+
+    cancelRequested = false;
+    subtitleOcrStore.startProcessing(itemIds);
+
+    try {
+      for (const itemId of itemIds) {
+        if (cancelRequested) {
+          break;
+        }
+
+        const result = await processAiCleanupRetryItem(itemId, undefined, config);
+        if (result === 'cancelled') {
+          break;
+        }
+      }
+    } finally {
+      subtitleOcrStore.stopProcessing();
+      cancelRequested = false;
+    }
+  }
+
+  async function processAiCleanupRetryItem(
+    itemId: string,
+    versionName: string | undefined,
+    config: SubtitleOcrConfig,
+  ): Promise<ProcessItemResult> {
+    const item = getStoreItem(itemId);
+    const activeVersion = subtitleOcrStore.getActiveVersion(itemId);
+    if (!item || !activeVersion) {
+      return 'error';
+    }
+
+    try {
+      const cleanup = await runAiCleanupForItem(itemId, activeVersion.finalCues, config);
       if (cleanup.cancelled || cancelRequested) {
         restoreCancelledItemStatus(itemId);
-        return;
+        return 'cancelled';
       }
 
       if (!cleanup.applied) {
         restoreCancelledItemStatus(itemId);
-        return;
+        return 'error';
       }
 
       const latestItem = getStoreItem(itemId) ?? item;
       const version: SubtitleOcrVersion = createSubtitleOcrVersion({
-        name: `Version ${latestItem.versions.length + 1}`,
+        name: versionName || `Version ${latestItem.versions.length + 1}`,
         mode: 'ai_cleanup_only',
-        configSnapshot: subtitleOcrStore.config,
+        configSnapshot: config,
         effectiveOcrModel: activeVersion.effectiveOcrModel,
         sourceSnapshot: activeVersion.sourceSnapshot,
         bitmaps: activeVersion.bitmaps,
@@ -824,9 +982,17 @@
 
       subtitleOcrStore.addVersion(itemId, version);
       await persistItem(itemId);
-    } finally {
-      subtitleOcrStore.stopProcessing();
-      cancelRequested = false;
+      return 'completed';
+    } catch (error) {
+      const details = sanitizeProcessingMessage(error);
+      subtitleOcrStore.setItemStatus(itemId, 'error', details);
+      logAndToast.error({
+        source: 'system',
+        title: 'Subtitle OCR AI cleanup retry failed',
+        details,
+        showAction: false,
+      });
+      return 'error';
     }
   }
 
@@ -836,6 +1002,9 @@
 
   function handleClearAll(): void {
     selectedCueIdsByItemId = {};
+    retryAllDialogOpen = false;
+    retryDialogOpen = false;
+    retryDialogItemId = null;
     subtitleOcrStore.clearItems();
   }
 
@@ -882,8 +1051,7 @@
     onImport={handleImport}
     onSelectItem={handleSelectItem}
     onOpenVersions={handleOpenVersions}
-    onRetry={handleRetry}
-    onRetryAiCleanupOnly={(itemId) => void retryAiCleanupOnly(itemId)}
+    onRetry={handleOpenRetryDialog}
     onRemove={handleRemove}
     onClearAll={handleClearAll}
   />
@@ -906,11 +1074,15 @@
     <SubtitleOcrOptionsPanel
       config={subtitleOcrStore.config}
       {canStart}
+      {canRetryAll}
       isProcessing={subtitleOcrStore.isProcessing}
       readyCount={summary.readyCount}
+      {retryCount}
       {actionHint}
+      {primaryAction}
       onConfigChange={subtitleOcrStore.updateConfig}
       onStart={handleStart}
+      onRetryAll={handleOpenRetryAllDialog}
       onCancel={() => void handleCancel()}
       {onNavigateToSettings}
     />
@@ -929,4 +1101,26 @@
   bind:open={resultDialogOpen}
   onOpenChange={(open) => { resultDialogOpen = open; }}
   item={selectedItem}
+/>
+
+<SubtitleOcrRetryDialog
+  bind:open={retryDialogOpen}
+  onOpenChange={handleRetryDialogOpenChange}
+  item={retryDialogItem}
+  activeVersion={retryDialogActiveVersion}
+  baseConfig={subtitleOcrStore.config}
+  isProcessing={subtitleOcrStore.isProcessing}
+  onConfirm={handleRetryDialogConfirm}
+  {onNavigateToSettings}
+/>
+
+<SubtitleOcrRetryAllDialog
+  bind:open={retryAllDialogOpen}
+  onOpenChange={(open) => { retryAllDialogOpen = open; }}
+  targetCount={retryCount}
+  {aiCleanupRetryCount}
+  baseConfig={subtitleOcrStore.config}
+  isProcessing={subtitleOcrStore.isProcessing}
+  onConfirm={handleRetryAllDialogConfirm}
+  {onNavigateToSettings}
 />

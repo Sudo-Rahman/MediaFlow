@@ -5,6 +5,8 @@ import {
   SUBTITLE_OCR_OUTPUT_FORMATS,
   buildSubtitleOcrSourceLabel,
   getSubtitleOcrEffectiveModel,
+  hasActiveSubtitleOcrVersion,
+  hasSubtitleOcrVersions,
   type SubtitleOcrSourceSnapshot,
   type SubtitleOcrSourceItem,
   type SubtitleOcrTrackMetadata,
@@ -54,6 +56,26 @@ describe('subtitle OCR types', () => {
     } satisfies SubtitleOcrSourceItem;
 
     expect(getSubtitleOcrEffectiveModel(item, 'latin')).toBe('multi');
+  });
+
+  it('detects only valid active subtitle OCR versions', () => {
+    expect(hasActiveSubtitleOcrVersion({
+      activeVersionId: 'v1',
+      versions: [{ id: 'v1' }],
+    })).toBe(true);
+    expect(hasActiveSubtitleOcrVersion({
+      activeVersionId: 'missing',
+      versions: [{ id: 'v1' }],
+    })).toBe(false);
+    expect(hasActiveSubtitleOcrVersion({
+      activeVersionId: null,
+      versions: [{ id: 'v1' }],
+    })).toBe(false);
+  });
+
+  it('detects sources with any subtitle OCR version', () => {
+    expect(hasSubtitleOcrVersions({ versions: [{ id: 'v1' }] })).toBe(true);
+    expect(hasSubtitleOcrVersions({ versions: [] })).toBe(false);
   });
 
   it('enforces source metadata by source kind', () => {

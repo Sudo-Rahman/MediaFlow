@@ -7,17 +7,25 @@ import type {
   SubtitleOcrStatus,
   SubtitleOcrVersion,
 } from '$lib/types';
-import { getSubtitleOcrEffectiveModel } from '$lib/types';
+import {
+  getSubtitleOcrEffectiveModel,
+  hasActiveSubtitleOcrVersion,
+  hasSubtitleOcrVersions,
+} from '$lib/types';
 import type { CreateSubtitleOcrVersionInput } from '$lib/services/subtitle-ocr-storage';
 
 interface SubtitleOcrSummaryItem {
   status: SubtitleOcrStatus;
-  versions: readonly unknown[];
+}
+
+interface SubtitleOcrRetryTargetItem {
+  id: string;
+  versions: readonly { id: string }[];
+  activeVersionId: string | null;
 }
 
 export interface SubtitleOcrItemsSummary {
   readyCount: number;
-  retryableCount: number;
   scanningCount: number;
 }
 
@@ -39,14 +47,26 @@ export function summarizeSubtitleOcrItems(
         summary.scanningCount += 1;
       }
 
-      if (item.status === 'error' || (item.status === 'completed' && item.versions.length > 0)) {
-        summary.retryableCount += 1;
-      }
-
       return summary;
     },
-    { readyCount: 0, retryableCount: 0, scanningCount: 0 },
+    { readyCount: 0, scanningCount: 0 },
   );
+}
+
+export function getSubtitleOcrVersionedItemIds(
+  items: readonly SubtitleOcrRetryTargetItem[],
+): string[] {
+  return items
+    .filter(hasSubtitleOcrVersions)
+    .map((item) => item.id);
+}
+
+export function getSubtitleOcrActiveVersionItemIds(
+  items: readonly SubtitleOcrRetryTargetItem[],
+): string[] {
+  return items
+    .filter(hasActiveSubtitleOcrVersion)
+    .map((item) => item.id);
 }
 
 export function shouldApplySubtitleOcrProgressEvent(
@@ -98,13 +118,6 @@ export function buildSubtitleOcrSourceSnapshot(
         pair: { ...item.pair },
       };
   }
-}
-
-export function resolveSubtitleOcrFullRetryConfig(
-  activeVersion: Pick<SubtitleOcrVersion, 'configSnapshot'> | null | undefined,
-  globalConfig: SubtitleOcrConfig,
-): SubtitleOcrConfig {
-  return { ...(activeVersion?.configSnapshot ?? globalConfig) };
 }
 
 export function resolveSubtitleOcrEffectiveModelForConfig(

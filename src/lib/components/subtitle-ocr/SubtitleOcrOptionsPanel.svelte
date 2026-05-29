@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Play, Settings, Square } from '@lucide/svelte';
+  import { Play, RotateCw, Settings, Square } from '@lucide/svelte';
   import { useId } from 'bits-ui';
 
   import { LlmProviderModelSelector } from '$lib/components/llm';
@@ -14,11 +14,15 @@
   interface SubtitleOcrOptionsPanelProps {
     config: SubtitleOcrConfig;
     canStart: boolean;
+    canRetryAll: boolean;
     isProcessing: boolean;
     readyCount: number;
+    retryCount: number;
     actionHint: string;
+    primaryAction: 'start' | 'retry';
     onConfigChange: (updates: Partial<SubtitleOcrConfig>) => void;
     onStart: () => void;
+    onRetryAll: () => void;
     onCancel: () => void;
     onNavigateToSettings?: () => void;
   }
@@ -26,11 +30,15 @@
   let {
     config,
     canStart,
+    canRetryAll,
     isProcessing,
     readyCount,
+    retryCount,
     actionHint,
+    primaryAction = 'start',
     onConfigChange,
     onStart,
+    onRetryAll,
     onCancel,
     onNavigateToSettings,
   }: SubtitleOcrOptionsPanelProps = $props();
@@ -48,7 +56,22 @@
     onConfigChange({ ocrModel: value as SubtitleOcrConfig['ocrModel'] });
   }
 
-  function handleStartAction(): void {
+  const hasPrimaryAction = $derived(canStart || canRetryAll);
+  const primaryIsRetry = $derived(primaryAction === 'retry');
+  const primaryLabel = $derived(
+    primaryIsRetry ? `Retry OCR (${retryCount})` : `Start OCR (${readyCount})`,
+  );
+
+  function handlePrimaryAction(): void {
+    if (primaryIsRetry) {
+      if (!canRetryAll) {
+        return;
+      }
+
+      onRetryAll();
+      return;
+    }
+
     if (!canStart) {
       return;
     }
@@ -133,13 +156,17 @@
         Cancel Subtitle OCR
       </Button>
     {:else}
-      <Button class="w-full" disabled={!canStart} onclick={handleStartAction}>
-        <Play class="mr-2 size-4" />
-        Start OCR ({readyCount})
+      <Button class="w-full" disabled={!hasPrimaryAction} onclick={handlePrimaryAction}>
+        {#if primaryIsRetry}
+          <RotateCw class="mr-2 size-4" />
+        {:else}
+          <Play class="mr-2 size-4" />
+        {/if}
+        {primaryLabel}
       </Button>
     {/if}
 
-    {#if !canStart && !isProcessing}
+    {#if !hasPrimaryAction && !isProcessing}
       <p class="text-center text-xs text-muted-foreground">
         {actionHint}
       </p>

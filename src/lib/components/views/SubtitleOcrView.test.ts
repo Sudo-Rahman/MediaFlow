@@ -10,10 +10,11 @@ import {
   buildSubtitleOcrDraftVersionInput,
   buildSubtitleOcrSourceSnapshot,
   filterSubtitleOcrPersistenceForItem,
+  getSubtitleOcrActiveVersionItemIds,
   getSubtitleOcrBackendCancelTargets,
+  getSubtitleOcrVersionedItemIds,
   mergeSubtitleOcrPersistenceForItem,
   resolveSubtitleOcrEffectiveModelForConfig,
-  resolveSubtitleOcrFullRetryConfig,
   shouldApplySubtitleOcrProgressEvent,
   summarizeSubtitleOcrItems,
 } from './subtitle-ocr-view-state';
@@ -68,12 +69,33 @@ function persistenceData(versions: SubtitleOcrVersion[], activeVersionId: string
 }
 
 describe('summarizeSubtitleOcrItems', () => {
-  it('counts ready, retryable, and scanning items', () => {
+  it('counts ready and scanning items', () => {
     expect(summarizeSubtitleOcrItems([
-      { status: 'ready', versions: [] },
-      { status: 'completed', versions: [{}] },
-      { status: 'scanning', versions: [] },
-    ])).toEqual({ readyCount: 1, retryableCount: 1, scanningCount: 1 });
+      { status: 'ready' },
+      { status: 'completed' },
+      { status: 'error' },
+      { status: 'scanning' },
+    ])).toEqual({ readyCount: 1, scanningCount: 1 });
+  });
+});
+
+describe('subtitle OCR retry target selection', () => {
+  it('targets every versioned source for Full OCR retry', () => {
+    expect(getSubtitleOcrVersionedItemIds([
+      { id: 'ready', versions: [], activeVersionId: null },
+      { id: 'active', versions: [{ id: 'v1' }], activeVersionId: 'v1' },
+      { id: 'stale-active', versions: [{ id: 'v1' }], activeVersionId: 'missing' },
+      { id: 'inactive', versions: [{ id: 'v2' }], activeVersionId: null },
+    ])).toEqual(['active', 'stale-active', 'inactive']);
+  });
+
+  it('targets only sources with a valid active version for AI cleanup-only retry', () => {
+    expect(getSubtitleOcrActiveVersionItemIds([
+      { id: 'ready', versions: [], activeVersionId: null },
+      { id: 'active', versions: [{ id: 'v1' }], activeVersionId: 'v1' },
+      { id: 'stale-active', versions: [{ id: 'v1' }], activeVersionId: 'missing' },
+      { id: 'inactive', versions: [{ id: 'v2' }], activeVersionId: null },
+    ])).toEqual(['active']);
   });
 });
 
@@ -122,35 +144,7 @@ describe('getSubtitleOcrBackendCancelTargets', () => {
   });
 });
 
-describe('retry config resolution', () => {
-  it('uses the active version config snapshot for full OCR retries', () => {
-    const snapshotConfig = {
-      ...DEFAULT_SUBTITLE_OCR_CONFIG,
-      ocrModel: 'latin' as const,
-      useGpu: false,
-      aiCleanupEnabled: true,
-      aiCleanupModel: 'snapshot-model',
-    };
-    const activeVersion = version('v1', {
-      sourceKind: 'standalone_sup',
-      sourcePath: '/subs/source.sup',
-      ocrModelOverride: 'default',
-    });
-    activeVersion.configSnapshot = snapshotConfig;
-    const globalConfig = {
-      ...DEFAULT_SUBTITLE_OCR_CONFIG,
-      ocrModel: 'multi' as const,
-      useGpu: true,
-      aiCleanupEnabled: false,
-      aiCleanupModel: 'global-model',
-    };
-
-    const resolved = resolveSubtitleOcrFullRetryConfig(activeVersion, globalConfig);
-
-    expect(resolved).toEqual(snapshotConfig);
-    expect(resolved).not.toBe(snapshotConfig);
-  });
-
+describe('retry model resolution', () => {
   it('resolves OCR model from the retry snapshot global model plus the current item override', () => {
     const item = {
       ...containerItem(3),

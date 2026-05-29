@@ -190,6 +190,23 @@ export function getSubtitleOcrEffectiveModel(
   return item.ocrModelOverride === 'default' ? globalModel : item.ocrModelOverride;
 }
 
+interface SubtitleOcrVersionList {
+  versions: readonly { id: string }[];
+}
+
+interface SubtitleOcrActiveVersionList extends SubtitleOcrVersionList {
+  activeVersionId: string | null;
+}
+
+export function hasActiveSubtitleOcrVersion(item: SubtitleOcrActiveVersionList): boolean {
+  return item.activeVersionId !== null
+    && item.versions.some((version) => version.id === item.activeVersionId);
+}
+
+export function hasSubtitleOcrVersions(item: SubtitleOcrVersionList): boolean {
+  return item.versions.length > 0;
+}
+
 export function buildSubtitleOcrSourceLabel(item: SubtitleOcrSourceItem): string {
   if (item.sourceKind !== 'container_track' || !item.track) {
     return item.displayName;

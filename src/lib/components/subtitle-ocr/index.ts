@@ -2,6 +2,8 @@ export { default as SubtitleOcrOptionsPanel } from './SubtitleOcrOptionsPanel.sv
 export { default as SubtitleOcrCueCard } from './SubtitleOcrCueCard.svelte';
 export { default as SubtitleOcrImportTracksDialog } from './SubtitleOcrImportTracksDialog.svelte';
 export { default as SubtitleOcrResultDialog } from './SubtitleOcrResultDialog.svelte';
+export { default as SubtitleOcrRetryAllDialog } from './SubtitleOcrRetryAllDialog.svelte';
+export { default as SubtitleOcrRetryDialog } from './SubtitleOcrRetryDialog.svelte';
 export { default as SubtitleOcrSidebar } from './SubtitleOcrSidebar.svelte';
 export { default as SubtitleOcrBasket } from './SubtitleOcrBasket.svelte';
 export { default as SubtitleOcrCueRail } from './SubtitleOcrCueRail.svelte';

@@ -175,9 +175,11 @@
 
             {#snippet meta()}
               <div class={FILE_ITEM_CARD_META_CLASS}>
-                <Badge variant={getStatusBadgeVariant(item.status)} class="text-[10px] px-1.5 py-0">
-                  {getStatusLabel(item.status)}
-                </Badge>
+                {#if item.status !== 'completed'}
+                  <Badge variant={getStatusBadgeVariant(item.status)} class="text-[10px] px-1.5 py-0">
+                    {getStatusLabel(item.status)}
+                  </Badge>
+                {/if}
                 <Badge variant="secondary" class="text-[10px] px-1.5 py-0">
                   {versionCount} version{versionCount === 1 ? '' : 's'}
                 </Badge>
@@ -212,20 +214,21 @@
 
             {#snippet actions()}
               <div class="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_PRIMARY_ACTION_CLASS}`}
-                  onclick={(event: MouseEvent) => {
-                    event.stopPropagation();
-                    onOpenVersions(item.id);
-                  }}
-                  disabled={versionCount === 0}
-                  title="Versions"
-                  aria-label={`Open versions for ${item.displayName}`}
-                >
-                  <FileText class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
-                </Button>
+                {#if versionCount > 0}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_PRIMARY_ACTION_CLASS}`}
+                    onclick={(event: MouseEvent) => {
+                      event.stopPropagation();
+                      onOpenVersions(item.id);
+                    }}
+                    title="Versions"
+                    aria-label={`Open versions for ${item.displayName}`}
+                  >
+                    <FileText class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
+                  </Button>
+                {/if}
 
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger>

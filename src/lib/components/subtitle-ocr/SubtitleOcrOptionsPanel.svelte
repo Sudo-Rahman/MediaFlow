@@ -98,34 +98,31 @@
 
   <Separator />
 
-  <Field.FieldSet>
-    <Field.FieldLegend variant="label">AI cleanup</Field.FieldLegend>
-    <Field.FieldGroup class="gap-4">
-      <Field.Field orientation="horizontal">
-        <Field.FieldContent>
-          <Field.FieldLabel for={aiCleanupSwitchId}>AI cleanup</Field.FieldLabel>
-          <Field.FieldDescription>
-            Correct OCR errors and merge duplicate consecutive cues.
-          </Field.FieldDescription>
-        </Field.FieldContent>
-        <Switch
-          id={aiCleanupSwitchId}
-          checked={config.aiCleanupEnabled}
-          onCheckedChange={(checked) => onConfigChange({ aiCleanupEnabled: checked })}
-        />
-      </Field.Field>
+  <Field.FieldGroup class="gap-4">
+    <Field.Field orientation="horizontal">
+      <Field.FieldContent>
+        <Field.FieldLabel for={aiCleanupSwitchId}>AI cleanup</Field.FieldLabel>
+        <Field.FieldDescription>
+          Correct OCR errors and merge duplicate consecutive cues.
+        </Field.FieldDescription>
+      </Field.FieldContent>
+      <Switch
+        id={aiCleanupSwitchId}
+        checked={config.aiCleanupEnabled}
+        onCheckedChange={(checked) => onConfigChange({ aiCleanupEnabled: checked })}
+      />
+    </Field.Field>
 
-      {#if config.aiCleanupEnabled}
-        <LlmProviderModelSelector
-          provider={config.aiCleanupProvider}
-          model={config.aiCleanupModel}
-          onProviderChange={(provider) => onConfigChange({ aiCleanupProvider: provider })}
-          onModelChange={(model) => onConfigChange({ aiCleanupModel: model })}
-          onNavigateToSettings={onNavigateToSettings}
-        />
-      {/if}
-    </Field.FieldGroup>
-  </Field.FieldSet>
+    {#if config.aiCleanupEnabled}
+      <LlmProviderModelSelector
+        provider={config.aiCleanupProvider}
+        model={config.aiCleanupModel}
+        onProviderChange={(provider) => onConfigChange({ aiCleanupProvider: provider })}
+        onModelChange={(model) => onConfigChange({ aiCleanupModel: model })}
+        onNavigateToSettings={onNavigateToSettings}
+      />
+    {/if}
+  </Field.FieldGroup>
 
   <Separator />
 

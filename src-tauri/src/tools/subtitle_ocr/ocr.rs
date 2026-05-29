@@ -25,6 +25,7 @@ struct PipelineProgress {
 pub(crate) async fn run_subtitle_ocr_pipeline(
     app: tauri::AppHandle,
     item_id: String,
+    run_id: String,
     source_path: String,
     idx_path: Option<String>,
     sub_path: Option<String>,
@@ -34,6 +35,9 @@ pub(crate) async fn run_subtitle_ocr_pipeline(
     if item_id.trim().is_empty() {
         return Err("Subtitle OCR item id is required".to_string());
     }
+    if run_id.trim().is_empty() {
+        return Err("Subtitle OCR run id is required".to_string());
+    }
 
     let _sleep_guard = SleepInhibitGuard::try_acquire("Running Subtitle OCR pipeline").ok();
     let source =
@@ -42,9 +46,27 @@ pub(crate) async fn run_subtitle_ocr_pipeline(
     super::state::begin_operation(&item_id)?;
 
     let progress = PipelineProgress {
-        decoding: SubtitleOcrProgressEmitter::new(app.clone(), item_id.clone(), "decoding", 1),
-        ocr: SubtitleOcrProgressEmitter::new(app.clone(), item_id.clone(), "ocr", 1),
-        ai_cleaning: SubtitleOcrProgressEmitter::new(app, item_id.clone(), "ai_cleaning", 1),
+        decoding: SubtitleOcrProgressEmitter::new(
+            app.clone(),
+            item_id.clone(),
+            run_id.clone(),
+            "decoding",
+            1,
+        ),
+        ocr: SubtitleOcrProgressEmitter::new(
+            app.clone(),
+            item_id.clone(),
+            run_id.clone(),
+            "ocr",
+            1,
+        ),
+        ai_cleaning: SubtitleOcrProgressEmitter::new(
+            app,
+            item_id.clone(),
+            run_id,
+            "ai_cleaning",
+            1,
+        ),
     };
 
     let item_id_for_task = item_id.clone();

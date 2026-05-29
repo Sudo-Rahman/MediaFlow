@@ -75,10 +75,24 @@ describe('summarizeSubtitleOcrItems', () => {
 });
 
 describe('shouldApplySubtitleOcrProgressEvent', () => {
-  it('ignores late progress events outside the active backend run', () => {
-    expect(shouldApplySubtitleOcrProgressEvent('item-1', new Set(['item-1']), false)).toBe(true);
-    expect(shouldApplySubtitleOcrProgressEvent('item-1', new Set(), false)).toBe(false);
-    expect(shouldApplySubtitleOcrProgressEvent('item-1', new Set(['item-1']), true)).toBe(false);
+  it('requires the progress event run id to match the active item run', () => {
+    const activeRunIds = new Map([['item-1', 'run-current']]);
+
+    expect(
+      shouldApplySubtitleOcrProgressEvent('item-1', 'run-current', activeRunIds, false),
+    ).toBe(true);
+    expect(
+      shouldApplySubtitleOcrProgressEvent('item-1', undefined, activeRunIds, false),
+    ).toBe(false);
+    expect(
+      shouldApplySubtitleOcrProgressEvent('item-1', 'run-stale', activeRunIds, false),
+    ).toBe(false);
+    expect(
+      shouldApplySubtitleOcrProgressEvent('item-2', 'run-current', activeRunIds, false),
+    ).toBe(false);
+    expect(
+      shouldApplySubtitleOcrProgressEvent('item-1', 'run-current', activeRunIds, true),
+    ).toBe(false);
   });
 });
 
@@ -93,6 +107,13 @@ describe('getSubtitleOcrBackendCancelTargets', () => {
   it('excludes AI cleanup-only items without an active backend operation', () => {
     expect(getSubtitleOcrBackendCancelTargets(
       new Set(['ai-cleanup-item']),
+      new Set(),
+    )).toEqual([]);
+  });
+
+  it('excludes an item in the prepare-to-pipeline gap', () => {
+    expect(getSubtitleOcrBackendCancelTargets(
+      new Set(['container-track']),
       new Set(),
     )).toEqual([]);
   });

@@ -41,17 +41,23 @@ export function summarizeSubtitleOcrItems(
 
 export function shouldApplySubtitleOcrProgressEvent(
   itemId: string,
-  activeBackendItemIds: ReadonlySet<string>,
+  runId: string | undefined,
+  activeRunIdsByItemId: ReadonlyMap<string, string>,
   cancelRequested: boolean,
 ): boolean {
-  return !cancelRequested && activeBackendItemIds.has(itemId);
+  if (cancelRequested) {
+    return false;
+  }
+
+  const activeRunId = activeRunIdsByItemId.get(itemId);
+  return activeRunId !== undefined && runId === activeRunId;
 }
 
 export function getSubtitleOcrBackendCancelTargets(
   processingScopeItemIds: ReadonlySet<string>,
-  activeBackendItemIds: ReadonlySet<string>,
+  backendCancelableItemIds: ReadonlySet<string>,
 ): string[] {
-  return [...processingScopeItemIds].filter((itemId) => activeBackendItemIds.has(itemId));
+  return [...processingScopeItemIds].filter((itemId) => backendCancelableItemIds.has(itemId));
 }
 
 export function buildSubtitleOcrSourceSnapshot(

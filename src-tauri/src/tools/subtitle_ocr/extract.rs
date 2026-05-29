@@ -21,9 +21,11 @@ pub(crate) async fn prepare_subtitle_ocr_track(
     stream_index: u32,
     codec: String,
     item_id: String,
+    run_id: String,
 ) -> Result<String, String> {
     validate_media_path(&input_path)?;
     validate_item_id(&item_id)?;
+    validate_run_id(&run_id)?;
     ensure_container_extraction_supported(&codec)?;
     let _sleep_guard = SleepInhibitGuard::try_acquire("Subtitle OCR extraction").ok();
     let ffmpeg_path = resolve_ffmpeg_path(&app)?;
@@ -48,6 +50,7 @@ pub(crate) async fn prepare_subtitle_ocr_track(
             stream_index,
             &codec,
             &item_id,
+            &run_id,
         )
         .await?;
 
@@ -87,13 +90,14 @@ async fn run_prepare_subtitle_ocr_ffmpeg(
     stream_index: u32,
     codec: &str,
     item_id: &str,
+    run_id: &str,
 ) -> Result<(), String> {
     validate_output_path(output_path.to_string_lossy().as_ref())?;
     let output_path_string = output_path.to_string_lossy().to_string();
     let args =
         build_prepare_subtitle_ocr_args(input_path, &output_path_string, stream_index, codec)?;
 
-    emit_extract_progress(app, item_id, 0, "Extracting subtitle track...");
+    emit_extract_progress(app, item_id, run_id, 0, "Extracting subtitle track...");
 
     let child = tokio_command(ffmpeg_path)
         .args(&args)
@@ -145,7 +149,7 @@ async fn run_prepare_subtitle_ocr_ffmpeg(
         return Err(format!("Subtitle OCR extraction failed: {}", stderr));
     }
 
-    emit_extract_progress(app, item_id, 1, "Subtitle track extracted");
+    emit_extract_progress(app, item_id, run_id, 1, "Subtitle track extracted");
     Ok(())
 }
 
@@ -157,10 +161,16 @@ fn remove_registered_outputs(item_id: &str) {
     }
 }
 
-fn emit_extract_progress(app: &tauri::AppHandle, item_id: &str, current: u32, message: &str) {
+fn emit_extract_progress(
+    app: &tauri::AppHandle,
+    item_id: &str,
+    run_id: &str,
+    current: u32,
+    message: &str,
+) {
     let _ = app.emit(
         "subtitle-ocr-progress",
-        SubtitleOcrProgressEvent::new(item_id, "extracting", current, 1, message),
+        SubtitleOcrProgressEvent::new(item_id, run_id, "extracting", current, 1, message),
     );
 }
 
@@ -247,6 +257,14 @@ fn sanitize_file_component(value: &str) -> String {
 fn validate_item_id(item_id: &str) -> Result<(), String> {
     if item_id.trim().is_empty() {
         Err("Subtitle OCR item id is required".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_run_id(run_id: &str) -> Result<(), String> {
+    if run_id.trim().is_empty() {
+        Err("Subtitle OCR run id is required".to_string())
     } else {
         Ok(())
     }

@@ -64,6 +64,7 @@
 
   interface SubtitleOcrProgressEventPayload {
     itemId: string;
+    runId?: string;
     phase: string;
     current: number;
     total: number;
@@ -83,7 +84,8 @@
   let unlistenSubtitleOcrProgress: UnlistenFn | null = null;
 
   const aiCleanupControllers = new SvelteMap<string, AbortController>();
-  const activeBackendItemIds = new SvelteSet<string>();
+  const activeRunIdsByItemId = new SvelteMap<string, string>();
+  const backendCancelableItemIds = new SvelteSet<string>();
   let cancelRequested = false;
 
   const IMPORT_EXTENSIONS = [
@@ -172,7 +174,8 @@
         controller.abort();
       }
       aiCleanupControllers.clear();
-      activeBackendItemIds.clear();
+      activeRunIdsByItemId.clear();
+      backendCancelableItemIds.clear();
     };
   });
 
@@ -220,7 +223,12 @@
       return;
     }
 
-    if (!shouldApplySubtitleOcrProgressEvent(payload.itemId, activeBackendItemIds, cancelRequested)) {
+    if (!shouldApplySubtitleOcrProgressEvent(
+      payload.itemId,
+      payload.runId,
+      activeRunIdsByItemId,
+      cancelRequested,
+    )) {
       return;
     }
 
@@ -479,21 +487,32 @@
       .map((item) => item.id);
   }
 
-  async function preparePipelineSource(item: SubtitleOcrSourceItem): Promise<string> {
+  function createSubtitleOcrRunId(itemId: string): string {
+    const randomSegment = Math.random().toString(36).slice(2, 10);
+    return `${itemId}-${Date.now()}-${randomSegment}`;
+  }
+
+  async function preparePipelineSource(item: SubtitleOcrSourceItem, runId: string): Promise<string> {
     if (item.sourceKind !== 'container_track') {
       return item.sourcePath;
     }
 
     setManualProgress(item.id, 'extracting', 'Extracting subtitle track...');
-    return invoke<string>('prepare_subtitle_ocr_track', {
-      inputPath: item.sourcePath,
-      streamIndex: item.track.streamIndex,
-      codec: item.track.codec,
-      itemId: item.id,
-    });
+    backendCancelableItemIds.add(item.id);
+    try {
+      return await invoke<string>('prepare_subtitle_ocr_track', {
+        inputPath: item.sourcePath,
+        streamIndex: item.track.streamIndex,
+        codec: item.track.codec,
+        itemId: item.id,
+        runId,
+      });
+    } finally {
+      backendCancelableItemIds.delete(item.id);
+    }
   }
 
-  function buildPipelineArgs(item: SubtitleOcrSourceItem, sourcePath: string) {
+  function buildPipelineArgs(item: SubtitleOcrSourceItem, sourcePath: string, runId: string) {
     const config = subtitleOcrStore.config;
     const effectiveOcrModel = getSubtitleOcrEffectiveModel(item, config.ocrModel);
 
@@ -502,6 +521,7 @@
       effectiveOcrModel,
       args: {
         itemId: item.id,
+        runId,
         sourcePath,
         idxPath: item.sourceKind === 'standalone_vobsub' ? item.pair.idxPath : null,
         subPath: item.sourceKind === 'standalone_vobsub' ? item.pair.subPath : null,
@@ -589,7 +609,8 @@
   }
 
   async function processItem(item: SubtitleOcrSourceItem): Promise<ProcessItemResult> {
-    activeBackendItemIds.add(item.id);
+    const runId = createSubtitleOcrRunId(item.id);
+    activeRunIdsByItemId.set(item.id, runId);
 
     try {
       setManualProgress(
@@ -600,15 +621,17 @@
           : 'Decoding subtitle bitmaps...',
       );
 
-      const sourcePath = await preparePipelineSource(item);
+      const sourcePath = await preparePipelineSource(item, runId);
       if (cancelRequested) {
         throw new Error('Subtitle OCR operation cancelled');
       }
 
       setManualProgress(item.id, 'decoding', 'Decoding subtitle bitmaps...');
-      const { args, config, effectiveOcrModel } = buildPipelineArgs(item, sourcePath);
+      const { args, config, effectiveOcrModel } = buildPipelineArgs(item, sourcePath, runId);
+      backendCancelableItemIds.add(item.id);
       const result = await invoke<SubtitleOcrPipelineResult>('run_subtitle_ocr_pipeline', args);
-      activeBackendItemIds.delete(item.id);
+      backendCancelableItemIds.delete(item.id);
+      activeRunIdsByItemId.delete(item.id);
       if (cancelRequested) {
         throw new Error('Subtitle OCR operation cancelled');
       }
@@ -649,7 +672,8 @@
       await persistItem(item.id);
       return 'completed';
     } catch (error) {
-      activeBackendItemIds.delete(item.id);
+      backendCancelableItemIds.delete(item.id);
+      activeRunIdsByItemId.delete(item.id);
       subtitleOcrStore.setProgress(item.id, undefined);
 
       if (isCancellationError(error) || cancelRequested) {
@@ -723,7 +747,7 @@
     }
     const backendCancelTargets = getSubtitleOcrBackendCancelTargets(
       processingScopeItemIds,
-      activeBackendItemIds,
+      backendCancelableItemIds,
     );
     await Promise.allSettled(
       backendCancelTargets.map((itemId) => invoke('cancel_subtitle_ocr_operation', { itemId })),

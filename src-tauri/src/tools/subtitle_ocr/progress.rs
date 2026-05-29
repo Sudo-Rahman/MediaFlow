@@ -17,6 +17,7 @@ struct ProgressState {
 #[serde(rename_all = "camelCase")]
 pub(super) struct SubtitleOcrProgressEvent {
     item_id: String,
+    run_id: String,
     phase: &'static str,
     current: u32,
     total: u32,
@@ -27,6 +28,7 @@ pub(super) struct SubtitleOcrProgressEvent {
 impl SubtitleOcrProgressEvent {
     pub(super) fn new(
         item_id: impl Into<String>,
+        run_id: impl Into<String>,
         phase: &'static str,
         current: u32,
         total: u32,
@@ -34,6 +36,7 @@ impl SubtitleOcrProgressEvent {
     ) -> Self {
         Self {
             item_id: item_id.into(),
+            run_id: run_id.into(),
             phase,
             current,
             total,
@@ -47,6 +50,7 @@ impl SubtitleOcrProgressEvent {
 pub(super) struct SubtitleOcrProgressEmitter {
     app: tauri::AppHandle,
     item_id: String,
+    run_id: String,
     phase: &'static str,
     total: u32,
     state: Arc<Mutex<ProgressState>>,
@@ -56,12 +60,14 @@ impl SubtitleOcrProgressEmitter {
     pub(super) fn new(
         app: tauri::AppHandle,
         item_id: impl Into<String>,
+        run_id: impl Into<String>,
         phase: &'static str,
         total: u32,
     ) -> Self {
         Self {
             app,
             item_id: item_id.into(),
+            run_id: run_id.into(),
             phase,
             total,
             state: Arc::new(Mutex::new(ProgressState {
@@ -94,6 +100,7 @@ impl SubtitleOcrProgressEmitter {
             "subtitle-ocr-progress",
             SubtitleOcrProgressEvent::new(
                 self.item_id.clone(),
+                self.run_id.clone(),
                 self.phase,
                 current,
                 self.total,
@@ -145,10 +152,11 @@ mod tests {
 
     #[test]
     fn progress_event_serializes_percentage() {
-        let event = SubtitleOcrProgressEvent::new("item-1", "ocr", 5, 10, "Half done");
+        let event = SubtitleOcrProgressEvent::new("item-1", "run-1", "ocr", 5, 10, "Half done");
         let value = serde_json::to_value(event).expect("event should serialize");
 
         assert_eq!(value["itemId"], "item-1");
+        assert_eq!(value["runId"], "run-1");
         assert_eq!(value["phase"], "ocr");
         assert_eq!(value["current"], 5);
         assert_eq!(value["total"], 10);

@@ -54,6 +54,7 @@
   });
 
   const selectedIndex = $derived(cues.findIndex((cue) => cue.id === selectedCueId));
+  const durationMs = $derived(cues.reduce((max, cue) => Math.max(max, cue.endTimeMs), 0));
 
   const cueVirtualizer = createVirtualizer<HTMLElement, HTMLDivElement>({
     count: 0,
@@ -177,25 +178,42 @@
     }
 
     const safeTimeMs = Math.max(0, Math.round(timeMs));
-    let nearestIndex = 0;
-    let nearestDistanceMs = Number.POSITIVE_INFINITY;
+    let low = 0;
+    let high = cues.length - 1;
 
-    for (const [index, cue] of cues.entries()) {
-      if (cue.startTimeMs <= safeTimeMs && safeTimeMs <= cue.endTimeMs) {
-        return index;
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      const cue = cues[mid];
+      if (!cue) {
+        break;
       }
 
-      const distanceMs = safeTimeMs < cue.startTimeMs
-        ? cue.startTimeMs - safeTimeMs
-        : safeTimeMs - cue.endTimeMs;
-
-      if (distanceMs < nearestDistanceMs) {
-        nearestIndex = index;
-        nearestDistanceMs = distanceMs;
+      if (safeTimeMs < cue.startTimeMs) {
+        high = mid - 1;
+      } else if (safeTimeMs > cue.endTimeMs) {
+        low = mid + 1;
+      } else {
+        return mid;
       }
     }
 
-    return nearestIndex;
+    if (low <= 0) {
+      return 0;
+    }
+
+    if (low >= cues.length) {
+      return cues.length - 1;
+    }
+
+    const previousCue = cues[low - 1];
+    const nextCue = cues[low];
+    if (!previousCue || !nextCue) {
+      return Math.min(cues.length - 1, Math.max(0, low));
+    }
+
+    return safeTimeMs - previousCue.endTimeMs <= nextCue.startTimeMs - safeTimeMs
+      ? low - 1
+      : low;
   }
 
   function getVisibleViewportFromScroll(element: HTMLElement): { startMs: number; endMs: number } | null {
@@ -211,8 +229,6 @@
     if (!startCue || !endCue) {
       return null;
     }
-
-    const durationMs = cues.reduce((max, cue) => Math.max(max, cue.endTimeMs), 0);
 
     return clampTimelineViewport(
       startCue.startTimeMs,

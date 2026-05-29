@@ -66,7 +66,9 @@
   );
   const bitmaps = $derived(reviewVersion?.bitmaps ?? []);
   const durationMs = $derived(resolveDurationMs(renderedCues, bitmaps));
-  const selectedCue = $derived(renderedCues.find((cue) => cue.id === selectedCueId) ?? null);
+  const selectedCue = $derived(
+    renderedCues.find((cue) => cue.id === selectedCueId) ?? renderedCues[0] ?? null,
+  );
   const activeVersionId = $derived(reviewVersion?.id ?? item?.activeVersionId ?? null);
   const reviewMode: SubtitleOcrReviewMode = $derived(resolveSubtitleOcrReviewMode(centerWidthPx));
   const bitmapByCueId = $derived.by(() => {
@@ -79,7 +81,7 @@
   });
   const selectedCueBitmap = $derived(getCueBitmap(selectedCue));
   const selectedCueIndex = $derived(
-    selectedCueId ? renderedCues.findIndex((cue) => cue.id === selectedCueId) : -1,
+    selectedCue ? renderedCues.findIndex((cue) => cue.id === selectedCue.id) : -1,
   );
   const canSelectPreviousCue = $derived(selectedCueIndex > 0);
   const canSelectNextCue = $derived(selectedCueIndex >= 0 && selectedCueIndex < renderedCues.length - 1);

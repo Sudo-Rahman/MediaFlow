@@ -247,6 +247,8 @@ Retry behavior:
 
 ## Review Workspace
 
+This section is superseded by `docs/superpowers/specs/2026-05-29-subtitle-ocr-review-redesign-design.md` for the review UI layout, responsive behavior, and timeline navigation model. The pipeline, versioning, persistence, import, and export requirements in this document still apply.
+
 The center workspace uses the approved `Main Filmstrip, balanced` direction.
 
 Layout:

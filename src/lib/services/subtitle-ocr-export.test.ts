@@ -5,7 +5,9 @@ import { DEFAULT_SUBTITLE_OCR_CONFIG } from '$lib/types';
 
 import type { VersionedExportRequest } from './versioned-export';
 import {
+  buildSubtitleOcrPreview,
   buildSubtitleOcrExportGroups,
+  exportSubtitleOcrVersion,
   runSubtitleOcrBatchExport,
   SUBTITLE_OCR_ALLOWED_EXPORT_FORMATS,
   toRustSubtitleOcrCues,
@@ -174,6 +176,40 @@ describe('Subtitle OCR export service', () => {
     expect(rustCues[0]?.sourceCueIds).not.toBe(sourceCueIds);
     sourceCueIds.push('raw-3');
     expect(rustCues[0]?.sourceCueIds).toEqual(['raw-1', 'raw-2']);
+  });
+
+  it('builds simple ASS, SRT, and VTT previews from exportable cues', () => {
+    const cues = [
+      createCue({ text: 'First line\nSecond line' }),
+      createCue({ id: 'blank', text: '   ' }),
+    ];
+
+    expect(buildSubtitleOcrPreview(cues, 'srt')).toContain('00:00:01,000 --> 00:00:02,000');
+    expect(buildSubtitleOcrPreview(cues, 'vtt')).toContain('WEBVTT');
+    expect(buildSubtitleOcrPreview(cues, 'vtt')).toContain('00:00:01.000 --> 00:00:02.000');
+    expect(buildSubtitleOcrPreview(cues, 'ass')).toContain('First line\\NSecond line');
+    expect(buildSubtitleOcrPreview([createCue({ text: '   ' })], 'srt')).toBe('');
+  });
+
+  it('exports one selected version through the Rust command', async () => {
+    await exportSubtitleOcrVersion({
+      cues: [createCue({ sourceCueIds: ['raw-1', 'raw-2'] })],
+      outputPath: '/exports/movie.srt',
+      format: 'srt',
+    });
+
+    expect(mocks.invoke).toHaveBeenCalledWith('export_subtitle_ocr_version', {
+      cues: [{
+        id: 'cue-1',
+        sourceCueIds: ['raw-1', 'raw-2'],
+        startTimeMs: 1_000,
+        endTimeMs: 2_000,
+        text: 'Detected text',
+        confidence: 0.95,
+      }],
+      outputPath: '/exports/movie.srt',
+      format: 'srt',
+    });
   });
 
   it('exports selected versions through the Rust command and writes joined output paths', async () => {

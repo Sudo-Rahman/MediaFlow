@@ -56,6 +56,8 @@ pub(crate) struct SubtitleOcrDecodedCue {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) cache_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) thumbnail_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -77,4 +79,48 @@ pub(crate) struct SubtitleOcrPipelineResult {
     pub(crate) raw_ocr_cues: Vec<SubtitleOcrRawCue>,
     pub(crate) stabilized_cues: Vec<SubtitleOcrCue>,
     pub(crate) final_cues: Vec<SubtitleOcrCue>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SubtitleOcrDecodedCue;
+
+    #[test]
+    fn decoded_cue_serializes_optional_thumbnail_path() {
+        let cue = SubtitleOcrDecodedCue {
+            cue_id: "cue-1".to_string(),
+            start_time_ms: 1_000,
+            end_time_ms: 2_000,
+            width: 1920,
+            height: 1080,
+            cache_key: "cache-key".to_string(),
+            thumbnail_path: Some("/tmp/MediaFlow/subtitle-ocr/thumb.png".to_string()),
+        };
+
+        let value = serde_json::to_value(cue).expect("decoded cue should serialize");
+
+        assert_eq!(
+            value
+                .get("thumbnailPath")
+                .and_then(serde_json::Value::as_str),
+            Some("/tmp/MediaFlow/subtitle-ocr/thumb.png")
+        );
+    }
+
+    #[test]
+    fn decoded_cue_omits_missing_thumbnail_path() {
+        let cue = SubtitleOcrDecodedCue {
+            cue_id: "cue-1".to_string(),
+            start_time_ms: 1_000,
+            end_time_ms: 2_000,
+            width: 1920,
+            height: 1080,
+            cache_key: "cache-key".to_string(),
+            thumbnail_path: None,
+        };
+
+        let value = serde_json::to_value(cue).expect("decoded cue should serialize");
+
+        assert!(value.get("thumbnailPath").is_none());
+    }
 }

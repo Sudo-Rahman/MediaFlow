@@ -215,6 +215,33 @@ describe('subtitleOcrStore', () => {
     expect(subtitleOcrStore.selectedItem?.draft?.dirty).toBe(true);
   });
 
+  it('clears a dirty draft when a draft-derived version is added', () => {
+    subtitleOcrStore.addItems([source('a')]);
+    const originalVersion = version('v1', 'before');
+    subtitleOcrStore.addVersion('a', originalVersion);
+    subtitleOcrStore.updateCueText('a', 'cue-v1', 'after');
+
+    const draftCues = subtitleOcrStore.getRenderedCues('a');
+    subtitleOcrStore.addVersion('a', {
+      ...version('v2', 'placeholder'),
+      bitmaps: originalVersion.bitmaps.map((bitmap) => ({ ...bitmap })),
+      rawOcr: originalVersion.rawOcr.map((rawCue) => ({
+        ...rawCue,
+        boxes: rawCue.boxes.map((box) => ({ ...box })),
+      })),
+      stabilizedCues: originalVersion.stabilizedCues.map((stabilizedCue) => ({
+        ...stabilizedCue,
+        sourceCueIds: [...stabilizedCue.sourceCueIds],
+      })),
+      finalCues: draftCues,
+    });
+
+    expect(subtitleOcrStore.selectedItem?.draft).toBeUndefined();
+    expect(subtitleOcrStore.getActiveVersion('a')?.id).toBe('v2');
+    expect(subtitleOcrStore.getActiveVersion('a')?.finalCues[0]?.text).toBe('after');
+    expect(originalVersion.finalCues[0]?.text).toBe('before');
+  });
+
   it('returns cloned item objects from the items getter', () => {
     subtitleOcrStore.addItems([source('a')]);
     subtitleOcrStore.addVersion('a', version('v1', 'before'));

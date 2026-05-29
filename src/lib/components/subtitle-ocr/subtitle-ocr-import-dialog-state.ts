@@ -22,6 +22,22 @@ export function toggleTrackSelection(selected: Set<number>, streamIndex: number)
   return next;
 }
 
+export function selectAllTrackSelection(tracks: readonly SubtitleOcrImportTrack[]): Set<number> {
+  return new Set(tracks.map((track) => track.streamIndex));
+}
+
+export function selectForcedTrackSelection(tracks: readonly SubtitleOcrImportTrack[]): Set<number> {
+  return new Set(
+    tracks
+      .filter((track) => track.forced === true)
+      .map((track) => track.streamIndex),
+  );
+}
+
+export function clearTrackSelection(): Set<number> {
+  return new Set();
+}
+
 export function buildSubtitleOcrTrackItem(
   sourcePath: string,
   track: SubtitleOcrImportTrack,

@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { Layers, ScanText } from '@lucide/svelte';
+  import { Layers, Save, ScanText } from '@lucide/svelte';
 
   import { Badge } from '$lib/components/ui/badge';
+  import { Button } from '$lib/components/ui/button';
   import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '$lib/components/ui/empty';
   import type {
     SubtitleOcrCue,
@@ -24,6 +25,8 @@
     onSelectCue: (cueId: string) => void;
     onSelectVersion: (itemId: string, versionId: string) => void;
     onCueTextChange: (itemId: string, cueId: string, text: string) => void;
+    onSaveDraftVersion: (itemId: string) => void | Promise<void>;
+    isProcessing: boolean;
   }
 
   type ViewportChangeSource = 'filmstrip' | 'timeline';
@@ -36,6 +39,8 @@
     onSelectCue,
     onSelectVersion,
     onCueTextChange,
+    onSaveDraftVersion,
+    isProcessing,
   }: SubtitleOcrWorkspaceProps = $props();
 
   let viewportStartMs = $state(0);
@@ -187,6 +192,18 @@
       </div>
 
       <div class="flex shrink-0 items-center gap-2">
+        {#if item.draft?.dirty}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onclick={() => void onSaveDraftVersion(item.id)}
+            disabled={isProcessing}
+          >
+            <Save class="size-4" />
+            Save Draft Version
+          </Button>
+        {/if}
         <Layers class="size-4 text-muted-foreground" aria-hidden="true" />
         <SubtitleOcrVersionSelector
           versions={item.versions}

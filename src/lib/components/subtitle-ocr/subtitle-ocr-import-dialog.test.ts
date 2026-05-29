@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest';
 import type { SubtitleOcrTrackMetadata } from '$lib/types';
 import {
   buildSubtitleOcrTrackItem,
+  clearTrackSelection,
   resolveImportButtonLabel,
+  selectAllTrackSelection,
+  selectForcedTrackSelection,
   toggleTrackSelection,
 } from './subtitle-ocr-import-dialog-state';
 
@@ -27,6 +30,18 @@ describe('subtitle OCR import dialog state', () => {
     expect([...selected]).toEqual([1, 3]);
     expect([...added].sort((a, b) => a - b)).toEqual([1, 3, 7]);
     expect([...removed].sort((a, b) => a - b)).toEqual([1, 7]);
+  });
+
+  it('builds quick-action selections for all, forced-only, and clear', () => {
+    const tracks: SubtitleOcrTrackMetadata[] = [
+      { ...track, streamIndex: 1, forced: false },
+      { ...track, streamIndex: 2, forced: true },
+      { ...track, streamIndex: 3, forced: true },
+    ];
+
+    expect([...selectAllTrackSelection(tracks)]).toEqual([1, 2, 3]);
+    expect([...selectForcedTrackSelection(tracks)]).toEqual([2, 3]);
+    expect([...clearTrackSelection()]).toEqual([]);
   });
 
   it('builds a ready container track item with a default OCR model override', () => {

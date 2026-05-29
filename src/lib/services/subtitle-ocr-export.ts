@@ -30,6 +30,12 @@ export interface RustSubtitleOcrCue {
   confidence: number;
 }
 
+interface ExportSubtitleOcrVersionRequest {
+  cues: readonly SubtitleOcrCue[];
+  outputPath: string;
+  format: SubtitleOcrExportFormat;
+}
+
 export const SUBTITLE_OCR_EXPORT_FORMAT_OPTIONS: VersionedExportFormatOption[] =
   SUBTITLE_OCR_ALLOWED_EXPORT_FORMATS.map((value) => {
     const option = SUBTITLE_OCR_OUTPUT_FORMATS.find((format) => format.value === value);
@@ -68,6 +74,99 @@ export function toRustSubtitleOcrCues(cues: readonly SubtitleOcrCue[]): RustSubt
     text: cue.text,
     confidence: cue.confidence,
   }));
+}
+
+function formatSrtTime(ms: number): string {
+  const safeMs = Math.max(0, Math.round(ms));
+  const hours = Math.floor(safeMs / 3_600_000);
+  const minutes = Math.floor((safeMs % 3_600_000) / 60_000);
+  const seconds = Math.floor((safeMs % 60_000) / 1_000);
+  const millis = safeMs % 1_000;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(millis).padStart(3, '0')}`;
+}
+
+function formatVttTime(ms: number): string {
+  return formatSrtTime(ms).replace(',', '.');
+}
+
+function formatAssTime(ms: number): string {
+  const safeMs = Math.max(0, Math.round(ms));
+  const centiseconds = Math.floor((safeMs % 1_000) / 10);
+  const hours = Math.floor(safeMs / 3_600_000);
+  const minutes = Math.floor((safeMs % 3_600_000) / 60_000);
+  const seconds = Math.floor((safeMs % 60_000) / 1_000);
+  return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(centiseconds).padStart(2, '0')}`;
+}
+
+function formatAssText(text: string): string {
+  return text
+    .replace(/\r\n|\r|\n/g, '\n')
+    .replace(/\\/g, '\\\\')
+    .replace(/{/g, '\\{')
+    .replace(/}/g, '\\}')
+    .replace(/\n/g, '\\N');
+}
+
+export function buildSubtitleOcrPreview(
+  cues: readonly SubtitleOcrCue[],
+  format: SubtitleOcrExportFormat,
+): string {
+  const exportableCues = getExportableCues(cues);
+  if (exportableCues.length === 0) {
+    return '';
+  }
+
+  switch (format) {
+    case 'ass': {
+      const events = exportableCues
+        .map((cue) => (
+          `Dialogue: 0,${formatAssTime(cue.startTimeMs)},${formatAssTime(cue.endTimeMs)},Default,,0,0,0,,${formatAssText(cue.text)}`
+        ))
+        .join('\n');
+
+      return [
+        '[Script Info]',
+        'ScriptType: v4.00+',
+        '',
+        '[V4+ Styles]',
+        'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+        'Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,0,2,20,20,40,1',
+        '',
+        '[Events]',
+        'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+        events,
+      ].join('\n');
+    }
+    case 'vtt':
+      return `WEBVTT\n\n${exportableCues
+        .map((cue) => `${formatVttTime(cue.startTimeMs)} --> ${formatVttTime(cue.endTimeMs)}\n${cue.text}\n`)
+        .join('\n')}`;
+    case 'srt':
+      return exportableCues
+        .map((cue, index) => `${index + 1}\n${formatSrtTime(cue.startTimeMs)} --> ${formatSrtTime(cue.endTimeMs)}\n${cue.text}\n`)
+        .join('\n');
+  }
+}
+
+export async function exportSubtitleOcrVersion({
+  cues,
+  outputPath,
+  format,
+}: ExportSubtitleOcrVersionRequest): Promise<void> {
+  if (!isSubtitleOcrExportFormat(format)) {
+    throw new Error('Invalid export format');
+  }
+
+  const exportableCues = getExportableCues(cues);
+  if (exportableCues.length === 0) {
+    throw new Error('No valid Subtitle OCR cues to export');
+  }
+
+  await invoke('export_subtitle_ocr_version', {
+    cues: toRustSubtitleOcrCues(exportableCues),
+    outputPath,
+    format,
+  });
 }
 
 export function buildSubtitleOcrExportGroups(
@@ -118,11 +217,6 @@ export async function runSubtitleOcrBatchExport(
       throw new Error(`Subtitle OCR version not found: ${target.versionId}`);
     }
 
-    const exportableCues = getExportableCues(version.finalCues);
-    if (exportableCues.length === 0) {
-      throw new Error('No valid Subtitle OCR cues to export');
-    }
-
     const exportFileName = buildUniqueExportFileName(
       stripFileExtension(target.fileName),
       target.versionName,
@@ -131,8 +225,8 @@ export async function runSubtitleOcrBatchExport(
     );
     const outputPath = await join(request.outputDir, exportFileName);
 
-    await invoke('export_subtitle_ocr_version', {
-      cues: toRustSubtitleOcrCues(exportableCues),
+    await exportSubtitleOcrVersion({
+      cues: version.finalCues,
       outputPath,
       format: targetFormat,
     });

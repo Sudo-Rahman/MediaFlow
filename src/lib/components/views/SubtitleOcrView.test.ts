@@ -7,10 +7,13 @@ import type {
 } from '$lib/types';
 import { DEFAULT_SUBTITLE_OCR_CONFIG } from '$lib/types';
 import {
+  buildSubtitleOcrDraftVersionInput,
   buildSubtitleOcrSourceSnapshot,
   filterSubtitleOcrPersistenceForItem,
   getSubtitleOcrBackendCancelTargets,
   mergeSubtitleOcrPersistenceForItem,
+  resolveSubtitleOcrEffectiveModelForConfig,
+  resolveSubtitleOcrFullRetryConfig,
   shouldApplySubtitleOcrProgressEvent,
   summarizeSubtitleOcrItems,
 } from './subtitle-ocr-view-state';
@@ -116,6 +119,133 @@ describe('getSubtitleOcrBackendCancelTargets', () => {
       new Set(['container-track']),
       new Map(),
     )).toEqual([]);
+  });
+});
+
+describe('retry config resolution', () => {
+  it('uses the active version config snapshot for full OCR retries', () => {
+    const snapshotConfig = {
+      ...DEFAULT_SUBTITLE_OCR_CONFIG,
+      ocrModel: 'latin' as const,
+      useGpu: false,
+      aiCleanupEnabled: true,
+      aiCleanupModel: 'snapshot-model',
+    };
+    const activeVersion = version('v1', {
+      sourceKind: 'standalone_sup',
+      sourcePath: '/subs/source.sup',
+      ocrModelOverride: 'default',
+    });
+    activeVersion.configSnapshot = snapshotConfig;
+    const globalConfig = {
+      ...DEFAULT_SUBTITLE_OCR_CONFIG,
+      ocrModel: 'multi' as const,
+      useGpu: true,
+      aiCleanupEnabled: false,
+      aiCleanupModel: 'global-model',
+    };
+
+    const resolved = resolveSubtitleOcrFullRetryConfig(activeVersion, globalConfig);
+
+    expect(resolved).toEqual(snapshotConfig);
+    expect(resolved).not.toBe(snapshotConfig);
+  });
+
+  it('resolves OCR model from the retry snapshot global model plus the current item override', () => {
+    const item = {
+      ...containerItem(3),
+      ocrModelOverride: 'default' as const,
+    };
+
+    expect(resolveSubtitleOcrEffectiveModelForConfig(item, {
+      ...DEFAULT_SUBTITLE_OCR_CONFIG,
+      ocrModel: 'latin',
+    })).toBe('latin');
+
+    expect(resolveSubtitleOcrEffectiveModelForConfig({
+      ...item,
+      ocrModelOverride: 'en',
+    }, {
+      ...DEFAULT_SUBTITLE_OCR_CONFIG,
+      ocrModel: 'latin',
+    })).toBe('en');
+  });
+});
+
+describe('buildSubtitleOcrDraftVersionInput', () => {
+  it('turns dirty draft cues into a new version input without replacing OCR artifacts', () => {
+    const item = containerItem(3);
+    const activeVersion = version('v1', buildSubtitleOcrSourceSnapshot(item));
+    activeVersion.bitmaps = [{
+      cueId: 'bitmap-1',
+      startTimeMs: 1_000,
+      endTimeMs: 2_000,
+      width: 640,
+      height: 120,
+      cacheKey: 'bitmap-cache',
+      thumbnailPath: '/tmp/thumb.png',
+    }];
+    activeVersion.rawOcr = [{
+      cueId: 'raw-1',
+      startTimeMs: 1_000,
+      endTimeMs: 2_000,
+      cacheKey: 'raw-cache',
+      boxes: [],
+      text: 'raw',
+      confidence: 0.9,
+    }];
+    activeVersion.stabilizedCues = [{
+      id: 'cue-1',
+      sourceCueIds: ['raw-1'],
+      startTimeMs: 1_000,
+      endTimeMs: 2_000,
+      text: 'before',
+      confidence: 0.9,
+    }];
+    activeVersion.finalCues = [{
+      id: 'cue-1',
+      sourceCueIds: ['raw-1'],
+      startTimeMs: 1_000,
+      endTimeMs: 2_000,
+      text: 'before',
+      confidence: 0.9,
+    }];
+    item.versions = [activeVersion];
+    item.activeVersionId = activeVersion.id;
+    item.draft = {
+      baseVersionId: activeVersion.id,
+      cues: [{ ...activeVersion.finalCues[0], text: 'edited' }],
+      dirty: true,
+      updatedAt: '2026-05-29T10:00:00.000Z',
+    };
+
+    const input = buildSubtitleOcrDraftVersionInput(item, activeVersion);
+
+    expect(input).toMatchObject({
+      mode: 'full_ocr',
+      bitmaps: activeVersion.bitmaps,
+      rawOcr: activeVersion.rawOcr,
+      stabilizedCues: activeVersion.stabilizedCues,
+      finalCues: item.draft.cues,
+      aiCleanupApplied: false,
+    });
+    expect(input?.finalCues[0]?.text).toBe('edited');
+    expect(activeVersion.finalCues[0]?.text).toBe('before');
+  });
+
+  it('ignores clean or stale drafts', () => {
+    const item = containerItem(3);
+    const activeVersion = version('v1', buildSubtitleOcrSourceSnapshot(item));
+
+    expect(buildSubtitleOcrDraftVersionInput(item, activeVersion)).toBeNull();
+
+    item.draft = {
+      baseVersionId: 'other-version',
+      cues: [],
+      dirty: true,
+      updatedAt: '2026-05-29T10:00:00.000Z',
+    };
+    expect(buildSubtitleOcrDraftVersionInput(item, activeVersion)).toBeNull();
   });
 });
 

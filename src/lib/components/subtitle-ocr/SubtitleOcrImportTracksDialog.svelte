@@ -13,7 +13,10 @@
 
   import {
     buildSubtitleOcrTrackItem,
+    clearTrackSelection,
     resolveImportButtonLabel,
+    selectAllTrackSelection,
+    selectForcedTrackSelection,
     toggleTrackSelection,
     type SubtitleOcrImportTrack,
   } from './subtitle-ocr-import-dialog-state';
@@ -48,6 +51,7 @@
   const trackKey = $derived(`${sourcePath}|${tracks.map((track) => track.streamIndex).join(',')}`);
   const defaultTrackIndices = $derived(tracks.map((track) => track.streamIndex));
   const selectedTrackIndices = $derived.by(() => new Set(selectedTrackIndicesByKey[trackKey] ?? defaultTrackIndices));
+  const forcedTrackIndices = $derived(selectForcedTrackSelection(tracks));
   const selectedCount = $derived(selectedTrackIndices.size);
   const importButtonLabel = $derived(resolveImportButtonLabel(selectedCount));
 
@@ -76,9 +80,13 @@
 
   function toggleTrack(streamIndex: number) {
     const nextSelection = toggleTrackSelection(selectedTrackIndices, streamIndex);
+    setTrackSelection(nextSelection);
+  }
+
+  function setTrackSelection(nextSelection: Set<number>) {
     selectedTrackIndicesByKey = {
       ...selectedTrackIndicesByKey,
-      [trackKey]: [...nextSelection],
+      [trackKey]: [...nextSelection].sort((a, b) => a - b),
     };
   }
 
@@ -137,6 +145,36 @@
     </Dialog.Header>
 
     <div class="dialog-scroll-body flex flex-col gap-3 py-4">
+      <div class="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onclick={() => setTrackSelection(selectAllTrackSelection(tracks))}
+          disabled={isImporting || tracks.length === 0}
+        >
+          Select all
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onclick={() => setTrackSelection(forcedTrackIndices)}
+          disabled={isImporting || forcedTrackIndices.size === 0}
+        >
+          Forced only
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onclick={() => setTrackSelection(clearTrackSelection())}
+          disabled={isImporting || selectedCount === 0}
+        >
+          Clear
+        </Button>
+      </div>
+
       {#each tracks as track (track.streamIndex)}
         {@const isSelected = selectedTrackIndices.has(track.streamIndex)}
         {@const modelSelectId = `${dialogInstanceId}-model-${track.streamIndex}`}

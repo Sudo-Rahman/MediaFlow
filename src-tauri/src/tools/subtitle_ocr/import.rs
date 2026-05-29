@@ -19,7 +19,6 @@ pub(crate) async fn probe_subtitle_ocr_tracks(
 pub(super) fn codec_label(codec: &str) -> Option<&'static str> {
     match codec.to_ascii_lowercase().as_str() {
         "hdmv_pgs_subtitle" | "pgs" => Some("PGS"),
-        "dvd_subtitle" => Some("VobSub"),
         _ => None,
     }
 }
@@ -110,17 +109,17 @@ mod tests {
     fn codec_label_accepts_bitmap_subtitle_codecs() {
         assert_eq!(codec_label("hdmv_pgs_subtitle"), Some("PGS"));
         assert_eq!(codec_label("pgs"), Some("PGS"));
-        assert_eq!(codec_label("dvd_subtitle"), Some("VobSub"));
     }
 
     #[test]
-    fn codec_label_rejects_text_subtitle_codecs() {
+    fn codec_label_rejects_unsupported_container_subtitle_codecs() {
         assert_eq!(codec_label("subrip"), None);
         assert_eq!(codec_label("ass"), None);
+        assert_eq!(codec_label("dvd_subtitle"), None);
     }
 
     #[test]
-    fn parse_tracks_from_probe_json_filters_bitmap_subtitle_streams() {
+    fn parse_tracks_from_probe_json_filters_supported_bitmap_subtitle_streams() {
         let json = r#"{
             "streams": [
                 { "index": 0, "codec_type": "video", "codec_name": "h264" },
@@ -149,18 +148,12 @@ mod tests {
 
         let tracks = parse_tracks_from_probe_json(json).expect("tracks should parse");
 
-        assert_eq!(tracks.len(), 2);
+        assert_eq!(tracks.len(), 1);
         assert_eq!(tracks[0].stream_index, 2);
         assert_eq!(tracks[0].codec_label, "PGS");
         assert_eq!(tracks[0].language.as_deref(), Some("eng"));
         assert_eq!(tracks[0].title.as_deref(), Some("Signs"));
         assert!(tracks[0].forced);
         assert!(!tracks[0].r#default);
-        assert_eq!(tracks[1].stream_index, 4);
-        assert_eq!(tracks[1].codec_label, "VobSub");
-        assert_eq!(tracks[1].language.as_deref(), Some("jpn"));
-        assert_eq!(tracks[1].title.as_deref(), Some("Main"));
-        assert!(!tracks[1].forced);
-        assert!(tracks[1].r#default);
     }
 }

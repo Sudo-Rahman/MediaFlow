@@ -16,6 +16,7 @@
   import {
     SubtitleOcrImportTracksDialog,
     SubtitleOcrOptionsPanel,
+    SubtitleOcrResultDialog,
     SubtitleOcrSidebar,
     SubtitleOcrWorkspace,
   } from '$lib/components/subtitle-ocr';
@@ -40,15 +41,17 @@
     SubtitleOcrTrackMetadata,
     SubtitleOcrVersion,
   } from '$lib/types';
-  import { getSubtitleOcrEffectiveModel } from '$lib/types';
   import { getFileName } from '$lib/utils/format';
   import { logAndToast } from '$lib/utils/log-toast';
 
   import {
+    buildSubtitleOcrDraftVersionInput,
     buildSubtitleOcrSourceSnapshot,
     filterSubtitleOcrPersistenceForItem,
     getSubtitleOcrBackendCancelTargets,
     mergeSubtitleOcrPersistenceForItem,
+    resolveSubtitleOcrEffectiveModelForConfig,
+    resolveSubtitleOcrFullRetryConfig,
     shouldApplySubtitleOcrProgressEvent,
     summarizeSubtitleOcrItems,
   } from './subtitle-ocr-view-state';
@@ -80,6 +83,7 @@
   let trackDialogSourcePath = $state('');
   let trackDialogTracks = $state.raw<SubtitleOcrTrackMetadata[]>([]);
   let queuedTrackDialogs = $state.raw<TrackDialogRequest[]>([]);
+  let resultDialogOpen = $state(false);
   let selectedCueIdsByItemId = $state.raw<Record<string, string | null>>({});
   let unlistenSubtitleOcrProgress: UnlistenFn | null = null;
 
@@ -477,6 +481,7 @@
 
   function handleOpenVersions(itemId: string): void {
     subtitleOcrStore.selectItem(itemId);
+    resultDialogOpen = true;
   }
 
   function getProcessableItemIds(itemIds: string[]): string[] {
@@ -512,9 +517,13 @@
     }
   }
 
-  function buildPipelineArgs(item: SubtitleOcrSourceItem, sourcePath: string, runId: string) {
-    const config = subtitleOcrStore.config;
-    const effectiveOcrModel = getSubtitleOcrEffectiveModel(item, config.ocrModel);
+  function buildPipelineArgs(
+    item: SubtitleOcrSourceItem,
+    sourcePath: string,
+    runId: string,
+    config: SubtitleOcrConfig = subtitleOcrStore.config,
+  ) {
+    const effectiveOcrModel = resolveSubtitleOcrEffectiveModelForConfig(item, config);
 
     return {
       config,
@@ -608,7 +617,10 @@
     subtitleOcrStore.setProgress(itemId, undefined);
   }
 
-  async function processItem(item: SubtitleOcrSourceItem): Promise<ProcessItemResult> {
+  async function processItem(
+    item: SubtitleOcrSourceItem,
+    configOverride?: SubtitleOcrConfig,
+  ): Promise<ProcessItemResult> {
     const runId = createSubtitleOcrRunId(item.id);
     activeRunIdsByItemId.set(item.id, runId);
 
@@ -627,7 +639,12 @@
       }
 
       setManualProgress(item.id, 'decoding', 'Decoding subtitle bitmaps...');
-      const { args, config, effectiveOcrModel } = buildPipelineArgs(item, sourcePath, runId);
+      const { args, config, effectiveOcrModel } = buildPipelineArgs(
+        item,
+        sourcePath,
+        runId,
+        configOverride,
+      );
       backendCancelableRunIdsByItemId.set(item.id, runId);
       const result = await invoke<SubtitleOcrPipelineResult>('run_subtitle_ocr_pipeline', args);
       backendCancelableRunIdsByItemId.delete(item.id);
@@ -693,7 +710,10 @@
     }
   }
 
-  async function runProcessingItems(itemIds: string[]): Promise<void> {
+  async function runProcessingItems(
+    itemIds: string[],
+    configByItemId: ReadonlyMap<string, SubtitleOcrConfig> = new Map(),
+  ): Promise<void> {
     const processableItemIds = getProcessableItemIds(itemIds);
     if (processableItemIds.length === 0 || subtitleOcrStore.isProcessing) {
       return;
@@ -713,7 +733,7 @@
           continue;
         }
 
-        const result = await processItem(item);
+        const result = await processItem(item, configByItemId.get(itemId));
         if (result === 'cancelled') {
           break;
         }
@@ -758,7 +778,12 @@
 
   function handleRetry(itemId: string): void {
     subtitleOcrStore.selectItem(itemId);
-    void runProcessingItems([itemId]);
+    const item = getStoreItem(itemId);
+    const activeVersion = subtitleOcrStore.getActiveVersion(itemId);
+    const retryConfig = item
+      ? resolveSubtitleOcrFullRetryConfig(activeVersion, subtitleOcrStore.config)
+      : subtitleOcrStore.config;
+    void runProcessingItems([itemId], new Map([[itemId, retryConfig]]));
   }
 
   async function retryAiCleanupOnly(itemId: string): Promise<void> {
@@ -809,6 +834,29 @@
     subtitleOcrStore.removeItem(itemId);
   }
 
+  async function handleSaveDraftVersion(itemId: string): Promise<void> {
+    const item = getStoreItem(itemId);
+    const activeVersion = subtitleOcrStore.getActiveVersion(itemId);
+    if (!item || !activeVersion) {
+      return;
+    }
+
+    const input = buildSubtitleOcrDraftVersionInput(item, activeVersion);
+    if (!input) {
+      return;
+    }
+
+    const latestItem = getStoreItem(itemId) ?? item;
+    const version = createSubtitleOcrVersion({
+      name: `Version ${latestItem.versions.length + 1}`,
+      ...input,
+    });
+
+    subtitleOcrStore.addVersion(itemId, version);
+    await persistItem(itemId);
+    toast.success('Saved draft as a new Subtitle OCR version');
+  }
+
   function handleSelectCue(cueId: string): void {
     if (!selectedItem) {
       return;
@@ -830,6 +878,7 @@
     onSelectItem={handleSelectItem}
     onOpenVersions={handleOpenVersions}
     onRetry={handleRetry}
+    onRetryAiCleanupOnly={(itemId) => void retryAiCleanupOnly(itemId)}
     onRemove={handleRemove}
   />
 
@@ -842,6 +891,8 @@
       onSelectCue={handleSelectCue}
       onSelectVersion={subtitleOcrStore.selectVersion}
       onCueTextChange={subtitleOcrStore.updateCueText}
+      onSaveDraftVersion={(itemId) => void handleSaveDraftVersion(itemId)}
+      isProcessing={subtitleOcrStore.isProcessing}
     />
   </div>
 
@@ -866,4 +917,10 @@
   sourcePath={trackDialogSourcePath}
   tracks={trackDialogTracks}
   onImport={handleImportTracks}
+/>
+
+<SubtitleOcrResultDialog
+  bind:open={resultDialogOpen}
+  onOpenChange={(open) => { resultDialogOpen = open; }}
+  item={selectedItem}
 />

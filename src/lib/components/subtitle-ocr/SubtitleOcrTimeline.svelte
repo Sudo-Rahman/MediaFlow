@@ -229,6 +229,38 @@
     queueViewportChange(zoomTimelineViewport(viewport, safeDurationMs, factor, anchorRatio));
   }
 
+  function zoomViewport(factor: number): void {
+    if (safeDurationMs <= 0 || viewportSpanMs <= 0) {
+      return;
+    }
+
+    queueViewportChange(zoomTimelineViewport(viewport, safeDurationMs, factor, 0.5));
+  }
+
+  function panViewport(direction: -1 | 1, ratio: number): void {
+    if (safeDurationMs <= 0 || viewportSpanMs <= 0) {
+      return;
+    }
+
+    queueViewportChange(panTimelineViewport(viewport, safeDurationMs, viewportSpanMs * ratio * direction));
+  }
+
+  function goToTimelineStart(): void {
+    if (safeDurationMs <= 0 || viewportSpanMs <= 0) {
+      return;
+    }
+
+    queueViewportChange(clampTimelineViewport(0, viewportSpanMs, safeDurationMs));
+  }
+
+  function goToTimelineEnd(): void {
+    if (safeDurationMs <= 0 || viewportSpanMs <= 0) {
+      return;
+    }
+
+    queueViewportChange(clampTimelineViewport(safeDurationMs - viewportSpanMs, safeDurationMs, safeDurationMs));
+  }
+
   function handlePointerDown(event: PointerEvent): void {
     if (event.button !== 0 || !trackElement || safeDurationMs <= 0 || viewportSpanMs <= 0) {
       return;
@@ -334,6 +366,51 @@
     <p class="truncate text-xs text-muted-foreground">
       {formatTime(viewport.startMs)} - {formatTime(viewport.endMs)}
     </p>
+  </div>
+
+  <div class="relative h-0" role="group" aria-label="Timeline keyboard controls">
+    <button
+      type="button"
+      class="sr-only focus:not-sr-only focus:absolute focus:left-0 focus:top-0 focus:z-20 focus:rounded-md focus:border focus:bg-background focus:px-2 focus:py-1 focus:text-xs focus:shadow-sm"
+      onclick={() => panViewport(-1, 0.1)}
+    >
+      Pan timeline left
+    </button>
+    <button
+      type="button"
+      class="sr-only focus:not-sr-only focus:absolute focus:left-0 focus:top-8 focus:z-20 focus:rounded-md focus:border focus:bg-background focus:px-2 focus:py-1 focus:text-xs focus:shadow-sm"
+      onclick={() => panViewport(1, 0.1)}
+    >
+      Pan timeline right
+    </button>
+    <button
+      type="button"
+      class="sr-only focus:not-sr-only focus:absolute focus:left-0 focus:top-16 focus:z-20 focus:rounded-md focus:border focus:bg-background focus:px-2 focus:py-1 focus:text-xs focus:shadow-sm"
+      onclick={() => zoomViewport(0.82)}
+    >
+      Zoom timeline in
+    </button>
+    <button
+      type="button"
+      class="sr-only focus:not-sr-only focus:absolute focus:left-0 focus:top-24 focus:z-20 focus:rounded-md focus:border focus:bg-background focus:px-2 focus:py-1 focus:text-xs focus:shadow-sm"
+      onclick={() => zoomViewport(1.18)}
+    >
+      Zoom timeline out
+    </button>
+    <button
+      type="button"
+      class="sr-only focus:not-sr-only focus:absolute focus:left-0 focus:top-32 focus:z-20 focus:rounded-md focus:border focus:bg-background focus:px-2 focus:py-1 focus:text-xs focus:shadow-sm"
+      onclick={goToTimelineStart}
+    >
+      Move timeline to start
+    </button>
+    <button
+      type="button"
+      class="sr-only focus:not-sr-only focus:absolute focus:left-0 focus:top-40 focus:z-20 focus:rounded-md focus:border focus:bg-background focus:px-2 focus:py-1 focus:text-xs focus:shadow-sm"
+      onclick={goToTimelineEnd}
+    >
+      Move timeline to end
+    </button>
   </div>
 
   <div

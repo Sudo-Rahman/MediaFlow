@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildTimelineBuckets,
+  centerTimelineViewport,
   clampTimelineViewport,
   findCueNearestTime,
   getVisibleCueRange,
+  panTimelineViewport,
+  resolveSubtitleOcrReviewMode,
   toCueTileWidth,
+  WIDE_REVIEW_MIN_CENTER_WIDTH_PX,
+  zoomTimelineViewport,
   type TimedCue,
+  type TimelineBucket,
 } from './subtitle-ocr-review-state';
 
 const cues: TimedCue[] = [
@@ -16,6 +23,16 @@ const cues: TimedCue[] = [
 ];
 
 describe('subtitle OCR review state', () => {
+  describe('resolveSubtitleOcrReviewMode', () => {
+    it('uses compact mode below the wide review center breakpoint', () => {
+      expect(resolveSubtitleOcrReviewMode(WIDE_REVIEW_MIN_CENTER_WIDTH_PX - 1)).toBe('compact');
+    });
+
+    it('uses wide mode at and above the wide review center breakpoint', () => {
+      expect(resolveSubtitleOcrReviewMode(WIDE_REVIEW_MIN_CENTER_WIDTH_PX)).toBe('wide');
+    });
+  });
+
   describe('getVisibleCueRange', () => {
     it('returns the half-open range of cues intersecting the viewport', () => {
       expect(getVisibleCueRange(cues, 2_700, 5_100)).toEqual({
@@ -95,6 +112,104 @@ describe('subtitle OCR review state', () => {
         startMs: 0,
         endMs: 0,
       });
+    });
+  });
+
+  describe('centerTimelineViewport', () => {
+    it('centers a viewport around the selected cue while preserving the requested span', () => {
+      expect(centerTimelineViewport(cues[2], 4_000, 12_000)).toEqual({
+        startMs: 4_500,
+        endMs: 8_500,
+      });
+    });
+  });
+
+  describe('zoomTimelineViewport', () => {
+    it('zooms around the pointer anchor', () => {
+      expect(zoomTimelineViewport(
+        { startMs: 0, endMs: 10_000 },
+        20_000,
+        0.5,
+        0.25,
+      )).toEqual({
+        startMs: 1_250,
+        endMs: 6_250,
+      });
+    });
+  });
+
+  describe('panTimelineViewport', () => {
+    it('pans the viewport by a time delta and clamps to duration bounds', () => {
+      expect(panTimelineViewport(
+        { startMs: 8_000, endMs: 12_000 },
+        10_000,
+        4_000,
+      )).toEqual({
+        startMs: 6_000,
+        endMs: 10_000,
+      });
+    });
+  });
+
+  describe('buildTimelineBuckets', () => {
+    const bucketCues: TimedCue[] = [
+      { id: 'cue-a', startTimeMs: 1_000, endTimeMs: 2_000 },
+      { id: 'cue-b', startTimeMs: 18_000, endTimeMs: 19_000 },
+      { id: 'cue-c', startTimeMs: 34_000, endTimeMs: 36_000 },
+    ];
+
+    it('builds overview buckets across the full visible duration', () => {
+      const buckets: TimelineBucket[] = buildTimelineBuckets(bucketCues, {
+        viewport: { startMs: 0, endMs: 50_000 },
+        durationMs: 50_000,
+        timelineWidthPx: 600,
+        minBucketWidthPx: 120,
+        exactCueMaxViewportSpanMs: 8_000,
+      });
+
+      expect(buckets).toHaveLength(5);
+      expect(buckets.map((bucket) => bucket.cueCount)).toEqual([1, 1, 0, 1, 0]);
+      expect(buckets[2]).toMatchObject({
+        isGap: true,
+        representativeCue: null,
+        exactCue: null,
+      });
+      expect(buckets[0]?.representativeCue?.id).toBe('cue-a');
+    });
+
+    it('builds exact cue and gap buckets when the viewport is precise enough', () => {
+      const buckets = buildTimelineBuckets(bucketCues, {
+        viewport: { startMs: 16_000, endMs: 22_000 },
+        durationMs: 50_000,
+        timelineWidthPx: 600,
+        minBucketWidthPx: 120,
+        exactCueMaxViewportSpanMs: 8_000,
+      });
+
+      expect(buckets.map((bucket) => ({
+        cue: bucket.exactCue?.id ?? null,
+        isGap: bucket.isGap,
+      }))).toEqual([
+        { cue: null, isGap: true },
+        { cue: 'cue-b', isGap: false },
+        { cue: null, isGap: true },
+      ]);
+    });
+
+    it('uses the cue nearest the bucket center as the representative cue', () => {
+      const buckets = buildTimelineBuckets([
+        { id: 'early', startTimeMs: 1_000, endTimeMs: 1_500 },
+        { id: 'near-center', startTimeMs: 8_000, endTimeMs: 9_000 },
+      ], {
+        viewport: { startMs: 0, endMs: 10_000 },
+        durationMs: 10_000,
+        timelineWidthPx: 140,
+        minBucketWidthPx: 120,
+        exactCueMaxViewportSpanMs: 1_000,
+      });
+
+      expect(buckets).toHaveLength(1);
+      expect(buckets[0]?.representativeCue?.id).toBe('near-center');
     });
   });
 });

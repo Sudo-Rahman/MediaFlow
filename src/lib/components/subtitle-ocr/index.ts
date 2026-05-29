@@ -1,4 +1,5 @@
 export { default as SubtitleOcrOptionsPanel } from './SubtitleOcrOptionsPanel.svelte';
+export { default as SubtitleOcrCueCard } from './SubtitleOcrCueCard.svelte';
 export { default as SubtitleOcrImportTracksDialog } from './SubtitleOcrImportTracksDialog.svelte';
 export { default as SubtitleOcrResultDialog } from './SubtitleOcrResultDialog.svelte';
 export { default as SubtitleOcrSidebar } from './SubtitleOcrSidebar.svelte';

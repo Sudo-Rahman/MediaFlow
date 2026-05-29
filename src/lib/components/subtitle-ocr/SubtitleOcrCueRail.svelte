@@ -31,6 +31,7 @@
   const SELECTED_CARD_WIDTH = 620;
   const NEIGHBOR_CARD_WIDTH = 420;
   const CARD_GAP = 18;
+  const CARD_SLOT_WIDTH = SELECTED_CARD_WIDTH + CARD_GAP;
   const OVERSCAN = 3;
 
   let viewport = $state<HTMLElement | null>(null);
@@ -48,19 +49,10 @@
 
   const selectedIndex = $derived(cues.findIndex((cue) => cue.id === selectedCueId));
 
-  const cardOffsets = $derived.by(() => {
-    const offsets = [0];
-    for (const cue of cues) {
-      offsets.push(offsets[offsets.length - 1] + getCueOuterWidth(cue, selectedCueId));
-    }
-
-    return offsets;
-  });
-
   const cueVirtualizer = createVirtualizer<HTMLElement, HTMLDivElement>({
     count: 0,
     getScrollElement: () => viewport,
-    estimateSize: () => NEIGHBOR_CARD_WIDTH + CARD_GAP,
+    estimateSize: () => CARD_SLOT_WIDTH,
     horizontal: true,
     overscan: OVERSCAN,
   });
@@ -68,19 +60,12 @@
   $effect(() => {
     const count = cues.length;
     const scrollElement = viewport;
-    const currentSelectedCueId = selectedCueId;
-    const currentCues = cues;
 
     untrack(() => {
       get(cueVirtualizer).setOptions({
         count,
         getScrollElement: () => scrollElement,
-        estimateSize: (index) => {
-          const cue = currentCues[index];
-          return cue
-            ? getCueOuterWidth(cue, currentSelectedCueId)
-            : NEIGHBOR_CARD_WIDTH + CARD_GAP;
-        },
+        estimateSize: () => CARD_SLOT_WIDTH,
         horizontal: true,
         overscan: OVERSCAN,
       });
@@ -128,12 +113,6 @@
     };
   });
 
-  function getCueOuterWidth(cue: SubtitleOcrCue, currentSelectedCueId: string | null): number {
-    const width = cue.id === currentSelectedCueId ? SELECTED_CARD_WIDTH : NEIGHBOR_CARD_WIDTH;
-
-    return width + CARD_GAP;
-  }
-
   function getCueBitmap(cue: SubtitleOcrCue): SubtitleOcrCueBitmap | null {
     const directBitmap = bitmapByCueId.get(cue.id);
     if (directBitmap) {
@@ -156,24 +135,7 @@
     }
 
     const safeOffset = Math.max(0, offset);
-    let low = 0;
-    let high = cues.length - 1;
-
-    while (low <= high) {
-      const mid = Math.floor((low + high) / 2);
-      const start = cardOffsets[mid] ?? 0;
-      const end = cardOffsets[mid + 1] ?? start;
-
-      if (safeOffset < start) {
-        high = mid - 1;
-      } else if (safeOffset >= end) {
-        low = mid + 1;
-      } else {
-        return mid;
-      }
-    }
-
-    return Math.min(cues.length - 1, Math.max(0, low));
+    return Math.min(cues.length - 1, Math.floor(safeOffset / CARD_SLOT_WIDTH));
   }
 
   function getVisibleViewportFromScroll(element: HTMLElement): { startMs: number; endMs: number } | null {
@@ -241,9 +203,11 @@
           {@const cue = cues[virtualCue.index]}
           {#if cue}
             {@const selected = cue.id === selectedCueId}
+            {@const cardWidth = selected ? SELECTED_CARD_WIDTH : NEIGHBOR_CARD_WIDTH}
+            {@const cardOffset = selected ? 0 : (SELECTED_CARD_WIDTH - NEIGHBOR_CARD_WIDTH) / 2}
             <div
               class="absolute top-4"
-              style={`width: ${selected ? SELECTED_CARD_WIDTH : NEIGHBOR_CARD_WIDTH}px; transform: translateX(${virtualCue.start}px);`}
+              style={`width: ${cardWidth}px; transform: translateX(${virtualCue.start + cardOffset}px);`}
             >
               <SubtitleOcrCueCard
                 {cue}

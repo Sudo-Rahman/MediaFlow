@@ -41,7 +41,8 @@
   }: SubtitleOcrCueCardProps = $props();
 
   const textAreaId = `${useId()}-subtitle-ocr-cue-text`;
-  const THUMBNAIL_URL_PATH = /^(?:https?:\/\/|data:|blob:|\/\/)/i;
+  const THUMBNAIL_URL_PATH = /^(?:[a-z][a-z\d+\-.]*:|\/\/)/i;
+  const canSelectCue = $derived(Boolean(cue && onSelectCue && !disabled));
   const confidencePercent = $derived(
     cue ? Math.max(0, Math.min(100, Math.round(cue.confidence * 100))) : 0,
   );
@@ -74,8 +75,8 @@
   }
 
   function handleSelect(): void {
-    if (cue) {
-      onSelectCue?.(cue.id);
+    if (cue && onSelectCue && !disabled) {
+      onSelectCue(cue.id);
     }
   }
 </script>
@@ -90,13 +91,16 @@
   aria-label={cue ? `Subtitle cue ${cueIndex !== undefined ? cueIndex + 1 : ''}`.trim() : 'No subtitle cue selected'}
   aria-current={selected ? 'true' : undefined}
 >
-  <div class="relative flex min-h-0 items-center justify-center overflow-hidden rounded-lg bg-zinc-950">
+  <div class={cn(
+    'relative flex min-h-0 items-center justify-center overflow-hidden rounded-lg bg-zinc-950',
+    mode === 'wide' && 'aspect-video min-h-28',
+  )}>
     <button
       type="button"
-      class="flex size-full min-h-0 items-center justify-center disabled:pointer-events-none"
+      class="flex size-full min-h-0 appearance-none items-center justify-center border-0 bg-transparent p-0 text-inherit disabled:pointer-events-none"
       aria-label="Select subtitle cue"
       onclick={handleSelect}
-      disabled={disabled || !cue || !onSelectCue}
+      disabled={!canSelectCue}
     >
       {#if bitmap?.thumbnailPath}
         <img
@@ -121,7 +125,7 @@
         class="absolute left-3 z-10 rounded-full bg-background/90"
         aria-label="Previous subtitle cue"
         onclick={onPreviousCue}
-        disabled={disabled}
+        disabled={disabled || !onPreviousCue}
       >
         <ChevronLeft class="size-5" aria-hidden="true" />
       </Button>
@@ -135,7 +139,7 @@
         class="absolute right-3 z-10 rounded-full bg-background/90"
         aria-label="Next subtitle cue"
         onclick={onNextCue}
-        disabled={disabled}
+        disabled={disabled || !onNextCue}
       >
         <ChevronRight class="size-5" aria-hidden="true" />
       </Button>
@@ -143,27 +147,27 @@
   </div>
 
   {#if cue}
-    <Item.Root variant="outline" size="sm" class={cn(selected && 'border-primary ring-2 ring-primary/20')}>
-      {#snippet child({ props })}
+    <div class="relative">
+      <Item.Root variant="outline" size="sm" class={cn(selected && 'border-primary ring-2 ring-primary/20')}>
+        <Item.Content>
+          <Item.Title>{formatTime(cue.startTimeMs)} - {formatTime(cue.endTimeMs)}</Item.Title>
+          <Item.Description class="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary">Confidence {confidencePercent}%</Badge>
+            <span>{cue.sourceCueIds.length} source cue{cue.sourceCueIds.length === 1 ? '' : 's'}</span>
+          </Item.Description>
+          <Progress value={confidencePercent} class="mt-2 h-1.5" />
+        </Item.Content>
+      </Item.Root>
+
+      {#if canSelectCue}
         <button
-          {...props}
           type="button"
-          class={cn(String(props.class ?? ''), 'text-left')}
+          class="absolute inset-0 cursor-pointer appearance-none rounded-2xl border border-transparent bg-transparent p-0 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 focus-visible:outline-none"
           aria-label="Select subtitle cue"
           onclick={handleSelect}
-          disabled={disabled || !onSelectCue}
-        >
-          <Item.Content>
-            <Item.Title>{formatTime(cue.startTimeMs)} - {formatTime(cue.endTimeMs)}</Item.Title>
-            <Item.Description class="flex flex-wrap items-center gap-2">
-              <Badge variant="secondary">Confidence {confidencePercent}%</Badge>
-              <span>{cue.sourceCueIds.length} source cue{cue.sourceCueIds.length === 1 ? '' : 's'}</span>
-            </Item.Description>
-            <Progress value={confidencePercent} class="mt-2 h-1.5" />
-          </Item.Content>
-        </button>
-      {/snippet}
-    </Item.Root>
+        ></button>
+      {/if}
+    </div>
 
     <Field.Field class="min-h-0">
       <Field.FieldLabel for={textAreaId}>Recognized text</Field.FieldLabel>

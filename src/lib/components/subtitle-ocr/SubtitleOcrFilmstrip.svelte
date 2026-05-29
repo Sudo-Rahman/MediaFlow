@@ -37,7 +37,7 @@
   const TILE_GAP = 10;
   const TILE_HEIGHT = 112;
   const TILE_OVERSCAN = 6;
-  const THUMBNAIL_URL_PATH = /^(?:https?:\/\/|data:|blob:|\/\/)/i;
+  const BITMAP_URL_PATH = /^(?:https?:\/\/|data:|blob:|\/\/)/i;
 
   let viewport = $state<HTMLElement | null>(null);
   let applyingViewportScroll = false;
@@ -169,8 +169,12 @@
     return null;
   }
 
-  function resolveThumbnailSrc(thumbnailPath: string): string {
-    return THUMBNAIL_URL_PATH.test(thumbnailPath) ? thumbnailPath : convertFileSrc(thumbnailPath);
+  function resolveBitmapSrc(bitmapPath: string): string {
+    return BITMAP_URL_PATH.test(bitmapPath) ? bitmapPath : convertFileSrc(bitmapPath);
+  }
+
+  function getReviewBitmapPath(bitmap: SubtitleOcrCueBitmap | null): string | undefined {
+    return bitmap?.previewPath ?? bitmap?.thumbnailPath;
   }
 
   function formatTime(ms: number): string {
@@ -304,9 +308,9 @@
               onclick={() => onSelectCue(cue.id)}
             >
               <span class="flex min-h-0 flex-1 items-center justify-center bg-zinc-950">
-                {#if bitmap?.thumbnailPath}
+                {#if getReviewBitmapPath(bitmap)}
                   <img
-                    src={resolveThumbnailSrc(bitmap.thumbnailPath)}
+                    src={resolveBitmapSrc(getReviewBitmapPath(bitmap) ?? '')}
                     alt={`Cue ${virtualTile.index + 1} thumbnail`}
                     loading="lazy"
                     class="max-h-full max-w-full object-contain"

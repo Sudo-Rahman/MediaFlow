@@ -17,6 +17,8 @@ use crate::tools::subtitle_ocr::{
 
 const THUMBNAIL_MAX_WIDTH: u32 = 360;
 const THUMBNAIL_MAX_HEIGHT: u32 = 180;
+const PREVIEW_MAX_WIDTH: u32 = 1920;
+const PREVIEW_MAX_HEIGHT: u32 = 1080;
 
 #[derive(Clone)]
 struct PipelineProgress {
@@ -125,12 +127,10 @@ fn run_subtitle_ocr_pipeline_blocking(
     decode_bitmap_subtitle_source_with_handler(source, item_id, run_id, |mut decoded| {
         ensure_not_cancelled(item_id, run_id)?;
         decoded_count = decoded_count.saturating_add(1);
-        decoded.metadata.thumbnail_path = Some(write_decoded_thumbnail(
-            item_id,
-            run_id,
-            &decoded.metadata,
-            &decoded.rgba,
-        )?);
+        let bitmap_assets =
+            write_decoded_bitmap_assets(item_id, run_id, &decoded.metadata, &decoded.rgba)?;
+        decoded.metadata.thumbnail_path = Some(bitmap_assets.thumbnail_path);
+        decoded.metadata.preview_path = Some(bitmap_assets.preview_path);
         let metadata = decoded.metadata.clone();
         let raw_cue = ocr_decoded_bitmap(&engine, decoded)?;
         if !raw_cue.text.trim().is_empty() {
@@ -184,42 +184,87 @@ fn ensure_not_cancelled(item_id: &str, run_id: &str) -> Result<(), String> {
     }
 }
 
-fn write_decoded_thumbnail(
+struct DecodedBitmapAssetPaths {
+    thumbnail_path: String,
+    preview_path: String,
+}
+
+fn write_decoded_bitmap_assets(
     item_id: &str,
     run_id: &str,
     metadata: &SubtitleOcrDecodedCue,
     rgba: &[u8],
-) -> Result<String, String> {
+) -> Result<DecodedBitmapAssetPaths, String> {
     let image =
         RgbaImage::from_raw(metadata.width, metadata.height, rgba.to_vec()).ok_or_else(|| {
             "Decoded Subtitle OCR bitmap dimensions did not match RGBA data".to_string()
         })?;
     let image = DynamicImage::ImageRgba8(image);
-    let thumbnail = image.resize(
+
+    let thumbnail_path = write_resized_bitmap_asset(
+        item_id,
+        run_id,
+        metadata,
+        &image,
         THUMBNAIL_MAX_WIDTH,
         THUMBNAIL_MAX_HEIGHT,
-        FilterType::Triangle,
-    );
-    let output_dir = subtitle_ocr_thumbnail_dir(item_id, run_id);
-    std::fs::create_dir_all(&output_dir)
-        .map_err(|e| format!("Failed to create Subtitle OCR thumbnail directory: {}", e))?;
+        "thumbnails",
+    )?;
+    let preview_path = write_resized_bitmap_asset(
+        item_id,
+        run_id,
+        metadata,
+        &image,
+        PREVIEW_MAX_WIDTH,
+        PREVIEW_MAX_HEIGHT,
+        "previews",
+    )?;
+
+    Ok(DecodedBitmapAssetPaths {
+        thumbnail_path,
+        preview_path,
+    })
+}
+
+fn write_resized_bitmap_asset(
+    item_id: &str,
+    run_id: &str,
+    metadata: &SubtitleOcrDecodedCue,
+    image: &DynamicImage,
+    max_width: u32,
+    max_height: u32,
+    variant: &str,
+) -> Result<String, String> {
+    let resized = if image.width() > max_width || image.height() > max_height {
+        image.resize(max_width, max_height, FilterType::Triangle)
+    } else {
+        image.clone()
+    };
+    let output_dir = subtitle_ocr_bitmap_asset_dir(item_id, run_id, variant);
+    std::fs::create_dir_all(&output_dir).map_err(|e| {
+        format!(
+            "Failed to create Subtitle OCR bitmap asset directory: {}",
+            e
+        )
+    })?;
     let output_path = output_dir.join(format!(
         "{}.png",
         safe_thumbnail_path_component(&metadata.cache_key)
     ));
-    thumbnail
+    resized
         .save(&output_path)
-        .map_err(|e| format!("Failed to write Subtitle OCR thumbnail: {}", e))?;
+        .map_err(|e| format!("Failed to write Subtitle OCR bitmap asset: {}", e))?;
 
     Ok(output_path.to_string_lossy().to_string())
 }
 
-fn subtitle_ocr_thumbnail_dir(item_id: &str, run_id: &str) -> PathBuf {
+fn subtitle_ocr_bitmap_asset_dir(item_id: &str, run_id: &str, variant: &str) -> PathBuf {
     std::env::temp_dir()
         .join("MediaFlow")
         .join("subtitle-ocr")
         .join(safe_thumbnail_path_component(item_id))
         .join(safe_thumbnail_path_component(run_id))
+        .join(safe_thumbnail_path_component(variant))
 }
 
 fn safe_thumbnail_path_component(value: &str) -> String {
@@ -292,7 +337,7 @@ fn average_confidence(boxes: &[SubtitleOcrBox]) -> f64 {
 mod tests {
     use super::{
         THUMBNAIL_MAX_HEIGHT, THUMBNAIL_MAX_WIDTH, safe_thumbnail_path_component,
-        subtitle_ocr_thumbnail_dir, write_decoded_thumbnail,
+        subtitle_ocr_bitmap_asset_dir, write_decoded_bitmap_assets,
     };
     use crate::tools::subtitle_ocr::SubtitleOcrDecodedCue;
 
@@ -306,19 +351,20 @@ mod tests {
     }
 
     #[test]
-    fn subtitle_ocr_thumbnail_dir_stays_under_mediaflow_temp_namespace() {
-        let dir = subtitle_ocr_thumbnail_dir("../item", "run/id");
+    fn subtitle_ocr_bitmap_asset_dir_stays_under_mediaflow_temp_namespace() {
+        let dir = subtitle_ocr_bitmap_asset_dir("../item", "run/id", "previews");
         let path = dir.to_string_lossy();
 
         assert!(path.contains("MediaFlow"));
         assert!(path.contains("subtitle-ocr"));
         assert!(path.contains("item"));
         assert!(path.contains("run_id"));
+        assert!(path.contains("previews"));
         assert!(!path.contains("../"));
     }
 
     #[test]
-    fn write_decoded_thumbnail_populates_a_small_png_under_temp_dir() {
+    fn write_decoded_bitmap_assets_populates_timeline_and_preview_pngs_under_temp_dir() {
         let metadata = SubtitleOcrDecodedCue {
             cue_id: "cue-1".to_string(),
             start_time_ms: 0,
@@ -327,19 +373,26 @@ mod tests {
             height: 360,
             cache_key: "subtitle-ocr:test/cache".to_string(),
             thumbnail_path: None,
+            preview_path: None,
         };
         let rgba = vec![255; (metadata.width * metadata.height * 4) as usize];
 
-        let path = write_decoded_thumbnail("item/1", "run:1", &metadata, &rgba)
-            .expect("thumbnail should be written");
+        let assets = write_decoded_bitmap_assets("item/1", "run:1", &metadata, &rgba)
+            .expect("bitmap assets should be written");
+        let path = assets.thumbnail_path;
         let thumbnail = image::open(&path).expect("thumbnail should be readable");
+        let preview = image::open(&assets.preview_path).expect("preview should be readable");
 
         assert!(path.contains("MediaFlow"));
         assert!(path.contains("subtitle-ocr"));
         assert!(std::path::Path::new(&path).is_file());
+        assert!(std::path::Path::new(&assets.preview_path).is_file());
         assert!(thumbnail.width() <= THUMBNAIL_MAX_WIDTH);
         assert!(thumbnail.height() <= THUMBNAIL_MAX_HEIGHT);
+        assert_eq!(preview.width(), metadata.width);
+        assert_eq!(preview.height(), metadata.height);
 
         let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(assets.preview_path);
     }
 }

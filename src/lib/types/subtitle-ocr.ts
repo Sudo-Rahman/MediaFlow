@@ -48,6 +48,7 @@ export interface SubtitleOcrCueBitmap {
   height: number;
   cacheKey?: string;
   thumbnailPath?: string;
+  previewPath?: string;
 }
 
 export interface SubtitleOcrRawBox {

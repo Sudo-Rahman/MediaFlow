@@ -41,14 +41,15 @@
   }: SubtitleOcrCueCardProps = $props();
 
   const textAreaId = `${useId()}-subtitle-ocr-cue-text`;
-  const THUMBNAIL_URL_PATH = /^(?:[a-z][a-z\d+\-.]*:|\/\/)/i;
+  const BITMAP_URL_PATH = /^(?:[a-z][a-z\d+\-.]*:|\/\/)/i;
   const canSelectCue = $derived(Boolean(cue && onSelectCue && !disabled));
+  const bitmapImagePath = $derived(bitmap?.previewPath ?? bitmap?.thumbnailPath);
   const confidencePercent = $derived(
     cue ? Math.max(0, Math.min(100, Math.round(cue.confidence * 100))) : 0,
   );
 
-  function resolveThumbnailSrc(thumbnailPath: string): string {
-    return THUMBNAIL_URL_PATH.test(thumbnailPath) ? thumbnailPath : convertFileSrc(thumbnailPath);
+  function resolveBitmapSrc(bitmapPath: string): string {
+    return BITMAP_URL_PATH.test(bitmapPath) ? bitmapPath : convertFileSrc(bitmapPath);
   }
 
   function formatTime(ms: number): string {
@@ -102,9 +103,9 @@
       onclick={handleSelect}
       disabled={!canSelectCue}
     >
-      {#if bitmap?.thumbnailPath}
+      {#if bitmapImagePath}
         <img
-          src={resolveThumbnailSrc(bitmap.thumbnailPath)}
+          src={resolveBitmapSrc(bitmapImagePath)}
           alt={cueIndex !== undefined ? `Cue ${cueIndex + 1} bitmap` : 'Selected cue bitmap'}
           loading={selected || mode === 'compact' ? 'eager' : 'lazy'}
           class="max-h-full max-w-full object-contain"

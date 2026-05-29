@@ -430,6 +430,7 @@ fn decoded_frame_to_cue(
             height,
             cache_key,
             thumbnail_path: None,
+            preview_path: None,
         },
         rgba: plane.data,
     })
@@ -524,6 +525,7 @@ mod tests {
                 height: 2,
                 cache_key: format!("cache-{cue_id}"),
                 thumbnail_path: None,
+                preview_path: None,
             },
             rgba: Vec::new(),
         }

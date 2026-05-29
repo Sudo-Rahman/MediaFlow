@@ -184,6 +184,7 @@ describe('buildSubtitleOcrDraftVersionInput', () => {
       height: 120,
       cacheKey: 'bitmap-cache',
       thumbnailPath: '/tmp/thumb.png',
+      previewPath: '/tmp/preview.png',
     }];
     activeVersion.rawOcr = [{
       cueId: 'raw-1',

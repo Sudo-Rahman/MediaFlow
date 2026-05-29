@@ -201,6 +201,49 @@ describe('subtitle OCR review state', () => {
       ]);
     });
 
+    it('keeps exact gaps monotonic for overlapping and contained cues', () => {
+      const buckets = buildTimelineBuckets([
+        { id: 'outer', startTimeMs: 1_000, endTimeMs: 6_000 },
+        { id: 'contained', startTimeMs: 2_000, endTimeMs: 3_000 },
+        { id: 'after', startTimeMs: 7_000, endTimeMs: 8_000 },
+      ], {
+        viewport: { startMs: 0, endMs: 10_000 },
+        durationMs: 10_000,
+        timelineWidthPx: 600,
+        exactCueMaxViewportSpanMs: 12_000,
+      });
+
+      expect(buckets.filter((bucket) => bucket.isGap).map((bucket) => ({
+        startMs: bucket.startMs,
+        endMs: bucket.endMs,
+      }))).toEqual([
+        { startMs: 0, endMs: 1_000 },
+        { startMs: 6_000, endMs: 7_000 },
+        { startMs: 8_000, endMs: 10_000 },
+      ]);
+    });
+
+    it('skips zero-length exact cues without emitting duplicate gaps', () => {
+      const buckets = buildTimelineBuckets([
+        { id: 'before', startTimeMs: 1_000, endTimeMs: 2_000 },
+        { id: 'zero', startTimeMs: 2_500, endTimeMs: 2_500 },
+        { id: 'after', startTimeMs: 3_000, endTimeMs: 4_000 },
+      ], {
+        viewport: { startMs: 0, endMs: 5_000 },
+        durationMs: 5_000,
+        timelineWidthPx: 600,
+        exactCueMaxViewportSpanMs: 12_000,
+      });
+
+      expect(buckets.map((bucket) => bucket.id)).toEqual([
+        'gap:0-1000',
+        'cue:before:1000-2000',
+        'gap:2000-3000',
+        'cue:after:3000-4000',
+        'gap:4000-5000',
+      ]);
+    });
+
     it('uses the cue nearest the bucket center as the representative cue', () => {
       const buckets = buildTimelineBuckets([
         { id: 'early', startTimeMs: 1_000, endTimeMs: 1_500 },
@@ -225,7 +268,7 @@ describe('subtitle OCR review state', () => {
       const options: BuildTimelineBucketsOptions = {
         viewport: { startMs: 0, endMs: 50_000 },
         durationMs: 50_000,
-        timelineWidthPx: 240,
+        timelineWidthPx: 256,
       };
       const buckets: TimelineBucket<ReviewedTimedCue>[] = buildTimelineBuckets(reviewedCues, options);
 
@@ -234,6 +277,55 @@ describe('subtitle OCR review state', () => {
         'overview:25000-50000',
       ]);
       expect(buckets[0]?.representativeCue?.text).toBe('Second cue');
+    });
+
+    it('bounds overview buckets for invalid dimensions, empty cues, and clamped viewports', () => {
+      const buckets = buildTimelineBuckets([], {
+        viewport: { startMs: 100_000, endMs: 250_000 },
+        durationMs: 100_000,
+        timelineWidthPx: 100_000,
+        minBucketWidthPx: 0,
+        exactCueMaxViewportSpanMs: 1,
+      });
+
+      expect(buckets).toHaveLength(80);
+      expect(buckets.every((bucket) => bucket.isGap)).toBe(true);
+      expect(buckets.at(0)).toMatchObject({
+        id: 'overview:0-1250',
+        startMs: 0,
+        endMs: 1_250,
+        cueCount: 0,
+        representativeCue: null,
+        exactCue: null,
+      });
+      expect(buckets.at(-1)).toMatchObject({
+        id: 'overview:98750-100000',
+        startMs: 98_750,
+        endMs: 100_000,
+      });
+    });
+
+    it('lower-bounds tiny overview bucket widths', () => {
+      const buckets = buildTimelineBuckets([], {
+        viewport: { startMs: 0, endMs: 96_000 },
+        durationMs: 96_000,
+        timelineWidthPx: 96,
+        minBucketWidthPx: 1,
+        exactCueMaxViewportSpanMs: 1,
+      });
+
+      expect(buckets.map((bucket) => bucket.id)).toEqual([
+        'overview:0-48000',
+        'overview:48000-96000',
+      ]);
+    });
+
+    it('returns no buckets for zero-duration media', () => {
+      expect(buildTimelineBuckets(bucketCues, {
+        viewport: { startMs: 0, endMs: 10_000 },
+        durationMs: 0,
+        timelineWidthPx: 600,
+      })).toEqual([]);
     });
   });
 });

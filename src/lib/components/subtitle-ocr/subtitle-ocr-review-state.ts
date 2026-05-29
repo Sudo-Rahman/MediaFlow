@@ -46,8 +46,10 @@ export const DEFAULT_TIMELINE_MIN_SPAN_MS = 1_000;
 const DEFAULT_TILE_MIN_WIDTH = 112;
 const DEFAULT_TILE_MAX_WIDTH = 280;
 const DEFAULT_TILE_PIXELS_PER_SECOND = 52;
-const DEFAULT_TIMELINE_BUCKET_WIDTH_PX = 120;
-const DEFAULT_EXACT_CUE_MAX_VIEWPORT_SPAN_MS = 8_000;
+const DEFAULT_TIMELINE_MIN_BUCKET_WIDTH_PX = 128;
+const MIN_TIMELINE_BUCKET_WIDTH_PX = 48;
+const DEFAULT_TIMELINE_MAX_BUCKET_COUNT = 80;
+const DEFAULT_EXACT_CUE_MAX_VIEWPORT_SPAN_MS = 12_000;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -295,6 +297,10 @@ export function buildTimelineBuckets<TCue extends TimedCue>(
       const cueStartMs = clamp(normalizeTime(cue.startTimeMs), viewport.startMs, viewport.endMs);
       const cueEndMs = clamp(Math.max(cueStartMs, normalizeTime(cue.endTimeMs)), viewport.startMs, viewport.endMs);
 
+      if (cueStartMs >= cueEndMs) {
+        continue;
+      }
+
       if (cursorMs < cueStartMs) {
         buckets.push({
           id: `gap:${cursorMs}-${cueStartMs}`,
@@ -317,7 +323,7 @@ export function buildTimelineBuckets<TCue extends TimedCue>(
           exactCue: cue,
           isGap: false,
         });
-        cursorMs = cueEndMs;
+        cursorMs = Math.max(cursorMs, cueEndMs);
       }
     }
 
@@ -338,10 +344,14 @@ export function buildTimelineBuckets<TCue extends TimedCue>(
 
   const safeTimelineWidthPx = Math.max(1, normalizeTime(options.timelineWidthPx));
   const safeMinBucketWidthPx = Math.max(
-    1,
-    normalizeTime(options.minBucketWidthPx ?? DEFAULT_TIMELINE_BUCKET_WIDTH_PX),
+    MIN_TIMELINE_BUCKET_WIDTH_PX,
+    normalizeTime(options.minBucketWidthPx ?? DEFAULT_TIMELINE_MIN_BUCKET_WIDTH_PX),
   );
-  const bucketCount = Math.max(1, Math.floor(safeTimelineWidthPx / safeMinBucketWidthPx));
+  const bucketCount = clamp(
+    Math.max(1, Math.floor(safeTimelineWidthPx / safeMinBucketWidthPx)),
+    1,
+    DEFAULT_TIMELINE_MAX_BUCKET_COUNT,
+  );
   const bucketSpanMs = viewportSpanMs / bucketCount;
 
   return Array.from({ length: bucketCount }, (_, index): TimelineBucket<TCue> => {

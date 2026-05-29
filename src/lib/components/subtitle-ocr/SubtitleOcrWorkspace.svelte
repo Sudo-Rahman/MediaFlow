@@ -11,6 +11,7 @@
     SubtitleOcrVersion,
   } from '$lib/types';
   import { buildSubtitleOcrSourceLabel } from '$lib/types';
+  import { cn } from '$lib/utils';
   import {
     centerTimelineViewport,
     clampTimelineViewport,
@@ -37,6 +38,8 @@
 
   type ViewportChangeSource = 'rail' | 'timeline';
   type ActiveViewportSource = ViewportChangeSource | 'selection' | null;
+  const REVIEW_HEADER_DETAILS_MIN_WIDTH_PX = 620;
+  const VERSION_SELECTOR_COMPACT_WIDTH_PX = 520;
 
   let {
     item,
@@ -84,6 +87,12 @@
   const selectedCueIndex = $derived(
     selectedCue ? renderedCues.findIndex((cue) => cue.id === selectedCue.id) : -1,
   );
+  const subtitleOcrReviewStats = $derived(
+    `${renderedCues.length} cue${renderedCues.length === 1 ? '' : 's'} · ${formatTime(durationMs)}`,
+  );
+  const compactVersionSelector = $derived(isNarrowMeasuredWidth(centerWidthPx, VERSION_SELECTOR_COMPACT_WIDTH_PX));
+  const hideReviewModeDetails = $derived(isNarrowMeasuredWidth(centerWidthPx, REVIEW_HEADER_DETAILS_MIN_WIDTH_PX));
+  const hideVersionIcon = $derived(compactVersionSelector);
   const canSelectPreviousCue = $derived(selectedCueIndex > 0);
   const canSelectNextCue = $derived(selectedCueIndex >= 0 && selectedCueIndex < renderedCues.length - 1);
 
@@ -275,6 +284,10 @@
     }
   }
 
+  function isNarrowMeasuredWidth(widthPx: number, thresholdPx: number): boolean {
+    return widthPx > 0 && widthPx < thresholdPx;
+  }
+
   function handleCueTextChange(cueId: string, text: string): void {
     if (item) {
       onCueTextChange(item.id, cueId, text);
@@ -311,24 +324,39 @@
   </Empty>
 {:else}
   <div class="flex h-full min-h-0 flex-col">
-    <header class="flex shrink-0 flex-col gap-3 border-b px-4 py-3 md:flex-row md:items-center md:justify-between">
-      <div class="min-w-0">
+    <header class="flex min-w-0 shrink-0 items-center gap-3 border-b px-4 py-3">
+      <div class="min-w-0 flex-1">
         <div class="flex min-w-0 items-center gap-2">
           <ScanText class="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <h2 class="truncate text-base font-semibold">{item.displayName}</h2>
-          <Badge variant="secondary" class="shrink-0">
-            {getVersionModeLabel(reviewVersion)}
-          </Badge>
+          <h2 class="min-w-0 truncate text-base font-semibold">{item.displayName}</h2>
+          <span
+            class={cn(
+              'inline-flex shrink-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-200 ease-out motion-reduce:transition-none',
+              hideReviewModeDetails ? 'max-w-0 -translate-y-0.5 opacity-0' : 'max-w-24 translate-y-0 opacity-100',
+            )}
+          >
+            <Badge variant="secondary">
+              {getVersionModeLabel(reviewVersion)}
+            </Badge>
+          </span>
           {#if item.draft?.dirty}
             <Badge variant="outline" class="shrink-0">Draft edits</Badge>
           {/if}
         </div>
-        <p class="mt-1 truncate text-xs text-muted-foreground" title={buildSubtitleOcrSourceLabel(item)}>
-          {buildSubtitleOcrSourceLabel(item)} · {renderedCues.length} cue{renderedCues.length === 1 ? '' : 's'} · {formatTime(durationMs)}
+        <p class="mt-1 min-w-0 truncate text-xs text-muted-foreground" title={`${buildSubtitleOcrSourceLabel(item)} · ${subtitleOcrReviewStats}`}>
+          <span>{buildSubtitleOcrSourceLabel(item)}</span>
+          <span
+            class={cn(
+              'inline-block overflow-hidden whitespace-nowrap align-bottom transition-[max-width,opacity,transform] duration-200 ease-out motion-reduce:transition-none',
+              hideReviewModeDetails ? 'max-w-0 -translate-y-0.5 opacity-0' : 'max-w-48 translate-y-0 opacity-100',
+            )}
+          >
+            · {subtitleOcrReviewStats}
+          </span>
         </p>
       </div>
 
-      <div class="flex shrink-0 items-center gap-2">
+      <div class="flex shrink-0 items-center gap-1.5">
         {#if item.draft?.dirty}
           <Button
             type="button"
@@ -341,10 +369,18 @@
             Save Draft Version
           </Button>
         {/if}
-        <Layers class="size-4 text-muted-foreground" aria-hidden="true" />
+        <span
+          class={cn(
+            'inline-flex shrink-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-200 ease-out motion-reduce:transition-none',
+            hideVersionIcon ? 'max-w-0 -translate-y-0.5 opacity-0' : 'max-w-4 translate-y-0 opacity-100',
+          )}
+        >
+          <Layers class="size-4 text-muted-foreground" aria-hidden="true" />
+        </span>
         <SubtitleOcrVersionSelector
           versions={item.versions}
           activeVersionId={reviewVersion.id}
+          compact={compactVersionSelector}
           onSelectVersion={handleSelectVersion}
         />
       </div>

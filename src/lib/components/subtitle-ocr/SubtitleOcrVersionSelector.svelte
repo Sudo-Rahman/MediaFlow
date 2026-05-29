@@ -3,16 +3,19 @@
 
   import * as Select from '$lib/components/ui/select';
   import type { SubtitleOcrVersion } from '$lib/types';
+  import { cn } from '$lib/utils';
 
   interface SubtitleOcrVersionSelectorProps {
     versions: SubtitleOcrVersion[];
     activeVersionId: string | null;
+    compact?: boolean;
     onSelectVersion: (versionId: string) => void;
   }
 
   let {
     versions,
     activeVersionId,
+    compact = false,
     onSelectVersion,
   }: SubtitleOcrVersionSelectorProps = $props();
 
@@ -27,6 +30,12 @@
   const activeVersionLabel = $derived(
     versions.find((version) => version.id === activeVersionId)?.name ?? 'Select version',
   );
+  const activeCompactVersionLabel = $derived(toCompactVersionLabel(activeVersionLabel));
+  const triggerClass = $derived(cn(
+    'max-w-full overflow-hidden transition-[width,background-color,box-shadow] duration-200 ease-out motion-reduce:transition-none',
+    compact ? 'w-20' : 'w-28',
+  ));
+  const triggerLabel = $derived(compact ? activeCompactVersionLabel : activeVersionLabel);
 
   function getVersionModeLabel(version: SubtitleOcrVersion): string {
     return version.mode === 'ai_cleanup_only' ? 'AI cleanup' : 'Full OCR';
@@ -39,6 +48,11 @@
     }
 
     return dateFormatter.format(new Date(timestamp));
+  }
+
+  function toCompactVersionLabel(label: string): string {
+    const match = /^Version\s+(.+)$/i.exec(label.trim());
+    return match ? `V${match[1]}` : label;
   }
 
   function handleValueChange(versionId: string): void {
@@ -54,8 +68,15 @@
   onValueChange={handleValueChange}
   disabled={versions.length === 0}
 >
-  <Select.Trigger id={selectId} class="w-56 max-w-full" aria-label="Subtitle OCR version">
-    {activeVersionLabel}
+  <Select.Trigger
+    id={selectId}
+    size="sm"
+    class={triggerClass}
+    aria-label="Subtitle OCR version"
+  >
+    <span class="min-w-0 flex-1 truncate text-left">
+      {triggerLabel}
+    </span>
   </Select.Trigger>
   <Select.Content>
     <Select.Group>

@@ -4,6 +4,7 @@ export { default as SubtitleOcrImportTracksDialog } from './SubtitleOcrImportTra
 export { default as SubtitleOcrResultDialog } from './SubtitleOcrResultDialog.svelte';
 export { default as SubtitleOcrSidebar } from './SubtitleOcrSidebar.svelte';
 export { default as SubtitleOcrBasket } from './SubtitleOcrBasket.svelte';
+export { default as SubtitleOcrCueRail } from './SubtitleOcrCueRail.svelte';
 export { default as SubtitleOcrFilmstrip } from './SubtitleOcrFilmstrip.svelte';
 export { default as SubtitleOcrTimeline } from './SubtitleOcrTimeline.svelte';
 export { default as SubtitleOcrVersionSelector } from './SubtitleOcrVersionSelector.svelte';

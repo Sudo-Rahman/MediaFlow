@@ -221,6 +221,13 @@ describe('subtitle OCR review state', () => {
         { startMs: 6_000, endMs: 7_000 },
         { startMs: 8_000, endMs: 10_000 },
       ]);
+      expect(buckets.map((bucket) => [bucket.startMs, bucket.endMs])).toEqual([
+        [0, 1_000],
+        [1_000, 6_000],
+        [6_000, 7_000],
+        [7_000, 8_000],
+        [8_000, 10_000],
+      ]);
     });
 
     it('skips zero-length exact cues without emitting duplicate gaps', () => {

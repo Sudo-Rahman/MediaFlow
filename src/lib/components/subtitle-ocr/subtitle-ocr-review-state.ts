@@ -297,7 +297,7 @@ export function buildTimelineBuckets<TCue extends TimedCue>(
       const cueStartMs = clamp(normalizeTime(cue.startTimeMs), viewport.startMs, viewport.endMs);
       const cueEndMs = clamp(Math.max(cueStartMs, normalizeTime(cue.endTimeMs)), viewport.startMs, viewport.endMs);
 
-      if (cueStartMs >= cueEndMs) {
+      if (cueStartMs >= cueEndMs || cueEndMs <= cursorMs) {
         continue;
       }
 
@@ -313,18 +313,17 @@ export function buildTimelineBuckets<TCue extends TimedCue>(
         });
       }
 
-      if (cueStartMs < cueEndMs) {
-        buckets.push({
-          id: `cue:${cue.id}:${cueStartMs}-${cueEndMs}`,
-          startMs: cueStartMs,
-          endMs: cueEndMs,
-          cueCount: 1,
-          representativeCue: cue,
-          exactCue: cue,
-          isGap: false,
-        });
-        cursorMs = Math.max(cursorMs, cueEndMs);
-      }
+      const bucketStartMs = Math.max(cursorMs, cueStartMs);
+      buckets.push({
+        id: `cue:${cue.id}:${bucketStartMs}-${cueEndMs}`,
+        startMs: bucketStartMs,
+        endMs: cueEndMs,
+        cueCount: 1,
+        representativeCue: cue,
+        exactCue: cue,
+        isGap: false,
+      });
+      cursorMs = cueEndMs;
     }
 
     if (cursorMs < viewport.endMs) {

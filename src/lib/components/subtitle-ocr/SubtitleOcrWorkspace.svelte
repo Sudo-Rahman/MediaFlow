@@ -69,6 +69,7 @@
   const selectedCue = $derived(
     renderedCues.find((cue) => cue.id === selectedCueId) ?? renderedCues[0] ?? null,
   );
+  const effectiveSelectedCueId = $derived(selectedCue?.id ?? null);
   const activeVersionId = $derived(reviewVersion?.id ?? item?.activeVersionId ?? null);
   const reviewMode: SubtitleOcrReviewMode = $derived(resolveSubtitleOcrReviewMode(centerWidthPx));
   const bitmapByCueId = $derived.by(() => {
@@ -354,7 +355,7 @@
         <SubtitleOcrCueRail
           cues={renderedCues}
           {bitmaps}
-          {selectedCueId}
+          selectedCueId={effectiveSelectedCueId}
           {viewportStartMs}
           {viewportEndMs}
           viewportSource={activeViewportSource}
@@ -371,7 +372,7 @@
             durationMs={durationMs}
             viewportStartMs={viewportStartMs}
             viewportEndMs={viewportEndMs}
-            {selectedCueId}
+            selectedCueId={effectiveSelectedCueId}
             selectedCueStartMs={selectedCue?.startTimeMs}
             onSelectCue={(cueId) => handleSelectCue(cueId, 'timeline')}
             onViewportChange={handleViewportChange}

@@ -136,10 +136,6 @@
   }
 
   function getSelectedMarkerPercent(): number | null {
-    if (selectedCueId !== null) {
-      return null;
-    }
-
     if (selectedCueStartMs === undefined || viewportSpanMs <= 0) {
       return null;
     }

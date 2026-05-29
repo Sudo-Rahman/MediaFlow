@@ -283,6 +283,53 @@ describe('subtitleOcrStore', () => {
     expect([...subtitleOcrStore.processingScopeItemIds]).toEqual(['a', 'b']);
   });
 
+  it('derives overall progress from streamed OCR bitmap progress', () => {
+    subtitleOcrStore.addItems([source('a')]);
+    subtitleOcrStore.setProgress('a', {
+      phase: 'ocr',
+      current: 27,
+      total: 373,
+      percentage: 7,
+    });
+
+    expect(subtitleOcrStore.selectedItem?.progress).toMatchObject({
+      phase: 'ocr',
+      current: 27,
+      total: 373,
+      percentage: 7,
+      overallPercentage: 25,
+    });
+  });
+
+  it('keeps subtitle OCR progress monotonic within and across phases', () => {
+    subtitleOcrStore.addItems([source('a')]);
+    subtitleOcrStore.setProgress('a', {
+      phase: 'ocr',
+      current: 50,
+      total: 100,
+      percentage: 50,
+    });
+    subtitleOcrStore.setProgress('a', {
+      phase: 'ocr',
+      current: 10,
+      total: 100,
+      percentage: 10,
+    });
+    subtitleOcrStore.setProgress('a', {
+      phase: 'decoding',
+      current: 1,
+      total: 1,
+      percentage: 100,
+    });
+
+    expect(subtitleOcrStore.selectedItem?.progress).toMatchObject({
+      phase: 'ocr',
+      current: 50,
+      percentage: 50,
+      overallPercentage: 58,
+    });
+  });
+
   it('removes items and moves selection to the next available item', () => {
     subtitleOcrStore.addItems([source('a'), source('b'), source('c')]);
     subtitleOcrStore.selectItem('b');
@@ -323,7 +370,6 @@ describe('subtitleOcrStore', () => {
         current: 1,
         total: 2,
         percentage: 50,
-        message: 'Decoding',
       },
       ocrModelOverride: 'latin',
     });

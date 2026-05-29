@@ -239,7 +239,9 @@
         doneUnits += 1;
         settledCount += 1;
       } else if (subtitleOcrStore.isProcessing) {
-        doneUnits += clampPercentage(item.progress?.percentage ?? 0) / 100;
+        doneUnits += clampPercentage(
+          item.progress?.overallPercentage ?? item.progress?.percentage ?? 0,
+        ) / 100;
       } else {
         doneUnits += 1;
         settledCount += 1;

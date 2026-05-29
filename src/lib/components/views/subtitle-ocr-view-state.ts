@@ -127,6 +127,13 @@ export function resolveSubtitleOcrEffectiveModelForConfig(
   return getSubtitleOcrEffectiveModel(item, config.ocrModel);
 }
 
+export function resolveSubtitleOcrExpectedBitmapCount(
+  activeVersion: Pick<SubtitleOcrVersion, 'bitmaps'> | null | undefined,
+): number | undefined {
+  const count = activeVersion?.bitmaps.length ?? 0;
+  return count > 0 ? count : undefined;
+}
+
 export function buildSubtitleOcrDraftVersionInput(
   item: SubtitleOcrSourceItem,
   activeVersion: SubtitleOcrVersion,

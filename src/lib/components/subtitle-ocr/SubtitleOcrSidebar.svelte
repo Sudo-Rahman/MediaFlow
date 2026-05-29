@@ -96,26 +96,30 @@
   }
 
   function getProgressLabel(item: SubtitleOcrSourceItem): string {
-    if (item.progress?.message) {
-      return item.progress.message;
-    }
-
-    switch (item.progress?.phase) {
+    const progress = item.progress;
+    switch (progress?.phase) {
       case 'extracting':
-        return 'Extracting subtitle track...';
+        return 'Extracting';
       case 'decoding':
-        return 'Decoding subtitle bitmaps...';
+        return 'Decoding';
       case 'ocr':
-        return 'Running OCR...';
+        if (progress.totalKnown && progress.total > 0) {
+          return `OCR ${progress.current}/${progress.total} bitmaps`;
+        }
+
+        return progress.current > 0 ? `OCR ${progress.current} bitmaps` : 'OCR';
       case 'ai_cleaning':
-        return 'Cleaning subtitles with AI...';
+        return 'AI cleanup';
       default:
         return 'Processing...';
     }
   }
 
   function getProgressPercentage(item: SubtitleOcrSourceItem): number {
-    return Math.max(0, Math.min(100, Math.round(item.progress?.percentage ?? 0)));
+    return Math.max(
+      0,
+      Math.min(100, Math.round(item.progress?.overallPercentage ?? item.progress?.percentage ?? 0)),
+    );
   }
 
   function getModelOverrideLabel(item: SubtitleOcrSourceItem): string {
@@ -212,7 +216,7 @@
               {#if item.progress}
                 <div class="mt-2">
                   <Progress value={getProgressPercentage(item)} class="h-1.5" />
-                  <p class="mt-1 text-xs text-muted-foreground">
+                  <p class="mt-1 truncate text-xs text-muted-foreground" title={`${getProgressLabel(item)} ${getProgressPercentage(item)}%`}>
                     {getProgressLabel(item)} {getProgressPercentage(item)}%
                   </p>
                 </div>

@@ -1,13 +1,19 @@
 use std::path::PathBuf;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicU32, Ordering},
+};
+use std::thread::{self, JoinHandle};
 
 use image::{DynamicImage, RgbaImage, imageops::FilterType};
 
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::tools::ocr::{create_ocr_engine, get_ocr_models_dir, resolve_ocr_engine_threads};
 use crate::tools::subtitle_ocr::decode::{
-    DecodedBitmapCue, decode_bitmap_subtitle_source_with_handler, validate_bitmap_subtitle_source,
+    BitmapSubtitleSource, DecodedBitmapCue, count_bitmap_subtitle_source_with_stop,
+    decode_bitmap_subtitle_source_with_handler, validate_bitmap_subtitle_source,
 };
-use crate::tools::subtitle_ocr::progress::SubtitleOcrProgressEmitter;
+use crate::tools::subtitle_ocr::progress::{ProgressTotal, SubtitleOcrProgressEmitter};
 use crate::tools::subtitle_ocr::stabilize::stabilize_cues;
 use crate::tools::subtitle_ocr::text::reconstruct_text_from_boxes;
 use crate::tools::subtitle_ocr::{
@@ -22,7 +28,6 @@ const PREVIEW_MAX_HEIGHT: u32 = 1080;
 
 #[derive(Clone)]
 struct PipelineProgress {
-    decoding: SubtitleOcrProgressEmitter,
     ocr: SubtitleOcrProgressEmitter,
     ai_cleaning: SubtitleOcrProgressEmitter,
 }
@@ -37,6 +42,7 @@ pub(crate) async fn run_subtitle_ocr_pipeline(
     sub_path: Option<String>,
     language: String,
     use_gpu: bool,
+    expected_bitmap_count: Option<u32>,
 ) -> Result<SubtitleOcrPipelineResult, String> {
     if item_id.trim().is_empty() {
         return Err("Subtitle OCR item id is required".to_string());
@@ -51,30 +57,6 @@ pub(crate) async fn run_subtitle_ocr_pipeline(
     let models_dir = get_ocr_models_dir(&app)?;
     super::state::begin_operation(&item_id, &run_id)?;
 
-    let progress = PipelineProgress {
-        decoding: SubtitleOcrProgressEmitter::new(
-            app.clone(),
-            item_id.clone(),
-            run_id.clone(),
-            "decoding",
-            1,
-        ),
-        ocr: SubtitleOcrProgressEmitter::new(
-            app.clone(),
-            item_id.clone(),
-            run_id.clone(),
-            "ocr",
-            1,
-        ),
-        ai_cleaning: SubtitleOcrProgressEmitter::new(
-            app,
-            item_id.clone(),
-            run_id.clone(),
-            "ai_cleaning",
-            1,
-        ),
-    };
-
     let item_id_for_task = item_id.clone();
     let run_id_for_task = run_id.clone();
     let task = tokio::task::spawn_blocking(move || {
@@ -82,10 +64,11 @@ pub(crate) async fn run_subtitle_ocr_pipeline(
             &item_id_for_task,
             &run_id_for_task,
             &source,
+            app,
             models_dir,
             &language,
             use_gpu,
-            progress,
+            expected_bitmap_count,
         )
     });
 
@@ -103,22 +86,42 @@ fn run_subtitle_ocr_pipeline_blocking(
     item_id: &str,
     run_id: &str,
     source: &super::decode::BitmapSubtitleSource,
+    app: tauri::AppHandle,
     models_dir: PathBuf,
     language: &str,
     use_gpu: bool,
-    progress: PipelineProgress,
+    expected_bitmap_count: Option<u32>,
 ) -> Result<SubtitleOcrPipelineResult, String> {
     ensure_not_cancelled(item_id, run_id)?;
-    progress
-        .decoding
-        .emit_force(0, "Decoding bitmap subtitles...");
+    let progress = PipelineProgress {
+        ocr: SubtitleOcrProgressEmitter::new(
+            app.clone(),
+            item_id.to_string(),
+            run_id.to_string(),
+            "ocr",
+            initial_bitmap_total(expected_bitmap_count),
+        ),
+        ai_cleaning: SubtitleOcrProgressEmitter::new(
+            app,
+            item_id.to_string(),
+            run_id.to_string(),
+            "ai_cleaning",
+            1,
+        ),
+    };
+    let processed_count = Arc::new(AtomicU32::new(0));
+    let mut background_count = start_background_bitmap_count(
+        should_start_background_count(expected_bitmap_count),
+        source,
+        item_id,
+        run_id,
+        progress.ocr.clone(),
+        Arc::clone(&processed_count),
+    );
 
-    ensure_not_cancelled(item_id, run_id)?;
     let engine_threads = resolve_ocr_engine_threads(1);
     let engine = create_ocr_engine(&models_dir, language, use_gpu, engine_threads, true)?;
-    progress
-        .ocr
-        .emit_force(0, "Running OCR on subtitle bitmaps...");
+    progress.ocr.emit_force(0);
 
     let mut decoded_metadata = Vec::new();
     let mut raw_ocr_cues = Vec::new();
@@ -127,6 +130,7 @@ fn run_subtitle_ocr_pipeline_blocking(
     decode_bitmap_subtitle_source_with_handler(source, item_id, run_id, |mut decoded| {
         ensure_not_cancelled(item_id, run_id)?;
         decoded_count = decoded_count.saturating_add(1);
+        processed_count.store(decoded_count, Ordering::Relaxed);
         let bitmap_assets =
             write_decoded_bitmap_assets(item_id, run_id, &decoded.metadata, &decoded.rgba)?;
         decoded.metadata.thumbnail_path = Some(bitmap_assets.thumbnail_path);
@@ -145,28 +149,24 @@ fn run_subtitle_ocr_pipeline_blocking(
         }
         decoded_metadata.push(metadata);
         raw_ocr_cues.push(raw_cue);
-        progress.ocr.emit(
-            0,
-            format!("Processed {} subtitle bitmaps...", decoded_count),
-        );
+        progress.ocr.emit(decoded_count);
         Ok(())
     })?;
 
-    progress.decoding.emit_force(
-        1,
-        format!("Decoded {} subtitle bitmaps", decoded_metadata.len()),
-    );
-    progress.ocr.emit_force(1, "Subtitle bitmap OCR complete");
+    stop_background_bitmap_count(&mut background_count);
+    progress
+        .ocr
+        .emit_force_with_total(decoded_count, decoded_count);
 
     ensure_not_cancelled(item_id, run_id)?;
-    progress
-        .ai_cleaning
-        .emit_force(0, "Stabilizing subtitle OCR cues...");
+    if decoded_count == 0 {
+        progress.ai_cleaning.emit_force(1);
+        return Ok(empty_subtitle_ocr_pipeline_result());
+    }
+
+    progress.ai_cleaning.emit_force(0);
     let stabilized_cues = stabilize_cues(&final_candidates);
-    progress.ai_cleaning.emit_force(
-        1,
-        format!("Stabilized {} subtitle cues", stabilized_cues.len()),
-    );
+    progress.ai_cleaning.emit_force(1);
 
     Ok(SubtitleOcrPipelineResult {
         decoded_cues: decoded_metadata,
@@ -174,6 +174,97 @@ fn run_subtitle_ocr_pipeline_blocking(
         final_cues: stabilized_cues.clone(),
         stabilized_cues,
     })
+}
+
+struct BackgroundBitmapCountTask {
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl Drop for BackgroundBitmapCountTask {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+impl BackgroundBitmapCountTask {
+    fn stop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn stop_background_bitmap_count(background_count: &mut Option<BackgroundBitmapCountTask>) {
+    if let Some(mut task) = background_count.take() {
+        task.stop();
+    }
+}
+
+fn start_background_bitmap_count(
+    enabled: bool,
+    source: &BitmapSubtitleSource,
+    item_id: &str,
+    run_id: &str,
+    progress: SubtitleOcrProgressEmitter,
+    processed_count: Arc<AtomicU32>,
+) -> Option<BackgroundBitmapCountTask> {
+    if !enabled {
+        return None;
+    }
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let thread_stop = Arc::clone(&stop);
+    let source = source.clone();
+    let item_id = item_id.to_string();
+    let run_id = run_id.to_string();
+    let handle = thread::spawn(move || {
+        let count = count_bitmap_subtitle_source_with_stop(&source, &item_id, &run_id, || {
+            thread_stop.load(Ordering::Relaxed)
+        });
+        if thread_stop.load(Ordering::Relaxed)
+            || super::state::is_operation_cancelled(&item_id, &run_id)
+        {
+            return;
+        }
+
+        if let Ok(total) = count {
+            let current = processed_count.load(Ordering::Relaxed);
+            if thread_stop.load(Ordering::Relaxed)
+                || super::state::is_operation_cancelled(&item_id, &run_id)
+            {
+                return;
+            }
+
+            progress.emit_force_with_total(current, total);
+        }
+    });
+
+    Some(BackgroundBitmapCountTask {
+        stop,
+        handle: Some(handle),
+    })
+}
+
+fn empty_subtitle_ocr_pipeline_result() -> SubtitleOcrPipelineResult {
+    SubtitleOcrPipelineResult {
+        decoded_cues: Vec::new(),
+        raw_ocr_cues: Vec::new(),
+        final_cues: Vec::new(),
+        stabilized_cues: Vec::new(),
+    }
+}
+
+fn initial_bitmap_total(expected_bitmap_count: Option<u32>) -> ProgressTotal {
+    expected_bitmap_count
+        .filter(|count| *count > 0)
+        .map(ProgressTotal::Known)
+        .unwrap_or(ProgressTotal::Unknown)
+}
+
+fn should_start_background_count(expected_bitmap_count: Option<u32>) -> bool {
+    expected_bitmap_count.unwrap_or(0) == 0
 }
 
 fn ensure_not_cancelled(item_id: &str, run_id: &str) -> Result<(), String> {
@@ -335,11 +426,20 @@ fn average_confidence(boxes: &[SubtitleOcrBox]) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use std::thread;
+    use std::time::Duration;
+
     use super::{
-        THUMBNAIL_MAX_HEIGHT, THUMBNAIL_MAX_WIDTH, safe_thumbnail_path_component,
-        subtitle_ocr_bitmap_asset_dir, write_decoded_bitmap_assets,
+        BackgroundBitmapCountTask, THUMBNAIL_MAX_HEIGHT, THUMBNAIL_MAX_WIDTH,
+        empty_subtitle_ocr_pipeline_result, initial_bitmap_total, safe_thumbnail_path_component,
+        should_start_background_count, subtitle_ocr_bitmap_asset_dir, write_decoded_bitmap_assets,
     };
     use crate::tools::subtitle_ocr::SubtitleOcrDecodedCue;
+    use crate::tools::subtitle_ocr::progress::ProgressTotal;
 
     #[test]
     fn safe_thumbnail_path_component_removes_path_separators_and_empty_segments() {
@@ -361,6 +461,53 @@ mod tests {
         assert!(path.contains("run_id"));
         assert!(path.contains("previews"));
         assert!(!path.contains("../"));
+    }
+
+    #[test]
+    fn empty_subtitle_ocr_pipeline_result_has_no_artifacts_or_cues() {
+        let result = empty_subtitle_ocr_pipeline_result();
+
+        assert!(result.decoded_cues.is_empty());
+        assert!(result.raw_ocr_cues.is_empty());
+        assert!(result.stabilized_cues.is_empty());
+        assert!(result.final_cues.is_empty());
+    }
+
+    #[test]
+    fn initial_bitmap_total_uses_expected_count_when_available() {
+        assert_eq!(initial_bitmap_total(Some(373)), ProgressTotal::Known(373));
+        assert_eq!(initial_bitmap_total(Some(0)), ProgressTotal::Unknown);
+        assert_eq!(initial_bitmap_total(None), ProgressTotal::Unknown);
+    }
+
+    #[test]
+    fn background_count_starts_only_without_expected_count() {
+        assert!(!should_start_background_count(Some(373)));
+        assert!(should_start_background_count(Some(0)));
+        assert!(should_start_background_count(None));
+    }
+
+    #[test]
+    fn background_count_stop_joins_running_thread() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let finished = Arc::new(AtomicBool::new(false));
+        let thread_finished = Arc::clone(&finished);
+        let handle = thread::spawn(move || {
+            while !thread_stop.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_millis(1));
+            }
+            thread_finished.store(true, Ordering::Relaxed);
+        });
+
+        let mut task = BackgroundBitmapCountTask {
+            stop,
+            handle: Some(handle),
+        };
+        task.stop();
+
+        assert!(finished.load(Ordering::Relaxed));
+        assert!(task.handle.is_none());
     }
 
     #[test]

@@ -143,6 +143,26 @@ pub(super) fn decode_bitmap_subtitle_source_with_handler<F>(
 where
     F: FnMut(DecodedBitmapCue) -> Result<(), String>,
 {
+    decode_bitmap_subtitle_source_with_handler_and_stop(
+        source,
+        item_id,
+        run_id,
+        &mut handler,
+        || false,
+    )
+}
+
+fn decode_bitmap_subtitle_source_with_handler_and_stop<F, S>(
+    source: &BitmapSubtitleSource,
+    item_id: &str,
+    run_id: &str,
+    mut handler: F,
+    mut should_stop: S,
+) -> Result<(), String>
+where
+    F: FnMut(DecodedBitmapCue) -> Result<(), String>,
+    S: FnMut() -> bool,
+{
     let mut ctx = RuntimeContext::new();
     oxideav_sub_image::register(&mut ctx);
 
@@ -186,11 +206,13 @@ where
     let mut normalizer = StreamingCueTimingNormalizer::new(&mut handler);
     loop {
         ensure_decode_not_cancelled(item_id, run_id)?;
+        ensure_decode_not_stopped(&mut should_stop)?;
         let packet = match demuxer.next_packet() {
             Ok(packet) => packet,
             Err(OxideavError::Eof) => break,
             Err(error) => return Err(format!("Failed to read Subtitle OCR packet: {}", error)),
         };
+        ensure_decode_not_stopped(&mut should_stop)?;
 
         if packet.stream_index != stream.index {
             continue;
@@ -216,6 +238,7 @@ where
             decoder.as_mut(),
             &mut normalizer,
             &mut cue_index,
+            &mut should_stop,
             item_id,
             run_id,
             &source_key,
@@ -224,6 +247,7 @@ where
         )?;
     }
 
+    ensure_decode_not_stopped(&mut should_stop)?;
     decoder
         .flush()
         .map_err(|e| format!("Failed to flush Subtitle OCR decoder: {}", e))?;
@@ -231,13 +255,39 @@ where
         decoder.as_mut(),
         &mut normalizer,
         &mut cue_index,
+        &mut should_stop,
         item_id,
         run_id,
         &source_key,
         0,
         0,
     )?;
+    ensure_decode_not_stopped(&mut should_stop)?;
     normalizer.finish()
+}
+
+pub(super) fn count_bitmap_subtitle_source_with_stop<F>(
+    source: &BitmapSubtitleSource,
+    item_id: &str,
+    run_id: &str,
+    mut should_stop: F,
+) -> Result<u32, String>
+where
+    F: FnMut() -> bool,
+{
+    let mut count = 0u32;
+    decode_bitmap_subtitle_source_with_handler_and_stop(
+        source,
+        item_id,
+        run_id,
+        |_| {
+            count = count.saturating_add(1);
+            Ok(())
+        },
+        &mut should_stop,
+    )?;
+
+    Ok(count)
 }
 
 fn ensure_end_after_start(start_time_ms: u64, end_time_ms: u64) -> u64 {
@@ -343,6 +393,7 @@ fn drain_decoder_frames<F>(
     decoder: &mut dyn oxideav_core::Decoder,
     normalizer: &mut StreamingCueTimingNormalizer<'_, F>,
     cue_index: &mut usize,
+    should_stop: &mut impl FnMut() -> bool,
     item_id: &str,
     run_id: &str,
     source_key: &str,
@@ -354,8 +405,10 @@ where
 {
     loop {
         ensure_decode_not_cancelled(item_id, run_id)?;
+        ensure_decode_not_stopped(should_stop)?;
         match decoder.receive_frame() {
             Ok(Frame::Video(frame)) => {
+                ensure_decode_not_stopped(should_stop)?;
                 let cue = decoded_frame_to_cue(
                     frame,
                     *cue_index,
@@ -364,6 +417,7 @@ where
                     start_time_ms,
                     end_time_ms,
                 )?;
+                ensure_decode_not_stopped(should_stop)?;
                 *cue_index += 1;
                 normalizer.push(cue)?;
             }
@@ -374,6 +428,14 @@ where
     }
 
     Ok(())
+}
+
+fn ensure_decode_not_stopped(should_stop: &mut impl FnMut() -> bool) -> Result<(), String> {
+    if should_stop() {
+        Err("Subtitle OCR bitmap decode stopped".to_string())
+    } else {
+        Ok(())
+    }
 }
 
 fn ensure_decode_not_cancelled(item_id: &str, run_id: &str) -> Result<(), String> {
@@ -509,9 +571,12 @@ fn stable_hash64_bytes(bytes: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::{
         BitmapSubtitleSource, DecodedBitmapCue, StreamingCueTimingNormalizer,
-        decode_bitmap_subtitle_source_with_handler, validate_bitmap_subtitle_source,
+        decode_bitmap_subtitle_source_with_handler,
+        decode_bitmap_subtitle_source_with_handler_and_stop, validate_bitmap_subtitle_source,
     };
     use crate::tools::subtitle_ocr::SubtitleOcrDecodedCue;
 
@@ -652,5 +717,56 @@ timestamp: 00:00:01:500, filepos: 000000000
 
         assert_eq!(decoded_metadata.len(), 1);
         assert_eq!(decoded_metadata[0].end_time_ms, 3_500);
+    }
+
+    #[test]
+    fn decode_bitmap_subtitle_source_with_handler_and_stop_observes_stop_between_frames() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let idx = dir.path().join("demo.idx");
+        let sub = dir.path().join("demo.sub");
+        let first_spu = oxideav_sub_image::vobsub::build_demo_spu(2, 2, &[1, 1, 1, 1]);
+        let second_offset = first_spu.len();
+        let third_offset = second_offset + first_spu.len();
+        let mut sub_bytes = Vec::new();
+        sub_bytes.extend_from_slice(&first_spu);
+        sub_bytes.extend_from_slice(&first_spu);
+        sub_bytes.extend_from_slice(&first_spu);
+        std::fs::write(&sub, sub_bytes).expect("failed to write sub");
+        std::fs::write(
+            &idx,
+            format!(
+                "\
+# VobSub index file
+size: 2x2
+palette: ff0000, 00ff00, 0000ff, ffffff, 000000, 808080, c0c0c0, 404040, 200020, 800080, a0a0a0, 010203, 040506, 070809, 0a0b0c, 0d0e0f
+timestamp: 00:00:01:000, filepos: 000000000
+timestamp: 00:00:02:000, filepos: {second_offset:09x}
+timestamp: 00:00:03:000, filepos: {third_offset:09x}
+"
+            ),
+        )
+        .expect("failed to write idx");
+        let source = BitmapSubtitleSource::VobSub {
+            idx_path: idx,
+            sub_path: sub,
+        };
+        let stop = Cell::new(false);
+        let mut decoded_metadata = Vec::new();
+
+        let error = decode_bitmap_subtitle_source_with_handler_and_stop(
+            &source,
+            "demo-item",
+            "demo-run",
+            |decoded| {
+                decoded_metadata.push(decoded.metadata);
+                stop.set(true);
+                Ok(())
+            },
+            || stop.get(),
+        )
+        .expect_err("stop flag should interrupt the decode stream");
+
+        assert!(error.contains("stopped"));
+        assert_eq!(decoded_metadata.len(), 1);
     }
 }

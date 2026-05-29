@@ -11,6 +11,32 @@ const PROGRESS_MIN_PERCENT_STEP: u32 = 5;
 struct ProgressState {
     last_percentage: u32,
     last_emitted_at: Option<Instant>,
+    total: ProgressTotal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ProgressTotal {
+    Known(u32),
+    Unknown,
+}
+
+impl From<u32> for ProgressTotal {
+    fn from(value: u32) -> Self {
+        Self::Known(value)
+    }
+}
+
+impl ProgressTotal {
+    fn event_total(self) -> u32 {
+        match self {
+            Self::Known(total) => total,
+            Self::Unknown => 0,
+        }
+    }
+
+    fn is_known(self) -> bool {
+        matches!(self, Self::Known(_))
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -21,8 +47,8 @@ pub(super) struct SubtitleOcrProgressEvent {
     phase: &'static str,
     current: u32,
     total: u32,
+    total_known: bool,
     percentage: u32,
-    message: String,
 }
 
 impl SubtitleOcrProgressEvent {
@@ -31,17 +57,17 @@ impl SubtitleOcrProgressEvent {
         run_id: impl Into<String>,
         phase: &'static str,
         current: u32,
-        total: u32,
-        message: impl Into<String>,
+        total: impl Into<ProgressTotal>,
     ) -> Self {
+        let total = total.into();
         Self {
             item_id: item_id.into(),
             run_id: run_id.into(),
             phase,
             current,
-            total,
+            total: total.event_total(),
+            total_known: total.is_known(),
             percentage: progress_percentage(current, total),
-            message: message.into(),
         }
     }
 }
@@ -52,7 +78,6 @@ pub(super) struct SubtitleOcrProgressEmitter {
     item_id: String,
     run_id: String,
     phase: &'static str,
-    total: u32,
     state: Arc<Mutex<ProgressState>>,
 }
 
@@ -62,37 +87,45 @@ impl SubtitleOcrProgressEmitter {
         item_id: impl Into<String>,
         run_id: impl Into<String>,
         phase: &'static str,
-        total: u32,
+        total: impl Into<ProgressTotal>,
     ) -> Self {
         Self {
             app,
             item_id: item_id.into(),
             run_id: run_id.into(),
             phase,
-            total,
             state: Arc::new(Mutex::new(ProgressState {
                 last_percentage: 0,
                 last_emitted_at: None,
+                total: total.into(),
             })),
         }
     }
 
-    pub(super) fn emit(&self, current: u32, message: impl Into<String>) {
-        self.emit_internal(current, message.into(), false);
+    pub(super) fn emit(&self, current: u32) {
+        self.emit_internal(current, None, false);
     }
 
-    pub(super) fn emit_force(&self, current: u32, message: impl Into<String>) {
-        self.emit_internal(current, message.into(), true);
+    pub(super) fn emit_force(&self, current: u32) {
+        self.emit_internal(current, None, true);
     }
 
-    fn emit_internal(&self, current: u32, message: String, force: bool) {
+    pub(super) fn emit_force_with_total(&self, current: u32, total: u32) {
+        self.emit_internal(current, Some(total), true);
+    }
+
+    fn emit_internal(&self, current: u32, total_update: Option<u32>, force: bool) {
         let mut state = match self.state.lock() {
             Ok(state) => state,
             Err(_) => return,
         };
         let now = Instant::now();
+        if let Some(total) = total_update {
+            state.total = ProgressTotal::Known(total);
+        }
+        let percentage = progress_percentage(current, state.total);
 
-        if !should_emit_progress(&state, current, self.total, now, force) {
+        if !should_emit_progress(&state, percentage, now, force) {
             return;
         }
 
@@ -103,23 +136,16 @@ impl SubtitleOcrProgressEmitter {
                 self.run_id.clone(),
                 self.phase,
                 current,
-                self.total,
-                message,
+                state.total,
             ),
         );
 
-        state.last_percentage = progress_percentage(current, self.total);
+        state.last_percentage = percentage;
         state.last_emitted_at = Some(now);
     }
 }
 
-fn should_emit_progress(
-    state: &ProgressState,
-    current: u32,
-    total: u32,
-    now: Instant,
-    force: bool,
-) -> bool {
+fn should_emit_progress(state: &ProgressState, percentage: u32, now: Instant, force: bool) -> bool {
     if force {
         return true;
     }
@@ -128,7 +154,6 @@ fn should_emit_progress(
         return true;
     };
 
-    let percentage = progress_percentage(current, total);
     if percentage.saturating_sub(state.last_percentage) >= PROGRESS_MIN_PERCENT_STEP {
         return true;
     }
@@ -136,11 +161,13 @@ fn should_emit_progress(
     now.duration_since(last_emitted_at) >= PROGRESS_MIN_INTERVAL
 }
 
-fn progress_percentage(current: u32, total: u32) -> u32 {
-    if total == 0 {
-        0
-    } else {
-        ((u64::from(current.min(total)) * 100) / u64::from(total)) as u32
+fn progress_percentage(current: u32, total: ProgressTotal) -> u32 {
+    match total {
+        ProgressTotal::Known(0) => 100,
+        ProgressTotal::Known(total) => {
+            ((u64::from(current.min(total)) * 100) / u64::from(total)) as u32
+        }
+        ProgressTotal::Unknown => 0,
     }
 }
 
@@ -148,11 +175,14 @@ fn progress_percentage(current: u32, total: u32) -> u32 {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{ProgressState, SubtitleOcrProgressEvent, should_emit_progress};
+    use super::{
+        ProgressState, ProgressTotal, SubtitleOcrProgressEvent, progress_percentage,
+        should_emit_progress,
+    };
 
     #[test]
     fn progress_event_serializes_percentage() {
-        let event = SubtitleOcrProgressEvent::new("item-1", "run-1", "ocr", 5, 10, "Half done");
+        let event = SubtitleOcrProgressEvent::new("item-1", "run-1", "ocr", 5, 10);
         let value = serde_json::to_value(event).expect("event should serialize");
 
         assert_eq!(value["itemId"], "item-1");
@@ -160,8 +190,30 @@ mod tests {
         assert_eq!(value["phase"], "ocr");
         assert_eq!(value["current"], 5);
         assert_eq!(value["total"], 10);
+        assert_eq!(value["totalKnown"], true);
         assert_eq!(value["percentage"], 50);
-        assert_eq!(value["message"], "Half done");
+        assert!(value.get("message").is_none());
+    }
+
+    #[test]
+    fn progress_percentage_reports_partial_bitmap_ocr_progress() {
+        assert_eq!(progress_percentage(27, ProgressTotal::Known(373)), 7);
+    }
+
+    #[test]
+    fn progress_percentage_treats_empty_work_as_complete() {
+        assert_eq!(progress_percentage(0, ProgressTotal::Known(0)), 100);
+    }
+
+    #[test]
+    fn progress_event_serializes_unknown_total_without_progress() {
+        let event =
+            SubtitleOcrProgressEvent::new("item-1", "run-1", "ocr", 27, ProgressTotal::Unknown);
+        let value = serde_json::to_value(event).expect("event should serialize");
+
+        assert_eq!(value["total"], 0);
+        assert_eq!(value["totalKnown"], false);
+        assert_eq!(value["percentage"], 0);
     }
 
     #[test]
@@ -170,12 +222,12 @@ mod tests {
         let mut state = ProgressState {
             last_percentage: 10,
             last_emitted_at: Some(now),
+            total: ProgressTotal::Known(100),
         };
 
         assert!(!should_emit_progress(
             &state,
             11,
-            100,
             now + Duration::from_millis(25),
             false
         ));
@@ -184,21 +236,18 @@ mod tests {
         assert!(should_emit_progress(
             &state,
             15,
-            100,
             now + Duration::from_millis(25),
             false
         ));
         assert!(should_emit_progress(
             &state,
             11,
-            100,
             now + Duration::from_millis(250),
             false
         ));
         assert!(should_emit_progress(
             &state,
             11,
-            100,
             now + Duration::from_millis(25),
             true
         ));

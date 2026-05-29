@@ -97,7 +97,7 @@ async fn run_prepare_subtitle_ocr_ffmpeg(
     let args =
         build_prepare_subtitle_ocr_args(input_path, &output_path_string, stream_index, codec)?;
 
-    emit_extract_progress(app, item_id, run_id, 0, "Extracting subtitle track...");
+    emit_extract_progress(app, item_id, run_id, 0);
 
     let child = tokio_command(ffmpeg_path)
         .args(&args)
@@ -149,7 +149,7 @@ async fn run_prepare_subtitle_ocr_ffmpeg(
         return Err(format!("Subtitle OCR extraction failed: {}", stderr));
     }
 
-    emit_extract_progress(app, item_id, run_id, 1, "Subtitle track extracted");
+    emit_extract_progress(app, item_id, run_id, 1);
     Ok(())
 }
 
@@ -161,16 +161,10 @@ fn remove_registered_outputs(item_id: &str, run_id: &str) {
     }
 }
 
-fn emit_extract_progress(
-    app: &tauri::AppHandle,
-    item_id: &str,
-    run_id: &str,
-    current: u32,
-    message: &str,
-) {
+fn emit_extract_progress(app: &tauri::AppHandle, item_id: &str, run_id: &str, current: u32) {
     let _ = app.emit(
         "subtitle-ocr-progress",
-        SubtitleOcrProgressEvent::new(item_id, run_id, "extracting", current, 1, message),
+        SubtitleOcrProgressEvent::new(item_id, run_id, "extracting", current, 1),
     );
 }
 

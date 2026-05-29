@@ -14,6 +14,7 @@ import {
   getSubtitleOcrBackendCancelTargets,
   getSubtitleOcrVersionedItemIds,
   mergeSubtitleOcrPersistenceForItem,
+  resolveSubtitleOcrExpectedBitmapCount,
   resolveSubtitleOcrEffectiveModelForConfig,
   shouldApplySubtitleOcrProgressEvent,
   summarizeSubtitleOcrItems,
@@ -163,6 +164,37 @@ describe('retry model resolution', () => {
       ...DEFAULT_SUBTITLE_OCR_CONFIG,
       ocrModel: 'latin',
     })).toBe('en');
+  });
+});
+
+describe('resolveSubtitleOcrExpectedBitmapCount', () => {
+  it('uses the active version bitmap count when available', () => {
+    const activeVersion = version('v1', {
+      sourceKind: 'standalone_sup',
+      sourcePath: '/subs/source.sup',
+      ocrModelOverride: 'default',
+    });
+    activeVersion.bitmaps = [
+      {
+        cueId: 'bitmap-1',
+        startTimeMs: 1_000,
+        endTimeMs: 2_000,
+        width: 640,
+        height: 120,
+      },
+      {
+        cueId: 'bitmap-2',
+        startTimeMs: 3_000,
+        endTimeMs: 4_000,
+        width: 640,
+        height: 120,
+      },
+    ];
+
+    expect(resolveSubtitleOcrExpectedBitmapCount(activeVersion)).toBe(2);
+    expect(resolveSubtitleOcrExpectedBitmapCount(version('empty', activeVersion.sourceSnapshot)))
+      .toBeUndefined();
+    expect(resolveSubtitleOcrExpectedBitmapCount(null)).toBeUndefined();
   });
 });
 

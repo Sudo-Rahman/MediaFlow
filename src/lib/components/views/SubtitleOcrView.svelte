@@ -33,6 +33,7 @@
   } from '$lib/services/subtitle-ocr-storage';
   import { cleanupSubtitleOcrCuesWithAi } from '$lib/services/subtitle-ocr-ai-cleanup';
   import { subtitleOcrStore } from '$lib/stores';
+  import { isSubtitleOcrProgressPhaseStale } from '$lib/stores/subtitle-ocr-progress';
   import {
     type SubtitleOcrCue,
     type SubtitleOcrConfig,
@@ -55,6 +56,7 @@
     getSubtitleOcrBackendCancelTargets,
     getSubtitleOcrVersionedItemIds,
     mergeSubtitleOcrPersistenceForItem,
+    resolveSubtitleOcrExpectedBitmapCount,
     resolveSubtitleOcrEffectiveModelForConfig,
     shouldApplySubtitleOcrProgressEvent,
     summarizeSubtitleOcrItems,
@@ -75,8 +77,8 @@
     phase: string;
     current: number;
     total: number;
+    totalKnown?: boolean;
     percentage: number;
-    message?: string;
   }
 
   type ProcessItemResult = 'completed' | 'cancelled' | 'error';
@@ -265,13 +267,18 @@
       return;
     }
 
+    const currentItem = getStoreItem(payload.itemId);
+    if (isSubtitleOcrProgressPhaseStale(currentItem?.progress, payload.phase)) {
+      return;
+    }
+
     subtitleOcrStore.setItemStatus(payload.itemId, statusForProgressPhase(payload.phase));
     subtitleOcrStore.setProgress(payload.itemId, {
       phase: payload.phase,
       current: payload.current,
       total: payload.total,
+      totalKnown: payload.totalKnown,
       percentage: payload.percentage,
-      message: payload.message,
     });
   }
 
@@ -293,7 +300,6 @@
   function setManualProgress(
     itemId: string,
     phase: SubtitleOcrProgress['phase'],
-    message: string,
     percentage = 0,
   ): void {
     subtitleOcrStore.setItemStatus(itemId, statusForProgressPhase(phase));
@@ -302,7 +308,6 @@
       current: percentage,
       total: 100,
       percentage,
-      message,
     });
   }
 
@@ -531,7 +536,7 @@
       return item.sourcePath;
     }
 
-    setManualProgress(item.id, 'extracting', 'Extracting subtitle track...');
+    setManualProgress(item.id, 'extracting');
     backendCancelableRunIdsByItemId.set(item.id, runId);
     try {
       return await invoke<string>('prepare_subtitle_ocr_track', {
@@ -565,6 +570,9 @@
         subPath: item.sourceKind === 'standalone_vobsub' ? item.pair.subPath : null,
         language: effectiveOcrModel,
         useGpu: config.useGpu,
+        expectedBitmapCount: resolveSubtitleOcrExpectedBitmapCount(
+          subtitleOcrStore.getActiveVersion(item.id),
+        ) ?? null,
       },
     };
   }
@@ -576,7 +584,7 @@
   ): Promise<{ cues: SubtitleOcrCue[]; applied: boolean; cancelled: boolean }> {
     const controller = new AbortController();
     aiCleanupControllers.set(itemId, controller);
-    setManualProgress(itemId, 'ai_cleaning', 'Cleaning subtitles with AI...');
+    setManualProgress(itemId, 'ai_cleaning');
 
     try {
       const result = await cleanupSubtitleOcrCuesWithAi(cues, {
@@ -658,9 +666,6 @@
       setManualProgress(
         item.id,
         item.sourceKind === 'container_track' ? 'extracting' : 'decoding',
-        item.sourceKind === 'container_track'
-          ? 'Extracting subtitle track...'
-          : 'Decoding subtitle bitmaps...',
       );
 
       const sourcePath = await preparePipelineSource(item, runId);
@@ -668,7 +673,7 @@
         throw new Error('Subtitle OCR operation cancelled');
       }
 
-      setManualProgress(item.id, 'decoding', 'Decoding subtitle bitmaps...');
+      setManualProgress(item.id, 'decoding');
       const { args, config, effectiveOcrModel } = buildPipelineArgs(
         item,
         sourcePath,

@@ -13,6 +13,7 @@ import type {
   SubtitleOcrVobSubPair,
 } from '$lib/types';
 import { DEFAULT_SUBTITLE_OCR_CONFIG } from '$lib/types';
+import { mergeSubtitleOcrProgress } from './subtitle-ocr-progress';
 
 interface SubtitleOcrItemFields {
   id: string;
@@ -257,7 +258,9 @@ function applyItemUpdates(
   if (hasOwn(updates, 'duration')) fields.duration = updates.duration;
   if (hasOwn(updates, 'error')) fields.error = updates.error;
   if (hasOwn(updates, 'progress')) {
-    fields.progress = updates.progress ? cloneProgress(updates.progress) : undefined;
+    fields.progress = updates.progress
+      ? mergeSubtitleOcrProgress(item.progress, updates.progress)
+      : undefined;
   }
   if (updates.versions !== undefined) {
     fields.versions = updates.versions.map(cloneVersion);
@@ -282,7 +285,9 @@ function applySafeItemUpdates(
   if (hasOwn(updates, 'duration')) fields.duration = updates.duration;
   if (hasOwn(updates, 'error')) fields.error = updates.error;
   if (hasOwn(updates, 'progress')) {
-    fields.progress = updates.progress ? cloneProgress(updates.progress) : undefined;
+    fields.progress = updates.progress
+      ? mergeSubtitleOcrProgress(item.progress, updates.progress)
+      : undefined;
   }
 
   return buildItemFromSnapshot(

@@ -168,8 +168,9 @@ export interface SubtitleOcrProgress {
   phase: 'extracting' | 'decoding' | 'ocr' | 'ai_cleaning';
   current: number;
   total: number;
+  totalKnown?: boolean;
   percentage: number;
-  message?: string;
+  overallPercentage?: number;
 }
 
 const DEFAULT_AI_CLEANUP_PROVIDER = getDefaultLLMProvider();

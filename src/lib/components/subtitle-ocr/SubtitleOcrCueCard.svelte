@@ -91,6 +91,28 @@
   aria-current={selected ? 'true' : undefined}
 >
   <div class="relative flex min-h-0 items-center justify-center overflow-hidden rounded-lg bg-zinc-950">
+    <button
+      type="button"
+      class="flex size-full min-h-0 items-center justify-center disabled:pointer-events-none"
+      aria-label="Select subtitle cue"
+      onclick={handleSelect}
+      disabled={disabled || !cue || !onSelectCue}
+    >
+      {#if bitmap?.thumbnailPath}
+        <img
+          src={resolveThumbnailSrc(bitmap.thumbnailPath)}
+          alt={cueIndex !== undefined ? `Cue ${cueIndex + 1} bitmap` : 'Selected cue bitmap'}
+          loading={selected || mode === 'compact' ? 'eager' : 'lazy'}
+          class="max-h-full max-w-full object-contain"
+        />
+      {:else}
+        <span class="flex flex-col items-center gap-2 py-16 text-sm text-zinc-400">
+          <ImageOff class="size-6" aria-hidden="true" />
+          No thumbnail
+        </span>
+      {/if}
+    </button>
+
     {#if showNavigation}
       <Button
         type="button"
@@ -103,20 +125,6 @@
       >
         <ChevronLeft class="size-5" aria-hidden="true" />
       </Button>
-    {/if}
-
-    {#if bitmap?.thumbnailPath}
-      <img
-        src={resolveThumbnailSrc(bitmap.thumbnailPath)}
-        alt={cueIndex !== undefined ? `Cue ${cueIndex + 1} bitmap` : 'Selected cue bitmap'}
-        loading={selected || mode === 'compact' ? 'eager' : 'lazy'}
-        class="max-h-full max-w-full object-contain"
-      />
-    {:else}
-      <span class="flex flex-col items-center gap-2 py-16 text-sm text-zinc-400">
-        <ImageOff class="size-6" aria-hidden="true" />
-        No thumbnail
-      </span>
     {/if}
 
     {#if showNavigation}

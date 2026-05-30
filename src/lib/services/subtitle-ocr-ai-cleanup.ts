@@ -8,6 +8,8 @@ import { withSleepInhibit } from './sleep-inhibit';
 const SUBTITLE_OCR_CLEANUP_SYSTEM_PROMPT = `You are an expert subtitle OCR post-editor.
 Return JSON only. Do not include markdown, explanations, or commentary.`;
 
+const LOCAL_DUPLICATE_MERGE_MAX_GAP_MS = 250;
+
 export interface SubtitleOcrAiCleanupOptions {
   provider: LLMProvider;
   model: string;
@@ -20,6 +22,28 @@ export interface SubtitleOcrAiCleanupResult {
   error?: string;
   cancelled?: boolean;
   usage?: LlmUsage;
+}
+
+interface SubtitleOcrCleanupPromptCue {
+  id: string;
+  text: string;
+}
+
+interface SubtitleOcrCleanupCorrection {
+  id: string;
+  correctedText: string;
+}
+
+interface SubtitleOcrCleanupParseResult {
+  success: boolean;
+  corrections: SubtitleOcrCleanupCorrection[];
+  error?: string;
+}
+
+interface SubtitleOcrCleanupApplyResult {
+  success: boolean;
+  cues: SubtitleOcrCue[];
+  error?: string;
 }
 
 function cloneCue(cue: SubtitleOcrCue): SubtitleOcrCue {
@@ -50,10 +74,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
-
 function extractJsonObject(content: string): unknown | null {
   const trimmed = content.trim();
   if (!trimmed) return null;
@@ -76,101 +96,62 @@ function extractJsonObject(content: string): unknown | null {
   }
 }
 
-function parseCleanupCue(value: unknown): SubtitleOcrCue | null {
-  if (!isRecord(value)) return null;
-
-  const {
-    id,
-    sourceCueIds,
-    startTimeMs,
-    endTimeMs,
-    text,
-    confidence,
-  } = value;
-
-  if (typeof id !== 'string' || !id.trim()) return null;
-  if (!Array.isArray(sourceCueIds) || sourceCueIds.some((sourceCueId) => typeof sourceCueId !== 'string')) {
-    return null;
-  }
-  if (!isFiniteNumber(startTimeMs) || startTimeMs < 0) {
-    return null;
-  }
-  if (typeof text !== 'string' || !text.trim()) return null;
-  if (!isFiniteNumber(endTimeMs) || endTimeMs <= startTimeMs) return null;
-  if (!isFiniteNumber(confidence) || confidence < 0 || confidence > 1) return null;
-
-  return {
-    id,
-    sourceCueIds: [...sourceCueIds],
-    startTimeMs,
-    endTimeMs,
-    text,
-    confidence,
-  };
-}
-
 function providerDisplayName(provider: LLMProvider): string {
   return LLM_PROVIDERS[provider]?.name || provider;
 }
 
-function buildAllowedSourceCueMap(cues: SubtitleOcrCue[]): Map<string, string> {
-  const sourceCueIdToOriginalCueId = new Map<string, string>();
-
-  for (const cue of cues) {
-    sourceCueIdToOriginalCueId.set(cue.id, cue.id);
-    for (const sourceCueId of cue.sourceCueIds) {
-      sourceCueIdToOriginalCueId.set(sourceCueId, cue.id);
-    }
-  }
-
-  return sourceCueIdToOriginalCueId;
+function buildPromptCues(cues: SubtitleOcrCue[]): SubtitleOcrCleanupPromptCue[] {
+  return cues.map((cue, index) => ({
+    id: String(index),
+    text: cue.text,
+  }));
 }
 
-function validateCleanedCueSourceMapping(
-  originalCues: SubtitleOcrCue[],
-  cleanedCues: SubtitleOcrCue[]
-): string | null {
-  if (originalCues.length > 0 && cleanedCues.length === 0) {
-    return 'AI cleanup returned no cues for non-empty input';
+function buildCueMap(cues: SubtitleOcrCue[]): Map<string, SubtitleOcrCue> {
+  return new Map(cues.map((cue, index) => [String(index), cue]));
+}
+
+function parseCleanupCorrection(value: unknown): SubtitleOcrCleanupCorrection | null {
+  if (!isRecord(value)) return null;
+
+  const { id, correctedText } = value;
+  if (typeof id !== 'string' || !id.trim()) return null;
+  if (typeof correctedText !== 'string') return null;
+
+  return {
+    id,
+    correctedText,
+  };
+}
+
+export function parseSubtitleOcrCleanupResponse(content: string): SubtitleOcrCleanupParseResult {
+  const parsed = extractJsonObject(content);
+  if (!isRecord(parsed) || !Array.isArray(parsed.cues)) {
+    return {
+      success: false,
+      corrections: [],
+      error: 'Invalid AI cleanup response',
+    };
   }
 
-  const allowedSourceCueIds = buildAllowedSourceCueMap(originalCues);
-  const outputIndexByOriginalCueId = new Map<string, number>();
-
-  for (let outputIndex = 0; outputIndex < cleanedCues.length; outputIndex += 1) {
-    const cue = cleanedCues[outputIndex];
-
-    if (cue.sourceCueIds.length === 0) {
-      return `AI cleanup cue "${cue.id}" has no source cue IDs`;
+  const corrections: SubtitleOcrCleanupCorrection[] = [];
+  for (const cue of parsed.cues) {
+    const correction = parseCleanupCorrection(cue);
+    if (!correction) {
+      return {
+        success: false,
+        corrections: [],
+        error: 'Invalid AI cleanup response',
+      };
     }
 
-    const sourceCueIdsInOutput = new Set<string>();
-    const originalCueIdsInOutput = new Set<string>();
-
-    for (const sourceCueId of cue.sourceCueIds) {
-      if (sourceCueIdsInOutput.has(sourceCueId)) {
-        return `AI cleanup cue "${cue.id}" references source cue ID "${sourceCueId}" more than once`;
-      }
-
-      const originalCueId = allowedSourceCueIds.get(sourceCueId);
-      if (!originalCueId) {
-        return `AI cleanup referenced unknown source cue ID "${sourceCueId}"`;
-      }
-
-      sourceCueIdsInOutput.add(sourceCueId);
-      originalCueIdsInOutput.add(originalCueId);
-    }
-
-    for (const originalCueId of originalCueIdsInOutput) {
-      if (outputIndexByOriginalCueId.has(originalCueId)) {
-        return `AI cleanup referenced original cue "${originalCueId}" in more than one output cue`;
-      }
-
-      outputIndexByOriginalCueId.set(originalCueId, outputIndex);
-    }
+    corrections.push(correction);
   }
 
-  return null;
+  return {
+    success: true,
+    corrections,
+  };
 }
 
 export function buildSubtitleOcrCleanupPrompt(cues: SubtitleOcrCue[]): string {
@@ -181,55 +162,119 @@ Rules:
 - Do not invent text.
 - Preserve the original language, meaning, speaker dashes, and intentional line breaks.
 - Correct OCR mistakes, spelling, punctuation, and grammar.
-- You may merge consecutive duplicate cues when they represent the same subtitle.
-- When you merge consecutive duplicate cues, combine their sourceCueIds and use the earliest startTimeMs and latest endTimeMs.
-- Preserve useful timing and confidence information.
+- Do not merge, split, or reorder cues.
+- Return exactly one corrected cue for every input cue.
+- Keep exactly the same short cue IDs as input.
+- If a cue is clearly OCR noise and not part of the subtitle text, set correctedText to an empty string.
 
 Return JSON only with this exact shape:
 {
   "cues": [
-    {
-      "id": "cue_id",
-      "sourceCueIds": ["source_cue_id"],
-      "startTimeMs": 0,
-      "endTimeMs": 1000,
-      "text": "cleaned subtitle text",
-      "confidence": 0.95
-    }
+    { "id": "0", "correctedText": "cleaned subtitle text" }
   ]
 }
 
 Input cues:
-${JSON.stringify({ cues: cloneCues(cues) }, null, 2)}`;
+${JSON.stringify({ cues: buildPromptCues(cues) })}`;
 }
 
-export function parseSubtitleOcrCleanupResponse(content: string): SubtitleOcrAiCleanupResult {
-  const parsed = extractJsonObject(content);
-  if (!isRecord(parsed) || !Array.isArray(parsed.cues)) {
-    return {
-      success: false,
-      cues: [],
-      error: 'Invalid AI cleanup response',
-    };
+function collapseWhitespace(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+function normalizeForMerge(text: string): string {
+  return collapseWhitespace(text)
+    .replace(/^[\s.,!?;:'"()[\]{}-]+|[\s.,!?;:'"()[\]{}-]+$/g, '')
+    .toLowerCase();
+}
+
+function mergeConsecutiveDuplicateCues(cues: SubtitleOcrCue[]): SubtitleOcrCue[] {
+  const merged: SubtitleOcrCue[] = [];
+
+  for (const cue of cues) {
+    if (!cue.text.trim()) {
+      continue;
+    }
+
+    const previous = merged.at(-1);
+    const currentNormalized = normalizeForMerge(cue.text);
+    const previousNormalized = previous ? normalizeForMerge(previous.text) : '';
+    const isAdjacent = previous
+      ? cue.startTimeMs <= previous.endTimeMs + LOCAL_DUPLICATE_MERGE_MAX_GAP_MS
+      : false;
+
+    if (previous && currentNormalized && previousNormalized === currentNormalized && isAdjacent) {
+      previous.endTimeMs = Math.max(previous.endTimeMs, cue.endTimeMs);
+      previous.sourceCueIds.push(...cue.sourceCueIds);
+      if (
+        cue.confidence > previous.confidence + 1e-9
+        || (Math.abs(cue.confidence - previous.confidence) <= 1e-9 && cue.text.length > previous.text.length)
+      ) {
+        previous.text = cue.text;
+      }
+      previous.confidence = Math.max(previous.confidence, cue.confidence);
+      continue;
+    }
+
+    merged.push(cloneCue(cue));
   }
 
-  const cues: SubtitleOcrCue[] = [];
-  for (const cue of parsed.cues) {
-    const parsedCue = parseCleanupCue(cue);
-    if (!parsedCue) {
+  return merged;
+}
+
+function applyCleanupCorrections(
+  originalCues: SubtitleOcrCue[],
+  corrections: SubtitleOcrCleanupCorrection[]
+): SubtitleOcrCleanupApplyResult {
+  const cueMap = buildCueMap(originalCues);
+  const correctionById = new Map<string, string>();
+
+  for (const correction of corrections) {
+    if (!cueMap.has(correction.id)) {
       return {
         success: false,
         cues: [],
-        error: 'Invalid AI cleanup response',
+        error: `AI cleanup returned unknown cue ID "${correction.id}"`,
       };
     }
 
-    cues.push(parsedCue);
+    if (correctionById.has(correction.id)) {
+      return {
+        success: false,
+        cues: [],
+        error: `AI cleanup returned duplicate cue ID "${correction.id}"`,
+      };
+    }
+
+    correctionById.set(correction.id, correction.correctedText);
+  }
+
+  const missingIds = [...cueMap.keys()].filter((id) => !correctionById.has(id));
+  if (missingIds.length > 0) {
+    return {
+      success: false,
+      cues: [],
+      error: `AI cleanup response is missing corrected cues: ${missingIds.slice(0, 5).join(', ')}`,
+    };
+  }
+
+  const correctedCues = originalCues.map((cue, index) => ({
+    ...cloneCue(cue),
+    text: correctionById.get(String(index))?.trim() ?? cue.text,
+  }));
+
+  const cleanedCues = mergeConsecutiveDuplicateCues(correctedCues);
+  if (originalCues.length > 0 && cleanedCues.length === 0) {
+    return {
+      success: false,
+      cues: [],
+      error: 'AI cleanup returned no cues for non-empty input',
+    };
   }
 
   return {
     success: true,
-    cues: cloneCues(cues),
+    cues: cleanedCues,
   };
 }
 
@@ -307,16 +352,16 @@ export async function cleanupSubtitleOcrCuesWithAi(
         });
       }
 
-      const sourceMappingError = validateCleanedCueSourceMapping(originalCues, parsed.cues);
-      if (sourceMappingError) {
-        return failureResult(originalCues, sourceMappingError, {
+      const applied = applyCleanupCorrections(originalCues, parsed.corrections);
+      if (!applied.success) {
+        return failureResult(originalCues, applied.error ?? 'Invalid AI cleanup response', {
           usage: response.usage,
         });
       }
 
       return {
         success: true,
-        cues: cloneCues(parsed.cues),
+        cues: cloneCues(applied.cues),
         usage: response.usage,
       };
     });

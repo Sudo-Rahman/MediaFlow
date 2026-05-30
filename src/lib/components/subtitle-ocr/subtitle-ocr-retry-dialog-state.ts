@@ -16,13 +16,13 @@ export function cloneSubtitleOcrConfig(config: SubtitleOcrConfig): SubtitleOcrCo
 }
 
 export function buildSubtitleOcrRetryDialogDefaults(
-  globalConfig: SubtitleOcrConfig,
+  versionConfig: SubtitleOcrConfig,
   existingVersionCount: number,
 ): SubtitleOcrRetryDialogDefaults {
   return {
     mode: 'full_ocr',
     versionName: `Version ${existingVersionCount + 1}`,
-    config: cloneSubtitleOcrConfig(globalConfig),
+    config: cloneSubtitleOcrConfig(versionConfig),
   };
 }
 

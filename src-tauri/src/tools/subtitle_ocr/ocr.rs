@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{
     Arc,
@@ -166,12 +167,13 @@ fn run_subtitle_ocr_pipeline_blocking(
 
     progress.ai_cleaning.emit_force(0);
     let stabilized_cues = stabilize_cues(&final_candidates);
+    let final_cues = build_final_subtitle_ocr_cues(&raw_ocr_cues, stabilized_cues.clone());
     progress.ai_cleaning.emit_force(1);
 
     Ok(SubtitleOcrPipelineResult {
         decoded_cues: decoded_metadata,
         raw_ocr_cues,
-        final_cues: stabilized_cues.clone(),
+        final_cues,
         stabilized_cues,
     })
 }
@@ -265,6 +267,55 @@ fn initial_bitmap_total(expected_bitmap_count: Option<u32>) -> ProgressTotal {
 
 fn should_start_background_count(expected_bitmap_count: Option<u32>) -> bool {
     expected_bitmap_count.unwrap_or(0) == 0
+}
+
+fn build_final_subtitle_ocr_cues(
+    raw_ocr_cues: &[SubtitleOcrRawCue],
+    stabilized_cues: Vec<SubtitleOcrCue>,
+) -> Vec<SubtitleOcrCue> {
+    if raw_ocr_cues.is_empty() {
+        return stabilized_cues;
+    }
+
+    let mut stabilized_index_by_source = HashMap::new();
+    for (index, cue) in stabilized_cues.iter().enumerate() {
+        for source_cue_id in &cue.source_cue_ids {
+            stabilized_index_by_source.insert(source_cue_id.as_str(), index);
+        }
+    }
+
+    let mut emitted_stabilized_cues = vec![false; stabilized_cues.len()];
+    let mut final_cues = Vec::with_capacity(raw_ocr_cues.len().max(stabilized_cues.len()));
+    for raw_cue in raw_ocr_cues {
+        if let Some(index) = stabilized_index_by_source.get(raw_cue.cue_id.as_str()) {
+            if !emitted_stabilized_cues[*index] {
+                final_cues.push(stabilized_cues[*index].clone());
+                emitted_stabilized_cues[*index] = true;
+            }
+            continue;
+        }
+
+        final_cues.push(blank_final_cue_from_raw(raw_cue));
+    }
+
+    for (index, cue) in stabilized_cues.into_iter().enumerate() {
+        if !emitted_stabilized_cues[index] {
+            final_cues.push(cue);
+        }
+    }
+
+    final_cues
+}
+
+fn blank_final_cue_from_raw(raw_cue: &SubtitleOcrRawCue) -> SubtitleOcrCue {
+    SubtitleOcrCue {
+        id: raw_cue.cue_id.clone(),
+        source_cue_ids: vec![raw_cue.cue_id.clone()],
+        start_time_ms: raw_cue.start_time_ms,
+        end_time_ms: raw_cue.end_time_ms,
+        text: String::new(),
+        confidence: raw_cue.confidence,
+    }
 }
 
 fn ensure_not_cancelled(item_id: &str, run_id: &str) -> Result<(), String> {
@@ -435,11 +486,12 @@ mod tests {
 
     use super::{
         BackgroundBitmapCountTask, THUMBNAIL_MAX_HEIGHT, THUMBNAIL_MAX_WIDTH,
-        empty_subtitle_ocr_pipeline_result, initial_bitmap_total, safe_thumbnail_path_component,
-        should_start_background_count, subtitle_ocr_bitmap_asset_dir, write_decoded_bitmap_assets,
+        build_final_subtitle_ocr_cues, empty_subtitle_ocr_pipeline_result, initial_bitmap_total,
+        safe_thumbnail_path_component, should_start_background_count,
+        subtitle_ocr_bitmap_asset_dir, write_decoded_bitmap_assets,
     };
-    use crate::tools::subtitle_ocr::SubtitleOcrDecodedCue;
     use crate::tools::subtitle_ocr::progress::ProgressTotal;
+    use crate::tools::subtitle_ocr::{SubtitleOcrCue, SubtitleOcrDecodedCue, SubtitleOcrRawCue};
 
     #[test]
     fn safe_thumbnail_path_component_removes_path_separators_and_empty_segments() {
@@ -508,6 +560,84 @@ mod tests {
 
         assert!(finished.load(Ordering::Relaxed));
         assert!(task.handle.is_none());
+    }
+
+    fn raw_cue(cue_id: &str, text: &str) -> SubtitleOcrRawCue {
+        raw_cue_at(cue_id, 1_000, 2_500, text)
+    }
+
+    fn raw_cue_at(
+        cue_id: &str,
+        start_time_ms: u64,
+        end_time_ms: u64,
+        text: &str,
+    ) -> SubtitleOcrRawCue {
+        SubtitleOcrRawCue {
+            cue_id: cue_id.to_string(),
+            start_time_ms,
+            end_time_ms,
+            cache_key: format!("cache-{cue_id}"),
+            boxes: Vec::new(),
+            text: text.to_string(),
+            confidence: if text.is_empty() { 0.0 } else { 0.8 },
+        }
+    }
+
+    fn final_cue(cue_id: &str, text: &str) -> SubtitleOcrCue {
+        SubtitleOcrCue {
+            id: cue_id.to_string(),
+            source_cue_ids: vec![cue_id.to_string()],
+            start_time_ms: 1_000,
+            end_time_ms: 2_500,
+            text: text.to_string(),
+            confidence: 0.8,
+        }
+    }
+
+    #[test]
+    fn build_final_subtitle_ocr_cues_creates_blank_review_cues_for_empty_ocr() {
+        let raw = vec![raw_cue("cue-1", ""), raw_cue("cue-2", "   ")];
+
+        let final_cues = build_final_subtitle_ocr_cues(&raw, Vec::new());
+
+        assert_eq!(final_cues.len(), 2);
+        assert_eq!(final_cues[0].id, "cue-1");
+        assert_eq!(final_cues[0].source_cue_ids, vec!["cue-1"]);
+        assert_eq!(final_cues[0].start_time_ms, 1_000);
+        assert_eq!(final_cues[0].end_time_ms, 2_500);
+        assert!(final_cues.iter().all(|cue| cue.text.is_empty()));
+    }
+
+    #[test]
+    fn build_final_subtitle_ocr_cues_preserves_blank_cues_in_mixed_results() {
+        let raw = vec![raw_cue("cue-1", ""), raw_cue("cue-2", "Hello")];
+        let stabilized = vec![final_cue("cue-2", "Hello")];
+
+        let final_cues = build_final_subtitle_ocr_cues(&raw, stabilized);
+
+        assert_eq!(final_cues.len(), 2);
+        assert_eq!(final_cues[0].id, "cue-1");
+        assert!(final_cues[0].text.is_empty());
+        assert_eq!(final_cues[1], final_cue("cue-2", "Hello"));
+    }
+
+    #[test]
+    fn build_final_subtitle_ocr_cues_emits_merged_stabilized_cues_once() {
+        let raw = vec![
+            raw_cue_at("cue-1", 1_000, 2_000, "Hello"),
+            raw_cue_at("cue-2", 2_100, 2_500, "Hello"),
+            raw_cue_at("cue-3", 2_600, 3_000, ""),
+        ];
+        let mut stabilized = final_cue("cue-1", "Hello");
+        stabilized.end_time_ms = 2_500;
+        stabilized.source_cue_ids = vec!["cue-1".to_string(), "cue-2".to_string()];
+
+        let final_cues = build_final_subtitle_ocr_cues(&raw, vec![stabilized.clone()]);
+
+        assert_eq!(final_cues.len(), 2);
+        assert_eq!(final_cues[0], stabilized);
+        assert_eq!(final_cues[1].id, "cue-3");
+        assert!(final_cues[1].text.is_empty());
     }
 
     #[test]

@@ -8,8 +8,8 @@ import {
 } from './subtitle-ocr-retry-dialog-state';
 
 describe('buildSubtitleOcrRetryDialogDefaults', () => {
-  it('defaults to full OCR and clones the current global config', () => {
-    const globalConfig = {
+  it('defaults to full OCR and clones the active version config', () => {
+    const versionConfig = {
       ...DEFAULT_SUBTITLE_OCR_CONFIG,
       ocrModel: 'latin' as const,
       useGpu: false,
@@ -17,14 +17,14 @@ describe('buildSubtitleOcrRetryDialogDefaults', () => {
       aiCleanupModel: 'global-model',
     };
 
-    const defaults = buildSubtitleOcrRetryDialogDefaults(globalConfig, 2);
+    const defaults = buildSubtitleOcrRetryDialogDefaults(versionConfig, 2);
 
     expect(defaults).toEqual({
       mode: 'full_ocr',
       versionName: 'Version 3',
-      config: globalConfig,
+      config: versionConfig,
     });
-    expect(defaults.config).not.toBe(globalConfig);
+    expect(defaults.config).not.toBe(versionConfig);
   });
 });
 

@@ -52,7 +52,10 @@
 
   $effect(() => {
     if (open && item) {
-      const defaults = buildSubtitleOcrRetryDialogDefaults(baseConfig, item.versions.length);
+      const defaults = buildSubtitleOcrRetryDialogDefaults(
+        activeVersion?.configSnapshot ?? baseConfig,
+        item.versions.length,
+      );
       mode = defaults.mode;
       versionName = defaults.versionName;
       config = defaults.config;

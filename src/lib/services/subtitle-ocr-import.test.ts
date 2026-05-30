@@ -7,6 +7,11 @@ import {
 } from './subtitle-ocr-import';
 
 describe('subtitle OCR import helpers', () => {
+  const unusedResolver = async () => ({
+    idxPath: '/unused.idx',
+    subPath: '/unused.sub',
+  });
+
   it('detects standalone PGS and VobSub extensions', () => {
     expect(getSubtitleOcrImportKind('/subs/French.sup')).toBe('standalone_sup');
     expect(getSubtitleOcrImportKind('/subs/French.idx')).toBe('standalone_vobsub_part');
@@ -48,14 +53,20 @@ describe('subtitle OCR import helpers', () => {
     ]);
   });
 
-  it('resolves missing pair files through the supplied exists callback', async () => {
-    const exists = vi.fn(async (path: string) => path === '/subs/French.sub');
+  it('resolves missing pair files through the supplied backend resolver', async () => {
+    const resolveVobSubPair = vi.fn(async (path: string) => {
+      expect(path).toBe('/subs/French.idx');
+      return {
+        idxPath: '/subs/French.idx',
+        subPath: '/subs/French.sub',
+      };
+    });
 
-    const items = await buildStandaloneSubtitleOcrItems(['/subs/French.idx'], exists);
+    const items = await buildStandaloneSubtitleOcrItems(['/subs/French.idx'], resolveVobSubPair);
 
     expect(items.warnings).toEqual([]);
-    expect(exists).toHaveBeenCalledWith('/subs/French.sub');
-    expect(exists).toHaveBeenCalledTimes(1);
+    expect(resolveVobSubPair).toHaveBeenCalledWith('/subs/French.idx');
+    expect(resolveVobSubPair).toHaveBeenCalledTimes(1);
     expect(items.items).toHaveLength(1);
     expect(items.items[0]?.sourceKind).toBe('standalone_vobsub');
     expect(items.items[0]?.pair).toEqual({
@@ -64,14 +75,20 @@ describe('subtitle OCR import helpers', () => {
     });
   });
 
-  it('resolves missing idx files through the supplied exists callback', async () => {
-    const exists = vi.fn(async (path: string) => path === '/subs/French.idx');
+  it('resolves missing idx files through the supplied backend resolver', async () => {
+    const resolveVobSubPair = vi.fn(async (path: string) => {
+      expect(path).toBe('/subs/French.sub');
+      return {
+        idxPath: '/subs/French.idx',
+        subPath: '/subs/French.sub',
+      };
+    });
 
-    const items = await buildStandaloneSubtitleOcrItems(['/subs/French.sub'], exists);
+    const items = await buildStandaloneSubtitleOcrItems(['/subs/French.sub'], resolveVobSubPair);
 
     expect(items.warnings).toEqual([]);
-    expect(exists).toHaveBeenCalledWith('/subs/French.idx');
-    expect(exists).toHaveBeenCalledTimes(1);
+    expect(resolveVobSubPair).toHaveBeenCalledWith('/subs/French.sub');
+    expect(resolveVobSubPair).toHaveBeenCalledTimes(1);
     expect(items.items).toHaveLength(1);
     expect(items.items[0]?.sourceKind).toBe('standalone_vobsub');
     expect(items.items[0]?.pair).toEqual({
@@ -81,18 +98,20 @@ describe('subtitle OCR import helpers', () => {
   });
 
   it('warns and skips incomplete VobSub pairs', async () => {
-    const exists = vi.fn(async () => false);
+    const resolveVobSubPair = vi.fn(async () => {
+      throw new Error('VobSub .idx sidecar not found: /subs/French.idx');
+    });
 
-    const items = await buildStandaloneSubtitleOcrItems(['/subs/French.sub'], exists);
+    const items = await buildStandaloneSubtitleOcrItems(['/subs/French.sub'], resolveVobSubPair);
 
     expect(items.items).toEqual([]);
     expect(items.warnings).toEqual([
-      'Missing VobSub pair for French.sub. Expected /subs/French.idx.',
+      'Missing VobSub pair for French.sub. VobSub .idx sidecar not found: /subs/French.idx',
     ]);
   });
 
   it('creates a standalone PGS item', async () => {
-    const items = await buildStandaloneSubtitleOcrItems(['/subs/French.sup'], async () => false);
+    const items = await buildStandaloneSubtitleOcrItems(['/subs/French.sup'], unusedResolver);
 
     expect(items.warnings).toEqual([]);
     expect(items.items[0]).toMatchObject({
@@ -107,7 +126,7 @@ describe('subtitle OCR import helpers', () => {
   it('deduplicates duplicate standalone PGS imports', async () => {
     const items = await buildStandaloneSubtitleOcrItems(
       ['/subs/French.sup', '/subs/French.sup'],
-      async () => false,
+      unusedResolver,
     );
 
     expect(items.warnings).toEqual([]);
@@ -122,7 +141,7 @@ describe('subtitle OCR import helpers', () => {
   it('creates distinct IDs for standalone PGS paths that collided under the old hash', async () => {
     const items = await buildStandaloneSubtitleOcrItems(
       ['/subs/Aa.sup', '/subs/BB.sup'],
-      async () => false,
+      unusedResolver,
     );
 
     expect(items.warnings).toEqual([]);

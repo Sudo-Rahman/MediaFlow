@@ -19,6 +19,8 @@ export interface BuildStandaloneSubtitleOcrItemsResult {
   warnings: string[];
 }
 
+export type ResolveVobSubPair = (path: string) => Promise<SubtitleOcrVobSubPair>;
+
 const CONTAINER_EXTENSIONS = new Set([
   'mkv',
   'm2ts',
@@ -103,9 +105,18 @@ function createVobSubItem(pair: Required<Pick<SubtitleOcrVobSubPair, 'idxPath' |
   };
 }
 
+function formatPairResolutionError(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.replace(/\s+/g, ' ').trim();
+  }
+
+  const message = String(error).replace(/\s+/g, ' ').trim();
+  return message || 'Could not resolve the matching .idx/.sub sidecar.';
+}
+
 export async function buildStandaloneSubtitleOcrItems(
   paths: string[],
-  exists: (path: string) => Promise<boolean>,
+  resolveVobSubPair: ResolveVobSubPair,
 ): Promise<BuildStandaloneSubtitleOcrItemsResult> {
   const items: SubtitleOcrSourceItem[] = [];
   const warnings: string[] = [];
@@ -118,21 +129,23 @@ export async function buildStandaloneSubtitleOcrItems(
     let subPath = candidate.subPath;
 
     if (!idxPath && subPath) {
-      const expectedIdx = `${candidate.basePath}.idx`;
-      if (await exists(expectedIdx)) {
-        idxPath = expectedIdx;
-      } else {
-        warnings.push(`Missing VobSub pair for ${getFileName(subPath)}. Expected ${expectedIdx}.`);
+      try {
+        const resolvedPair = await resolveVobSubPair(subPath);
+        idxPath = resolvedPair.idxPath;
+        subPath = resolvedPair.subPath;
+      } catch (error) {
+        warnings.push(`Missing VobSub pair for ${getFileName(subPath)}. ${formatPairResolutionError(error)}`);
         continue;
       }
     }
 
     if (!subPath && idxPath) {
-      const expectedSub = `${candidate.basePath}.sub`;
-      if (await exists(expectedSub)) {
-        subPath = expectedSub;
-      } else {
-        warnings.push(`Missing VobSub pair for ${getFileName(idxPath)}. Expected ${expectedSub}.`);
+      try {
+        const resolvedPair = await resolveVobSubPair(idxPath);
+        idxPath = resolvedPair.idxPath;
+        subPath = resolvedPair.subPath;
+      } catch (error) {
+        warnings.push(`Missing VobSub pair for ${getFileName(idxPath)}. ${formatPairResolutionError(error)}`);
         continue;
       }
     }

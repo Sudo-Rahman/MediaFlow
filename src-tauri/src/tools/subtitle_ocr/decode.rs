@@ -175,7 +175,7 @@ where
         BitmapSubtitleSource::VobSub { idx_path, sub_path } => {
             let idx_text = std::fs::read_to_string(idx_path)
                 .map_err(|e| format!("Failed to read VobSub .idx source: {}", e))?;
-            let idx_text = with_oxideav_idx_path_hint(&idx_text, idx_path);
+            let idx_text = normalize_oxideav_vobsub_idx_text(&idx_text, idx_path);
             (
                 "vobsub",
                 format!(
@@ -515,6 +515,25 @@ fn with_oxideav_idx_path_hint(idx_text: &str, idx_path: &Path) -> String {
     }
 }
 
+fn normalize_oxideav_vobsub_idx_text(idx_text: &str, idx_path: &Path) -> String {
+    let idx_text = with_oxideav_idx_path_hint(idx_text, idx_path);
+    if has_vobsub_palette_line(&idx_text) {
+        idx_text
+    } else {
+        format!("{}\n{}", fallback_vobsub_palette_line(), idx_text)
+    }
+}
+
+fn has_vobsub_palette_line(idx_text: &str) -> bool {
+    idx_text
+        .lines()
+        .any(|line| line.trim_start().starts_with("palette:"))
+}
+
+fn fallback_vobsub_palette_line() -> &'static str {
+    "palette: 000000, 111111, 222222, 333333, 444444, 555555, 666666, 777777, 888888, 999999, aaaaaa, bbbbbb, cccccc, dddddd, eeeeee, ffffff"
+}
+
 fn validate_existing_file_with_extension(path: &str, extension: &str) -> Result<PathBuf, String> {
     let path = Path::new(path);
     if !path.exists() {
@@ -717,6 +736,43 @@ timestamp: 00:00:01:500, filepos: 000000000
 
         assert_eq!(decoded_metadata.len(), 1);
         assert_eq!(decoded_metadata[0].end_time_ms, 3_500);
+    }
+
+    #[test]
+    fn decode_bitmap_subtitle_source_with_handler_decodes_vobsub_without_palette_as_visible_rgba() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let idx = dir.path().join("demo.idx");
+        let sub = dir.path().join("demo.sub");
+        let spu = oxideav_sub_image::vobsub::build_demo_spu(2, 2, &[1, 1, 1, 1]);
+        std::fs::write(&sub, spu).expect("failed to write sub");
+        std::fs::write(
+            &idx,
+            "\
+# VobSub index file
+size: 2x2
+timestamp: 00:00:01:500, filepos: 000000000
+",
+        )
+        .expect("failed to write idx");
+        let source = BitmapSubtitleSource::VobSub {
+            idx_path: idx,
+            sub_path: sub,
+        };
+        let mut decoded_cues = Vec::new();
+
+        decode_bitmap_subtitle_source_with_handler(&source, "demo-item", "demo-run", |decoded| {
+            decoded_cues.push(decoded);
+            Ok(())
+        })
+        .expect("no-palette VobSub fixture should decode");
+
+        assert_eq!(decoded_cues.len(), 1);
+        assert!(
+            decoded_cues[0]
+                .rgba
+                .chunks_exact(4)
+                .any(|pixel| { pixel[3] > 0 && (pixel[0] > 0 || pixel[1] > 0 || pixel[2] > 0) })
+        );
     }
 
     #[test]

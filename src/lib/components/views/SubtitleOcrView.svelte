@@ -10,7 +10,6 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
-  import { exists as pathExists } from '@tauri-apps/plugin-fs';
   import { toast } from 'svelte-sonner';
 
   import {
@@ -44,6 +43,7 @@
     type SubtitleOcrStatus,
     type SubtitleOcrTrackMetadata,
     type SubtitleOcrVersion,
+    type SubtitleOcrVobSubPair,
   } from '$lib/types';
   import { getFileName } from '$lib/utils/format';
   import { logAndToast } from '$lib/utils/log-toast';
@@ -361,13 +361,17 @@
       return;
     }
 
-    const result = await buildStandaloneSubtitleOcrItems(paths, pathExists);
+    const result = await buildStandaloneSubtitleOcrItems(paths, resolveVobSubPair);
     await addImportedItems(result.items);
     showImportWarnings(result.warnings);
 
     if (result.items.length === 0 && result.warnings.length === 0) {
       toast.warning('No complete standalone subtitle sources found');
     }
+  }
+
+  async function resolveVobSubPair(path: string): Promise<SubtitleOcrVobSubPair> {
+    return invoke<SubtitleOcrVobSubPair>('resolve_subtitle_ocr_vobsub_pair', { path });
   }
 
   async function probeContainerPath(path: string): Promise<TrackDialogRequest | null> {

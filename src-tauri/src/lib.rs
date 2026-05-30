@@ -78,6 +78,7 @@ pub fn run() {
             commands::ocr_subtitles::generate_subtitles_from_ocr,
             commands::ocr_export::export_ocr_subtitles,
             commands::subtitle_ocr_import::probe_subtitle_ocr_tracks,
+            commands::subtitle_ocr_import::resolve_subtitle_ocr_vobsub_pair,
             commands::subtitle_ocr_extract::prepare_subtitle_ocr_track,
             commands::subtitle_ocr_decode::decode_subtitle_ocr_bitmaps,
             commands::subtitle_ocr_ocr::run_subtitle_ocr_pipeline,

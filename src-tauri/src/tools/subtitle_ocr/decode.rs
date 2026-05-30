@@ -152,7 +152,7 @@ where
     )
 }
 
-fn decode_bitmap_subtitle_source_with_handler_and_stop<F, S>(
+pub(super) fn decode_bitmap_subtitle_source_with_handler_and_stop<F, S>(
     source: &BitmapSubtitleSource,
     item_id: &str,
     run_id: &str,

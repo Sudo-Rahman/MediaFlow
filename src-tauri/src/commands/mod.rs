@@ -26,6 +26,7 @@ pub(crate) use crate::tools::subtitle_ocr::export as subtitle_ocr_export;
 pub(crate) use crate::tools::subtitle_ocr::extract as subtitle_ocr_extract;
 pub(crate) use crate::tools::subtitle_ocr::import as subtitle_ocr_import;
 pub(crate) use crate::tools::subtitle_ocr::ocr as subtitle_ocr_ocr;
+pub(crate) use crate::tools::subtitle_ocr::restore as subtitle_ocr_restore;
 pub(crate) use crate::tools::tokens::count as tokens;
 pub(crate) use crate::tools::transcode::analysis as transcode_analysis;
 pub(crate) use crate::tools::transcode::cancel as transcode_cancel;

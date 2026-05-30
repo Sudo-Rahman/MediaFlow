@@ -10,6 +10,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
+  import { exists } from '@tauri-apps/plugin-fs';
   import { toast } from 'svelte-sonner';
 
   import {
@@ -35,6 +36,7 @@
   import { isSubtitleOcrProgressPhaseStale } from '$lib/stores/subtitle-ocr-progress';
   import {
     type SubtitleOcrCue,
+    type SubtitleOcrCueBitmap,
     type SubtitleOcrConfig,
     type SubtitleOcrPipelineResult,
     type SubtitleOcrProgress,
@@ -51,10 +53,12 @@
   import {
     buildSubtitleOcrDraftVersionInput,
     buildSubtitleOcrSourceSnapshot,
+    collectMissingSubtitleOcrBitmapAssets,
     filterSubtitleOcrPersistenceForItem,
     getSubtitleOcrActiveVersionItemIds,
     getSubtitleOcrBackendCancelTargets,
     getSubtitleOcrVersionedItemIds,
+    mergeRestoredSubtitleOcrBitmapAssets,
     mergeSubtitleOcrPersistenceForItem,
     resolveSubtitleOcrExpectedBitmapCount,
     resolveSubtitleOcrEffectiveModelForConfig,
@@ -99,6 +103,7 @@
   const aiCleanupControllers = new SvelteMap<string, AbortController>();
   const activeRunIdsByItemId = new SvelteMap<string, string>();
   const backendCancelableRunIdsByItemId = new SvelteMap<string, string>();
+  const previewRestoreRunIdsByItemId = new SvelteMap<string, string>();
   let cancelRequested = false;
 
   const IMPORT_EXTENSIONS = [
@@ -144,6 +149,9 @@
       ? selectedCueIdsByItemId[selectedItem.id] ?? renderedCues[0]?.id ?? null
       : null,
   );
+  const restoringPreviewItemIds = $derived.by(() => (
+    new Set(previewRestoreRunIdsByItemId.keys())
+  ));
   const summary = $derived.by(() => summarizeSubtitleOcrItems(items));
   const retryableItemIds = $derived.by(() => getSubtitleOcrVersionedItemIds(items));
   const aiCleanupRetryableItemIds = $derived.by(() => (
@@ -211,6 +219,7 @@
       aiCleanupControllers.clear();
       activeRunIdsByItemId.clear();
       backendCancelableRunIdsByItemId.clear();
+      previewRestoreRunIdsByItemId.clear();
     };
   });
 
@@ -297,6 +306,14 @@
     return sanitizeProcessingMessage(error).toLowerCase().includes('cancelled');
   }
 
+  async function subtitleOcrBitmapPathExists(path: string): Promise<boolean> {
+    try {
+      return await exists(path);
+    } catch {
+      return false;
+    }
+  }
+
   function setManualProgress(
     itemId: string,
     phase: SubtitleOcrProgress['phase'],
@@ -329,6 +346,7 @@
         matchingData.activeVersionId,
         { status: 'completed' },
       );
+      await restoreMissingPreviewAssets(item.id);
     } catch (error) {
       logAndToast.warning({
         source: 'system',
@@ -579,6 +597,98 @@
         ) ?? null,
       },
     };
+  }
+
+  function buildPreviewRestoreArgs(
+    item: SubtitleOcrSourceItem,
+    sourcePath: string,
+    runId: string,
+    bitmaps: SubtitleOcrCueBitmap[],
+  ) {
+    return {
+      itemId: item.id,
+      runId,
+      sourcePath,
+      idxPath: item.sourceKind === 'standalone_vobsub' ? item.pair.idxPath : null,
+      subPath: item.sourceKind === 'standalone_vobsub' ? item.pair.subPath : null,
+      bitmaps,
+    };
+  }
+
+  async function restoreMissingPreviewAssets(itemId: string): Promise<void> {
+    const item = getStoreItem(itemId);
+    if (!item || item.versions.length === 0) {
+      return;
+    }
+
+    const missingBitmaps = await collectMissingSubtitleOcrBitmapAssets(
+      item.versions,
+      subtitleOcrBitmapPathExists,
+    );
+    if (missingBitmaps.length === 0) {
+      return;
+    }
+
+    const runId = createSubtitleOcrRunId(`${item.id}-restore`);
+    previewRestoreRunIdsByItemId.set(item.id, runId);
+    activeRunIdsByItemId.set(item.id, runId);
+    subtitleOcrStore.startProcessing([item.id]);
+
+    try {
+      setManualProgress(item.id, 'decoding');
+      const sourcePath = await preparePipelineSource(item, runId);
+      if (cancelRequested) {
+        throw new Error('Subtitle OCR operation cancelled');
+      }
+
+      backendCancelableRunIdsByItemId.set(item.id, runId);
+      const restoredBitmaps = await invoke<SubtitleOcrCueBitmap[]>(
+        'restore_subtitle_ocr_bitmap_assets',
+        buildPreviewRestoreArgs(item, sourcePath, runId, missingBitmaps),
+      );
+      backendCancelableRunIdsByItemId.delete(item.id);
+
+      const latestItem = getStoreItem(item.id) ?? item;
+      const restoredVersions = mergeRestoredSubtitleOcrBitmapAssets(
+        latestItem.versions,
+        restoredBitmaps,
+      );
+      subtitleOcrStore.replaceItemVersions(
+        item.id,
+        restoredVersions,
+        latestItem.activeVersionId,
+        { status: 'completed' },
+      );
+      await persistItem(item.id);
+
+      if (restoredBitmaps.length < missingBitmaps.length) {
+        logAndToast.warning({
+          source: 'system',
+          title: 'Some Subtitle OCR previews were not restored',
+          details: 'The OCR text remains available, but some cue images could not be regenerated.',
+          showAction: false,
+        });
+      }
+    } catch (error) {
+      subtitleOcrStore.setItemStatus(item.id, 'completed');
+      subtitleOcrStore.setProgress(item.id, undefined);
+      if (!isCancellationError(error) && !cancelRequested) {
+        logAndToast.warning({
+          source: 'system',
+          title: 'Subtitle OCR previews were not restored',
+          details: 'The OCR text remains available, but missing cue images could not be regenerated.',
+          showAction: false,
+        });
+      }
+    } finally {
+      backendCancelableRunIdsByItemId.delete(item.id);
+      activeRunIdsByItemId.delete(item.id);
+      previewRestoreRunIdsByItemId.delete(item.id);
+      subtitleOcrStore.stopProcessing();
+      subtitleOcrStore.setItemStatus(item.id, 'completed');
+      subtitleOcrStore.setProgress(item.id, undefined);
+      cancelRequested = false;
+    }
   }
 
   async function runAiCleanupForItem(
@@ -1057,6 +1167,7 @@
     {items}
     selectedItemId={selectedItem?.id ?? null}
     isProcessing={subtitleOcrStore.isProcessing}
+    {restoringPreviewItemIds}
     onImport={handleImport}
     onSelectItem={handleSelectItem}
     onOpenVersions={handleOpenVersions}

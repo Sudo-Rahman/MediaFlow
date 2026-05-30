@@ -1,6 +1,7 @@
 import type {
   OcrLanguage,
   SubtitleOcrConfig,
+  SubtitleOcrCueBitmap,
   SubtitleOcrPersistenceData,
   SubtitleOcrSourceItem,
   SubtitleOcrSourceSnapshot,
@@ -33,6 +34,8 @@ export interface SubtitleOcrBackendCancelTarget {
   itemId: string;
   runId: string;
 }
+
+export type SubtitleOcrBitmapExists = (path: string) => Promise<boolean>;
 
 export function summarizeSubtitleOcrItems(
   items: readonly SubtitleOcrSummaryItem[],
@@ -132,6 +135,129 @@ export function resolveSubtitleOcrExpectedBitmapCount(
 ): number | undefined {
   const count = activeVersion?.bitmaps.length ?? 0;
   return count > 0 ? count : undefined;
+}
+
+function bitmapRestoreKey(bitmap: SubtitleOcrCueBitmap): string {
+  if (bitmap.cacheKey) {
+    return `cache:${bitmap.cacheKey}`;
+  }
+
+  if (bitmap.cueId) {
+    return `cue:${bitmap.cueId}`;
+  }
+
+  return [
+    'time',
+    bitmap.startTimeMs,
+    bitmap.endTimeMs,
+    bitmap.width,
+    bitmap.height,
+  ].join(':');
+}
+
+async function bitmapAssetIsMissing(
+  bitmap: SubtitleOcrCueBitmap,
+  exists: SubtitleOcrBitmapExists,
+): Promise<boolean> {
+  if (!bitmap.thumbnailPath || !bitmap.previewPath) {
+    return true;
+  }
+
+  const [thumbnailExists, previewExists] = await Promise.all([
+    exists(bitmap.thumbnailPath),
+    exists(bitmap.previewPath),
+  ]);
+
+  return !thumbnailExists || !previewExists;
+}
+
+export async function collectMissingSubtitleOcrBitmapAssets(
+  versions: readonly Pick<SubtitleOcrVersion, 'bitmaps'>[],
+  exists: SubtitleOcrBitmapExists,
+): Promise<SubtitleOcrCueBitmap[]> {
+  const missingBitmaps: SubtitleOcrCueBitmap[] = [];
+  const seenKeys = new Set<string>();
+
+  for (const version of versions) {
+    for (const bitmap of version.bitmaps) {
+      const key = bitmapRestoreKey(bitmap);
+      if (seenKeys.has(key)) {
+        continue;
+      }
+
+      if (await bitmapAssetIsMissing(bitmap, exists)) {
+        seenKeys.add(key);
+        missingBitmaps.push({ ...bitmap });
+      }
+    }
+  }
+
+  return missingBitmaps;
+}
+
+function restoredBitmapMatchesByCacheKey(
+  bitmap: SubtitleOcrCueBitmap,
+  restored: SubtitleOcrCueBitmap,
+): boolean {
+  return Boolean(bitmap.cacheKey && restored.cacheKey && bitmap.cacheKey === restored.cacheKey);
+}
+
+function restoredBitmapMatchesByCueId(
+  bitmap: SubtitleOcrCueBitmap,
+  restored: SubtitleOcrCueBitmap,
+): boolean {
+  return Boolean(bitmap.cueId && restored.cueId && bitmap.cueId === restored.cueId);
+}
+
+function restoredBitmapMatchesByTimingAndDimensions(
+  bitmap: SubtitleOcrCueBitmap,
+  restored: SubtitleOcrCueBitmap,
+): boolean {
+  return bitmap.startTimeMs === restored.startTimeMs
+    && bitmap.endTimeMs === restored.endTimeMs
+    && bitmap.width === restored.width
+    && bitmap.height === restored.height;
+}
+
+function mergeRestoredBitmapPath(
+  bitmap: SubtitleOcrCueBitmap,
+  restoredBitmaps: readonly SubtitleOcrCueBitmap[],
+): SubtitleOcrCueBitmap {
+  const restored = restoredBitmaps.find((candidate) => (
+    restoredBitmapMatchesByCacheKey(bitmap, candidate)
+  )) ?? restoredBitmaps.find((candidate) => (
+    restoredBitmapMatchesByCueId(bitmap, candidate)
+  )) ?? restoredBitmaps.find((candidate) => (
+    restoredBitmapMatchesByTimingAndDimensions(bitmap, candidate)
+  ));
+  if (!restored) {
+    return { ...bitmap };
+  }
+
+  return {
+    ...bitmap,
+    ...(restored.thumbnailPath !== undefined ? { thumbnailPath: restored.thumbnailPath } : {}),
+    ...(restored.previewPath !== undefined ? { previewPath: restored.previewPath } : {}),
+  };
+}
+
+export function mergeRestoredSubtitleOcrBitmapAssets(
+  versions: readonly SubtitleOcrVersion[],
+  restoredBitmaps: readonly SubtitleOcrCueBitmap[],
+): SubtitleOcrVersion[] {
+  if (restoredBitmaps.length === 0) {
+    return versions.map((version) => ({
+      ...version,
+      bitmaps: version.bitmaps.map((bitmap) => ({ ...bitmap })),
+    }));
+  }
+
+  return versions.map((version) => ({
+    ...version,
+    bitmaps: version.bitmaps.map((bitmap) => (
+      mergeRestoredBitmapPath(bitmap, restoredBitmaps)
+    )),
+  }));
 }
 
 export function buildSubtitleOcrDraftVersionInput(

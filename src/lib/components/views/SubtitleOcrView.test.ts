@@ -9,10 +9,12 @@ import { DEFAULT_SUBTITLE_OCR_CONFIG } from '$lib/types';
 import {
   buildSubtitleOcrDraftVersionInput,
   buildSubtitleOcrSourceSnapshot,
+  collectMissingSubtitleOcrBitmapAssets,
   filterSubtitleOcrPersistenceForItem,
   getSubtitleOcrActiveVersionItemIds,
   getSubtitleOcrBackendCancelTargets,
   getSubtitleOcrVersionedItemIds,
+  mergeRestoredSubtitleOcrBitmapAssets,
   mergeSubtitleOcrPersistenceForItem,
   resolveSubtitleOcrExpectedBitmapCount,
   resolveSubtitleOcrEffectiveModelForConfig,
@@ -195,6 +197,186 @@ describe('resolveSubtitleOcrExpectedBitmapCount', () => {
     expect(resolveSubtitleOcrExpectedBitmapCount(version('empty', activeVersion.sourceSnapshot)))
       .toBeUndefined();
     expect(resolveSubtitleOcrExpectedBitmapCount(null)).toBeUndefined();
+  });
+});
+
+describe('subtitle OCR bitmap asset restore helpers', () => {
+  it('collects unique bitmaps with missing thumbnail or preview files', async () => {
+    const sourceSnapshot = {
+      sourceKind: 'standalone_sup' as const,
+      sourcePath: '/subs/source.sup',
+      ocrModelOverride: 'default' as const,
+    };
+    const v1 = version('v1', sourceSnapshot);
+    const v2 = version('v2', sourceSnapshot);
+    const sharedMissing = {
+      cueId: 'cue-1',
+      startTimeMs: 1_000,
+      endTimeMs: 2_000,
+      width: 640,
+      height: 120,
+      cacheKey: 'shared-cache',
+      thumbnailPath: '/tmp/missing-thumb.png',
+      previewPath: '/tmp/existing-preview.png',
+    };
+    v1.bitmaps = [
+      sharedMissing,
+      {
+        cueId: 'cue-2',
+        startTimeMs: 3_000,
+        endTimeMs: 4_000,
+        width: 640,
+        height: 120,
+        cacheKey: 'existing-cache',
+        thumbnailPath: '/tmp/existing-thumb.png',
+        previewPath: '/tmp/existing-preview.png',
+      },
+    ];
+    v2.bitmaps = [{ ...sharedMissing, cueId: 'cue-1-copy' }];
+
+    const missing = await collectMissingSubtitleOcrBitmapAssets([v1, v2], async (path) => (
+      !path.includes('missing')
+    ));
+
+    expect(missing).toEqual([sharedMissing]);
+  });
+
+  it('treats absent thumbnail or preview paths as restore targets', async () => {
+    const sourceSnapshot = {
+      sourceKind: 'standalone_sup' as const,
+      sourcePath: '/subs/source.sup',
+      ocrModelOverride: 'default' as const,
+    };
+    const v1 = version('v1', sourceSnapshot);
+    v1.bitmaps = [{
+      cueId: 'cue-1',
+      startTimeMs: 1_000,
+      endTimeMs: 2_000,
+      width: 640,
+      height: 120,
+      cacheKey: 'cache-1',
+    }];
+
+    const missing = await collectMissingSubtitleOcrBitmapAssets([v1], async () => true);
+
+    expect(missing).toEqual(v1.bitmaps);
+  });
+
+  it('merges restored bitmap paths across versions by cache key without changing OCR data', () => {
+    const sourceSnapshot = {
+      sourceKind: 'standalone_sup' as const,
+      sourcePath: '/subs/source.sup',
+      ocrModelOverride: 'default' as const,
+    };
+    const v1 = version('v1', sourceSnapshot);
+    const v2 = version('v2', sourceSnapshot);
+    v1.rawOcr = [{
+      cueId: 'raw-1',
+      startTimeMs: 1_000,
+      endTimeMs: 2_000,
+      cacheKey: 'raw-cache',
+      boxes: [],
+      text: 'raw text',
+      confidence: 0.8,
+    }];
+    v1.finalCues = [{
+      id: 'cue-final',
+      sourceCueIds: ['raw-1'],
+      startTimeMs: 1_000,
+      endTimeMs: 2_000,
+      text: 'edited text',
+      confidence: 0.8,
+    }];
+    v1.bitmaps = [{
+      cueId: 'cue-1',
+      startTimeMs: 1_000,
+      endTimeMs: 2_000,
+      width: 640,
+      height: 120,
+      cacheKey: 'shared-cache',
+      thumbnailPath: '/tmp/old-thumb.png',
+      previewPath: '/tmp/old-preview.png',
+    }];
+    v2.bitmaps = [{
+      cueId: 'cue-1-copy',
+      startTimeMs: 1_000,
+      endTimeMs: 2_000,
+      width: 640,
+      height: 120,
+      cacheKey: 'shared-cache',
+      thumbnailPath: '/tmp/old-thumb-copy.png',
+      previewPath: '/tmp/old-preview-copy.png',
+    }];
+
+    const merged = mergeRestoredSubtitleOcrBitmapAssets([v1, v2], [{
+      cueId: 'cue-1',
+      startTimeMs: 1_000,
+      endTimeMs: 2_000,
+      width: 640,
+      height: 120,
+      cacheKey: 'shared-cache',
+      thumbnailPath: '/tmp/new-thumb.png',
+      previewPath: '/tmp/new-preview.png',
+    }]);
+
+    expect(merged[0].bitmaps[0]).toMatchObject({
+      thumbnailPath: '/tmp/new-thumb.png',
+      previewPath: '/tmp/new-preview.png',
+    });
+    expect(merged[1].bitmaps[0]).toMatchObject({
+      thumbnailPath: '/tmp/new-thumb.png',
+      previewPath: '/tmp/new-preview.png',
+    });
+    expect(merged[0].rawOcr).toEqual(v1.rawOcr);
+    expect(merged[0].finalCues).toEqual(v1.finalCues);
+    expect(merged[0].configSnapshot).toEqual(v1.configSnapshot);
+  });
+
+  it('prefers restored cache key matches over earlier lower-priority matches', () => {
+    const sourceSnapshot = {
+      sourceKind: 'standalone_sup' as const,
+      sourcePath: '/subs/source.sup',
+      ocrModelOverride: 'default' as const,
+    };
+    const v1 = version('v1', sourceSnapshot);
+    v1.bitmaps = [{
+      cueId: 'cue-1',
+      startTimeMs: 1_000,
+      endTimeMs: 2_000,
+      width: 640,
+      height: 120,
+      cacheKey: 'cache-target',
+      thumbnailPath: '/tmp/old-thumb.png',
+      previewPath: '/tmp/old-preview.png',
+    }];
+
+    const merged = mergeRestoredSubtitleOcrBitmapAssets([v1], [
+      {
+        cueId: 'cue-1',
+        startTimeMs: 1_000,
+        endTimeMs: 2_000,
+        width: 640,
+        height: 120,
+        cacheKey: 'other-cache',
+        thumbnailPath: '/tmp/cue-id-thumb.png',
+        previewPath: '/tmp/cue-id-preview.png',
+      },
+      {
+        cueId: 'other-cue',
+        startTimeMs: 3_000,
+        endTimeMs: 4_000,
+        width: 640,
+        height: 120,
+        cacheKey: 'cache-target',
+        thumbnailPath: '/tmp/cache-thumb.png',
+        previewPath: '/tmp/cache-preview.png',
+      },
+    ]);
+
+    expect(merged[0].bitmaps[0]).toMatchObject({
+      thumbnailPath: '/tmp/cache-thumb.png',
+      previewPath: '/tmp/cache-preview.png',
+    });
   });
 });
 

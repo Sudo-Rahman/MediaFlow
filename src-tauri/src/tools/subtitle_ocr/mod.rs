@@ -1,3 +1,4 @@
+pub(crate) mod assets;
 pub(crate) mod cancel;
 pub(crate) mod decode;
 pub(crate) mod export;
@@ -5,6 +6,7 @@ pub(crate) mod extract;
 pub(crate) mod import;
 pub(crate) mod ocr;
 pub(crate) mod progress;
+pub(crate) mod restore;
 pub(crate) mod stabilize;
 pub(crate) mod state;
 pub(crate) mod text;

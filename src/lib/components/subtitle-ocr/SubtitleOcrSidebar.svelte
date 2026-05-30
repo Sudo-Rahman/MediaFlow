@@ -32,6 +32,7 @@
     items: SubtitleOcrSourceItem[];
     selectedItemId: string | null;
     isProcessing: boolean;
+    restoringPreviewItemIds?: ReadonlySet<string>;
     onImport: () => void | Promise<void>;
     onSelectItem: (itemId: string) => void;
     onOpenVersions: (itemId: string) => void;
@@ -44,6 +45,7 @@
     items,
     selectedItemId,
     isProcessing,
+    restoringPreviewItemIds = new Set<string>(),
     onImport,
     onSelectItem,
     onOpenVersions,
@@ -101,6 +103,14 @@
       case 'extracting':
         return 'Extracting';
       case 'decoding':
+        if (restoringPreviewItemIds.has(item.id)) {
+          if (progress.totalKnown && progress.total > 0) {
+            return `Restoring previews ${progress.current}/${progress.total}`;
+          }
+
+          return progress.current > 0 ? `Restoring previews ${progress.current}` : 'Restoring previews';
+        }
+
         return 'Decoding';
       case 'ocr':
         if (progress.totalKnown && progress.total > 0) {

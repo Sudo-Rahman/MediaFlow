@@ -923,6 +923,10 @@
   }
 
   async function handleCancel(): Promise<void> {
+    if (subtitleOcrStore.isCancelling) {
+      return;
+    }
+
     const processingScopeItemIds = subtitleOcrStore.processingScopeItemIds;
     const itemIds = Array.from(processingScopeItemIds);
     if (itemIds.length === 0) {
@@ -1195,6 +1199,7 @@
       {canStart}
       {canRetryAll}
       isProcessing={subtitleOcrStore.isProcessing}
+      isCancelling={subtitleOcrStore.isCancelling}
       readyCount={summary.readyCount}
       {retryCount}
       {actionHint}

@@ -1,3 +1,19 @@
+<script lang="ts" module>
+  export interface SubtitleOcrCancelActionState {
+    disabled: boolean;
+    label: string;
+  }
+
+  export function getSubtitleOcrCancelActionState(
+    isCancelling: boolean,
+  ): SubtitleOcrCancelActionState {
+    return {
+      disabled: isCancelling,
+      label: isCancelling ? 'Cancelling...' : 'Cancel Subtitle OCR',
+    };
+  }
+</script>
+
 <script lang="ts">
   import { Play, RotateCw, Settings, Square } from '@lucide/svelte';
   import { useId } from 'bits-ui';
@@ -16,6 +32,7 @@
     canStart: boolean;
     canRetryAll: boolean;
     isProcessing: boolean;
+    isCancelling?: boolean;
     readyCount: number;
     retryCount: number;
     actionHint: string;
@@ -32,6 +49,7 @@
     canStart,
     canRetryAll,
     isProcessing,
+    isCancelling = false,
     readyCount,
     retryCount,
     actionHint,
@@ -61,6 +79,7 @@
   const primaryLabel = $derived(
     primaryIsRetry ? `Retry OCR (${retryCount})` : `Start OCR (${readyCount})`,
   );
+  const cancelActionState = $derived(getSubtitleOcrCancelActionState(isCancelling));
 
   function handlePrimaryAction(): void {
     if (primaryIsRetry) {
@@ -151,9 +170,14 @@
 
   <div class="space-y-2">
     {#if isProcessing}
-      <Button variant="destructive" class="w-full" onclick={onCancel}>
+      <Button
+        variant="destructive"
+        class="w-full"
+        onclick={onCancel}
+        disabled={cancelActionState.disabled}
+      >
         <Square class="mr-2 size-4" />
-        Cancel Subtitle OCR
+        {cancelActionState.label}
       </Button>
     {:else}
       <Button class="w-full" disabled={!hasPrimaryAction} onclick={handlePrimaryAction}>

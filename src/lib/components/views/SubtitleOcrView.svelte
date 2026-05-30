@@ -10,7 +10,6 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
-  import { exists } from '@tauri-apps/plugin-fs';
   import { toast } from 'svelte-sonner';
 
   import {
@@ -306,12 +305,12 @@
     return sanitizeProcessingMessage(error).toLowerCase().includes('cancelled');
   }
 
-  async function subtitleOcrBitmapPathExists(path: string): Promise<boolean> {
-    try {
-      return await exists(path);
-    } catch {
-      return false;
-    }
+  async function collectMissingPreviewAssets(
+    bitmaps: SubtitleOcrCueBitmap[],
+  ): Promise<SubtitleOcrCueBitmap[]> {
+    return invoke<SubtitleOcrCueBitmap[]>('collect_missing_subtitle_ocr_bitmap_assets', {
+      bitmaps,
+    });
   }
 
   function setManualProgress(
@@ -623,7 +622,7 @@
 
     const missingBitmaps = await collectMissingSubtitleOcrBitmapAssets(
       item.versions,
-      subtitleOcrBitmapPathExists,
+      collectMissingPreviewAssets,
     );
     if (missingBitmaps.length === 0) {
       return;

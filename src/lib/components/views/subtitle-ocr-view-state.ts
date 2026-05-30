@@ -35,7 +35,9 @@ export interface SubtitleOcrBackendCancelTarget {
   runId: string;
 }
 
-export type SubtitleOcrBitmapExists = (path: string) => Promise<boolean>;
+export type SubtitleOcrMissingBitmapCollector = (
+  bitmaps: SubtitleOcrCueBitmap[],
+) => Promise<SubtitleOcrCueBitmap[]>;
 
 export function summarizeSubtitleOcrItems(
   items: readonly SubtitleOcrSummaryItem[],
@@ -137,62 +139,23 @@ export function resolveSubtitleOcrExpectedBitmapCount(
   return count > 0 ? count : undefined;
 }
 
-function bitmapRestoreKey(bitmap: SubtitleOcrCueBitmap): string {
-  if (bitmap.cacheKey) {
-    return `cache:${bitmap.cacheKey}`;
-  }
-
-  if (bitmap.cueId) {
-    return `cue:${bitmap.cueId}`;
-  }
-
-  return [
-    'time',
-    bitmap.startTimeMs,
-    bitmap.endTimeMs,
-    bitmap.width,
-    bitmap.height,
-  ].join(':');
-}
-
-async function bitmapAssetIsMissing(
-  bitmap: SubtitleOcrCueBitmap,
-  exists: SubtitleOcrBitmapExists,
-): Promise<boolean> {
-  if (!bitmap.thumbnailPath || !bitmap.previewPath) {
-    return true;
-  }
-
-  const [thumbnailExists, previewExists] = await Promise.all([
-    exists(bitmap.thumbnailPath),
-    exists(bitmap.previewPath),
-  ]);
-
-  return !thumbnailExists || !previewExists;
-}
-
 export async function collectMissingSubtitleOcrBitmapAssets(
   versions: readonly Pick<SubtitleOcrVersion, 'bitmaps'>[],
-  exists: SubtitleOcrBitmapExists,
+  collectMissingBitmaps: SubtitleOcrMissingBitmapCollector,
 ): Promise<SubtitleOcrCueBitmap[]> {
-  const missingBitmaps: SubtitleOcrCueBitmap[] = [];
-  const seenKeys = new Set<string>();
+  const bitmaps: SubtitleOcrCueBitmap[] = [];
 
   for (const version of versions) {
     for (const bitmap of version.bitmaps) {
-      const key = bitmapRestoreKey(bitmap);
-      if (seenKeys.has(key)) {
-        continue;
-      }
-
-      if (await bitmapAssetIsMissing(bitmap, exists)) {
-        seenKeys.add(key);
-        missingBitmaps.push({ ...bitmap });
-      }
+      bitmaps.push({ ...bitmap });
     }
   }
 
-  return missingBitmaps;
+  if (bitmaps.length === 0) {
+    return [];
+  }
+
+  return collectMissingBitmaps(bitmaps);
 }
 
 function restoredBitmapMatchesByCacheKey(

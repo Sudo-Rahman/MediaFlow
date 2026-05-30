@@ -1,4 +1,7 @@
-use std::cell::Cell;
+use std::{
+    cell::Cell,
+    path::{Component, Path, PathBuf},
+};
 
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::tools::subtitle_ocr::SubtitleOcrDecodedCue;
@@ -67,6 +70,86 @@ pub(crate) async fn restore_subtitle_ocr_bitmap_assets(
     }
 
     result
+}
+
+#[tauri::command]
+pub(crate) async fn collect_missing_subtitle_ocr_bitmap_assets(
+    bitmaps: Vec<SubtitleOcrRestoreBitmap>,
+) -> Result<Vec<SubtitleOcrRestoreBitmap>, String> {
+    tokio::task::spawn_blocking(move || collect_missing_bitmap_assets(bitmaps))
+        .await
+        .map_err(|e| format!("Subtitle OCR bitmap asset scan failed: {}", e))
+}
+
+fn collect_missing_bitmap_assets(
+    bitmaps: Vec<SubtitleOcrRestoreBitmap>,
+) -> Vec<SubtitleOcrRestoreBitmap> {
+    let mut missing = Vec::new();
+    let mut seen_keys = std::collections::HashSet::new();
+
+    for bitmap in bitmaps {
+        if bitmap_asset_is_missing(&bitmap) {
+            let key = bitmap_restore_key(&bitmap);
+            if !seen_keys.insert(key) {
+                continue;
+            }
+            missing.push(bitmap);
+        }
+    }
+
+    missing
+}
+
+fn bitmap_restore_key(bitmap: &SubtitleOcrRestoreBitmap) -> String {
+    if let Some(cache_key) = bitmap
+        .cache_key
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        return format!("cache:{cache_key}");
+    }
+
+    if !bitmap.cue_id.is_empty() {
+        return format!("cue:{}", bitmap.cue_id);
+    }
+
+    format!(
+        "time:{}:{}:{}:{}",
+        bitmap.start_time_ms, bitmap.end_time_ms, bitmap.width, bitmap.height
+    )
+}
+
+fn bitmap_asset_is_missing(bitmap: &SubtitleOcrRestoreBitmap) -> bool {
+    let Some(thumbnail_path) = bitmap.thumbnail_path.as_deref() else {
+        return true;
+    };
+    let Some(preview_path) = bitmap.preview_path.as_deref() else {
+        return true;
+    };
+
+    !subtitle_ocr_asset_path_exists(thumbnail_path) || !subtitle_ocr_asset_path_exists(preview_path)
+}
+
+fn subtitle_ocr_asset_path_exists(path: &str) -> bool {
+    let path = Path::new(path);
+    if !path_is_in_subtitle_ocr_temp_root(path) {
+        return false;
+    }
+
+    path.exists()
+}
+
+fn path_is_in_subtitle_ocr_temp_root(path: &Path) -> bool {
+    let root = subtitle_ocr_temp_asset_root();
+    path.is_absolute()
+        && path.starts_with(&root)
+        && path
+            .components()
+            .all(|component| !matches!(component, Component::ParentDir | Component::CurDir))
+}
+
+fn subtitle_ocr_temp_asset_root() -> PathBuf {
+    std::env::temp_dir().join("MediaFlow").join("subtitle-ocr")
 }
 
 fn restore_subtitle_ocr_bitmap_assets_blocking(
@@ -195,7 +278,10 @@ impl RestoreBitmapMatcher {
 
 #[cfg(test)]
 mod tests {
-    use super::{RestoreBitmapMatcher, SubtitleOcrRestoreBitmap, restore_bitmap_paths};
+    use super::{
+        RestoreBitmapMatcher, SubtitleOcrRestoreBitmap, collect_missing_bitmap_assets,
+        restore_bitmap_paths, subtitle_ocr_temp_asset_root,
+    };
     use crate::tools::subtitle_ocr::SubtitleOcrDecodedCue;
     use crate::tools::subtitle_ocr::decode::DecodedBitmapCue;
 
@@ -266,6 +352,109 @@ mod tests {
             .expect("timing and dimensions should match");
 
         assert_eq!(matched.cue_id, "target");
+    }
+
+    #[test]
+    fn collect_missing_bitmap_assets_deduplicates_and_checks_paths() {
+        let asset_root = subtitle_ocr_temp_asset_root();
+        std::fs::create_dir_all(&asset_root).expect("asset root should be created");
+        let temp_dir = tempfile::Builder::new()
+            .prefix("restore-test")
+            .tempdir_in(&asset_root)
+            .expect("temp dir should be created");
+        let thumbnail_path = temp_dir.path().join("existing-thumb.png");
+        let preview_path = temp_dir.path().join("existing-preview.png");
+        std::fs::write(&thumbnail_path, b"thumb").expect("thumbnail should be written");
+        std::fs::write(&preview_path, b"preview").expect("preview should be written");
+
+        let mut existing = bitmap("existing", Some("existing-cache"), 1_000);
+        existing.thumbnail_path = Some(thumbnail_path.to_string_lossy().to_string());
+        existing.preview_path = Some(preview_path.to_string_lossy().to_string());
+
+        let mut missing = bitmap("missing", Some("missing-cache"), 2_000);
+        missing.thumbnail_path = Some(
+            temp_dir
+                .path()
+                .join("missing-thumb.png")
+                .to_string_lossy()
+                .to_string(),
+        );
+        missing.preview_path = Some(preview_path.to_string_lossy().to_string());
+
+        let found = collect_missing_bitmap_assets(vec![
+            existing,
+            missing.clone(),
+            SubtitleOcrRestoreBitmap {
+                cue_id: "duplicate".to_string(),
+                ..missing.clone()
+            },
+        ]);
+
+        assert_eq!(found, vec![missing]);
+    }
+
+    #[test]
+    fn collect_missing_bitmap_assets_detects_later_missing_duplicate() {
+        let asset_root = subtitle_ocr_temp_asset_root();
+        std::fs::create_dir_all(&asset_root).expect("asset root should be created");
+        let temp_dir = tempfile::Builder::new()
+            .prefix("restore-duplicate-test")
+            .tempdir_in(&asset_root)
+            .expect("temp dir should be created");
+        let thumbnail_path = temp_dir.path().join("existing-thumb.png");
+        let preview_path = temp_dir.path().join("existing-preview.png");
+        std::fs::write(&thumbnail_path, b"thumb").expect("thumbnail should be written");
+        std::fs::write(&preview_path, b"preview").expect("preview should be written");
+
+        let mut existing = bitmap("existing", Some("shared-cache"), 1_000);
+        existing.thumbnail_path = Some(thumbnail_path.to_string_lossy().to_string());
+        existing.preview_path = Some(preview_path.to_string_lossy().to_string());
+
+        let mut missing = bitmap("missing", Some("shared-cache"), 2_000);
+        missing.thumbnail_path = Some(
+            temp_dir
+                .path()
+                .join("missing-thumb.png")
+                .to_string_lossy()
+                .to_string(),
+        );
+        missing.preview_path = Some(preview_path.to_string_lossy().to_string());
+
+        let found = collect_missing_bitmap_assets(vec![existing, missing.clone()]);
+
+        assert_eq!(found, vec![missing]);
+    }
+
+    #[test]
+    fn collect_missing_bitmap_assets_treats_out_of_scope_paths_as_missing_without_probing() {
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let thumbnail_path = temp_dir.path().join("existing-thumb.png");
+        let preview_path = temp_dir.path().join("existing-preview.png");
+        std::fs::write(&thumbnail_path, b"thumb").expect("thumbnail should be written");
+        std::fs::write(&preview_path, b"preview").expect("preview should be written");
+
+        let mut target = bitmap("target", Some("target-cache"), 1_000);
+        target.thumbnail_path = Some(thumbnail_path.to_string_lossy().to_string());
+        target.preview_path = Some(preview_path.to_string_lossy().to_string());
+
+        assert_eq!(
+            collect_missing_bitmap_assets(vec![target.clone()]),
+            vec![target]
+        );
+    }
+
+    #[test]
+    fn collect_missing_bitmap_assets_treats_absent_paths_as_missing() {
+        let target = SubtitleOcrRestoreBitmap {
+            thumbnail_path: None,
+            preview_path: None,
+            ..bitmap("target", Some("target-cache"), 1_000)
+        };
+
+        assert_eq!(
+            collect_missing_bitmap_assets(vec![target.clone()]),
+            vec![target]
+        );
     }
 
     #[test]

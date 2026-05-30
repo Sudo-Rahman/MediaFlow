@@ -82,6 +82,7 @@ pub fn run() {
             commands::subtitle_ocr_extract::prepare_subtitle_ocr_track,
             commands::subtitle_ocr_decode::decode_subtitle_ocr_bitmaps,
             commands::subtitle_ocr_ocr::run_subtitle_ocr_pipeline,
+            commands::subtitle_ocr_restore::collect_missing_subtitle_ocr_bitmap_assets,
             commands::subtitle_ocr_restore::restore_subtitle_ocr_bitmap_assets,
             commands::subtitle_ocr_export::export_subtitle_ocr_version,
             commands::subtitle_ocr_cancel::cancel_subtitle_ocr_operation,

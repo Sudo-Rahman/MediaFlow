@@ -201,7 +201,7 @@ describe('resolveSubtitleOcrExpectedBitmapCount', () => {
 });
 
 describe('subtitle OCR bitmap asset restore helpers', () => {
-  it('collects unique bitmaps with missing thumbnail or preview files', async () => {
+  it('collects bitmaps with missing thumbnail or preview files', async () => {
     const sourceSnapshot = {
       sourceKind: 'standalone_sup' as const,
       sourcePath: '/subs/source.sup',
@@ -234,11 +234,60 @@ describe('subtitle OCR bitmap asset restore helpers', () => {
     ];
     v2.bitmaps = [{ ...sharedMissing, cueId: 'cue-1-copy' }];
 
-    const missing = await collectMissingSubtitleOcrBitmapAssets([v1, v2], async (path) => (
-      !path.includes('missing')
+    const seenMissingKeys = new Set<string>();
+    const missing = await collectMissingSubtitleOcrBitmapAssets([v1, v2], async (bitmaps) => (
+      bitmaps.filter((bitmap) => {
+        if (!bitmap.thumbnailPath?.includes('missing') && !bitmap.previewPath?.includes('missing')) {
+          return false;
+        }
+
+        const key = bitmap.cacheKey ?? bitmap.cueId;
+        if (seenMissingKeys.has(key)) {
+          return false;
+        }
+
+        seenMissingKeys.add(key);
+        return true;
+      })
     ));
 
     expect(missing).toEqual([sharedMissing]);
+  });
+
+  it('lets the backend evaluate duplicate bitmap keys before deduplication', async () => {
+    const sourceSnapshot = {
+      sourceKind: 'standalone_sup' as const,
+      sourcePath: '/subs/source.sup',
+      ocrModelOverride: 'default' as const,
+    };
+    const v1 = version('v1', sourceSnapshot);
+    const v2 = version('v2', sourceSnapshot);
+    const existingDuplicate = {
+      cueId: 'cue-1',
+      startTimeMs: 1_000,
+      endTimeMs: 2_000,
+      width: 640,
+      height: 120,
+      cacheKey: 'shared-cache',
+      thumbnailPath: '/tmp/existing-thumb.png',
+      previewPath: '/tmp/existing-preview.png',
+    };
+    const missingDuplicate = {
+      ...existingDuplicate,
+      cueId: 'cue-1-copy',
+      thumbnailPath: '/tmp/missing-thumb.png',
+    };
+    v1.bitmaps = [existingDuplicate];
+    v2.bitmaps = [missingDuplicate];
+
+    const seenByCollector: SubtitleOcrVersion['bitmaps'] = [];
+    const missing = await collectMissingSubtitleOcrBitmapAssets([v1, v2], async (bitmaps) => {
+      seenByCollector.push(...bitmaps);
+      return bitmaps.filter((bitmap) => bitmap.thumbnailPath?.includes('missing'));
+    });
+
+    expect(seenByCollector).toEqual([existingDuplicate, missingDuplicate]);
+    expect(missing).toEqual([missingDuplicate]);
   });
 
   it('treats absent thumbnail or preview paths as restore targets', async () => {
@@ -257,7 +306,7 @@ describe('subtitle OCR bitmap asset restore helpers', () => {
       cacheKey: 'cache-1',
     }];
 
-    const missing = await collectMissingSubtitleOcrBitmapAssets([v1], async () => true);
+    const missing = await collectMissingSubtitleOcrBitmapAssets([v1], async (bitmaps) => bitmaps);
 
     expect(missing).toEqual(v1.bitmaps);
   });

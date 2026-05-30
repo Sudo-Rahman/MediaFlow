@@ -11,6 +11,7 @@ use crate::tools::subtitle_ocr::decode::{
     validate_bitmap_subtitle_source,
 };
 use crate::tools::subtitle_ocr::progress::SubtitleOcrProgressEmitter;
+use tauri::Emitter;
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +27,14 @@ pub(crate) struct SubtitleOcrRestoreBitmap {
     pub(crate) thumbnail_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) preview_path: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SubtitleOcrRestoredBitmapEvent {
+    item_id: String,
+    run_id: String,
+    bitmap: SubtitleOcrRestoreBitmap,
 }
 
 #[tauri::command]
@@ -162,7 +171,7 @@ fn restore_subtitle_ocr_bitmap_assets_blocking(
     ensure_not_cancelled(item_id, run_id)?;
     let total = u32::try_from(bitmaps.len()).unwrap_or(u32::MAX);
     let progress = SubtitleOcrProgressEmitter::new(
-        app,
+        app.clone(),
         item_id.to_string(),
         run_id.to_string(),
         "decoding",
@@ -187,6 +196,7 @@ fn restore_subtitle_ocr_bitmap_assets_blocking(
             ensure_not_cancelled(item_id, run_id)?;
             if let Some(target) = matcher.take_match(&decoded.metadata) {
                 let restored_bitmap = restore_bitmap_paths(item_id, run_id, target, &decoded)?;
+                emit_restored_bitmap_event(&app, item_id, run_id, &restored_bitmap);
                 restored.push(restored_bitmap);
                 restored_count = restored_count.saturating_add(1);
                 progress.emit(restored_count);
@@ -199,6 +209,22 @@ fn restore_subtitle_ocr_bitmap_assets_blocking(
 
     progress.emit_force_with_total(restored_count, total);
     Ok(restored)
+}
+
+fn emit_restored_bitmap_event(
+    app: &tauri::AppHandle,
+    item_id: &str,
+    run_id: &str,
+    bitmap: &SubtitleOcrRestoreBitmap,
+) {
+    let _ = app.emit(
+        "subtitle-ocr-restored-bitmap",
+        SubtitleOcrRestoredBitmapEvent {
+            item_id: item_id.to_string(),
+            run_id: run_id.to_string(),
+            bitmap: bitmap.clone(),
+        },
+    );
 }
 
 fn restore_bitmap_paths(
@@ -279,8 +305,8 @@ impl RestoreBitmapMatcher {
 #[cfg(test)]
 mod tests {
     use super::{
-        RestoreBitmapMatcher, SubtitleOcrRestoreBitmap, collect_missing_bitmap_assets,
-        restore_bitmap_paths, subtitle_ocr_temp_asset_root,
+        RestoreBitmapMatcher, SubtitleOcrRestoreBitmap, SubtitleOcrRestoredBitmapEvent,
+        collect_missing_bitmap_assets, restore_bitmap_paths, subtitle_ocr_temp_asset_root,
     };
     use crate::tools::subtitle_ocr::SubtitleOcrDecodedCue;
     use crate::tools::subtitle_ocr::decode::DecodedBitmapCue;
@@ -352,6 +378,22 @@ mod tests {
             .expect("timing and dimensions should match");
 
         assert_eq!(matched.cue_id, "target");
+    }
+
+    #[test]
+    fn restored_bitmap_event_serializes_frontend_contract() {
+        let event = SubtitleOcrRestoredBitmapEvent {
+            item_id: "item-1".to_string(),
+            run_id: "run-1".to_string(),
+            bitmap: bitmap("cue-1", Some("cache-1"), 1_000),
+        };
+
+        let value = serde_json::to_value(event).expect("event should serialize");
+
+        assert_eq!(value["itemId"], "item-1");
+        assert_eq!(value["runId"], "run-1");
+        assert_eq!(value["bitmap"]["cueId"], "cue-1");
+        assert_eq!(value["bitmap"]["cacheKey"], "cache-1");
     }
 
     #[test]

@@ -183,6 +183,48 @@ describe('subtitleOcrStore', () => {
     });
   });
 
+  it('can replace preview asset paths without clearing live review state', () => {
+    const hydratedVersion = version('v1', 'before');
+    const restoredVersion = version('v1', 'before');
+    restoredVersion.bitmaps = [{
+      cueId: 'cue-v1',
+      startTimeMs: 1000,
+      endTimeMs: 2000,
+      width: 720,
+      height: 360,
+      previewPath: '/tmp/restored-preview.png',
+      thumbnailPath: '/tmp/restored-thumb.png',
+    }];
+    subtitleOcrStore.addItems([source('a')]);
+    subtitleOcrStore.replaceItemVersions('a', [hydratedVersion], hydratedVersion.id, {
+      status: 'completed',
+    });
+    subtitleOcrStore.setProgress('a', {
+      phase: 'decoding',
+      current: 183,
+      total: 685,
+      totalKnown: true,
+      percentage: 26,
+      overallPercentage: 26,
+    });
+    subtitleOcrStore.updateCueText('a', 'cue-v1', 'after');
+
+    subtitleOcrStore.replaceItemVersions('a', [restoredVersion], restoredVersion.id, {
+      preserveDraft: true,
+      preserveProgress: true,
+    });
+
+    expect(subtitleOcrStore.selectedItem?.draft?.cues[0]?.text).toBe('after');
+    expect(subtitleOcrStore.selectedItem?.progress).toMatchObject({
+      phase: 'decoding',
+      current: 183,
+      total: 685,
+      overallPercentage: 26,
+    });
+    expect(subtitleOcrStore.getActiveVersion('a')?.bitmaps[0]?.previewPath)
+      .toBe('/tmp/restored-preview.png');
+  });
+
   it('normalizes invalid selected version ids', () => {
     const item = source('a');
     item.versions = [version('v1', 'one')];

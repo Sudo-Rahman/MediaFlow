@@ -40,6 +40,9 @@ interface SubtitleOcrItemUpdates {
 
 interface ReplaceSubtitleOcrItemVersionsOptions {
   status?: SubtitleOcrStatus;
+  preserveDraft?: boolean;
+  preserveProgress?: boolean;
+  preserveError?: boolean;
 }
 
 let items = $state.raw<SubtitleOcrSourceItem[]>([]);
@@ -449,9 +452,9 @@ export const subtitleOcrStore = {
         ...(options.status !== undefined ? { status: options.status } : {}),
         versions: nextVersions,
         activeVersionId: nextActiveVersionId,
-        draft: undefined,
-        progress: undefined,
-        error: undefined,
+        ...(options.preserveDraft ? {} : { draft: undefined }),
+        ...(options.preserveProgress ? {} : { progress: undefined }),
+        ...(options.preserveError ? {} : { error: undefined }),
       });
     });
   },

@@ -3,6 +3,7 @@ import type {
   SubtitleOcrConfig,
   SubtitleOcrCueBitmap,
   SubtitleOcrPersistenceData,
+  SubtitleOcrProgress,
   SubtitleOcrSourceItem,
   SubtitleOcrSourceSnapshot,
   SubtitleOcrStatus,
@@ -34,6 +35,11 @@ export interface SubtitleOcrBackendCancelTarget {
   itemId: string;
   runId: string;
 }
+
+export type SubtitleOcrProgressEventInput = Pick<
+  SubtitleOcrProgress,
+  'phase' | 'current' | 'total' | 'totalKnown' | 'percentage'
+>;
 
 export type SubtitleOcrMissingBitmapCollector = (
   bitmaps: SubtitleOcrCueBitmap[],
@@ -86,6 +92,23 @@ export function shouldApplySubtitleOcrProgressEvent(
 
   const activeRunId = activeRunIdsByItemId.get(itemId);
   return activeRunId !== undefined && runId === activeRunId;
+}
+
+export function buildSubtitleOcrProgressFromEvent(
+  payload: SubtitleOcrProgressEventInput,
+  useDirectOverallPercentage = false,
+): SubtitleOcrProgress {
+  const progress: SubtitleOcrProgress = {
+    phase: payload.phase,
+    current: payload.current,
+    total: payload.total,
+    totalKnown: payload.totalKnown,
+    percentage: payload.percentage,
+  };
+
+  return useDirectOverallPercentage
+    ? { ...progress, overallPercentage: payload.percentage }
+    : progress;
 }
 
 export function getSubtitleOcrBackendCancelTargets(

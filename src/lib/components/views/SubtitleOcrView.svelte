@@ -51,6 +51,7 @@
 
   import {
     buildSubtitleOcrDraftVersionInput,
+    buildSubtitleOcrProgressFromEvent,
     buildSubtitleOcrSourceSnapshot,
     collectMissingSubtitleOcrBitmapAssets,
     filterSubtitleOcrPersistenceForItem,
@@ -84,6 +85,12 @@
     percentage: number;
   }
 
+  interface SubtitleOcrRestoredBitmapEventPayload {
+    itemId: string;
+    runId?: string;
+    bitmap: SubtitleOcrCueBitmap;
+  }
+
   type ProcessItemResult = 'completed' | 'cancelled' | 'error';
 
   let { onNavigateToSettings }: SubtitleOcrViewProps = $props();
@@ -98,6 +105,7 @@
   let retryDialogItemId = $state<string | null>(null);
   let selectedCueIdsByItemId = $state.raw<Record<string, string | null>>({});
   let unlistenSubtitleOcrProgress: UnlistenFn | null = null;
+  let unlistenSubtitleOcrRestoredBitmap: UnlistenFn | null = null;
 
   const aiCleanupControllers = new SvelteMap<string, AbortController>();
   const activeRunIdsByItemId = new SvelteMap<string, string>();
@@ -187,23 +195,37 @@
     let destroyed = false;
 
     const setup = async () => {
-      const unlisten = await listen<SubtitleOcrProgressEventPayload>(
-        'subtitle-ocr-progress',
-        (event) => {
-          if (destroyed) {
-            return;
-          }
+      const [unlistenProgress, unlistenRestoredBitmap] = await Promise.all([
+        listen<SubtitleOcrProgressEventPayload>(
+          'subtitle-ocr-progress',
+          (event) => {
+            if (destroyed) {
+              return;
+            }
 
-          handleSubtitleOcrProgress(event.payload);
-        },
-      );
+            handleSubtitleOcrProgress(event.payload);
+          },
+        ),
+        listen<SubtitleOcrRestoredBitmapEventPayload>(
+          'subtitle-ocr-restored-bitmap',
+          (event) => {
+            if (destroyed) {
+              return;
+            }
+
+            handleSubtitleOcrRestoredBitmap(event.payload);
+          },
+        ),
+      ]);
 
       if (destroyed) {
-        unlisten();
+        unlistenProgress();
+        unlistenRestoredBitmap();
         return;
       }
 
-      unlistenSubtitleOcrProgress = unlisten;
+      unlistenSubtitleOcrProgress = unlistenProgress;
+      unlistenSubtitleOcrRestoredBitmap = unlistenRestoredBitmap;
     };
 
     void setup();
@@ -212,6 +234,8 @@
       destroyed = true;
       unlistenSubtitleOcrProgress?.();
       unlistenSubtitleOcrProgress = null;
+      unlistenSubtitleOcrRestoredBitmap?.();
+      unlistenSubtitleOcrRestoredBitmap = null;
       for (const controller of aiCleanupControllers.values()) {
         controller.abort();
       }
@@ -281,13 +305,50 @@
     }
 
     subtitleOcrStore.setItemStatus(payload.itemId, statusForProgressPhase(payload.phase));
-    subtitleOcrStore.setProgress(payload.itemId, {
-      phase: payload.phase,
-      current: payload.current,
-      total: payload.total,
-      totalKnown: payload.totalKnown,
-      percentage: payload.percentage,
-    });
+    subtitleOcrStore.setProgress(
+      payload.itemId,
+      buildSubtitleOcrProgressFromEvent(
+        {
+          phase: payload.phase,
+          current: payload.current,
+          total: payload.total,
+          totalKnown: payload.totalKnown,
+          percentage: payload.percentage,
+        },
+        previewRestoreRunIdsByItemId.get(payload.itemId) === payload.runId,
+      ),
+    );
+  }
+
+  function handleSubtitleOcrRestoredBitmap(payload: SubtitleOcrRestoredBitmapEventPayload): void {
+    if (!shouldApplySubtitleOcrProgressEvent(
+      payload.itemId,
+      payload.runId,
+      activeRunIdsByItemId,
+      cancelRequested,
+    )) {
+      return;
+    }
+
+    const currentItem = getStoreItem(payload.itemId);
+    if (!currentItem || currentItem.versions.length === 0) {
+      return;
+    }
+
+    const restoredVersions = mergeRestoredSubtitleOcrBitmapAssets(
+      currentItem.versions,
+      [payload.bitmap],
+    );
+    subtitleOcrStore.replaceItemVersions(
+      currentItem.id,
+      restoredVersions,
+      currentItem.activeVersionId,
+      {
+        preserveDraft: true,
+        preserveProgress: true,
+        preserveError: true,
+      },
+    );
   }
 
   function sanitizeProcessingMessage(error: unknown): string {
@@ -656,7 +717,10 @@
         item.id,
         restoredVersions,
         latestItem.activeVersionId,
-        { status: 'completed' },
+        {
+          status: 'completed',
+          preserveDraft: true,
+        },
       );
       await persistItem(item.id);
 

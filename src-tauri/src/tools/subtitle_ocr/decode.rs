@@ -11,6 +11,8 @@ use crate::tools::subtitle_ocr::SubtitleOcrDecodedCue;
 const DEFAULT_MISSING_CUE_DURATION_MS: u64 = 2_000;
 const MIN_NORMALIZED_CUE_DURATION_MS: u64 = 250;
 const MAX_NORMALIZED_CUE_DURATION_MS: u64 = 10_000;
+const TRANSPARENT_ALPHA_THRESHOLD: u8 = 8;
+const LIGHT_PIXEL_LUMA_THRESHOLD: u16 = 192;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum BitmapSubtitleSource {
@@ -166,15 +168,26 @@ where
     let mut ctx = RuntimeContext::new();
     oxideav_sub_image::register(&mut ctx);
 
-    let (container_id, source_key, input): (&str, String, Box<dyn ReadSeek>) = match source {
+    let (container_id, source_key, input, missing_palette): (
+        &str,
+        String,
+        Box<dyn ReadSeek>,
+        bool,
+    ) = match source {
         BitmapSubtitleSource::Pgs { path } => {
             let file = File::open(path)
                 .map_err(|e| format!("Failed to open PGS subtitle source: {}", e))?;
-            ("pgs", path.to_string_lossy().to_string(), Box::new(file))
+            (
+                "pgs",
+                path.to_string_lossy().to_string(),
+                Box::new(file),
+                false,
+            )
         }
         BitmapSubtitleSource::VobSub { idx_path, sub_path } => {
             let idx_text = std::fs::read_to_string(idx_path)
                 .map_err(|e| format!("Failed to read VobSub .idx source: {}", e))?;
+            let missing_palette = !has_vobsub_palette_line(&idx_text);
             let idx_text = normalize_oxideav_vobsub_idx_text(&idx_text, idx_path);
             (
                 "vobsub",
@@ -184,6 +197,7 @@ where
                     sub_path.to_string_lossy()
                 ),
                 Box::new(Cursor::new(idx_text.into_bytes())),
+                missing_palette,
             )
         }
     };
@@ -244,6 +258,7 @@ where
             &source_key,
             start_time_ms,
             end_time_ms,
+            missing_palette,
         )?;
     }
 
@@ -261,6 +276,7 @@ where
         &source_key,
         0,
         0,
+        missing_palette,
     )?;
     ensure_decode_not_stopped(&mut should_stop)?;
     normalizer.finish()
@@ -399,6 +415,7 @@ fn drain_decoder_frames<F>(
     source_key: &str,
     start_time_ms: u64,
     end_time_ms: u64,
+    missing_palette_vobsub: bool,
 ) -> Result<(), String>
 where
     F: FnMut(DecodedBitmapCue) -> Result<(), String>,
@@ -416,6 +433,7 @@ where
                     source_key,
                     start_time_ms,
                     end_time_ms,
+                    missing_palette_vobsub,
                 )?;
                 ensure_decode_not_stopped(should_stop)?;
                 *cue_index += 1;
@@ -453,6 +471,7 @@ fn decoded_frame_to_cue(
     source_key: &str,
     start_time_ms: u64,
     end_time_ms: u64,
+    missing_palette_vobsub: bool,
 ) -> Result<DecodedBitmapCue, String> {
     let plane =
         frame.planes.into_iter().next().ok_or_else(|| {
@@ -469,8 +488,12 @@ fn decoded_frame_to_cue(
         .map_err(|_| "Decoded Subtitle OCR frame width was too large".to_string())?;
     let height = u32::try_from(plane.data.len() / plane.stride)
         .map_err(|_| "Decoded Subtitle OCR frame height was too large".to_string())?;
+    let mut rgba = plane.data;
+    if missing_palette_vobsub {
+        normalize_missing_palette_vobsub_rgba(&mut rgba);
+    }
     let cue_id = format!("{}-cue-{}", item_id, cue_index + 1);
-    let bitmap_hash = stable_hash64_bytes(&plane.data);
+    let bitmap_hash = stable_hash64_bytes(&rgba);
     let cache_key = format!(
         "subtitle-ocr:{}:{:016x}",
         item_id,
@@ -494,7 +517,7 @@ fn decoded_frame_to_cue(
             thumbnail_path: None,
             preview_path: None,
         },
-        rgba: plane.data,
+        rgba,
     })
 }
 
@@ -532,6 +555,49 @@ fn has_vobsub_palette_line(idx_text: &str) -> bool {
 
 fn fallback_vobsub_palette_line() -> &'static str {
     "palette: 000000, 111111, 222222, 333333, 444444, 555555, 666666, 777777, 888888, 999999, aaaaaa, bbbbbb, cccccc, dddddd, eeeeee, ffffff"
+}
+
+fn normalize_missing_palette_vobsub_rgba(rgba: &mut [u8]) {
+    if !looks_like_light_vobsub_mask_with_transparent_glyphs(rgba) {
+        return;
+    }
+
+    for pixel in rgba.chunks_exact_mut(4) {
+        if pixel[3] <= TRANSPARENT_ALPHA_THRESHOLD {
+            pixel.copy_from_slice(&[255, 255, 255, 255]);
+        } else {
+            pixel.copy_from_slice(&[0, 0, 0, 0]);
+        }
+    }
+}
+
+fn looks_like_light_vobsub_mask_with_transparent_glyphs(rgba: &[u8]) -> bool {
+    let mut total = 0usize;
+    let mut visible = 0usize;
+    let mut transparent = 0usize;
+    let mut light_visible = 0usize;
+
+    for pixel in rgba.chunks_exact(4) {
+        total += 1;
+        if pixel[3] <= TRANSPARENT_ALPHA_THRESHOLD {
+            transparent += 1;
+            continue;
+        }
+
+        visible += 1;
+        if pixel_luma(pixel) >= LIGHT_PIXEL_LUMA_THRESHOLD {
+            light_visible += 1;
+        }
+    }
+
+    total > 0
+        && transparent > 0
+        && visible > transparent
+        && light_visible.saturating_mul(10) >= visible.saturating_mul(9)
+}
+
+fn pixel_luma(pixel: &[u8]) -> u16 {
+    ((u16::from(pixel[0]) * 77) + (u16::from(pixel[1]) * 150) + (u16::from(pixel[2]) * 29)) >> 8
 }
 
 fn validate_existing_file_with_extension(path: &str, extension: &str) -> Result<PathBuf, String> {
@@ -613,6 +679,14 @@ mod tests {
             },
             rgba: Vec::new(),
         }
+    }
+
+    fn select_pattern_palette_entry(spu: &mut [u8], palette_entry: u8) {
+        let command_offset = spu
+            .windows(4)
+            .position(|window| window == [0x03, 0x01, 0x32, 0x04])
+            .expect("demo SPU should contain a palette select command");
+        spu[command_offset + 1] = palette_entry & 0x0f;
     }
 
     #[test]
@@ -773,6 +847,42 @@ timestamp: 00:00:01:500, filepos: 000000000
                 .chunks_exact(4)
                 .any(|pixel| { pixel[3] > 0 && (pixel[0] > 0 || pixel[1] > 0 || pixel[2] > 0) })
         );
+    }
+
+    #[test]
+    fn decode_vobsub_without_palette_normalizes_transparent_glyphs() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let idx = dir.path().join("demo.idx");
+        let sub = dir.path().join("demo.sub");
+        let indices = [1, 1, 1, 1, 0, 1, 1, 1, 1];
+        let mut spu = oxideav_sub_image::vobsub::build_demo_spu(3, 3, &indices);
+        select_pattern_palette_entry(&mut spu, 0x0f);
+        std::fs::write(&sub, spu).expect("failed to write sub");
+        std::fs::write(
+            &idx,
+            "\
+# VobSub index file
+size: 3x3
+timestamp: 00:00:01:500, filepos: 000000000
+",
+        )
+        .expect("failed to write idx");
+        let source = BitmapSubtitleSource::VobSub {
+            idx_path: idx,
+            sub_path: sub,
+        };
+        let mut decoded_cues = Vec::new();
+
+        decode_bitmap_subtitle_source_with_handler(&source, "demo-item", "demo-run", |decoded| {
+            decoded_cues.push(decoded);
+            Ok(())
+        })
+        .expect("no-palette VobSub fixture should decode");
+
+        assert_eq!(decoded_cues.len(), 1);
+        let rgba = &decoded_cues[0].rgba;
+        assert_eq!(&rgba[0..4], &[0, 0, 0, 0]);
+        assert_eq!(&rgba[16..20], &[255, 255, 255, 255]);
     }
 
     #[test]

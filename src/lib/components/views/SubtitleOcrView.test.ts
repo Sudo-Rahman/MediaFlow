@@ -8,6 +8,7 @@ import type {
 import { DEFAULT_SUBTITLE_OCR_CONFIG } from '$lib/types';
 import {
   buildSubtitleOcrDraftVersionInput,
+  buildSubtitleOcrProgressFromEvent,
   buildSubtitleOcrSourceSnapshot,
   collectMissingSubtitleOcrBitmapAssets,
   filterSubtitleOcrPersistenceForItem,
@@ -121,6 +122,45 @@ describe('shouldApplySubtitleOcrProgressEvent', () => {
     expect(
       shouldApplySubtitleOcrProgressEvent('item-1', 'run-current', activeRunIds, true),
     ).toBe(false);
+  });
+});
+
+describe('buildSubtitleOcrProgressFromEvent', () => {
+  it('uses direct overall progress while restoring preview assets', () => {
+    const progress = buildSubtitleOcrProgressFromEvent({
+      phase: 'decoding',
+      current: 183,
+      total: 685,
+      totalKnown: true,
+      percentage: 26,
+    }, true);
+
+    expect(progress).toEqual({
+      phase: 'decoding',
+      current: 183,
+      total: 685,
+      totalKnown: true,
+      percentage: 26,
+      overallPercentage: 26,
+    });
+  });
+
+  it('leaves normal OCR progress phase-weighted by default', () => {
+    const progress = buildSubtitleOcrProgressFromEvent({
+      phase: 'decoding',
+      current: 183,
+      total: 685,
+      totalKnown: true,
+      percentage: 26,
+    });
+
+    expect(progress).toEqual({
+      phase: 'decoding',
+      current: 183,
+      total: 685,
+      totalKnown: true,
+      percentage: 26,
+    });
   });
 });
 

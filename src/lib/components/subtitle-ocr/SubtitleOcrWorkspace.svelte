@@ -13,6 +13,7 @@
   import { buildSubtitleOcrSourceLabel } from '$lib/types';
   import { cn } from '$lib/utils';
   import {
+    buildSubtitleOcrReviewStats,
     centerTimelineViewport,
     clampTimelineViewport,
     resolveSubtitleOcrReviewMode,
@@ -87,9 +88,7 @@
   const selectedCueIndex = $derived(
     selectedCue ? renderedCues.findIndex((cue) => cue.id === selectedCue.id) : -1,
   );
-  const subtitleOcrReviewStats = $derived(
-    `${renderedCues.length} cue${renderedCues.length === 1 ? '' : 's'} · ${formatTime(durationMs)}`,
-  );
+  const subtitleOcrReviewStats = $derived(buildSubtitleOcrReviewStats(renderedCues, durationMs));
   const compactVersionSelector = $derived(isNarrowMeasuredWidth(centerWidthPx, VERSION_SELECTOR_COMPACT_WIDTH_PX));
   const hideReviewModeDetails = $derived(isNarrowMeasuredWidth(centerWidthPx, REVIEW_HEADER_DETAILS_MIN_WIDTH_PX));
   const hideVersionIcon = $derived(compactVersionSelector);
@@ -210,20 +209,6 @@
 
   function getSelectionRecenterKey(cueId: string): string {
     return `${item?.id ?? 'none'}:${activeVersionId ?? 'none'}:${cueId}`;
-  }
-
-  function formatTime(ms: number): string {
-    const safeMs = Math.max(0, Math.round(ms));
-    const totalSeconds = Math.floor(safeMs / 1_000);
-    const hours = Math.floor(totalSeconds / 3_600);
-    const minutes = Math.floor((totalSeconds % 3_600) / 60);
-    const seconds = totalSeconds % 60;
-
-    if (hours > 0) {
-      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-    }
-
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   }
 
   function getVersionModeLabel(version: SubtitleOcrVersion): string {

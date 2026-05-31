@@ -6,6 +6,7 @@
   import { get } from 'svelte/store';
 
   import { ScrollArea } from '$lib/components/ui/scroll-area';
+  import { countExportableSubtitleOcrCues } from '$lib/services/subtitle-ocr-export';
   import type { SubtitleOcrCue, SubtitleOcrCueBitmap } from '$lib/types';
   import { cn } from '$lib/utils';
   import {
@@ -58,6 +59,7 @@
 
     return Math.max(cueEndMs, bitmapEndMs);
   });
+  const exportableCueCount = $derived(countExportableSubtitleOcrCues(cues));
 
   const tileOffsets = $derived.by(() => {
     const offsets = [0];
@@ -266,7 +268,7 @@
     <div class="min-w-0">
       <h3 class="text-sm font-medium">Filmstrip</h3>
       <p class="truncate text-xs text-muted-foreground">
-        {cues.length} cue{cues.length === 1 ? '' : 's'} from {formatTime(viewportStartMs)} to {formatTime(viewportEndMs)}
+        {exportableCueCount} cue{exportableCueCount === 1 ? '' : 's'} from {formatTime(viewportStartMs)} to {formatTime(viewportEndMs)}
       </p>
     </div>
   </div>

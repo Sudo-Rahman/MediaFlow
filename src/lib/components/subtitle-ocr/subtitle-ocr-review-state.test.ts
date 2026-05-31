@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildSubtitleOcrReviewStats,
   buildTimelineBuckets,
   centerTimelineViewport,
   clampTimelineViewport,
@@ -20,6 +21,12 @@ interface ReviewedTimedCue extends TimedCue {
   text: string;
 }
 
+interface ReviewedSubtitleCue extends TimedCue {
+  sourceCueIds: string[];
+  text: string;
+  confidence: number;
+}
+
 const cues: TimedCue[] = [
   { id: 'cue-1', startTimeMs: 1_000, endTimeMs: 2_000 },
   { id: 'cue-2', startTimeMs: 2_500, endTimeMs: 3_000 },
@@ -35,6 +42,39 @@ describe('subtitle OCR review state', () => {
 
     it('uses wide mode at and above the wide review center breakpoint', () => {
       expect(resolveSubtitleOcrReviewMode(WIDE_REVIEW_MIN_CENTER_WIDTH_PX)).toBe('wide');
+    });
+  });
+
+  describe('buildSubtitleOcrReviewStats', () => {
+    it('counts only exportable subtitle cues in the review header summary', () => {
+      const reviewCues: ReviewedSubtitleCue[] = [
+        {
+          id: 'valid-1',
+          sourceCueIds: ['raw-1'],
+          startTimeMs: 1_000,
+          endTimeMs: 2_000,
+          text: 'First subtitle',
+          confidence: 0.9,
+        },
+        {
+          id: 'blank',
+          sourceCueIds: ['raw-2'],
+          startTimeMs: 2_000,
+          endTimeMs: 3_000,
+          text: '   ',
+          confidence: 0.9,
+        },
+        {
+          id: 'valid-2',
+          sourceCueIds: ['raw-3'],
+          startTimeMs: 4_000,
+          endTimeMs: 5_000,
+          text: 'Second subtitle',
+          confidence: 0.9,
+        },
+      ];
+
+      expect(buildSubtitleOcrReviewStats(reviewCues, 5_000)).toBe('2 cues · 0:05');
     });
   });
 

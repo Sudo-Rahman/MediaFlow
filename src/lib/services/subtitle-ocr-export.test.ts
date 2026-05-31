@@ -7,6 +7,7 @@ import type { VersionedExportRequest } from './versioned-export';
 import {
   buildSubtitleOcrPreview,
   buildSubtitleOcrExportGroups,
+  countExportableSubtitleOcrCues,
   exportSubtitleOcrVersion,
   runSubtitleOcrBatchExport,
   SUBTITLE_OCR_ALLOWED_EXPORT_FORMATS,
@@ -189,6 +190,17 @@ describe('Subtitle OCR export service', () => {
     expect(buildSubtitleOcrPreview(cues, 'vtt')).toContain('00:00:01.000 --> 00:00:02.000');
     expect(buildSubtitleOcrPreview(cues, 'ass')).toContain('First line\\NSecond line');
     expect(buildSubtitleOcrPreview([createCue({ text: '   ' })], 'srt')).toBe('');
+  });
+
+  it('counts only exportable cues for version metadata', () => {
+    const cues = [
+      createCue({ id: 'valid-1', text: 'First subtitle' }),
+      createCue({ id: 'blank', text: '   ' }),
+      createCue({ id: 'invalid-range', startTimeMs: 3_000, endTimeMs: 3_000 }),
+      createCue({ id: 'valid-2', startTimeMs: 4_000, endTimeMs: 5_000, text: 'Second subtitle' }),
+    ];
+
+    expect(countExportableSubtitleOcrCues(cues)).toBe(2);
   });
 
   it('exports one selected version through the Rust command', async () => {

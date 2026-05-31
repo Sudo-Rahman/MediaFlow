@@ -7,6 +7,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import {
     buildSubtitleOcrPreview,
+    countExportableSubtitleOcrCues,
     exportSubtitleOcrVersion,
     SUBTITLE_OCR_ALLOWED_EXPORT_FORMATS,
     type SubtitleOcrExportFormat,
@@ -40,6 +41,9 @@
   );
   const previewContent = $derived(
     currentVersion ? buildSubtitleOcrPreview(currentVersion.finalCues, selectedFormat) : '',
+  );
+  const exportableCueCount = $derived(
+    currentVersion ? countExportableSubtitleOcrCues(currentVersion.finalCues) : 0,
   );
 
   $effect(() => {
@@ -158,7 +162,7 @@
         </span>
         <span class="flex items-center gap-1">
           <Clock class="size-3" />
-          {currentVersion.finalCues.length} cue{currentVersion.finalCues.length === 1 ? '' : 's'}
+          {exportableCueCount} cue{exportableCueCount === 1 ? '' : 's'}
         </span>
         <Badge variant="outline" class="text-[10px]">
           {currentVersion.effectiveOcrModel}

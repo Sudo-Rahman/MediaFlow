@@ -65,6 +65,10 @@ function getExportableCues(cues: readonly SubtitleOcrCue[]): SubtitleOcrCue[] {
   return cues.filter(isExportableCue);
 }
 
+export function countExportableSubtitleOcrCues(cues: readonly SubtitleOcrCue[]): number {
+  return getExportableCues(cues).length;
+}
+
 export function toRustSubtitleOcrCues(cues: readonly SubtitleOcrCue[]): RustSubtitleOcrCue[] {
   return cues.map((cue) => ({
     id: cue.id,

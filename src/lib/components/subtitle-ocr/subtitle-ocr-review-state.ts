@@ -1,3 +1,6 @@
+import { countExportableSubtitleOcrCues } from '$lib/services/subtitle-ocr-export';
+import type { SubtitleOcrCue } from '$lib/types';
+
 export interface TimedCue {
   id: string;
   startTimeMs: number;
@@ -63,6 +66,20 @@ function normalizeTime(value: number): number {
   return isFiniteMs(value) ? value : 0;
 }
 
+function formatCompactDuration(ms: number): string {
+  const safeMs = Math.max(0, Math.round(ms));
+  const totalSeconds = Math.floor(safeMs / 1_000);
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+  }
+
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
 function normalizeCueDurationMs(cue: TimedCue): number {
   const startTimeMs = normalizeTime(cue.startTimeMs);
   const endTimeMs = normalizeTime(cue.endTimeMs);
@@ -105,6 +122,15 @@ export function resolveSubtitleOcrReviewMode(centerWidthPx: number): SubtitleOcr
   return Number.isFinite(centerWidthPx) && centerWidthPx >= WIDE_REVIEW_MIN_CENTER_WIDTH_PX
     ? 'wide'
     : 'compact';
+}
+
+export function buildSubtitleOcrReviewStats(
+  cues: readonly SubtitleOcrCue[],
+  durationMs: number,
+): string {
+  const exportableCueCount = countExportableSubtitleOcrCues(cues);
+
+  return `${exportableCueCount} cue${exportableCueCount === 1 ? '' : 's'} · ${formatCompactDuration(durationMs)}`;
 }
 
 export function getCueCenterMs(cue: TimedCue): number {

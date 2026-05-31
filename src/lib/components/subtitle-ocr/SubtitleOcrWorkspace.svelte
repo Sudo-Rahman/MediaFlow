@@ -18,6 +18,7 @@
     clampTimelineViewport,
     findCueNearestTimelineWindowCenter,
     resolveSubtitleOcrReviewMode,
+    shouldSuppressSubtitleOcrReviewTextSelection,
     type SubtitleOcrReviewMode,
     type TimelineViewport,
   } from './subtitle-ocr-review-state';
@@ -60,6 +61,7 @@
   let viewportScopeKey = $state('');
   let recenteredSelectionKey = $state('');
   let activeViewportSource = $state<ActiveViewportSource>(null);
+  let timelineWindowDragging = $state(false);
   let centerElement = $state<HTMLElement | null>(null);
   let centerWidthPx = $state(0);
 
@@ -95,6 +97,9 @@
   const hideVersionIcon = $derived(compactVersionSelector);
   const canSelectPreviousCue = $derived(selectedCueIndex > 0);
   const canSelectNextCue = $derived(selectedCueIndex >= 0 && selectedCueIndex < renderedCues.length - 1);
+  const suppressReviewTextSelection = $derived(shouldSuppressSubtitleOcrReviewTextSelection({
+    timelineWindowDragging,
+  }));
 
   $effect(() => {
     const element = centerElement;
@@ -232,6 +237,10 @@
         onSelectCue(targetCue.id);
       }
     }
+  }
+
+  function handleTimelineWindowDragChange(dragging: boolean): void {
+    timelineWindowDragging = dragging;
   }
 
   function handleSelectCue(cueId: string, source: ActiveViewportSource = 'selection'): void {
@@ -379,7 +388,13 @@
       </div>
     </header>
 
-    <div bind:this={centerElement} class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    <div
+      bind:this={centerElement}
+      class={cn(
+        'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden',
+        suppressReviewTextSelection && 'subtitle-ocr-review--lock-selection cursor-grabbing',
+      )}
+    >
       {#if reviewMode === 'wide'}
         <SubtitleOcrCueRail
           cues={renderedCues}
@@ -388,6 +403,7 @@
           {viewportStartMs}
           {viewportEndMs}
           viewportSource={activeViewportSource}
+          {timelineWindowDragging}
           disabled={isProcessing}
           onSelectCue={(cueId) => handleSelectCue(cueId, 'rail')}
           onTextChange={handleCueTextChange}
@@ -401,9 +417,9 @@
             viewportStartMs={viewportStartMs}
             viewportEndMs={viewportEndMs}
             selectedCueId={effectiveSelectedCueId}
-            selectedCueStartMs={selectedCue?.startTimeMs}
             onSelectCue={(cueId) => handleSelectCue(cueId, 'timeline-zone')}
             onViewportChange={handleViewportChange}
+            onWindowDragChange={handleTimelineWindowDragChange}
           />
         </div>
       {:else}
@@ -425,3 +441,11 @@
     </div>
   </div>
 {/if}
+
+<style>
+  :global(.subtitle-ocr-review--lock-selection),
+  :global(.subtitle-ocr-review--lock-selection *) {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+  }
+</style>

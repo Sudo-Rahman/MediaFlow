@@ -191,6 +191,7 @@
           mode === 'wide' && 'min-h-0 flex-1 resize-none',
         )}
         aria-label="Recognized subtitle text"
+        onfocus={handleSelect}
         oninput={handleTextInput}
       />
       {#if mode === 'compact'}

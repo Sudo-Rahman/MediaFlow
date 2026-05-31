@@ -9,7 +9,9 @@
     clampTimelineViewport,
     findCueNearestTimelineWindowCenter,
     findRailIndexNearestCenter,
-    getRailVisibleViewportForCenteredIndex,
+    shouldCommitRailScrollSelection,
+    shouldPublishRailViewportUpdate,
+    shouldReportProgrammaticRailViewport,
   } from './subtitle-ocr-review-state';
   import SubtitleOcrCueCard from './SubtitleOcrCueCard.svelte';
 
@@ -22,6 +24,7 @@
     viewportStartMs?: number;
     viewportEndMs?: number;
     viewportSource?: ViewportSource;
+    timelineWindowDragging?: boolean;
     disabled?: boolean;
     onSelectCue: (cueId: string) => void;
     onTextChange: (cueId: string, text: string) => void;
@@ -35,6 +38,7 @@
     viewportStartMs = 0,
     viewportEndMs = 0,
     viewportSource = null,
+    timelineWindowDragging = false,
     disabled = false,
     onSelectCue,
     onTextChange,
@@ -44,13 +48,19 @@
   const CARD_WIDTH = 352;
   const CARD_GAP = 16;
   const CARD_SLOT_WIDTH = CARD_WIDTH + CARD_GAP;
-  const OVERSCAN = 3;
+  const OVERSCAN = 2;
+  const PROGRAMMATIC_SCROLL_SETTLE_MS = 120;
+  const PROGRAMMATIC_SCROLL_FALLBACK_MS = 180;
+  const USER_SCROLL_SETTLE_MS = 96;
 
   let viewport = $state<HTMLElement | null>(null);
   let applyingSelectedScroll = false;
+  let pendingProgrammaticViewportReport = false;
+  let pendingScrollSelectionCueId: string | null = null;
   let scrollFrameId: number | null = null;
-  let programmaticScrollTimeoutId: ReturnType<typeof setTimeout> | null = null;
-  let programmaticViewportTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  let programmaticScrollSettleTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  let userScrollSettleTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  let lastReportedRailViewportKey = '';
 
   const bitmapByCueId = $derived.by(() => {
     const map = new Map<string, SubtitleOcrCueBitmap>();
@@ -103,6 +113,7 @@
     const startMs = viewportStartMs;
     const endMs = viewportEndMs;
     const source = viewportSource;
+    const timelineDragging = timelineWindowDragging;
     if (!element || source === 'rail' || cues.length === 0) {
       return;
     }
@@ -113,7 +124,10 @@
       return;
     }
 
-    const shouldReportViewport = source === 'timeline-window' || source === 'timeline-zone';
+    const shouldReportViewport = shouldReportProgrammaticRailViewport({
+      source,
+      timelineWindowDragging: timelineDragging,
+    });
     scrollCueToCenter(index, shouldReportViewport ? 'smooth' : 'auto', shouldReportViewport);
   });
 
@@ -124,9 +138,11 @@
     }
 
     element.addEventListener('scroll', handleScroll, { passive: true });
+    element.addEventListener('scrollend', handleProgrammaticScrollEnd);
 
     return () => {
       element.removeEventListener('scroll', handleScroll);
+      element.removeEventListener('scrollend', handleProgrammaticScrollEnd);
     };
   });
 
@@ -136,13 +152,8 @@
         cancelAnimationFrame(scrollFrameId);
       }
 
-      if (programmaticScrollTimeoutId !== null) {
-        clearTimeout(programmaticScrollTimeoutId);
-      }
-
-      if (programmaticViewportTimeoutId !== null) {
-        clearTimeout(programmaticViewportTimeoutId);
-      }
+      clearProgrammaticScrollSettleTimeout();
+      clearUserScrollSettleTimeout();
     };
   });
 
@@ -172,15 +183,11 @@
       return;
     }
 
-    markProgrammaticScroll(behavior);
+    startProgrammaticScroll(reportViewportAfterScroll, behavior);
     element.scrollTo({
       left: getCueCenterScrollLeft(index, element),
       behavior,
     });
-
-    if (reportViewportAfterScroll) {
-      scheduleProgrammaticViewportChange(index, behavior);
-    }
   }
 
   function getCueCenterScrollLeft(index: number, element: HTMLElement): number {
@@ -190,42 +197,77 @@
     return Math.min(maxScrollLeft, Math.max(0, cueCenterPx - element.clientWidth / 2));
   }
 
-  function markProgrammaticScroll(behavior: ScrollBehavior): void {
+  function startProgrammaticScroll(reportViewportAfterScroll: boolean, behavior: ScrollBehavior): void {
     applyingSelectedScroll = true;
-    if (programmaticScrollTimeoutId !== null) {
-      clearTimeout(programmaticScrollTimeoutId);
+    pendingProgrammaticViewportReport = reportViewportAfterScroll;
+    pendingScrollSelectionCueId = null;
+    clearUserScrollSettleTimeout();
+    if (scrollFrameId !== null) {
+      cancelAnimationFrame(scrollFrameId);
+      scrollFrameId = null;
     }
-
-    programmaticScrollTimeoutId = setTimeout(() => {
-      applyingSelectedScroll = false;
-      programmaticScrollTimeoutId = null;
-    }, behavior === 'smooth' ? 420 : 80);
+    scheduleProgrammaticScrollSettle(behavior === 'smooth' ? PROGRAMMATIC_SCROLL_FALLBACK_MS : 0);
   }
 
-  function scheduleProgrammaticViewportChange(index: number, behavior: ScrollBehavior): void {
+  function clearProgrammaticScrollSettleTimeout(): void {
+    if (programmaticScrollSettleTimeoutId !== null) {
+      clearTimeout(programmaticScrollSettleTimeoutId);
+      programmaticScrollSettleTimeoutId = null;
+    }
+  }
+
+  function clearUserScrollSettleTimeout(): void {
+    if (userScrollSettleTimeoutId !== null) {
+      clearTimeout(userScrollSettleTimeoutId);
+      userScrollSettleTimeoutId = null;
+    }
+  }
+
+  function scheduleProgrammaticScrollSettle(delayMs = PROGRAMMATIC_SCROLL_SETTLE_MS): void {
+    clearProgrammaticScrollSettleTimeout();
+    programmaticScrollSettleTimeoutId = setTimeout(settleProgrammaticScroll, delayMs);
+  }
+
+  function scheduleUserScrollSettle(): void {
+    clearUserScrollSettleTimeout();
+    userScrollSettleTimeoutId = setTimeout(settleUserScroll, USER_SCROLL_SETTLE_MS);
+  }
+
+  function settleProgrammaticScroll(): void {
     const element = viewport;
-    if (!element) {
+    const shouldReportViewport = pendingProgrammaticViewportReport;
+    clearProgrammaticScrollSettleTimeout();
+    applyingSelectedScroll = false;
+    pendingProgrammaticViewportReport = false;
+
+    if (!element || !shouldReportViewport) {
       return;
     }
 
-    if (programmaticViewportTimeoutId !== null) {
-      clearTimeout(programmaticViewportTimeoutId);
+    publishRailViewportFromScroll(element);
+  }
+
+  function settleUserScroll(): void {
+    const element = viewport;
+    const pendingCueId = pendingScrollSelectionCueId;
+    clearUserScrollSettleTimeout();
+    pendingScrollSelectionCueId = null;
+
+    if (element) {
+      publishRailViewportFromScroll(element);
     }
 
-    programmaticViewportTimeoutId = setTimeout(() => {
-      programmaticViewportTimeoutId = null;
-      const viewportRange = getRailVisibleViewportForCenteredIndex(cues, {
-        targetIndex: index,
-        itemWidthPx: CARD_SLOT_WIDTH,
-        viewportWidthPx: element.clientWidth,
-        durationMs,
-        minSpanMs: 1_000,
-      });
+    if (shouldCommitRailScrollSelection({ pendingCueId, selectedCueId }) && pendingCueId) {
+      onSelectCue(pendingCueId);
+    }
+  }
 
-      if (viewportRange) {
-        onViewportChange(viewportRange.startMs, viewportRange.endMs, 'rail');
-      }
-    }, behavior === 'smooth' ? 460 : 90);
+  function handleProgrammaticScrollEnd(): void {
+    if (applyingSelectedScroll) {
+      settleProgrammaticScroll();
+    } else {
+      settleUserScroll();
+    }
   }
 
   function findCueIndexAtOffset(offset: number): number {
@@ -259,8 +301,39 @@
     );
   }
 
+  function getViewportKey(startMs: number, endMs: number): string {
+    return `${Math.round(startMs)}:${Math.round(endMs)}`;
+  }
+
+  function publishRailViewportFromScroll(element: HTMLElement): void {
+    const viewportRange = getVisibleViewportFromScroll(element);
+    if (!viewportRange) {
+      return;
+    }
+
+    const nextViewportKey = getViewportKey(viewportRange.startMs, viewportRange.endMs);
+    const currentViewportKey = getViewportKey(viewportStartMs, viewportEndMs);
+    if (!shouldPublishRailViewportUpdate({
+      nextViewportKey,
+      currentViewportKey,
+      lastReportedViewportKey: lastReportedRailViewportKey,
+    })) {
+      return;
+    }
+
+    lastReportedRailViewportKey = nextViewportKey;
+    onViewportChange(viewportRange.startMs, viewportRange.endMs, 'rail');
+  }
+
   function handleScroll(): void {
-    if (applyingSelectedScroll || scrollFrameId !== null || !viewport) {
+    if (applyingSelectedScroll) {
+      scheduleProgrammaticScrollSettle();
+      return;
+    }
+
+    scheduleUserScrollSettle();
+
+    if (scrollFrameId !== null || !viewport) {
       return;
     }
 
@@ -277,16 +350,11 @@
         viewportWidthPx: viewport.clientWidth,
       });
       const centerCue = cues[centerIndex];
-      if (centerCue && centerCue.id !== selectedCueId) {
-        onSelectCue(centerCue.id);
+      if (centerCue) {
+        pendingScrollSelectionCueId = centerCue.id;
       }
 
-      const viewportRange = getVisibleViewportFromScroll(viewport);
-      if (!viewportRange) {
-        return;
-      }
-
-      onViewportChange(viewportRange.startMs, viewportRange.endMs, 'rail');
+      publishRailViewportFromScroll(viewport);
     });
   }
 
@@ -317,8 +385,8 @@
           {#if cue}
             {@const selected = cue.id === selectedCueId}
             <div
-              class="absolute top-5"
-              style={`width: ${CARD_WIDTH}px; height: 29.25rem; transform: translateX(${virtualCue.start + CARD_GAP / 2}px);`}
+              class="absolute top-5 will-change-transform"
+              style={`width: ${CARD_WIDTH}px; height: 29.25rem; transform: translate3d(${virtualCue.start + CARD_GAP / 2}px, 0, 0); contain: layout paint style; content-visibility: auto; contain-intrinsic-size: ${CARD_WIDTH}px 29.25rem;`}
             >
               <SubtitleOcrCueCard
                 {cue}

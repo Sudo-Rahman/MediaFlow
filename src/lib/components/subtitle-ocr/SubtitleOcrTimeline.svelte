@@ -12,7 +12,10 @@
     clampTimelineScaleWindow,
     getTimelineAutoScrollIntent,
     getTimelineContentWidthPx,
+    getTimelineSelectedMarkerTimeMs,
     getTimelineWheelIntent,
+    shouldReleaseTimelineLocalWindow,
+    shouldSuppressTimelineZoneSelection,
     timelineMsToPx,
     timelinePxToMs,
     zoomTimelineScaleWindow,
@@ -28,13 +31,13 @@
     viewportStartMs: number;
     viewportEndMs: number;
     selectedCueId?: string | null;
-    selectedCueStartMs?: number;
     onSelectCue?: (cueId: string) => void;
     onViewportChange: (
       startMs: number,
       endMs: number,
       source: TimelineViewportChangeSource,
     ) => void;
+    onWindowDragChange?: (dragging: boolean) => void;
   }
 
   interface WindowDragState {
@@ -56,9 +59,9 @@
     viewportStartMs,
     viewportEndMs,
     selectedCueId = null,
-    selectedCueStartMs,
     onSelectCue = () => {},
     onViewportChange,
+    onWindowDragChange = () => {},
   }: SubtitleOcrTimelineProps = $props();
 
   const WHEEL_ZOOM_IN_FACTOR = 1.18;
@@ -67,17 +70,20 @@
   const WINDOW_KEYBOARD_PAN_RATIO = 0.08;
   const AUTO_SCROLL_BASE_PX = 8;
   const AUTO_SCROLL_PRESSURE_PX = 24;
+  const TIMELINE_SCROLL_SETTLE_MS = 140;
 
   let viewportElement = $state<HTMLDivElement | null>(null);
   let timelineWidthPx = $state(0);
   let timelineScale = $state(1);
+  let timelineScrolling = $state(false);
   let dragState = $state<WindowDragState | null>(null);
   let localWindow = $state<TimelineViewport | null>(null);
   let pendingWindow: TimelineViewport | null = null;
   let pendingWindowSource: TimelineViewportChangeSource = 'timeline-window';
   let viewportFrameId: number | null = null;
   let autoScrollFrameId: number | null = null;
-  let lastPropWindowKey = '';
+  let timelineScrollSettleTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  let timelineScaleScopeKey = '';
 
   const safeDurationMs = $derived(Math.max(0, Math.round(durationMs)));
   const safeScale = $derived(clampTimelineScale(timelineScale));
@@ -103,6 +109,10 @@
     1,
     timelineMsToPx(renderedWindow.endMs, safeDurationMs, timelineWidthPx, safeScale) - windowLeftPx,
   ));
+  const suppressTimelineZoneSelection = $derived(shouldSuppressTimelineZoneSelection({
+    timelineScrolling,
+    draggingWindow: Boolean(dragState),
+  }));
 
   $effect(() => {
     const element = viewportElement;
@@ -127,12 +137,28 @@
     const startMs = viewportStartMs;
     const endMs = viewportEndMs;
     const propWindowKey = `${startMs}:${endMs}`;
-    const propChanged = propWindowKey !== lastPropWindowKey;
-    lastPropWindowKey = propWindowKey;
 
-    if (propChanged && !dragState && localWindow) {
+    if (shouldReleaseTimelineLocalWindow({
+      dragging: Boolean(dragState),
+      hasLocalWindow: Boolean(localWindow),
+      localWindowKey: localWindow ? `${localWindow.startMs}:${localWindow.endMs}` : null,
+      nextPropWindowKey: propWindowKey,
+    })) {
       localWindow = null;
     }
+  });
+
+  $effect(() => {
+    const firstCueId = cues[0]?.id ?? 'none';
+    const lastCueId = cues[cues.length - 1]?.id ?? 'none';
+    const nextScopeKey = `${safeDurationMs}:${cues.length}:${firstCueId}:${lastCueId}`;
+    if (nextScopeKey === timelineScaleScopeKey) {
+      return;
+    }
+
+    timelineScaleScopeKey = nextScopeKey;
+    timelineScale = 1;
+    localWindow = null;
   });
 
   $effect(() => {
@@ -141,6 +167,7 @@
         cancelAnimationFrame(viewportFrameId);
       }
 
+      clearTimelineScrollSettleTimeout();
       stopAutoScroll();
     };
   });
@@ -212,11 +239,12 @@
   }
 
   function getSelectedMarkerLeftPx(): number | null {
-    if (selectedCueStartMs === undefined || safeDurationMs <= 0 || timelineWidthPx <= 0) {
+    const selectedMarkerTimeMs = getTimelineSelectedMarkerTimeMs(cues, selectedCueId);
+    if (selectedMarkerTimeMs === null || safeDurationMs <= 0 || timelineWidthPx <= 0) {
       return null;
     }
 
-    return timelineMsToPx(selectedCueStartMs, safeDurationMs, timelineWidthPx, safeScale);
+    return timelineMsToPx(selectedMarkerTimeMs, safeDurationMs, timelineWidthPx, safeScale);
   }
 
   function getZoneLabel(zone: TimelineCueZone<SubtitleOcrCue>, index: number): string {
@@ -288,6 +316,7 @@
       deltaY: event.deltaY,
     });
     if (wheelIntent === 'native-scroll') {
+      scheduleTimelineScrollSelectionLock();
       return;
     }
 
@@ -324,6 +353,34 @@
     });
   }
 
+  function clearTimelineScrollSettleTimeout(): void {
+    if (timelineScrollSettleTimeoutId !== null) {
+      clearTimeout(timelineScrollSettleTimeoutId);
+      timelineScrollSettleTimeoutId = null;
+    }
+  }
+
+  function scheduleTimelineScrollSelectionLock(): void {
+    if (!timelineScrolling) {
+      timelineScrolling = true;
+    }
+
+    clearTimelineScrollSettleTimeout();
+    timelineScrollSettleTimeoutId = setTimeout(() => {
+      timelineScrollSettleTimeoutId = null;
+      timelineScrolling = false;
+    }, TIMELINE_SCROLL_SETTLE_MS);
+  }
+
+  function handleTimelineScroll(): void {
+    scheduleTimelineScrollSelectionLock();
+  }
+
+  function handleTimelineScrollEnd(): void {
+    clearTimelineScrollSettleTimeout();
+    timelineScrolling = false;
+  }
+
   function zoomByButton(factor: number): void {
     if (safeDurationMs <= 0 || timelineWidthPx <= 0) {
       return;
@@ -356,6 +413,10 @@
   }
 
   function selectZone(zone: TimelineCueZone<SubtitleOcrCue>): void {
+    if (suppressTimelineZoneSelection) {
+      return;
+    }
+
     const cueCenterMs = zone.cue.startTimeMs + (zone.cue.endTimeMs - zone.cue.startTimeMs) / 2;
     const windowSpanMs = renderedWindow.endMs - renderedWindow.startMs;
 
@@ -377,6 +438,16 @@
     }, 'timeline-window');
   }
 
+  function moveWindowToBoundary(boundary: 'start' | 'end'): void {
+    const spanMs = renderedWindow.endMs - renderedWindow.startMs;
+    const startMs = boundary === 'start' ? 0 : Math.max(0, safeDurationMs - spanMs);
+
+    queueWindowChange({
+      startMs,
+      endMs: startMs + spanMs,
+    }, 'timeline-window');
+  }
+
   function handleWindowKeydown(event: KeyboardEvent): void {
     if (event.key === 'ArrowLeft') {
       event.preventDefault();
@@ -390,6 +461,18 @@
     } else if (event.key === '-' || event.key === '_') {
       event.preventDefault();
       zoomByButton(WHEEL_ZOOM_OUT_FACTOR);
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      moveWindowToBoundary('start');
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      moveWindowToBoundary('end');
+    } else if (event.key === 'PageUp') {
+      event.preventDefault();
+      moveWindowByRatio(-1, 0.5);
+    } else if (event.key === 'PageDown') {
+      event.preventDefault();
+      moveWindowByRatio(1, 0.5);
     }
   }
 
@@ -397,6 +480,9 @@
     if (event.button !== 0 || !viewportElement || safeDurationMs <= 0) {
       return;
     }
+
+    event.preventDefault();
+    clearNativeSelection();
 
     const rect = viewportElement.getBoundingClientRect();
     dragState = {
@@ -407,9 +493,11 @@
 
     const target = event.currentTarget;
     if (target instanceof HTMLElement) {
+      target.focus({ preventScroll: true });
       target.setPointerCapture(event.pointerId);
     }
 
+    onWindowDragChange(true);
     startAutoScroll();
   }
 
@@ -418,6 +506,8 @@
       return;
     }
 
+    event.preventDefault();
+    clearNativeSelection();
     dragState = { ...dragState, pointerClientX: event.clientX };
     updateWindowFromPointer(event.clientX);
   }
@@ -427,6 +517,21 @@
       return;
     }
 
+    finishWindowDrag(event);
+  }
+
+  function handleWindowPointerCancel(event: PointerEvent): void {
+    if (!dragState || event.pointerId !== dragState.pointerId) {
+      return;
+    }
+
+    finishWindowDrag(event);
+  }
+
+  function finishWindowDrag(event: PointerEvent): void {
+    event.preventDefault();
+    clearNativeSelection();
+
     const target = event.currentTarget;
     if (target instanceof HTMLElement && target.hasPointerCapture(event.pointerId)) {
       target.releasePointerCapture(event.pointerId);
@@ -434,12 +539,11 @@
 
     dragState = null;
     stopAutoScroll();
+    onWindowDragChange(false);
+  }
 
-    requestAnimationFrame(() => {
-      if (!dragState) {
-        localWindow = null;
-      }
-    });
+  function clearNativeSelection(): void {
+    document.getSelection()?.removeAllRanges();
   }
 
   function updateWindowFromPointer(pointerClientX: number): void {
@@ -591,9 +695,14 @@
 
   <div
     bind:this={viewportElement}
-    class="relative h-28 overflow-x-auto overflow-y-hidden rounded-2xl border bg-muted/30 outline-none"
+    class={cn(
+      'relative h-28 overflow-x-auto overflow-y-hidden rounded-2xl border bg-muted/30 outline-none',
+      suppressTimelineZoneSelection && 'select-none',
+    )}
     aria-label="Timeline cue zones"
     onwheel={handleWheel}
+    onscroll={handleTimelineScroll}
+    onscrollend={handleTimelineScrollEnd}
   >
     <div
       class="relative h-full min-w-full"
@@ -625,13 +734,18 @@
             class={cn(
               'absolute top-12 h-6 rounded-full border bg-primary/20 outline-none transition-colors',
               'focus-visible:ring-ring/30 focus-visible:ring-3',
+              suppressTimelineZoneSelection && 'pointer-events-none cursor-default',
               zone.cue.id === selectedCueId
                 ? 'z-10 border-primary bg-primary/30 shadow-sm'
-                : 'border-primary/30 hover:border-primary/70 hover:bg-primary/25',
+                : suppressTimelineZoneSelection
+                  ? 'border-primary/30'
+                  : 'border-primary/30 hover:border-primary/70 hover:bg-primary/25',
             )}
             style={`left: ${zone.leftPx}px; width: ${zone.widthPx}px;`}
             aria-label={getZoneLabel(zone, index)}
             aria-current={zone.cue.id === selectedCueId ? 'true' : undefined}
+            aria-disabled={suppressTimelineZoneSelection ? 'true' : undefined}
+            disabled={suppressTimelineZoneSelection}
             title={getZoneLabel(zone, index)}
             onclick={() => selectZone(zone)}
           ></button>
@@ -639,7 +753,7 @@
 
         {#if selectedMarkerLeftPx !== null}
           <div
-            class="pointer-events-none absolute top-8 bottom-3 z-20 w-0.5 bg-primary shadow-sm"
+            class="pointer-events-none absolute top-5 bottom-3 z-20 w-0.5 bg-primary shadow-sm"
             style={`left: ${selectedMarkerLeftPx}px;`}
             aria-hidden="true"
           ></div>
@@ -652,6 +766,7 @@
         class={cn(
           'absolute top-5 bottom-3 z-30 rounded-2xl border-2 border-primary bg-primary/10 shadow-sm outline-none',
           'focus-visible:ring-ring/30 focus-visible:ring-3',
+          'touch-none select-none',
           dragState ? 'cursor-grabbing' : 'cursor-grab',
         )}
         style={`left: ${windowLeftPx}px; width: ${windowWidthPx}px;`}
@@ -664,7 +779,7 @@
         onpointerdown={handleWindowPointerDown}
         onpointermove={handleWindowPointerMove}
         onpointerup={handleWindowPointerUp}
-        onpointercancel={handleWindowPointerUp}
+        onpointercancel={handleWindowPointerCancel}
       ></div>
     </div>
   </div>

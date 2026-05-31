@@ -9,13 +9,19 @@ import {
   findCueNearestTime,
   findCueNearestTimelineWindowCenter,
   findRailIndexNearestCenter,
-  getRailVisibleViewportForCenteredIndex,
   getTimelineAutoScrollIntent,
+  getTimelineSelectedMarkerTimeMs,
   getTimelineWheelIntent,
   getVisibleCueRange,
   MIN_TIMELINE_WINDOW_WIDTH_PX,
   panTimelineViewport,
   resolveSubtitleOcrReviewMode,
+  shouldCommitRailScrollSelection,
+  shouldPublishRailViewportUpdate,
+  shouldReportProgrammaticRailViewport,
+  shouldSuppressSubtitleOcrReviewTextSelection,
+  shouldReleaseTimelineLocalWindow,
+  shouldSuppressTimelineZoneSelection,
   toCueTileWidth,
   zoomTimelineScaleWindow,
   WIDE_REVIEW_MIN_CENTER_WIDTH_PX,
@@ -491,6 +497,20 @@ describe('subtitle OCR review state', () => {
     });
   });
 
+  describe('timeline selected marker time', () => {
+    it('places the selected marker at the center of the selected cue', () => {
+      expect(getTimelineSelectedMarkerTimeMs([
+        { id: 'before', startTimeMs: 1_000, endTimeMs: 2_000 },
+        { id: 'selected', startTimeMs: 10_000, endTimeMs: 14_000 },
+      ], 'selected')).toBe(12_000);
+    });
+
+    it('returns null when no selected cue is available', () => {
+      expect(getTimelineSelectedMarkerTimeMs(cues, null)).toBeNull();
+      expect(getTimelineSelectedMarkerTimeMs(cues, 'missing')).toBeNull();
+    });
+  });
+
   describe('timeline and filmstrip nearest-target helpers', () => {
     it('finds the cue nearest the filmstrip window center timestamp', () => {
       expect(findCueNearestTimelineWindowCenter(cues, { startMs: 5_200, endMs: 6_200 })?.id)
@@ -513,24 +533,118 @@ describe('subtitle OCR review state', () => {
       })).toBe(1);
     });
 
-    it('derives the filmstrip viewport range after centering a rail card programmatically', () => {
-      const railCues: TimedCue[] = [
-        { id: 'a', startTimeMs: 0, endTimeMs: 1_000 },
-        { id: 'b', startTimeMs: 1_000, endTimeMs: 2_000 },
-        { id: 'c', startTimeMs: 2_000, endTimeMs: 3_000 },
-        { id: 'd', startTimeMs: 10_000, endTimeMs: 11_000 },
-        { id: 'e', startTimeMs: 50_000, endTimeMs: 51_000 },
-      ];
+  });
 
-      expect(getRailVisibleViewportForCenteredIndex(railCues, {
-        targetIndex: 3,
-        itemWidthPx: 100,
-        viewportWidthPx: 300,
-        durationMs: 60_000,
-      })).toEqual({
-        startMs: 2_000,
-        endMs: 51_000,
-      });
+  describe('timeline local window release', () => {
+    it('keeps the dragged local window until props receive a new window', () => {
+      expect(shouldReleaseTimelineLocalWindow({
+        dragging: false,
+        hasLocalWindow: true,
+        localWindowKey: '2000:6000',
+        nextPropWindowKey: '1000:5000',
+      })).toBe(false);
+    });
+
+    it('keeps the dragged local window when props advance but are still behind the dropped position', () => {
+      expect(shouldReleaseTimelineLocalWindow({
+        dragging: false,
+        hasLocalWindow: true,
+        localWindowKey: '3000:7000',
+        nextPropWindowKey: '2000:6000',
+      })).toBe(false);
+    });
+
+    it('releases the dragged local window once props catch up to the dropped position', () => {
+      expect(shouldReleaseTimelineLocalWindow({
+        dragging: false,
+        hasLocalWindow: true,
+        localWindowKey: '2000:6000',
+        nextPropWindowKey: '2000:6000',
+      })).toBe(true);
+    });
+
+    it('does not release while a drag is still active', () => {
+      expect(shouldReleaseTimelineLocalWindow({
+        dragging: true,
+        hasLocalWindow: true,
+        localWindowKey: '2000:6000',
+        nextPropWindowKey: '2000:6000',
+      })).toBe(false);
+    });
+  });
+
+  describe('programmatic rail viewport reporting', () => {
+    it('does not report a rail viewport while the timeline window is being dragged', () => {
+      expect(shouldReportProgrammaticRailViewport({
+        source: 'timeline-window',
+        timelineWindowDragging: true,
+      })).toBe(false);
+    });
+
+    it('reports the rail viewport after a timeline window drag has settled', () => {
+      expect(shouldReportProgrammaticRailViewport({
+        source: 'timeline-window',
+        timelineWindowDragging: false,
+      })).toBe(true);
+    });
+
+    it('reports the rail viewport after selecting a timeline zone', () => {
+      expect(shouldReportProgrammaticRailViewport({
+        source: 'timeline-zone',
+        timelineWindowDragging: false,
+      })).toBe(true);
+    });
+
+    it('does not report rail viewport updates for selection or zoom synchronization', () => {
+      expect(shouldReportProgrammaticRailViewport({
+        source: 'selection',
+        timelineWindowDragging: false,
+      })).toBe(false);
+      expect(shouldReportProgrammaticRailViewport({
+        source: 'timeline-zoom',
+        timelineWindowDragging: false,
+      })).toBe(false);
+    });
+  });
+
+  describe('rail scroll update throttling', () => {
+    it('skips publishing duplicate rail viewport updates that are already reflected in props', () => {
+      expect(shouldPublishRailViewportUpdate({
+        nextViewportKey: '1000:5000',
+        currentViewportKey: '1000:5000',
+        lastReportedViewportKey: '1000:5000',
+      })).toBe(false);
+    });
+
+    it('publishes a rail viewport update when props have not caught up yet', () => {
+      expect(shouldPublishRailViewportUpdate({
+        nextViewportKey: '1000:5000',
+        currentViewportKey: '0:4000',
+        lastReportedViewportKey: '1000:5000',
+      })).toBe(true);
+    });
+
+    it('publishes the first rail viewport update for a new visible range', () => {
+      expect(shouldPublishRailViewportUpdate({
+        nextViewportKey: '2000:6000',
+        currentViewportKey: '1000:5000',
+        lastReportedViewportKey: '1000:5000',
+      })).toBe(true);
+    });
+
+    it('commits the scroll-selected cue only when it differs from current selection', () => {
+      expect(shouldCommitRailScrollSelection({
+        pendingCueId: null,
+        selectedCueId: 'cue-a',
+      })).toBe(false);
+      expect(shouldCommitRailScrollSelection({
+        pendingCueId: 'cue-a',
+        selectedCueId: 'cue-a',
+      })).toBe(false);
+      expect(shouldCommitRailScrollSelection({
+        pendingCueId: 'cue-b',
+        selectedCueId: 'cue-a',
+      })).toBe(true);
     });
   });
 
@@ -594,6 +708,37 @@ describe('subtitle OCR review state', () => {
         deltaX: 0,
         deltaY: 80,
       })).toBe('zoom-out');
+    });
+  });
+
+  describe('timeline zone selection suppression', () => {
+    it('suppresses cue zone selection while the timeline is scrolling or dragging', () => {
+      expect(shouldSuppressTimelineZoneSelection({
+        timelineScrolling: true,
+        draggingWindow: false,
+      })).toBe(true);
+
+      expect(shouldSuppressTimelineZoneSelection({
+        timelineScrolling: false,
+        draggingWindow: true,
+      })).toBe(true);
+
+      expect(shouldSuppressTimelineZoneSelection({
+        timelineScrolling: false,
+        draggingWindow: false,
+      })).toBe(false);
+    });
+  });
+
+  describe('subtitle OCR review text selection suppression', () => {
+    it('suppresses review text selection while dragging the timeline window', () => {
+      expect(shouldSuppressSubtitleOcrReviewTextSelection({
+        timelineWindowDragging: true,
+      })).toBe(true);
+
+      expect(shouldSuppressSubtitleOcrReviewTextSelection({
+        timelineWindowDragging: false,
+      })).toBe(false);
     });
   });
 

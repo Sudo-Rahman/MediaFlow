@@ -78,14 +78,6 @@ export interface RailCenterSearchOptions {
   viewportWidthPx: number;
 }
 
-export interface RailProgrammaticViewportOptions {
-  targetIndex: number;
-  itemWidthPx: number;
-  viewportWidthPx: number;
-  durationMs: number;
-  minSpanMs?: number;
-}
-
 export interface TimelineAutoScrollIntentOptions {
   pointerClientX: number;
   viewportLeft: number;
@@ -102,6 +94,38 @@ export interface TimelineAutoScrollIntent {
 export interface TimelineWheelIntentOptions {
   deltaX: number;
   deltaY: number;
+}
+
+export interface TimelineLocalWindowReleaseOptions {
+  dragging: boolean;
+  hasLocalWindow: boolean;
+  localWindowKey: string | null;
+  nextPropWindowKey: string;
+}
+
+export interface ProgrammaticRailViewportReportOptions {
+  source: 'rail' | 'timeline-window' | 'timeline-zone' | 'timeline-zoom' | 'selection' | null;
+  timelineWindowDragging: boolean;
+}
+
+export interface RailViewportPublishOptions {
+  nextViewportKey: string;
+  currentViewportKey: string;
+  lastReportedViewportKey: string;
+}
+
+export interface RailScrollSelectionCommitOptions {
+  pendingCueId: string | null;
+  selectedCueId: string | null;
+}
+
+export interface TimelineZoneSelectionSuppressOptions {
+  timelineScrolling: boolean;
+  draggingWindow: boolean;
+}
+
+export interface SubtitleOcrReviewTextSelectionSuppressOptions {
+  timelineWindowDragging: boolean;
 }
 
 export type TimelineWheelIntent = 'native-scroll' | 'zoom-in' | 'zoom-out';
@@ -349,6 +373,18 @@ export function buildTimelineCueZones<TCue extends TimedCue>(
     });
 }
 
+export function getTimelineSelectedMarkerTimeMs<TCue extends TimedCue>(
+  cues: readonly TCue[],
+  selectedCueId: string | null | undefined,
+): number | null {
+  if (!selectedCueId) {
+    return null;
+  }
+
+  const selectedCue = cues.find((cue) => cue.id === selectedCueId);
+  return selectedCue ? getCueCenterMs(selectedCue) : null;
+}
+
 export function findCueNearestTimelineWindowCenter<TCue extends TimedCue>(
   cues: readonly TCue[],
   window: TimelineViewport,
@@ -367,39 +403,6 @@ export function findRailIndexNearestCenter(options: RailCenterSearchOptions): nu
   const index = Math.round((viewportCenterPx - itemWidthPx / 2) / itemWidthPx);
 
   return clamp(index, 0, itemCount - 1);
-}
-
-export function getRailVisibleViewportForCenteredIndex<TCue extends TimedCue>(
-  cues: readonly TCue[],
-  options: RailProgrammaticViewportOptions,
-): TimelineViewport | null {
-  const itemCount = cues.length;
-  if (itemCount === 0) {
-    return null;
-  }
-
-  const itemWidthPx = Math.max(1, normalizeTime(options.itemWidthPx));
-  const viewportWidthPx = Math.max(1, normalizeTime(options.viewportWidthPx));
-  const targetIndex = clamp(Math.floor(options.targetIndex), 0, itemCount - 1);
-  const totalWidthPx = itemCount * itemWidthPx;
-  const maxScrollLeftPx = Math.max(0, totalWidthPx - viewportWidthPx);
-  const targetCenterPx = targetIndex * itemWidthPx + itemWidthPx / 2;
-  const scrollLeftPx = clamp(targetCenterPx - viewportWidthPx / 2, 0, maxScrollLeftPx);
-  const startIndex = clamp(Math.floor(scrollLeftPx / itemWidthPx), 0, itemCount - 1);
-  const endIndex = clamp(Math.floor((scrollLeftPx + viewportWidthPx) / itemWidthPx), startIndex, itemCount - 1);
-  const startCue = cues[startIndex];
-  const endCue = cues[endIndex];
-
-  if (!startCue || !endCue) {
-    return null;
-  }
-
-  return clampTimelineViewport(
-    startCue.startTimeMs,
-    Math.max(startCue.endTimeMs, endCue.endTimeMs),
-    options.durationMs,
-    options.minSpanMs ?? DEFAULT_TIMELINE_MIN_SPAN_MS,
-  );
 }
 
 export function getTimelineAutoScrollIntent(
@@ -451,6 +454,40 @@ export function getTimelineWheelIntent(options: TimelineWheelIntentOptions): Tim
   }
 
   return deltaY > 0 ? 'zoom-out' : 'zoom-in';
+}
+
+export function shouldReleaseTimelineLocalWindow(options: TimelineLocalWindowReleaseOptions): boolean {
+  return options.hasLocalWindow
+    && !options.dragging
+    && options.localWindowKey !== null
+    && options.localWindowKey === options.nextPropWindowKey;
+}
+
+export function shouldReportProgrammaticRailViewport(options: ProgrammaticRailViewportReportOptions): boolean {
+  if (options.timelineWindowDragging) {
+    return false;
+  }
+
+  return options.source === 'timeline-window' || options.source === 'timeline-zone';
+}
+
+export function shouldPublishRailViewportUpdate(options: RailViewportPublishOptions): boolean {
+  return options.nextViewportKey !== options.lastReportedViewportKey
+    || options.nextViewportKey !== options.currentViewportKey;
+}
+
+export function shouldCommitRailScrollSelection(options: RailScrollSelectionCommitOptions): boolean {
+  return options.pendingCueId !== null && options.pendingCueId !== options.selectedCueId;
+}
+
+export function shouldSuppressTimelineZoneSelection(options: TimelineZoneSelectionSuppressOptions): boolean {
+  return options.timelineScrolling || options.draggingWindow;
+}
+
+export function shouldSuppressSubtitleOcrReviewTextSelection(
+  options: SubtitleOcrReviewTextSelectionSuppressOptions,
+): boolean {
+  return options.timelineWindowDragging;
 }
 
 export function getVisibleCueRange(

@@ -41,10 +41,93 @@ export interface BuildTimelineBucketsOptions {
   exactCueMaxViewportSpanMs?: number;
 }
 
+export interface TimelineScaleWindowOptions {
+  window: TimelineViewport;
+  durationMs: number;
+  viewportWidthPx: number;
+  scale: number;
+  factor: number;
+  minWindowWidthPx?: number;
+  maxWindowMarginPx?: number;
+  minWindowDurationMs?: number;
+}
+
+export interface TimelineScaleWindowResult {
+  scale: number;
+  window: TimelineViewport;
+}
+
+export interface TimelineCueZone<TCue extends TimedCue = TimedCue> {
+  id: string;
+  cue: TCue;
+  leftPx: number;
+  widthPx: number;
+}
+
+export interface BuildTimelineCueZonesOptions {
+  durationMs: number;
+  viewportWidthPx: number;
+  scale: number;
+  minCueZoneWidthPx?: number;
+}
+
+export interface RailCenterSearchOptions {
+  itemCount: number;
+  itemWidthPx: number;
+  scrollLeftPx: number;
+  viewportWidthPx: number;
+}
+
+export interface RailProgrammaticViewportOptions {
+  targetIndex: number;
+  itemWidthPx: number;
+  viewportWidthPx: number;
+  durationMs: number;
+  minSpanMs?: number;
+}
+
+export interface RailVisibleCueIndexRangeOptions {
+  itemCount: number;
+  itemWidthPx: number;
+  scrollLeftPx: number;
+  viewportWidthPx: number;
+}
+
+export interface RailVisibleCueIndexRange {
+  startIndex: number;
+  endIndex: number;
+}
+
+export interface TimelineAutoScrollIntentOptions {
+  pointerClientX: number;
+  viewportLeft: number;
+  viewportWidth: number;
+  scrollLeft: number;
+  maxScrollLeft: number;
+}
+
+export interface TimelineAutoScrollIntent {
+  direction: -1 | 0 | 1;
+  pressure: number;
+}
+
+export interface TimelineWheelIntentOptions {
+  deltaX: number;
+  deltaY: number;
+}
+
+export type TimelineWheelIntent = 'native-scroll' | 'zoom-in' | 'zoom-out';
+
 export type SubtitleOcrReviewMode = 'compact' | 'wide';
 
 export const WIDE_REVIEW_MIN_CENTER_WIDTH_PX = 1_700;
 export const DEFAULT_TIMELINE_MIN_SPAN_MS = 1_000;
+export const MIN_TIMELINE_WINDOW_WIDTH_PX = 200;
+export const MAX_TIMELINE_WINDOW_MARGIN_PX = 24;
+export const MIN_TIMELINE_WINDOW_DURATION_MS = 1_000;
+export const MIN_CUE_ZONE_WIDTH_PX = 4;
+export const MIN_TIMELINE_SCALE = 1;
+export const MAX_TIMELINE_SCALE = 8;
 
 const DEFAULT_TILE_MIN_WIDTH = 112;
 const DEFAULT_TILE_MAX_WIDTH = 280;
@@ -53,6 +136,8 @@ const DEFAULT_TIMELINE_MIN_BUCKET_WIDTH_PX = 128;
 const MIN_TIMELINE_BUCKET_WIDTH_PX = 48;
 const DEFAULT_TIMELINE_MAX_BUCKET_COUNT = 80;
 const DEFAULT_EXACT_CUE_MAX_VIEWPORT_SPAN_MS = 12_000;
+const TIMELINE_AUTOSCROLL_MIN_EDGE_WIDTH_PX = 32;
+const TIMELINE_AUTOSCROLL_MAX_EDGE_WIDTH_PX = 96;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -138,6 +223,269 @@ export function getCueCenterMs(cue: TimedCue): number {
   const endTimeMs = Math.max(startTimeMs, normalizeTime(cue.endTimeMs));
 
   return Math.round(startTimeMs + (endTimeMs - startTimeMs) / 2);
+}
+
+export function getTimelineContentWidthPx(
+  durationMs: number,
+  viewportWidthPx: number,
+  scale: number,
+): number {
+  const safeViewportWidthPx = Math.max(1, normalizeTime(viewportWidthPx));
+  if (normalizeTime(durationMs) <= 0) {
+    return safeViewportWidthPx;
+  }
+
+  return Math.max(
+    safeViewportWidthPx,
+    Math.round(safeViewportWidthPx * clamp(Number.isFinite(scale) ? scale : 1, MIN_TIMELINE_SCALE, MAX_TIMELINE_SCALE)),
+  );
+}
+
+export function timelineMsToPx(
+  timeMs: number,
+  durationMs: number,
+  viewportWidthPx: number,
+  scale: number,
+): number {
+  const safeDurationMs = normalizeTime(durationMs);
+  if (safeDurationMs <= 0) {
+    return 0;
+  }
+
+  return Math.round((normalizeTime(timeMs) / safeDurationMs) * getTimelineContentWidthPx(
+    safeDurationMs,
+    viewportWidthPx,
+    scale,
+  ));
+}
+
+export function timelinePxToMs(
+  positionPx: number,
+  durationMs: number,
+  viewportWidthPx: number,
+  scale: number,
+): number {
+  const safeDurationMs = normalizeTime(durationMs);
+  if (safeDurationMs <= 0) {
+    return 0;
+  }
+
+  return Math.round(
+    (normalizeTime(positionPx) / getTimelineContentWidthPx(safeDurationMs, viewportWidthPx, scale))
+      * safeDurationMs,
+  );
+}
+
+export function clampTimelineScale(scale: number): number {
+  return clamp(Number.isFinite(scale) ? scale : MIN_TIMELINE_SCALE, MIN_TIMELINE_SCALE, MAX_TIMELINE_SCALE);
+}
+
+export function clampTimelineScaleWindow(options: Omit<TimelineScaleWindowOptions, 'factor'>): TimelineViewport {
+  const safeDurationMs = normalizeTime(options.durationMs);
+  if (safeDurationMs <= 0) {
+    return { startMs: 0, endMs: 0 };
+  }
+
+  const scale = clampTimelineScale(options.scale);
+  const contentWidthPx = getTimelineContentWidthPx(safeDurationMs, options.viewportWidthPx, scale);
+  const maxWindowMarginPx = normalizeTime(options.maxWindowMarginPx ?? MAX_TIMELINE_WINDOW_MARGIN_PX);
+  const maxWindowWidthPx = Math.max(1, normalizeTime(options.viewportWidthPx) - maxWindowMarginPx);
+  const minWindowWidthPx = Math.min(
+    Math.max(1, normalizeTime(options.minWindowWidthPx ?? MIN_TIMELINE_WINDOW_WIDTH_PX)),
+    maxWindowWidthPx,
+  );
+  const minWindowDurationMs = Math.min(
+    safeDurationMs,
+    Math.max(
+      normalizeTime(options.minWindowDurationMs ?? MIN_TIMELINE_WINDOW_DURATION_MS),
+      (minWindowWidthPx / contentWidthPx) * safeDurationMs,
+    ),
+  );
+  const maxWindowDurationMs = Math.min(
+    safeDurationMs,
+    Math.max(minWindowDurationMs, (maxWindowWidthPx / contentWidthPx) * safeDurationMs),
+  );
+  const normalizedStartMs = Math.min(normalizeTime(options.window.startMs), normalizeTime(options.window.endMs));
+  const normalizedEndMs = Math.max(normalizeTime(options.window.startMs), normalizeTime(options.window.endMs));
+  const requestedSpanMs = normalizedEndMs - normalizedStartMs;
+  const nextSpanMs = Math.round(clamp(requestedSpanMs, minWindowDurationMs, maxWindowDurationMs));
+  const requestedCenterMs = normalizedStartMs + requestedSpanMs / 2;
+  const nextStartMs = clamp(Math.round(requestedCenterMs - nextSpanMs / 2), 0, safeDurationMs - nextSpanMs);
+
+  return {
+    startMs: nextStartMs,
+    endMs: nextStartMs + nextSpanMs,
+  };
+}
+
+export function zoomTimelineScaleWindow(options: TimelineScaleWindowOptions): TimelineScaleWindowResult {
+  const scale = clampTimelineScale(options.scale * (Number.isFinite(options.factor) ? options.factor : 1));
+
+  return {
+    scale,
+    window: clampTimelineScaleWindow({
+      window: options.window,
+      durationMs: options.durationMs,
+      viewportWidthPx: options.viewportWidthPx,
+      scale,
+      minWindowWidthPx: options.minWindowWidthPx,
+      maxWindowMarginPx: options.maxWindowMarginPx,
+      minWindowDurationMs: options.minWindowDurationMs,
+    }),
+  };
+}
+
+export function buildTimelineCueZones<TCue extends TimedCue>(
+  cues: readonly TCue[],
+  options: BuildTimelineCueZonesOptions,
+): TimelineCueZone<TCue>[] {
+  const safeDurationMs = normalizeTime(options.durationMs);
+  if (safeDurationMs <= 0) {
+    return [];
+  }
+
+  const minCueZoneWidthPx = Math.max(1, normalizeTime(options.minCueZoneWidthPx ?? MIN_CUE_ZONE_WIDTH_PX));
+
+  return cues
+    .filter((cue) => normalizeCueDurationMs(cue) > 0)
+    .map((cue) => {
+      const leftPx = timelineMsToPx(cue.startTimeMs, safeDurationMs, options.viewportWidthPx, options.scale);
+      const endPx = timelineMsToPx(cue.endTimeMs, safeDurationMs, options.viewportWidthPx, options.scale);
+
+      return {
+        id: cue.id,
+        cue,
+        leftPx,
+        widthPx: Math.max(minCueZoneWidthPx, endPx - leftPx),
+      };
+    });
+}
+
+export function findCueNearestTimelineWindowCenter<TCue extends TimedCue>(
+  cues: readonly TCue[],
+  window: TimelineViewport,
+): TCue | null {
+  return findCueNearestTime(cues, window.startMs + (window.endMs - window.startMs) / 2);
+}
+
+export function findRailIndexNearestCenter(options: RailCenterSearchOptions): number {
+  const itemCount = Math.max(0, Math.floor(options.itemCount));
+  if (itemCount === 0) {
+    return -1;
+  }
+
+  const itemWidthPx = Math.max(1, normalizeTime(options.itemWidthPx));
+  const viewportCenterPx = normalizeTime(options.scrollLeftPx) + normalizeTime(options.viewportWidthPx) / 2;
+  const index = Math.round((viewportCenterPx - itemWidthPx / 2) / itemWidthPx);
+
+  return clamp(index, 0, itemCount - 1);
+}
+
+export function getRailVisibleCueIndexRange(options: RailVisibleCueIndexRangeOptions): RailVisibleCueIndexRange {
+  const itemCount = Math.max(0, Math.floor(options.itemCount));
+  if (itemCount === 0) {
+    return { startIndex: -1, endIndex: -1 };
+  }
+
+  const itemWidthPx = Math.max(1, normalizeTime(options.itemWidthPx));
+  const scrollLeftPx = normalizeTime(options.scrollLeftPx);
+  const viewportWidthPx = Math.max(1, normalizeTime(options.viewportWidthPx));
+  const startIndex = clamp(Math.floor(scrollLeftPx / itemWidthPx), 0, itemCount - 1);
+  const endIndex = clamp(
+    Math.ceil((scrollLeftPx + viewportWidthPx) / itemWidthPx) - 1,
+    startIndex,
+    itemCount - 1,
+  );
+
+  return { startIndex, endIndex };
+}
+
+export function getRailVisibleViewportForCenteredIndex<TCue extends TimedCue>(
+  cues: readonly TCue[],
+  options: RailProgrammaticViewportOptions,
+): TimelineViewport | null {
+  const itemCount = cues.length;
+  if (itemCount === 0) {
+    return null;
+  }
+
+  const itemWidthPx = Math.max(1, normalizeTime(options.itemWidthPx));
+  const viewportWidthPx = Math.max(1, normalizeTime(options.viewportWidthPx));
+  const targetIndex = clamp(Math.floor(options.targetIndex), 0, itemCount - 1);
+  const totalWidthPx = itemCount * itemWidthPx;
+  const maxScrollLeftPx = Math.max(0, totalWidthPx - viewportWidthPx);
+  const targetCenterPx = targetIndex * itemWidthPx + itemWidthPx / 2;
+  const scrollLeftPx = clamp(targetCenterPx - viewportWidthPx / 2, 0, maxScrollLeftPx);
+  const { startIndex, endIndex } = getRailVisibleCueIndexRange({
+    itemCount,
+    itemWidthPx,
+    scrollLeftPx,
+    viewportWidthPx,
+  });
+  const startCue = cues[startIndex];
+  const endCue = cues[endIndex];
+
+  if (!startCue || !endCue) {
+    return null;
+  }
+
+  return clampTimelineViewport(
+    startCue.startTimeMs,
+    Math.max(startCue.endTimeMs, endCue.endTimeMs),
+    options.durationMs,
+    options.minSpanMs ?? DEFAULT_TIMELINE_MIN_SPAN_MS,
+  );
+}
+
+export function getTimelineAutoScrollIntent(
+  options: TimelineAutoScrollIntentOptions,
+): TimelineAutoScrollIntent {
+  const viewportWidth = normalizeTime(options.viewportWidth);
+  const maxScrollLeft = normalizeTime(options.maxScrollLeft);
+  const scrollLeft = clamp(normalizeTime(options.scrollLeft), 0, maxScrollLeft);
+
+  if (viewportWidth <= 0 || maxScrollLeft <= 0) {
+    return { direction: 0, pressure: 0 };
+  }
+
+  const edgeWidth = clamp(
+    viewportWidth * 0.12,
+    TIMELINE_AUTOSCROLL_MIN_EDGE_WIDTH_PX,
+    TIMELINE_AUTOSCROLL_MAX_EDGE_WIDTH_PX,
+  );
+  if (edgeWidth * 2 >= viewportWidth) {
+    return { direction: 0, pressure: 0 };
+  }
+
+  const localX = options.pointerClientX - options.viewportLeft;
+  if (localX < edgeWidth && scrollLeft > 0) {
+    return {
+      direction: -1,
+      pressure: clamp((edgeWidth - localX) / edgeWidth, 0, 1),
+    };
+  }
+
+  if (localX > viewportWidth - edgeWidth && scrollLeft < maxScrollLeft) {
+    return {
+      direction: 1,
+      pressure: clamp((localX - (viewportWidth - edgeWidth)) / edgeWidth, 0, 1),
+    };
+  }
+
+  return { direction: 0, pressure: 0 };
+}
+
+export function getTimelineWheelIntent(options: TimelineWheelIntentOptions): TimelineWheelIntent {
+  const deltaX = Number.isFinite(options.deltaX) ? options.deltaX : 0;
+  const deltaY = Number.isFinite(options.deltaY) ? options.deltaY : 0;
+  const absX = Math.abs(deltaX);
+  const absY = Math.abs(deltaY);
+
+  if (absX > absY || absY < 1) {
+    return 'native-scroll';
+  }
+
+  return deltaY > 0 ? 'zoom-out' : 'zoom-in';
 }
 
 export function getVisibleCueRange(

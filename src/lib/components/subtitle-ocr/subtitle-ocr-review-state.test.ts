@@ -2,14 +2,22 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildSubtitleOcrReviewStats,
+  buildTimelineCueZones,
   buildTimelineBuckets,
   centerTimelineViewport,
   clampTimelineViewport,
   findCueNearestTime,
+  findCueNearestTimelineWindowCenter,
+  findRailIndexNearestCenter,
+  getRailVisibleViewportForCenteredIndex,
+  getTimelineAutoScrollIntent,
+  getTimelineWheelIntent,
   getVisibleCueRange,
+  MIN_TIMELINE_WINDOW_WIDTH_PX,
   panTimelineViewport,
   resolveSubtitleOcrReviewMode,
   toCueTileWidth,
+  zoomTimelineScaleWindow,
   WIDE_REVIEW_MIN_CENTER_WIDTH_PX,
   zoomTimelineViewport,
   type BuildTimelineBucketsOptions,
@@ -373,6 +381,244 @@ describe('subtitle OCR review state', () => {
         durationMs: 0,
         timelineWidthPx: 600,
       })).toEqual([]);
+    });
+  });
+
+  describe('timeline scale window helpers', () => {
+    it('enforces the minimum filmstrip window pixel width', () => {
+      const window = zoomTimelineScaleWindow({
+        window: { startMs: 10_000, endMs: 11_000 },
+        durationMs: 100_000,
+        viewportWidthPx: 1_000,
+        scale: 1,
+        factor: 1,
+      }).window;
+
+      expect(window.endMs - window.startMs).toBe(20_000);
+    });
+
+    it('enforces the maximum filmstrip window pixel width inside the visible timeline', () => {
+      const window = zoomTimelineScaleWindow({
+        window: { startMs: 0, endMs: 100_000 },
+        durationMs: 100_000,
+        viewportWidthPx: 1_000,
+        scale: 1,
+        factor: 1,
+      }).window;
+
+      expect(window).toEqual({
+        startMs: 1_200,
+        endMs: 98_800,
+      });
+    });
+
+    it('clamps the filmstrip window to media duration bounds', () => {
+      const window = zoomTimelineScaleWindow({
+        window: { startMs: 90_000, endMs: 110_000 },
+        durationMs: 100_000,
+        viewportWidthPx: 1_000,
+        scale: 1,
+        factor: 1,
+      }).window;
+
+      expect(window).toEqual({
+        startMs: 80_000,
+        endMs: 100_000,
+      });
+    });
+
+    it('preserves the filmstrip window center while zooming when possible', () => {
+      const result = zoomTimelineScaleWindow({
+        window: { startMs: 30_000, endMs: 50_000 },
+        durationMs: 100_000,
+        viewportWidthPx: 1_000,
+        scale: 1,
+        factor: 2,
+      });
+
+      expect(result.scale).toBe(2);
+      expect(result.window).toEqual({
+        startMs: 30_000,
+        endMs: 50_000,
+      });
+    });
+
+    it('expands a tiny filmstrip window when zoom would make it unusably small', () => {
+      const result = zoomTimelineScaleWindow({
+        window: { startMs: 40_000, endMs: 41_000 },
+        durationMs: 100_000,
+        viewportWidthPx: 1_000,
+        scale: 8,
+        factor: 0.5,
+      });
+
+      expect(result.scale).toBe(4);
+      expect(result.window.endMs - result.window.startMs).toBe(5_000);
+    });
+
+    it('shrinks a filmstrip window that would be wider than the visible timeline', () => {
+      const result = zoomTimelineScaleWindow({
+        window: { startMs: 0, endMs: 100_000 },
+        durationMs: 100_000,
+        viewportWidthPx: 1_000,
+        scale: 4,
+        factor: 2,
+      });
+
+      expect(result.scale).toBe(8);
+      expect(result.window.endMs - result.window.startMs).toBe(12_200);
+    });
+  });
+
+  describe('timeline cue zones', () => {
+    it('keeps very short cue zones visible with a minimum width', () => {
+      const zones = buildTimelineCueZones([
+        { id: 'short', startTimeMs: 10_000, endTimeMs: 10_010 },
+      ], {
+        durationMs: 100_000,
+        viewportWidthPx: 1_000,
+        scale: 1,
+      });
+
+      expect(zones).toEqual([
+        {
+          cue: { id: 'short', startTimeMs: 10_000, endTimeMs: 10_010 },
+          id: 'short',
+          leftPx: 100,
+          widthPx: 4,
+        },
+      ]);
+    });
+  });
+
+  describe('timeline and filmstrip nearest-target helpers', () => {
+    it('finds the cue nearest the filmstrip window center timestamp', () => {
+      expect(findCueNearestTimelineWindowCenter(cues, { startMs: 5_200, endMs: 6_200 })?.id)
+        .toBe('cue-3');
+    });
+
+    it('finds the rail card nearest the viewport center', () => {
+      expect(findRailIndexNearestCenter({
+        itemCount: 4,
+        itemWidthPx: 330,
+        scrollLeftPx: 0,
+        viewportWidthPx: 330,
+      })).toBe(0);
+
+      expect(findRailIndexNearestCenter({
+        itemCount: 4,
+        itemWidthPx: 330,
+        scrollLeftPx: 330,
+        viewportWidthPx: 330,
+      })).toBe(1);
+    });
+
+    it('derives the filmstrip viewport range after centering a rail card programmatically', () => {
+      const railCues: TimedCue[] = [
+        { id: 'a', startTimeMs: 0, endTimeMs: 1_000 },
+        { id: 'b', startTimeMs: 1_000, endTimeMs: 2_000 },
+        { id: 'c', startTimeMs: 2_000, endTimeMs: 3_000 },
+        { id: 'd', startTimeMs: 10_000, endTimeMs: 11_000 },
+        { id: 'e', startTimeMs: 50_000, endTimeMs: 51_000 },
+      ];
+
+      expect(getRailVisibleViewportForCenteredIndex(railCues, {
+        targetIndex: 3,
+        itemWidthPx: 100,
+        viewportWidthPx: 300,
+        durationMs: 60_000,
+      })).toEqual({
+        startMs: 2_000,
+        endMs: 51_000,
+      });
+    });
+
+    it('excludes the next rail card when the viewport right edge lands on a card boundary', () => {
+      const railCues: TimedCue[] = [
+        { id: 'a', startTimeMs: 0, endTimeMs: 1_000 },
+        { id: 'b', startTimeMs: 1_000, endTimeMs: 2_000 },
+        { id: 'c', startTimeMs: 2_000, endTimeMs: 3_000 },
+        { id: 'd', startTimeMs: 10_000, endTimeMs: 11_000 },
+      ];
+
+      expect(getRailVisibleViewportForCenteredIndex(railCues, {
+        targetIndex: 0,
+        itemWidthPx: 100,
+        viewportWidthPx: 300,
+        durationMs: 12_000,
+      })).toEqual({
+        startMs: 0,
+        endMs: 3_000,
+      });
+    });
+  });
+
+  describe('timeline window auto-scroll intent', () => {
+    it('computes left and right auto-scroll pressure near timeline edges', () => {
+      const left = getTimelineAutoScrollIntent({
+        pointerClientX: 40,
+        viewportLeft: 0,
+        viewportWidth: 1_000,
+        scrollLeft: 500,
+        maxScrollLeft: 2_000,
+      });
+      const right = getTimelineAutoScrollIntent({
+        pointerClientX: 960,
+        viewportLeft: 0,
+        viewportWidth: 1_000,
+        scrollLeft: 500,
+        maxScrollLeft: 2_000,
+      });
+
+      expect(left.direction).toBe(-1);
+      expect(left.pressure).toBeGreaterThan(0);
+      expect(right.direction).toBe(1);
+      expect(right.pressure).toBeGreaterThan(0);
+    });
+
+    it('does not auto-scroll beyond available timeline bounds', () => {
+      expect(getTimelineAutoScrollIntent({
+        pointerClientX: 20,
+        viewportLeft: 0,
+        viewportWidth: 1_000,
+        scrollLeft: 0,
+        maxScrollLeft: 2_000,
+      })).toEqual({ direction: 0, pressure: 0 });
+
+      expect(getTimelineAutoScrollIntent({
+        pointerClientX: 980,
+        viewportLeft: 0,
+        viewportWidth: 1_000,
+        scrollLeft: 2_000,
+        maxScrollLeft: 2_000,
+      })).toEqual({ direction: 0, pressure: 0 });
+    });
+  });
+
+  describe('timeline wheel intent', () => {
+    it('lets horizontal trackpad gestures scroll the timeline instead of zooming', () => {
+      expect(getTimelineWheelIntent({
+        deltaX: 120,
+        deltaY: 4,
+      })).toBe('native-scroll');
+    });
+
+    it('keeps vertical wheel gestures as timeline zoom controls', () => {
+      expect(getTimelineWheelIntent({
+        deltaX: 0,
+        deltaY: -80,
+      })).toBe('zoom-in');
+
+      expect(getTimelineWheelIntent({
+        deltaX: 0,
+        deltaY: 80,
+      })).toBe('zoom-out');
+    });
+  });
+
+  describe('timeline window constants', () => {
+    it('uses the approved minimum filmstrip window width', () => {
+      expect(MIN_TIMELINE_WINDOW_WIDTH_PX).toBe(200);
     });
   });
 });

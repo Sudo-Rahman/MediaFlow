@@ -16,6 +16,7 @@
     buildSubtitleOcrReviewStats,
     centerTimelineViewport,
     clampTimelineViewport,
+    findCueNearestTimelineWindowCenter,
     resolveSubtitleOcrReviewMode,
     type SubtitleOcrReviewMode,
     type TimelineViewport,
@@ -37,7 +38,7 @@
     isProcessing: boolean;
   }
 
-  type ViewportChangeSource = 'rail' | 'timeline';
+  type ViewportChangeSource = 'rail' | 'timeline-window' | 'timeline-zone' | 'timeline-zoom';
   type ActiveViewportSource = ViewportChangeSource | 'selection' | null;
   const REVIEW_HEADER_DETAILS_MIN_WIDTH_PX = 620;
   const VERSION_SELECTOR_COMPACT_WIDTH_PX = 520;
@@ -138,7 +139,7 @@
       return;
     }
 
-    if (activeViewportSource === 'timeline') {
+    if (activeViewportSource && activeViewportSource !== 'selection') {
       recenteredSelectionKey = selectionKey;
       return;
     }
@@ -224,13 +225,20 @@
     activeViewportSource = source;
     viewportStartMs = nextViewport.startMs;
     viewportEndMs = nextViewport.endMs;
+
+    if (source === 'timeline-window') {
+      const targetCue = findCueNearestTimelineWindowCenter(renderedCues, nextViewport);
+      if (targetCue && targetCue.id !== effectiveSelectedCueId) {
+        onSelectCue(targetCue.id);
+      }
+    }
   }
 
   function handleSelectCue(cueId: string, source: ActiveViewportSource = 'selection'): void {
     activeViewportSource = source;
     onSelectCue(cueId);
 
-    if (source !== 'timeline') {
+    if (source === 'selection') {
       centerViewportOnCue(renderedCues.find((cue) => cue.id === cueId) ?? null);
     }
   }
@@ -389,13 +397,12 @@
         <div class="shrink-0 border-b">
           <SubtitleOcrTimeline
             cues={renderedCues}
-            bitmaps={bitmaps}
             durationMs={durationMs}
             viewportStartMs={viewportStartMs}
             viewportEndMs={viewportEndMs}
             selectedCueId={effectiveSelectedCueId}
             selectedCueStartMs={selectedCue?.startTimeMs}
-            onSelectCue={(cueId) => handleSelectCue(cueId, 'timeline')}
+            onSelectCue={(cueId) => handleSelectCue(cueId, 'timeline-zone')}
             onViewportChange={handleViewportChange}
           />
         </div>

@@ -1,41 +1,57 @@
 <script lang="ts">
-  import { convertFileSrc } from '@tauri-apps/api/core';
+  import { tick } from 'svelte';
+  import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from '@lucide/svelte';
 
-  import type { SubtitleOcrCue, SubtitleOcrCueBitmap } from '$lib/types';
+  import { Button } from '$lib/components/ui/button';
+  import * as Tooltip from '$lib/components/ui/tooltip';
+  import type { SubtitleOcrCue } from '$lib/types';
   import { cn } from '$lib/utils';
   import {
-    buildTimelineBuckets,
-    clampTimelineViewport,
-    panTimelineViewport,
-    type TimelineBucket,
+    buildTimelineCueZones,
+    clampTimelineScale,
+    clampTimelineScaleWindow,
+    getTimelineAutoScrollIntent,
+    getTimelineContentWidthPx,
+    getTimelineWheelIntent,
+    timelineMsToPx,
+    timelinePxToMs,
+    zoomTimelineScaleWindow,
+    type TimelineCueZone,
     type TimelineViewport,
-    zoomTimelineViewport,
   } from './subtitle-ocr-review-state';
+
+  type TimelineViewportChangeSource = 'timeline-window' | 'timeline-zone' | 'timeline-zoom';
 
   interface SubtitleOcrTimelineProps {
     cues: SubtitleOcrCue[];
-    bitmaps?: SubtitleOcrCueBitmap[];
     durationMs: number;
     viewportStartMs: number;
     viewportEndMs: number;
     selectedCueId?: string | null;
     selectedCueStartMs?: number;
     onSelectCue?: (cueId: string) => void;
-    onViewportChange: (startMs: number, endMs: number, source: 'timeline') => void;
+    onViewportChange: (
+      startMs: number,
+      endMs: number,
+      source: TimelineViewportChangeSource,
+    ) => void;
   }
 
-  interface DragState {
+  interface WindowDragState {
     pointerId: number;
-    startClientX: number;
-    trackWidth: number;
-    viewportStartMs: number;
-    viewportEndMs: number;
-    didDrag: boolean;
+    grabOffsetPx: number;
+    pointerClientX: number;
+  }
+
+  interface TimelineTick {
+    id: string;
+    timeMs: number;
+    label: string;
+    leftPx: number;
   }
 
   let {
     cues,
-    bitmaps = [],
     durationMs,
     viewportStartMs,
     viewportEndMs,
@@ -45,46 +61,53 @@
     onViewportChange,
   }: SubtitleOcrTimelineProps = $props();
 
-  const THUMBNAIL_URL_PATH = /^(?:https?:\/\/|data:|blob:|\/\/)/i;
-  const CLICK_DRAG_THRESHOLD_PX = 4;
-  const MIN_BUCKET_WIDTH_PX = 104;
+  const WHEEL_ZOOM_IN_FACTOR = 1.18;
+  const WHEEL_ZOOM_OUT_FACTOR = 0.82;
+  const PAN_RATIO = 0.25;
+  const WINDOW_KEYBOARD_PAN_RATIO = 0.08;
+  const AUTO_SCROLL_BASE_PX = 8;
+  const AUTO_SCROLL_PRESSURE_PX = 24;
 
-  let trackElement = $state<HTMLDivElement | null>(null);
+  let viewportElement = $state<HTMLDivElement | null>(null);
   let timelineWidthPx = $state(0);
-  let dragState = $state<DragState | null>(null);
-  let suppressClickUntilMs = 0;
-  let pendingViewport: TimelineViewport | null = null;
+  let timelineScale = $state(1);
+  let dragState = $state<WindowDragState | null>(null);
+  let localWindow = $state<TimelineViewport | null>(null);
+  let pendingWindow: TimelineViewport | null = null;
+  let pendingWindowSource: TimelineViewportChangeSource = 'timeline-window';
   let viewportFrameId: number | null = null;
+  let autoScrollFrameId: number | null = null;
+  let lastPropWindowKey = '';
 
   const safeDurationMs = $derived(Math.max(0, Math.round(durationMs)));
-  const viewport = $derived(clampTimelineViewport(viewportStartMs, viewportEndMs, safeDurationMs));
-  const viewportSpanMs = $derived(Math.max(0, viewport.endMs - viewport.startMs));
-
-  const bitmapByCueId = $derived.by(() => {
-    const map = new Map<string, SubtitleOcrCueBitmap>();
-    for (const bitmap of bitmaps) {
-      map.set(bitmap.cueId, bitmap);
-    }
-
-    return map;
-  });
-
-  const buckets = $derived.by((): TimelineBucket<SubtitleOcrCue>[] => {
-    if (safeDurationMs <= 0 || timelineWidthPx <= 0) {
-      return [];
-    }
-
-    return buildTimelineBuckets(cues, {
-      viewport,
+  const safeScale = $derived(clampTimelineScale(timelineScale));
+  const propWindow = $derived({ startMs: viewportStartMs, endMs: viewportEndMs });
+  const renderedWindow = $derived.by(() => clampTimelineScaleWindow({
+    window: localWindow ?? propWindow,
+    durationMs: safeDurationMs,
+    viewportWidthPx: timelineWidthPx,
+    scale: safeScale,
+  }));
+  const contentWidthPx = $derived(getTimelineContentWidthPx(safeDurationMs, timelineWidthPx, safeScale));
+  const cueZones = $derived.by((): TimelineCueZone<SubtitleOcrCue>[] => (
+    buildTimelineCueZones(cues, {
       durationMs: safeDurationMs,
-      timelineWidthPx,
-      minBucketWidthPx: MIN_BUCKET_WIDTH_PX,
-    });
-  });
+      viewportWidthPx: timelineWidthPx,
+      scale: safeScale,
+    })
+  ));
+  const timelineTicks = $derived.by(() => buildTimelineTicks(safeDurationMs, timelineWidthPx, safeScale));
+  const selectedMarkerLeftPx = $derived(getSelectedMarkerLeftPx());
+  const windowLeftPx = $derived(timelineMsToPx(renderedWindow.startMs, safeDurationMs, timelineWidthPx, safeScale));
+  const windowWidthPx = $derived(Math.max(
+    1,
+    timelineMsToPx(renderedWindow.endMs, safeDurationMs, timelineWidthPx, safeScale) - windowLeftPx,
+  ));
 
   $effect(() => {
-    const element = trackElement;
+    const element = viewportElement;
     if (!element) {
+      timelineWidthPx = 0;
       return;
     }
 
@@ -101,10 +124,24 @@
   });
 
   $effect(() => {
+    const startMs = viewportStartMs;
+    const endMs = viewportEndMs;
+    const propWindowKey = `${startMs}:${endMs}`;
+    const propChanged = propWindowKey !== lastPropWindowKey;
+    lastPropWindowKey = propWindowKey;
+
+    if (propChanged && !dragState && localWindow) {
+      localWindow = null;
+    }
+  });
+
+  $effect(() => {
     return () => {
       if (viewportFrameId !== null) {
         cancelAnimationFrame(viewportFrameId);
       }
+
+      stopAutoScroll();
     };
   });
 
@@ -122,37 +159,90 @@
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   }
 
-  function formatBucketRange(bucket: TimelineBucket<SubtitleOcrCue>): string {
-    return `${formatTime(bucket.startMs)} - ${formatTime(bucket.endMs)}`;
-  }
-
-  function getBucketFlexBasis(bucket: TimelineBucket<SubtitleOcrCue>): string {
-    if (viewportSpanMs <= 0) {
-      return '0%';
+  function buildTimelineTicks(totalDurationMs: number, viewportWidthPx: number, scale: number): TimelineTick[] {
+    if (totalDurationMs <= 0 || viewportWidthPx <= 0) {
+      return [];
     }
 
-    const bucketSpanMs = Math.max(0, bucket.endMs - bucket.startMs);
-    return `${(bucketSpanMs / viewportSpanMs) * 100}%`;
+    const contentWidth = getTimelineContentWidthPx(totalDurationMs, viewportWidthPx, scale);
+    const targetTickCount = Math.max(2, Math.min(10, Math.floor(contentWidth / 180)));
+    const rawStepMs = totalDurationMs / targetTickCount;
+    const stepMs = chooseTickStepMs(rawStepMs);
+    const ticks: TimelineTick[] = [];
+
+    for (let timeMs = 0; timeMs <= totalDurationMs; timeMs += stepMs) {
+      ticks.push({
+        id: `tick:${timeMs}`,
+        timeMs,
+        label: formatTime(timeMs),
+        leftPx: timelineMsToPx(timeMs, totalDurationMs, viewportWidthPx, scale),
+      });
+    }
+
+    if (ticks[ticks.length - 1]?.timeMs !== totalDurationMs) {
+      ticks.push({
+        id: `tick:${totalDurationMs}`,
+        timeMs: totalDurationMs,
+        label: formatTime(totalDurationMs),
+        leftPx: timelineMsToPx(totalDurationMs, totalDurationMs, viewportWidthPx, scale),
+      });
+    }
+
+    return ticks;
   }
 
-  function getSelectedMarkerPercent(): number | null {
-    if (selectedCueStartMs === undefined || viewportSpanMs <= 0) {
+  function chooseTickStepMs(rawStepMs: number): number {
+    const steps = [
+      1_000,
+      2_000,
+      5_000,
+      10_000,
+      15_000,
+      30_000,
+      60_000,
+      120_000,
+      300_000,
+      600_000,
+      900_000,
+      1_800_000,
+      3_600_000,
+    ];
+
+    return steps.find((step) => step >= rawStepMs) ?? steps[steps.length - 1];
+  }
+
+  function getSelectedMarkerLeftPx(): number | null {
+    if (selectedCueStartMs === undefined || safeDurationMs <= 0 || timelineWidthPx <= 0) {
       return null;
     }
 
-    if (selectedCueStartMs < viewport.startMs || selectedCueStartMs > viewport.endMs) {
-      return null;
-    }
-
-    return ((selectedCueStartMs - viewport.startMs) / viewportSpanMs) * 100;
+    return timelineMsToPx(selectedCueStartMs, safeDurationMs, timelineWidthPx, safeScale);
   }
 
-  function queueViewportChange(nextViewport: TimelineViewport): void {
-    if (safeDurationMs <= 0) {
+  function getZoneLabel(zone: TimelineCueZone<SubtitleOcrCue>, index: number): string {
+    return `Select cue ${index + 1}, ${formatTime(zone.cue.startTimeMs)} to ${formatTime(zone.cue.endTimeMs)}`;
+  }
+
+  function getWindowLabel(): string {
+    return `Filmstrip window, ${formatTime(renderedWindow.startMs)} to ${formatTime(renderedWindow.endMs)}`;
+  }
+
+  function queueWindowChange(
+    nextWindow: TimelineViewport,
+    source: TimelineViewportChangeSource,
+  ): void {
+    if (safeDurationMs <= 0 || timelineWidthPx <= 0) {
       return;
     }
 
-    pendingViewport = clampTimelineViewport(nextViewport.startMs, nextViewport.endMs, safeDurationMs);
+    pendingWindow = clampTimelineScaleWindow({
+      window: nextWindow,
+      durationMs: safeDurationMs,
+      viewportWidthPx: timelineWidthPx,
+      scale: safeScale,
+    });
+    pendingWindowSource = source;
+    localWindow = pendingWindow;
 
     if (viewportFrameId !== null) {
       return;
@@ -160,155 +250,179 @@
 
     viewportFrameId = requestAnimationFrame(() => {
       viewportFrameId = null;
-      const queuedViewport = pendingViewport;
-      pendingViewport = null;
+      const queuedWindow = pendingWindow;
+      const queuedSource = pendingWindowSource;
+      pendingWindow = null;
 
-      if (!queuedViewport) {
+      if (!queuedWindow) {
         return;
       }
 
-      onViewportChange(queuedViewport.startMs, queuedViewport.endMs, 'timeline');
+      onViewportChange(queuedWindow.startMs, queuedWindow.endMs, queuedSource);
     });
   }
 
-  function getCueBitmap(cue: SubtitleOcrCue | null): SubtitleOcrCueBitmap | null {
-    if (!cue) {
-      return null;
+  function scrollTimelineToTime(timeMs: number, anchorRatio = 0.5, behavior: ScrollBehavior = 'smooth'): void {
+    const element = viewportElement;
+    if (!element || safeDurationMs <= 0) {
+      return;
     }
 
-    const directBitmap = bitmapByCueId.get(cue.id);
-    if (directBitmap) {
-      return directBitmap;
-    }
-
-    for (const sourceCueId of cue.sourceCueIds) {
-      const sourceBitmap = bitmapByCueId.get(sourceCueId);
-      if (sourceBitmap) {
-        return sourceBitmap;
-      }
-    }
-
-    return null;
-  }
-
-  function resolveThumbnailSrc(thumbnailPath: string): string {
-    return THUMBNAIL_URL_PATH.test(thumbnailPath) ? thumbnailPath : convertFileSrc(thumbnailPath);
-  }
-
-  function getBucketTargetCue(bucket: TimelineBucket<SubtitleOcrCue>): SubtitleOcrCue | null {
-    return bucket.exactCue ?? bucket.representativeCue;
-  }
-
-  function getBucketLabel(bucket: TimelineBucket<SubtitleOcrCue>): string {
-    const targetCue = getBucketTargetCue(bucket);
-    if (targetCue) {
-      return `Select cue at ${formatBucketRange(bucket)}`;
-    }
-
-    return `Center timeline on empty range ${formatBucketRange(bucket)}`;
+    void tick().then(() => {
+      const leftPx = timelineMsToPx(timeMs, safeDurationMs, timelineWidthPx, safeScale)
+        - element.clientWidth * anchorRatio;
+      element.scrollTo({
+        left: Math.max(0, leftPx),
+        behavior,
+      });
+    });
   }
 
   function handleWheel(event: WheelEvent): void {
-    if (safeDurationMs <= 0 || viewportSpanMs <= 0) {
+    if (safeDurationMs <= 0 || timelineWidthPx <= 0 || !viewportElement) {
+      return;
+    }
+
+    const wheelIntent = getTimelineWheelIntent({
+      deltaX: event.deltaX,
+      deltaY: event.deltaY,
+    });
+    if (wheelIntent === 'native-scroll') {
       return;
     }
 
     event.preventDefault();
-    const rect = event.currentTarget instanceof HTMLElement
-      ? event.currentTarget.getBoundingClientRect()
-      : null;
-    const anchorRatio = rect && rect.width > 0
-      ? (event.clientX - rect.left) / rect.width
-      : 0.5;
-    const factor = event.deltaY > 0 ? 1.18 : 0.82;
+    const rect = viewportElement.getBoundingClientRect();
+    const pointerX = event.clientX - rect.left;
+    const anchorTimeMs = timelinePxToMs(
+      viewportElement.scrollLeft + pointerX,
+      safeDurationMs,
+      timelineWidthPx,
+      safeScale,
+    );
+    const factor = wheelIntent === 'zoom-out' ? WHEEL_ZOOM_OUT_FACTOR : WHEEL_ZOOM_IN_FACTOR;
+    const result = zoomTimelineScaleWindow({
+      window: renderedWindow,
+      durationMs: safeDurationMs,
+      viewportWidthPx: timelineWidthPx,
+      scale: safeScale,
+      factor,
+    });
 
-    queueViewportChange(zoomTimelineViewport(viewport, safeDurationMs, factor, anchorRatio));
+    timelineScale = result.scale;
+    queueWindowChange(result.window, 'timeline-zoom');
+
+    void tick().then(() => {
+      if (!viewportElement) {
+        return;
+      }
+
+      viewportElement.scrollLeft = Math.max(
+        0,
+        timelineMsToPx(anchorTimeMs, safeDurationMs, timelineWidthPx, result.scale) - pointerX,
+      );
+    });
   }
 
-  function zoomViewport(factor: number): void {
-    if (safeDurationMs <= 0 || viewportSpanMs <= 0) {
+  function zoomByButton(factor: number): void {
+    if (safeDurationMs <= 0 || timelineWidthPx <= 0) {
       return;
     }
 
-    queueViewportChange(zoomTimelineViewport(viewport, safeDurationMs, factor, 0.5));
+    const centerMs = renderedWindow.startMs + (renderedWindow.endMs - renderedWindow.startMs) / 2;
+    const result = zoomTimelineScaleWindow({
+      window: renderedWindow,
+      durationMs: safeDurationMs,
+      viewportWidthPx: timelineWidthPx,
+      scale: safeScale,
+      factor,
+    });
+
+    timelineScale = result.scale;
+    queueWindowChange(result.window, 'timeline-zoom');
+    scrollTimelineToTime(centerMs);
   }
 
-  function panViewport(direction: -1 | 1, ratio: number): void {
-    if (safeDurationMs <= 0 || viewportSpanMs <= 0) {
+  function panTimeline(direction: -1 | 1): void {
+    const element = viewportElement;
+    if (!element) {
       return;
     }
 
-    queueViewportChange(panTimelineViewport(viewport, safeDurationMs, viewportSpanMs * ratio * direction));
+    element.scrollBy({
+      left: element.clientWidth * PAN_RATIO * direction,
+      behavior: 'smooth',
+    });
   }
 
-  function goToTimelineStart(): void {
-    if (safeDurationMs <= 0 || viewportSpanMs <= 0) {
-      return;
-    }
+  function selectZone(zone: TimelineCueZone<SubtitleOcrCue>): void {
+    const cueCenterMs = zone.cue.startTimeMs + (zone.cue.endTimeMs - zone.cue.startTimeMs) / 2;
+    const windowSpanMs = renderedWindow.endMs - renderedWindow.startMs;
 
-    queueViewportChange(clampTimelineViewport(0, viewportSpanMs, safeDurationMs));
+    onSelectCue(zone.cue.id);
+    queueWindowChange({
+      startMs: cueCenterMs - windowSpanMs / 2,
+      endMs: cueCenterMs + windowSpanMs / 2,
+    }, 'timeline-zone');
+    scrollTimelineToTime(cueCenterMs);
   }
 
-  function goToTimelineEnd(): void {
-    if (safeDurationMs <= 0 || viewportSpanMs <= 0) {
-      return;
-    }
+  function moveWindowByRatio(direction: -1 | 1, ratio: number): void {
+    const spanMs = renderedWindow.endMs - renderedWindow.startMs;
+    const deltaMs = spanMs * ratio * direction;
 
-    queueViewportChange(clampTimelineViewport(safeDurationMs - viewportSpanMs, safeDurationMs, safeDurationMs));
+    queueWindowChange({
+      startMs: renderedWindow.startMs + deltaMs,
+      endMs: renderedWindow.endMs + deltaMs,
+    }, 'timeline-window');
   }
 
-  function handlePointerDown(event: PointerEvent): void {
-    if (event.button !== 0 || !trackElement || safeDurationMs <= 0 || viewportSpanMs <= 0) {
+  function handleWindowKeydown(event: KeyboardEvent): void {
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      moveWindowByRatio(-1, WINDOW_KEYBOARD_PAN_RATIO);
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      moveWindowByRatio(1, WINDOW_KEYBOARD_PAN_RATIO);
+    } else if (event.key === '+' || event.key === '=') {
+      event.preventDefault();
+      zoomByButton(WHEEL_ZOOM_IN_FACTOR);
+    } else if (event.key === '-' || event.key === '_') {
+      event.preventDefault();
+      zoomByButton(WHEEL_ZOOM_OUT_FACTOR);
+    }
+  }
+
+  function handleWindowPointerDown(event: PointerEvent): void {
+    if (event.button !== 0 || !viewportElement || safeDurationMs <= 0) {
       return;
     }
 
-    const trackWidth = trackElement.clientWidth;
-    if (trackWidth <= 0) {
-      return;
-    }
+    const rect = viewportElement.getBoundingClientRect();
+    dragState = {
+      pointerId: event.pointerId,
+      pointerClientX: event.clientX,
+      grabOffsetPx: event.clientX - rect.left + viewportElement.scrollLeft - windowLeftPx,
+    };
 
     const target = event.currentTarget;
     if (target instanceof HTMLElement) {
       target.setPointerCapture(event.pointerId);
     }
 
-    dragState = {
-      pointerId: event.pointerId,
-      startClientX: event.clientX,
-      trackWidth,
-      viewportStartMs: viewport.startMs,
-      viewportEndMs: viewport.endMs,
-      didDrag: false,
-    };
+    startAutoScroll();
   }
 
-  function handlePointerMove(event: PointerEvent): void {
+  function handleWindowPointerMove(event: PointerEvent): void {
     if (!dragState || event.pointerId !== dragState.pointerId) {
       return;
     }
 
-    const deltaX = event.clientX - dragState.startClientX;
-    const didDrag = dragState.didDrag || Math.abs(deltaX) > CLICK_DRAG_THRESHOLD_PX;
-    dragState = {
-      ...dragState,
-      didDrag,
-    };
-
-    if (!didDrag) {
-      return;
-    }
-
-    const deltaMs = -(deltaX / dragState.trackWidth) * viewportSpanMs;
-    queueViewportChange(
-      panTimelineViewport(
-        { startMs: dragState.viewportStartMs, endMs: dragState.viewportEndMs },
-        safeDurationMs,
-        deltaMs,
-      ),
-    );
+    dragState = { ...dragState, pointerClientX: event.clientX };
+    updateWindowFromPointer(event.clientX);
   }
 
-  function handlePointerUp(event: PointerEvent): void {
+  function handleWindowPointerUp(event: PointerEvent): void {
     if (!dragState || event.pointerId !== dragState.pointerId) {
       return;
     }
@@ -318,179 +432,240 @@
       target.releasePointerCapture(event.pointerId);
     }
 
-    suppressClickUntilMs = dragState.didDrag ? performance.now() + 200 : 0;
     dragState = null;
+    stopAutoScroll();
+
+    requestAnimationFrame(() => {
+      if (!dragState) {
+        localWindow = null;
+      }
+    });
   }
 
-  function handlePointerCancel(event: PointerEvent): void {
-    handlePointerUp(event);
-    suppressClickUntilMs = 0;
-  }
-
-  function handleBucketClick(event: MouseEvent, bucket: TimelineBucket<SubtitleOcrCue>): void {
-    event.stopPropagation();
-
-    if (performance.now() < suppressClickUntilMs) {
-      suppressClickUntilMs = 0;
+  function updateWindowFromPointer(pointerClientX: number): void {
+    const element = viewportElement;
+    const drag = dragState;
+    if (!element || !drag || safeDurationMs <= 0) {
       return;
     }
 
-    suppressClickUntilMs = 0;
+    const rect = element.getBoundingClientRect();
+    const localX = pointerClientX - rect.left + element.scrollLeft;
+    const startMs = timelinePxToMs(localX - drag.grabOffsetPx, safeDurationMs, timelineWidthPx, safeScale);
+    const spanMs = renderedWindow.endMs - renderedWindow.startMs;
 
-    const targetCue = getBucketTargetCue(bucket);
-    if (targetCue) {
-      onSelectCue(targetCue.id);
+    queueWindowChange({
+      startMs,
+      endMs: startMs + spanMs,
+    }, 'timeline-window');
+  }
+
+  function startAutoScroll(): void {
+    if (autoScrollFrameId !== null) {
       return;
     }
 
-    const centerMs = bucket.startMs + (bucket.endMs - bucket.startMs) / 2;
-    const spanMs = Math.max(1_000, viewportSpanMs);
-    queueViewportChange(
-      clampTimelineViewport(
-        centerMs - spanMs / 2,
-        centerMs + spanMs / 2,
-        safeDurationMs,
-      ),
-    );
+    const step = () => {
+      autoScrollFrameId = null;
+      const element = viewportElement;
+      const drag = dragState;
+      if (!element || !drag) {
+        return;
+      }
+
+      const rect = element.getBoundingClientRect();
+      const intent = getTimelineAutoScrollIntent({
+        pointerClientX: drag.pointerClientX,
+        viewportLeft: rect.left,
+        viewportWidth: rect.width,
+        scrollLeft: element.scrollLeft,
+        maxScrollLeft: Math.max(0, element.scrollWidth - element.clientWidth),
+      });
+
+      if (intent.direction !== 0) {
+        element.scrollLeft += intent.direction * (AUTO_SCROLL_BASE_PX + AUTO_SCROLL_PRESSURE_PX * intent.pressure);
+        updateWindowFromPointer(drag.pointerClientX);
+      }
+
+      autoScrollFrameId = requestAnimationFrame(step);
+    };
+
+    autoScrollFrameId = requestAnimationFrame(step);
   }
 
+  function stopAutoScroll(): void {
+    if (autoScrollFrameId !== null) {
+      cancelAnimationFrame(autoScrollFrameId);
+      autoScrollFrameId = null;
+    }
+  }
 </script>
 
 <section class="flex flex-col gap-3 px-4 py-3" aria-label="Subtitle OCR timeline">
-  <div class="min-w-0">
-    <h3 class="text-sm font-medium">Timeline</h3>
-    <p class="truncate text-xs text-muted-foreground">
-      {formatTime(viewport.startMs)} - {formatTime(viewport.endMs)}
-    </p>
-  </div>
+  <div class="flex min-w-0 items-center justify-between gap-3">
+    <div class="min-w-0">
+      <h3 class="text-sm font-medium">Timeline</h3>
+      <p class="truncate text-xs text-muted-foreground">
+        {formatTime(renderedWindow.startMs)} - {formatTime(renderedWindow.endMs)}
+      </p>
+    </div>
 
-  <div class="relative h-0" role="group" aria-label="Timeline keyboard controls">
-    <button
-      type="button"
-      class="sr-only focus:not-sr-only focus:absolute focus:left-0 focus:top-0 focus:z-20 focus:rounded-md focus:border focus:bg-background focus:px-2 focus:py-1 focus:text-xs focus:shadow-sm"
-      onclick={() => panViewport(-1, 0.1)}
-    >
-      Pan timeline left
-    </button>
-    <button
-      type="button"
-      class="sr-only focus:not-sr-only focus:absolute focus:left-0 focus:top-8 focus:z-20 focus:rounded-md focus:border focus:bg-background focus:px-2 focus:py-1 focus:text-xs focus:shadow-sm"
-      onclick={() => panViewport(1, 0.1)}
-    >
-      Pan timeline right
-    </button>
-    <button
-      type="button"
-      class="sr-only focus:not-sr-only focus:absolute focus:left-0 focus:top-16 focus:z-20 focus:rounded-md focus:border focus:bg-background focus:px-2 focus:py-1 focus:text-xs focus:shadow-sm"
-      onclick={() => zoomViewport(0.82)}
-    >
-      Zoom timeline in
-    </button>
-    <button
-      type="button"
-      class="sr-only focus:not-sr-only focus:absolute focus:left-0 focus:top-24 focus:z-20 focus:rounded-md focus:border focus:bg-background focus:px-2 focus:py-1 focus:text-xs focus:shadow-sm"
-      onclick={() => zoomViewport(1.18)}
-    >
-      Zoom timeline out
-    </button>
-    <button
-      type="button"
-      class="sr-only focus:not-sr-only focus:absolute focus:left-0 focus:top-32 focus:z-20 focus:rounded-md focus:border focus:bg-background focus:px-2 focus:py-1 focus:text-xs focus:shadow-sm"
-      onclick={goToTimelineStart}
-    >
-      Move timeline to start
-    </button>
-    <button
-      type="button"
-      class="sr-only focus:not-sr-only focus:absolute focus:left-0 focus:top-40 focus:z-20 focus:rounded-md focus:border focus:bg-background focus:px-2 focus:py-1 focus:text-xs focus:shadow-sm"
-      onclick={goToTimelineEnd}
-    >
-      Move timeline to end
-    </button>
+    <div class="flex shrink-0 items-center gap-1" role="group" aria-label="Timeline controls">
+      <Tooltip.Root>
+        <Tooltip.Trigger>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              type="button"
+              variant="outline"
+              size="icon"
+              class="size-8"
+              aria-label="Pan timeline left"
+              onclick={() => panTimeline(-1)}
+            >
+              <ChevronLeft class="size-4" aria-hidden="true" />
+            </Button>
+          {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Content>Pan left</Tooltip.Content>
+      </Tooltip.Root>
+
+      <Tooltip.Root>
+        <Tooltip.Trigger>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              type="button"
+              variant="outline"
+              size="icon"
+              class="size-8"
+              aria-label="Pan timeline right"
+              onclick={() => panTimeline(1)}
+            >
+              <ChevronRight class="size-4" aria-hidden="true" />
+            </Button>
+          {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Content>Pan right</Tooltip.Content>
+      </Tooltip.Root>
+
+      <Tooltip.Root>
+        <Tooltip.Trigger>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              type="button"
+              variant="outline"
+              size="icon"
+              class="size-8"
+              aria-label="Zoom timeline in"
+              onclick={() => zoomByButton(WHEEL_ZOOM_IN_FACTOR)}
+            >
+              <ZoomIn class="size-4" aria-hidden="true" />
+            </Button>
+          {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Content>Zoom in</Tooltip.Content>
+      </Tooltip.Root>
+
+      <Tooltip.Root>
+        <Tooltip.Trigger>
+          {#snippet child({ props })}
+            <Button
+              {...props}
+              type="button"
+              variant="outline"
+              size="icon"
+              class="size-8"
+              aria-label="Zoom timeline out"
+              onclick={() => zoomByButton(WHEEL_ZOOM_OUT_FACTOR)}
+            >
+              <ZoomOut class="size-4" aria-hidden="true" />
+            </Button>
+          {/snippet}
+        </Tooltip.Trigger>
+        <Tooltip.Content>Zoom out</Tooltip.Content>
+      </Tooltip.Root>
+    </div>
   </div>
 
   <div
-    bind:this={trackElement}
-    class={cn(
-      'relative flex h-20 gap-1 overflow-hidden rounded-lg border bg-muted/30 p-1 outline-none',
-      dragState?.didDrag ? 'cursor-grabbing' : 'cursor-grab',
-    )}
-    role="list"
-    aria-label="Timeline buckets"
+    bind:this={viewportElement}
+    class="relative h-28 overflow-x-auto overflow-y-hidden rounded-2xl border bg-muted/30 outline-none"
+    aria-label="Timeline cue zones"
     onwheel={handleWheel}
-    onpointerdown={handlePointerDown}
-    onpointermove={handlePointerMove}
-    onpointerup={handlePointerUp}
-    onpointercancel={handlePointerCancel}
   >
-    {#if buckets.length === 0}
+    <div
+      class="relative h-full min-w-full"
+      style={`width: ${contentWidthPx}px;`}
+    >
       <div
-        role="listitem"
-        class="flex min-w-0 flex-1 items-center justify-center text-xs text-muted-foreground"
-      >
-        No cues
-      </div>
-    {:else}
-      {@const selectedMarkerPercent = getSelectedMarkerPercent()}
-      {#each buckets as bucket (bucket.id)}
-        {@const bucketCue = getBucketTargetCue(bucket)}
-        {@const bucketBitmap = getCueBitmap(bucketCue)}
-        <div
-          role="listitem"
-          class="min-w-0 shrink"
-          style={`flex-basis: ${getBucketFlexBasis(bucket)};`}
+        class="pointer-events-none absolute inset-0"
+        style="background-image: linear-gradient(to right, color-mix(in oklab, var(--foreground) 12%, transparent) 1px, transparent 1px); background-size: 72px 100%;"
+        aria-hidden="true"
+      ></div>
+
+      {#each timelineTicks as tick (tick.id)}
+        <span
+          class="pointer-events-none absolute top-2 -translate-x-1/2 text-[11px] tabular-nums text-muted-foreground"
+          style={`left: ${tick.leftPx}px;`}
         >
+          {tick.label}
+        </span>
+      {/each}
+
+      {#if cueZones.length === 0}
+        <div class="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
+          No cues
+        </div>
+      {:else}
+        {#each cueZones as zone, index (zone.id)}
           <button
             type="button"
             class={cn(
-              'group relative size-full overflow-hidden rounded-md border text-left outline-none transition-colors',
+              'absolute top-12 h-6 rounded-full border bg-primary/20 outline-none transition-colors',
               'focus-visible:ring-ring/30 focus-visible:ring-3',
-              bucket.isGap
-                ? 'border-dashed bg-background/70 hover:bg-muted'
-                : 'border-border bg-background hover:border-primary/60',
-              bucketCue?.id === selectedCueId && 'border-primary ring-2 ring-primary/30',
+              zone.cue.id === selectedCueId
+                ? 'z-10 border-primary bg-primary/30 shadow-sm'
+                : 'border-primary/30 hover:border-primary/70 hover:bg-primary/25',
             )}
-            aria-label={getBucketLabel(bucket)}
-            aria-current={bucketCue?.id === selectedCueId ? 'true' : undefined}
-            onclick={(event) => handleBucketClick(event, bucket)}
-          >
-            {#if bucketBitmap?.thumbnailPath}
-              <img
-                class="size-full object-cover"
-                src={resolveThumbnailSrc(bucketBitmap.thumbnailPath)}
-                alt=""
-                loading="lazy"
-                draggable="false"
-              />
-              <div class="absolute inset-0 bg-gradient-to-t from-black/75 via-black/10 to-transparent" aria-hidden="true"></div>
-            {:else}
-              <div
-                class={cn(
-                  'absolute inset-0',
-                  bucket.isGap
-                    ? 'bg-[repeating-linear-gradient(135deg,var(--muted)_0,var(--muted)_8px,transparent_8px,transparent_16px)] opacity-70'
-                    : 'bg-muted',
-                )}
-                aria-hidden="true"
-              ></div>
-            {/if}
+            style={`left: ${zone.leftPx}px; width: ${zone.widthPx}px;`}
+            aria-label={getZoneLabel(zone, index)}
+            aria-current={zone.cue.id === selectedCueId ? 'true' : undefined}
+            title={getZoneLabel(zone, index)}
+            onclick={() => selectZone(zone)}
+          ></button>
+        {/each}
 
-            <span class="absolute bottom-1 left-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] leading-none text-white">
-              {formatTime(bucket.startMs)}
-            </span>
-            <span class="absolute bottom-1 right-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] leading-none text-white">
-              {bucket.cueCount > 0 ? bucket.cueCount : 'No cues'}
-            </span>
-          </button>
-        </div>
-      {/each}
-      {#if selectedMarkerPercent !== null}
-        <div
-          class="pointer-events-none absolute top-1 bottom-1 w-0.5 bg-primary shadow-sm"
-          style={`left: ${selectedMarkerPercent}%;`}
-          aria-hidden="true"
-        ></div>
+        {#if selectedMarkerLeftPx !== null}
+          <div
+            class="pointer-events-none absolute top-8 bottom-3 z-20 w-0.5 bg-primary shadow-sm"
+            style={`left: ${selectedMarkerLeftPx}px;`}
+            aria-hidden="true"
+          ></div>
+        {/if}
       {/if}
-    {/if}
+
+      <div
+        role="slider"
+        tabindex="0"
+        class={cn(
+          'absolute top-5 bottom-3 z-30 rounded-2xl border-2 border-primary bg-primary/10 shadow-sm outline-none',
+          'focus-visible:ring-ring/30 focus-visible:ring-3',
+          dragState ? 'cursor-grabbing' : 'cursor-grab',
+        )}
+        style={`left: ${windowLeftPx}px; width: ${windowWidthPx}px;`}
+        aria-label={getWindowLabel()}
+        aria-valuemin={0}
+        aria-valuemax={safeDurationMs}
+        aria-valuenow={renderedWindow.startMs}
+        aria-valuetext={`${formatTime(renderedWindow.startMs)} to ${formatTime(renderedWindow.endMs)}`}
+        onkeydown={handleWindowKeydown}
+        onpointerdown={handleWindowPointerDown}
+        onpointermove={handleWindowPointerMove}
+        onpointerup={handleWindowPointerUp}
+        onpointercancel={handleWindowPointerUp}
+      ></div>
+    </div>
   </div>
 </section>

@@ -84,17 +84,22 @@
 
 <article
   class={cn(
-    'grid min-w-0 gap-3',
+    'grid min-w-0 gap-3 overflow-visible',
     mode === 'compact'
       ? 'grid-rows-[minmax(16rem,1fr)_auto_auto] p-4'
-      : 'grid-rows-[auto_auto_minmax(7rem,1fr)]',
+      : 'h-full grid-rows-[12rem_auto_minmax(0,1fr)] rounded-2xl border p-2 text-card-foreground transition-[border-color,box-shadow,background-color]',
+    mode === 'wide' && (
+      selected
+        ? 'border-primary bg-card shadow-md ring-2 ring-primary/20'
+        : 'border-transparent bg-transparent'
+    ),
   )}
   aria-label={cue ? `Subtitle cue ${cueIndex !== undefined ? cueIndex + 1 : ''}`.trim() : 'No subtitle cue selected'}
   aria-current={selected ? 'true' : undefined}
 >
   <div class={cn(
-    'relative flex min-h-0 items-center justify-center overflow-hidden rounded-lg bg-zinc-950',
-    mode === 'wide' && 'aspect-video min-h-28',
+    'relative flex min-h-0 items-center justify-center overflow-hidden rounded-2xl bg-zinc-950',
+    mode === 'wide' && 'h-48',
   )}>
     <button
       type="button"
@@ -149,7 +154,11 @@
 
   {#if cue}
     <div class="relative">
-      <Item.Root variant="outline" size="sm" class={cn(selected && 'border-primary ring-2 ring-primary/20')}>
+      <Item.Root
+        variant="outline"
+        size="sm"
+        class={cn(mode === 'compact' && selected && 'border-primary ring-2 ring-primary/20')}
+      >
         <Item.Content>
           <Item.Title>{formatTime(cue.startTimeMs)} - {formatTime(cue.endTimeMs)}</Item.Title>
           <Item.Description class="flex flex-wrap items-center gap-2">
@@ -170,7 +179,7 @@
       {/if}
     </div>
 
-    <Field.Field class="min-h-0">
+    <Field.Field class={cn('min-h-0', mode === 'wide' && 'overflow-visible gap-2 pb-0.5')}>
       <Field.FieldLabel for={textAreaId}>Recognized text</Field.FieldLabel>
       <Textarea
         id={textAreaId}
@@ -179,6 +188,7 @@
         class={cn(
           'min-h-28 overflow-auto font-mono text-sm leading-relaxed',
           mode === 'compact' && 'min-h-36',
+          mode === 'wide' && 'min-h-0 flex-1 resize-none',
         )}
         aria-label="Recognized subtitle text"
         oninput={handleTextInput}

@@ -86,18 +86,6 @@ export interface RailProgrammaticViewportOptions {
   minSpanMs?: number;
 }
 
-export interface RailVisibleCueIndexRangeOptions {
-  itemCount: number;
-  itemWidthPx: number;
-  scrollLeftPx: number;
-  viewportWidthPx: number;
-}
-
-export interface RailVisibleCueIndexRange {
-  startIndex: number;
-  endIndex: number;
-}
-
 export interface TimelineAutoScrollIntentOptions {
   pointerClientX: number;
   viewportLeft: number;
@@ -381,25 +369,6 @@ export function findRailIndexNearestCenter(options: RailCenterSearchOptions): nu
   return clamp(index, 0, itemCount - 1);
 }
 
-export function getRailVisibleCueIndexRange(options: RailVisibleCueIndexRangeOptions): RailVisibleCueIndexRange {
-  const itemCount = Math.max(0, Math.floor(options.itemCount));
-  if (itemCount === 0) {
-    return { startIndex: -1, endIndex: -1 };
-  }
-
-  const itemWidthPx = Math.max(1, normalizeTime(options.itemWidthPx));
-  const scrollLeftPx = normalizeTime(options.scrollLeftPx);
-  const viewportWidthPx = Math.max(1, normalizeTime(options.viewportWidthPx));
-  const startIndex = clamp(Math.floor(scrollLeftPx / itemWidthPx), 0, itemCount - 1);
-  const endIndex = clamp(
-    Math.ceil((scrollLeftPx + viewportWidthPx) / itemWidthPx) - 1,
-    startIndex,
-    itemCount - 1,
-  );
-
-  return { startIndex, endIndex };
-}
-
 export function getRailVisibleViewportForCenteredIndex<TCue extends TimedCue>(
   cues: readonly TCue[],
   options: RailProgrammaticViewportOptions,
@@ -416,12 +385,8 @@ export function getRailVisibleViewportForCenteredIndex<TCue extends TimedCue>(
   const maxScrollLeftPx = Math.max(0, totalWidthPx - viewportWidthPx);
   const targetCenterPx = targetIndex * itemWidthPx + itemWidthPx / 2;
   const scrollLeftPx = clamp(targetCenterPx - viewportWidthPx / 2, 0, maxScrollLeftPx);
-  const { startIndex, endIndex } = getRailVisibleCueIndexRange({
-    itemCount,
-    itemWidthPx,
-    scrollLeftPx,
-    viewportWidthPx,
-  });
+  const startIndex = clamp(Math.floor(scrollLeftPx / itemWidthPx), 0, itemCount - 1);
+  const endIndex = clamp(Math.floor((scrollLeftPx + viewportWidthPx) / itemWidthPx), startIndex, itemCount - 1);
   const startCue = cues[startIndex];
   const endCue = cues[endIndex];
 

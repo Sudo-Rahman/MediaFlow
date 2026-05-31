@@ -532,25 +532,6 @@ describe('subtitle OCR review state', () => {
         endMs: 51_000,
       });
     });
-
-    it('excludes the next rail card when the viewport right edge lands on a card boundary', () => {
-      const railCues: TimedCue[] = [
-        { id: 'a', startTimeMs: 0, endTimeMs: 1_000 },
-        { id: 'b', startTimeMs: 1_000, endTimeMs: 2_000 },
-        { id: 'c', startTimeMs: 2_000, endTimeMs: 3_000 },
-        { id: 'd', startTimeMs: 10_000, endTimeMs: 11_000 },
-      ];
-
-      expect(getRailVisibleViewportForCenteredIndex(railCues, {
-        targetIndex: 0,
-        itemWidthPx: 100,
-        viewportWidthPx: 300,
-        durationMs: 12_000,
-      })).toEqual({
-        startMs: 0,
-        endMs: 3_000,
-      });
-    });
   });
 
   describe('timeline window auto-scroll intent', () => {

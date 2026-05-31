@@ -9,7 +9,7 @@
     clampTimelineViewport,
     findCueNearestTimelineWindowCenter,
     findRailIndexNearestCenter,
-    getRailVisibleCueIndexRange,
+    getRailVisibleViewportForCenteredIndex,
   } from './subtitle-ocr-review-state';
   import SubtitleOcrCueCard from './SubtitleOcrCueCard.svelte';
 
@@ -51,9 +51,6 @@
   let scrollFrameId: number | null = null;
   let programmaticScrollTimeoutId: ReturnType<typeof setTimeout> | null = null;
   let programmaticViewportTimeoutId: ReturnType<typeof setTimeout> | null = null;
-  let programmaticScrollOperationId = 0;
-  let programmaticScrollTargetLeft: number | null = null;
-  let programmaticViewportReportOperationId: number | null = null;
 
   const bitmapByCueId = $derived.by(() => {
     const map = new Map<string, SubtitleOcrCueBitmap>();
@@ -116,7 +113,8 @@
       return;
     }
 
-    scrollCueToCenter(index, source === 'timeline-window' || source === 'timeline-zone' ? 'smooth' : 'auto');
+    const shouldReportViewport = source === 'timeline-window' || source === 'timeline-zone';
+    scrollCueToCenter(index, shouldReportViewport ? 'smooth' : 'auto', shouldReportViewport);
   });
 
   $effect(() => {
@@ -126,15 +124,9 @@
     }
 
     element.addEventListener('scroll', handleScroll, { passive: true });
-    element.addEventListener('wheel', handleUserScrollIntent, { passive: true });
-    element.addEventListener('pointerdown', handleUserScrollIntent, { passive: true });
-    element.addEventListener('touchstart', handleUserScrollIntent, { passive: true });
 
     return () => {
       element.removeEventListener('scroll', handleScroll);
-      element.removeEventListener('wheel', handleUserScrollIntent);
-      element.removeEventListener('pointerdown', handleUserScrollIntent);
-      element.removeEventListener('touchstart', handleUserScrollIntent);
     };
   });
 
@@ -151,8 +143,6 @@
       if (programmaticViewportTimeoutId !== null) {
         clearTimeout(programmaticViewportTimeoutId);
       }
-
-      programmaticViewportReportOperationId = null;
     };
   });
 
@@ -182,15 +172,14 @@
       return;
     }
 
-    const targetLeft = getCueCenterScrollLeft(index, element);
-    const operationId = markProgrammaticScroll(targetLeft, behavior);
+    markProgrammaticScroll(behavior);
     element.scrollTo({
-      left: targetLeft,
+      left: getCueCenterScrollLeft(index, element),
       behavior,
     });
 
     if (reportViewportAfterScroll) {
-      scheduleProgrammaticViewportChange(operationId);
+      scheduleProgrammaticViewportChange(index, behavior);
     }
   }
 
@@ -201,82 +190,51 @@
     return Math.min(maxScrollLeft, Math.max(0, cueCenterPx - element.clientWidth / 2));
   }
 
-  function markProgrammaticScroll(targetLeft: number, behavior: ScrollBehavior): number {
+  function markProgrammaticScroll(behavior: ScrollBehavior): void {
     applyingSelectedScroll = true;
-    programmaticScrollOperationId += 1;
-    programmaticScrollTargetLeft = targetLeft;
     if (programmaticScrollTimeoutId !== null) {
       clearTimeout(programmaticScrollTimeoutId);
     }
 
-    const operationId = programmaticScrollOperationId;
     programmaticScrollTimeoutId = setTimeout(() => {
-      finishProgrammaticScroll(operationId);
-    }, behavior === 'smooth' ? 700 : 120);
-
-    return operationId;
-  }
-
-  function finishProgrammaticScroll(operationId: number): void {
-    if (operationId !== programmaticScrollOperationId) {
-      return;
-    }
-
-    applyingSelectedScroll = false;
-    programmaticScrollTargetLeft = null;
-    if (programmaticScrollTimeoutId !== null) {
-      clearTimeout(programmaticScrollTimeoutId);
+      applyingSelectedScroll = false;
       programmaticScrollTimeoutId = null;
-    }
+    }, behavior === 'smooth' ? 420 : 80);
   }
 
-  function cancelProgrammaticScroll(): void {
-    programmaticScrollOperationId += 1;
-    applyingSelectedScroll = false;
-    programmaticScrollTargetLeft = null;
-    programmaticViewportReportOperationId = null;
-
-    if (programmaticScrollTimeoutId !== null) {
-      clearTimeout(programmaticScrollTimeoutId);
-      programmaticScrollTimeoutId = null;
-    }
-
-    if (programmaticViewportTimeoutId !== null) {
-      clearTimeout(programmaticViewportTimeoutId);
-      programmaticViewportTimeoutId = null;
-    }
-  }
-
-  function scheduleProgrammaticViewportChange(operationId: number): void {
+  function scheduleProgrammaticViewportChange(index: number, behavior: ScrollBehavior): void {
     const element = viewport;
-    if (!element || operationId !== programmaticScrollOperationId) {
+    if (!element) {
       return;
     }
 
-    programmaticViewportReportOperationId = operationId;
     if (programmaticViewportTimeoutId !== null) {
       clearTimeout(programmaticViewportTimeoutId);
     }
 
     programmaticViewportTimeoutId = setTimeout(() => {
       programmaticViewportTimeoutId = null;
-      if (operationId !== programmaticScrollOperationId) {
-        if (programmaticViewportReportOperationId === operationId) {
-          programmaticViewportReportOperationId = null;
-        }
-        return;
-      }
-
-      const viewportRange = getVisibleViewportFromScroll(element);
+      const viewportRange = getRailVisibleViewportForCenteredIndex(cues, {
+        targetIndex: index,
+        itemWidthPx: CARD_SLOT_WIDTH,
+        viewportWidthPx: element.clientWidth,
+        durationMs,
+        minSpanMs: 1_000,
+      });
 
       if (viewportRange) {
         onViewportChange(viewportRange.startMs, viewportRange.endMs, 'rail');
       }
+    }, behavior === 'smooth' ? 460 : 90);
+  }
 
-      if (programmaticViewportReportOperationId === operationId) {
-        programmaticViewportReportOperationId = null;
-      }
-    }, 90);
+  function findCueIndexAtOffset(offset: number): number {
+    if (cues.length === 0) {
+      return -1;
+    }
+
+    const safeOffset = Math.max(0, offset);
+    return Math.min(cues.length - 1, Math.floor(safeOffset / CARD_SLOT_WIDTH));
   }
 
   function getVisibleViewportFromScroll(element: HTMLElement): { startMs: number; endMs: number } | null {
@@ -284,12 +242,8 @@
       return null;
     }
 
-    const { startIndex, endIndex } = getRailVisibleCueIndexRange({
-      itemCount: cues.length,
-      itemWidthPx: CARD_SLOT_WIDTH,
-      scrollLeftPx: element.scrollLeft,
-      viewportWidthPx: element.clientWidth,
-    });
+    const startIndex = findCueIndexAtOffset(element.scrollLeft);
+    const endIndex = findCueIndexAtOffset(element.scrollLeft + element.clientWidth);
     const startCue = cues[startIndex];
     const endCue = cues[endIndex];
 
@@ -306,27 +260,7 @@
   }
 
   function handleScroll(): void {
-    if (!viewport) {
-      return;
-    }
-
-    if (applyingSelectedScroll) {
-      const operationId = programmaticScrollOperationId;
-      if (programmaticViewportReportOperationId === operationId) {
-        scheduleProgrammaticViewportChange(operationId);
-      }
-
-      if (
-        programmaticScrollTargetLeft !== null
-        && Math.abs(viewport.scrollLeft - programmaticScrollTargetLeft) <= 1
-      ) {
-        finishProgrammaticScroll(operationId);
-      }
-
-      return;
-    }
-
-    if (scrollFrameId !== null) {
+    if (applyingSelectedScroll || scrollFrameId !== null || !viewport) {
       return;
     }
 
@@ -354,12 +288,6 @@
 
       onViewportChange(viewportRange.startMs, viewportRange.endMs, 'rail');
     });
-  }
-
-  function handleUserScrollIntent(): void {
-    if (applyingSelectedScroll || programmaticViewportReportOperationId !== null) {
-      cancelProgrammaticScroll();
-    }
   }
 
   function handleCueClick(cue: SubtitleOcrCue, index: number): void {

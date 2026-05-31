@@ -12,8 +12,8 @@
   import { cn } from '$lib/utils';
 
   import {
-    buildSubtitleOcrTrackItem,
     clearTrackSelection,
+    importSelectedSubtitleOcrTracks,
     resolveImportButtonLabel,
     selectAllTrackSelection,
     selectForcedTrackSelection,
@@ -115,17 +115,15 @@
     if (selectedCount === 0 || isImporting) return;
 
     isImporting = true;
-    const items = tracks
-      .filter((track) => selectedTrackIndices.has(track.streamIndex))
-      .map((track) => buildSubtitleOcrTrackItem(
-        sourcePath,
-        track,
-        getTrackOverride(track.streamIndex),
-      ));
-
     try {
-      await onImport(items);
-      handleOpenChange(false);
+      await importSelectedSubtitleOcrTracks({
+        sourcePath,
+        tracks,
+        selectedTrackIndices,
+        getTrackOverride,
+        closeDialog: () => handleOpenChange(false),
+        onImport,
+      });
     } finally {
       isImporting = false;
     }

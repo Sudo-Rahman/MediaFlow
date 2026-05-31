@@ -7,6 +7,15 @@ import { getFileName } from '$lib/utils/format';
 
 export type SubtitleOcrImportTrack = SubtitleOcrTrackMetadata;
 
+interface ImportSelectedSubtitleOcrTracksOptions {
+  sourcePath: string;
+  tracks: readonly SubtitleOcrImportTrack[];
+  selectedTrackIndices: ReadonlySet<number>;
+  getTrackOverride: (streamIndex: number) => SubtitleOcrModelOverride;
+  closeDialog: () => void;
+  onImport: (items: SubtitleOcrSourceItem[]) => void | Promise<void>;
+}
+
 function buildTrackItemId(sourcePath: string, streamIndex: number): string {
   return `subtitle-ocr-track-${encodeURIComponent(`${sourcePath}::${streamIndex}`)}`;
 }
@@ -66,4 +75,24 @@ export function resolveImportButtonLabel(count: number): string {
   }
 
   return 'Import selected tracks';
+}
+
+export async function importSelectedSubtitleOcrTracks({
+  sourcePath,
+  tracks,
+  selectedTrackIndices,
+  getTrackOverride,
+  closeDialog,
+  onImport,
+}: ImportSelectedSubtitleOcrTracksOptions): Promise<void> {
+  const items = tracks
+    .filter((track) => selectedTrackIndices.has(track.streamIndex))
+    .map((track) => buildSubtitleOcrTrackItem(
+      sourcePath,
+      track,
+      getTrackOverride(track.streamIndex),
+    ));
+
+  closeDialog();
+  await onImport(items);
 }

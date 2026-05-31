@@ -4,6 +4,7 @@ import type { SubtitleOcrTrackMetadata } from '$lib/types';
 import {
   buildSubtitleOcrTrackItem,
   clearTrackSelection,
+  importSelectedSubtitleOcrTracks,
   resolveImportButtonLabel,
   selectAllTrackSelection,
   selectForcedTrackSelection,
@@ -70,5 +71,35 @@ describe('subtitle OCR import dialog state', () => {
     expect(resolveImportButtonLabel(0)).toBe('Import selected tracks');
     expect(resolveImportButtonLabel(1)).toBe('Import 1 track');
     expect(resolveImportButtonLabel(3)).toBe('Import 3 tracks');
+  });
+
+  it('closes the import dialog before waiting for imported tracks to hydrate', async () => {
+    const events: string[] = [];
+    let finishImport!: () => void;
+    const importPromise = new Promise<void>((resolve) => {
+      finishImport = resolve;
+    });
+
+    const pending = importSelectedSubtitleOcrTracks({
+      sourcePath: '/media/Movie.mkv',
+      tracks: [track],
+      selectedTrackIndices: new Set([track.streamIndex]),
+      getTrackOverride: () => 'default',
+      closeDialog: () => {
+        events.push('close');
+      },
+      onImport: async () => {
+        events.push('import-start');
+        await importPromise;
+        events.push('import-finish');
+      },
+    });
+
+    expect(events).toEqual(['close', 'import-start']);
+
+    finishImport();
+    await pending;
+
+    expect(events).toEqual(['close', 'import-start', 'import-finish']);
   });
 });

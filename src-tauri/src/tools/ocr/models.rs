@@ -84,17 +84,6 @@ fn collect_model_status(models_dir: &std::path::Path) -> (Vec<String>, Vec<Strin
         available_languages.push("multi_server_recognition".to_string());
     }
 
-    if models_dir
-        .join(super::engine::OCR_SERVER_DET_MODEL)
-        .exists()
-        && models_dir
-            .join(super::engine::OCR_SERVER_REC_MODEL)
-            .exists()
-        && models_dir.join(super::engine::OCR_CHARSET).exists()
-    {
-        available_languages.push("multi_high_accuracy".to_string());
-    }
-
     for (rec_model, charset, lang) in LANGUAGE_MODELS {
         if models_dir.join(rec_model).exists() && models_dir.join(charset).exists() {
             available_languages.push(lang.to_string());
@@ -183,31 +172,6 @@ mod tests {
         let (missing, available_languages, installed) = collect_model_status(dir.path());
         assert!(missing.is_empty());
         assert!(available_languages.iter().any(|lang| lang == "multi"));
-        assert!(installed);
-    }
-
-    #[test]
-    fn collect_model_status_marks_high_accuracy_multi_language_as_available() {
-        let dir = tempfile::tempdir().expect("failed to create tempdir");
-        std::fs::write(dir.path().join("PP-OCRv5_mobile_det.mnn"), b"det")
-            .expect("failed to create det model");
-        std::fs::write(dir.path().join("PP-OCRv5_mobile_rec.mnn"), b"rec")
-            .expect("failed to create rec model");
-        std::fs::write(dir.path().join("ppocr_keys_v5.txt"), b"charset")
-            .expect("failed to create charset file");
-        std::fs::write(dir.path().join("PP-OCRv5_server_det.mnn"), b"server det")
-            .expect("failed to create server det model");
-        std::fs::write(dir.path().join("PP-OCRv5_server_rec.mnn"), b"server rec")
-            .expect("failed to create server rec model");
-
-        let (missing, available_languages, installed) = collect_model_status(dir.path());
-
-        assert!(missing.is_empty());
-        assert!(
-            available_languages
-                .iter()
-                .any(|lang| lang == "multi_high_accuracy")
-        );
         assert!(installed);
     }
 

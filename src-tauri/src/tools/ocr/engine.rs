@@ -9,23 +9,14 @@ pub(super) const DEFAULT_OCR_MODELS_DIR: &str = "ocr-models";
 /// Model file names for PP-OCRv5
 pub(super) const OCR_DET_MODEL: &str = "PP-OCRv5_mobile_det.mnn";
 pub(super) const OCR_CHARSET: &str = "ppocr_keys_v5.txt";
-pub(super) const OCR_SERVER_DET_MODEL: &str = "PP-OCRv5_server_det.mnn";
 pub(super) const OCR_SERVER_REC_MODEL: &str = "PP-OCRv5_server_rec.mnn";
 
-fn is_high_accuracy_model(language: &str) -> bool {
-    language == "multi_high_accuracy"
-}
-
 fn is_server_recognition_model(language: &str) -> bool {
-    language == "multi_high_accuracy" || language == "multi_server_recognition"
+    language == "multi_server_recognition"
 }
 
-fn get_det_model_for_language(language: &str) -> &'static str {
-    if is_high_accuracy_model(language) {
-        OCR_SERVER_DET_MODEL
-    } else {
-        OCR_DET_MODEL
-    }
+fn get_det_model_for_language(_language: &str) -> &'static str {
+    OCR_DET_MODEL
 }
 
 /// Language to recognition model mapping
@@ -206,8 +197,8 @@ mod tests {
     #[test]
     fn language_model_mapping_returns_expected_model_file() {
         assert_eq!(
-            get_det_model_for_language("multi_high_accuracy"),
-            "PP-OCRv5_server_det.mnn"
+            get_det_model_for_language("multi_server_recognition"),
+            "PP-OCRv5_mobile_det.mnn"
         );
         assert_eq!(
             get_det_model_for_language("multi"),
@@ -226,10 +217,6 @@ mod tests {
             "PP-OCRv5_mobile_rec.mnn"
         );
         assert_eq!(
-            get_rec_model_for_language("multi_high_accuracy"),
-            "PP-OCRv5_server_rec.mnn"
-        );
-        assert_eq!(
             get_rec_model_for_language("multi_server_recognition"),
             "PP-OCRv5_server_rec.mnn"
         );
@@ -239,10 +226,6 @@ mod tests {
     fn language_charset_mapping_returns_expected_charset_file() {
         assert_eq!(get_charset_for_language("en"), "ppocr_keys_en.txt");
         assert_eq!(get_charset_for_language("latin"), "ppocr_keys_latin.txt");
-        assert_eq!(
-            get_charset_for_language("multi_high_accuracy"),
-            "ppocr_keys_v5.txt"
-        );
         assert_eq!(
             get_charset_for_language("multi_server_recognition"),
             "ppocr_keys_v5.txt"
@@ -268,14 +251,6 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.contains("Detection model not found"));
-    }
-
-    #[test]
-    fn create_ocr_engine_initializes_high_accuracy_server_model() {
-        let models_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ocr-models");
-
-        create_ocr_engine(&models_dir, "multi_high_accuracy", false, 1, false)
-            .expect("server OCR model should initialize");
     }
 
     #[test]

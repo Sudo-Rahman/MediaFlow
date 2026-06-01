@@ -4,13 +4,10 @@ use image::{DynamicImage, RgbaImage, imageops::FilterType};
 
 use crate::tools::subtitle_ocr::SubtitleOcrDecodedCue;
 
-const THUMBNAIL_MAX_WIDTH: u32 = 360;
-const THUMBNAIL_MAX_HEIGHT: u32 = 180;
 const PREVIEW_MAX_WIDTH: u32 = 1920;
 const PREVIEW_MAX_HEIGHT: u32 = 1080;
 
 pub(super) struct DecodedBitmapAssetPaths {
-    pub(super) thumbnail_path: String,
     pub(super) preview_path: String,
 }
 
@@ -26,15 +23,6 @@ pub(super) fn write_decoded_bitmap_assets(
         })?;
     let image = DynamicImage::ImageRgba8(image);
 
-    let thumbnail_path = write_resized_bitmap_asset(
-        item_id,
-        run_id,
-        metadata,
-        &image,
-        THUMBNAIL_MAX_WIDTH,
-        THUMBNAIL_MAX_HEIGHT,
-        "thumbnails",
-    )?;
     let preview_path = write_resized_bitmap_asset(
         item_id,
         run_id,
@@ -45,10 +33,7 @@ pub(super) fn write_decoded_bitmap_assets(
         "previews",
     )?;
 
-    Ok(DecodedBitmapAssetPaths {
-        thumbnail_path,
-        preview_path,
-    })
+    Ok(DecodedBitmapAssetPaths { preview_path })
 }
 
 fn write_resized_bitmap_asset(
@@ -74,7 +59,7 @@ fn write_resized_bitmap_asset(
     })?;
     let output_path = output_dir.join(format!(
         "{}.png",
-        safe_thumbnail_path_component(&metadata.cache_key)
+        safe_asset_path_component(&metadata.cache_key)
     ));
     resized
         .save(&output_path)
@@ -87,12 +72,12 @@ fn subtitle_ocr_bitmap_asset_dir(item_id: &str, run_id: &str, variant: &str) -> 
     std::env::temp_dir()
         .join("MediaFlow")
         .join("subtitle-ocr")
-        .join(safe_thumbnail_path_component(item_id))
-        .join(safe_thumbnail_path_component(run_id))
-        .join(safe_thumbnail_path_component(variant))
+        .join(safe_asset_path_component(item_id))
+        .join(safe_asset_path_component(run_id))
+        .join(safe_asset_path_component(variant))
 }
 
-fn safe_thumbnail_path_component(value: &str) -> String {
+fn safe_asset_path_component(value: &str) -> String {
     let sanitized = value
         .chars()
         .map(|ch| {
@@ -116,18 +101,17 @@ fn safe_thumbnail_path_component(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        THUMBNAIL_MAX_HEIGHT, THUMBNAIL_MAX_WIDTH, safe_thumbnail_path_component,
-        subtitle_ocr_bitmap_asset_dir, write_decoded_bitmap_assets,
+        safe_asset_path_component, subtitle_ocr_bitmap_asset_dir, write_decoded_bitmap_assets,
     };
     use crate::tools::subtitle_ocr::SubtitleOcrDecodedCue;
 
     #[test]
-    fn safe_thumbnail_path_component_removes_path_separators_and_empty_segments() {
+    fn safe_asset_path_component_removes_path_separators_and_empty_segments() {
         assert_eq!(
-            safe_thumbnail_path_component("subtitle-ocr:item/../cache:key"),
+            safe_asset_path_component("subtitle-ocr:item/../cache:key"),
             "subtitle-ocr_item____cache_key"
         );
-        assert_eq!(safe_thumbnail_path_component(":::"), "subtitle-ocr");
+        assert_eq!(safe_asset_path_component(":::"), "subtitle-ocr");
     }
 
     #[test]
@@ -144,7 +128,15 @@ mod tests {
     }
 
     #[test]
-    fn write_decoded_bitmap_assets_populates_timeline_and_preview_pngs_under_temp_dir() {
+    fn write_decoded_bitmap_assets_populates_only_preview_pngs_under_temp_dir() {
+        let item_id = "asset-preview-only-item";
+        let run_id = format!(
+            "asset-preview-only-run-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time should be after UNIX epoch")
+                .as_nanos()
+        );
         let metadata = SubtitleOcrDecodedCue {
             cue_id: "cue-1".to_string(),
             start_time_ms: 0,
@@ -152,27 +144,38 @@ mod tests {
             width: 720,
             height: 360,
             cache_key: "subtitle-ocr:test/cache".to_string(),
-            thumbnail_path: None,
             preview_path: None,
         };
         let rgba = vec![255; (metadata.width * metadata.height * 4) as usize];
 
-        let assets = write_decoded_bitmap_assets("item/1", "run:1", &metadata, &rgba)
+        let assets = write_decoded_bitmap_assets(item_id, &run_id, &metadata, &rgba)
             .expect("bitmap assets should be written");
-        let path = assets.thumbnail_path;
-        let thumbnail = image::open(&path).expect("thumbnail should be readable");
         let preview = image::open(&assets.preview_path).expect("preview should be readable");
+        let preview_path = assets.preview_path;
+        let run_dir = subtitle_ocr_bitmap_asset_dir(item_id, &run_id, "previews")
+            .parent()
+            .expect("preview directory should have a run parent")
+            .to_path_buf();
+        let mut asset_dirs = std::fs::read_dir(&run_dir)
+            .expect("run directory should be readable")
+            .map(|entry| {
+                entry
+                    .expect("asset directory entry should be readable")
+                    .file_name()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        asset_dirs.sort();
 
-        assert!(path.contains("MediaFlow"));
-        assert!(path.contains("subtitle-ocr"));
-        assert!(std::path::Path::new(&path).is_file());
-        assert!(std::path::Path::new(&assets.preview_path).is_file());
-        assert!(thumbnail.width() <= THUMBNAIL_MAX_WIDTH);
-        assert!(thumbnail.height() <= THUMBNAIL_MAX_HEIGHT);
+        assert!(preview_path.contains("MediaFlow"));
+        assert!(preview_path.contains("subtitle-ocr"));
+        assert!(std::path::Path::new(&preview_path).is_file());
+        assert_eq!(asset_dirs, vec!["previews".to_string()]);
         assert_eq!(preview.width(), metadata.width);
         assert_eq!(preview.height(), metadata.height);
 
-        let _ = std::fs::remove_file(path);
-        let _ = std::fs::remove_file(assets.preview_path);
+        let _ = std::fs::remove_file(preview_path);
+        let _ = std::fs::remove_dir_all(run_dir);
     }
 }

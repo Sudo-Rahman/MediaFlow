@@ -302,7 +302,7 @@
     <EmptyHeader>
       <EmptyTitle>No subtitle source selected</EmptyTitle>
       <EmptyDescription>
-        Select a subtitle source to review OCR thumbnails, timing, and recognized text.
+        Select a subtitle source to review OCR previews, timing, and recognized text.
       </EmptyDescription>
     </EmptyHeader>
   </Empty>

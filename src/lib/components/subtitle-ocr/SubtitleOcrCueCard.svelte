@@ -43,7 +43,7 @@
   const textAreaId = `${useId()}-subtitle-ocr-cue-text`;
   const BITMAP_URL_PATH = /^(?:[a-z][a-z\d+\-.]*:|\/\/)/i;
   const canSelectCue = $derived(Boolean(cue && onSelectCue && !disabled));
-  const bitmapImagePath = $derived(bitmap?.previewPath ?? bitmap?.thumbnailPath);
+  const bitmapImagePath = $derived(bitmap?.previewPath);
   const confidencePercent = $derived(
     cue ? Math.max(0, Math.min(100, Math.round(cue.confidence * 100))) : 0,
   );
@@ -118,7 +118,7 @@
       {:else}
         <span class="flex flex-col items-center gap-2 py-16 text-sm text-zinc-400">
           <ImageOff class="size-6" aria-hidden="true" />
-          No thumbnail
+          No preview
         </span>
       {/if}
     </button>

@@ -241,7 +241,7 @@ describe('resolveSubtitleOcrExpectedBitmapCount', () => {
 });
 
 describe('subtitle OCR bitmap asset restore helpers', () => {
-  it('collects bitmaps with missing thumbnail or preview files', async () => {
+  it('collects bitmaps with missing preview files', async () => {
     const sourceSnapshot = {
       sourceKind: 'standalone_sup' as const,
       sourcePath: '/subs/source.sup',
@@ -256,8 +256,7 @@ describe('subtitle OCR bitmap asset restore helpers', () => {
       width: 640,
       height: 120,
       cacheKey: 'shared-cache',
-      thumbnailPath: '/tmp/missing-thumb.png',
-      previewPath: '/tmp/existing-preview.png',
+      previewPath: '/tmp/missing-preview.png',
     };
     v1.bitmaps = [
       sharedMissing,
@@ -268,7 +267,6 @@ describe('subtitle OCR bitmap asset restore helpers', () => {
         width: 640,
         height: 120,
         cacheKey: 'existing-cache',
-        thumbnailPath: '/tmp/existing-thumb.png',
         previewPath: '/tmp/existing-preview.png',
       },
     ];
@@ -277,7 +275,7 @@ describe('subtitle OCR bitmap asset restore helpers', () => {
     const seenMissingKeys = new Set<string>();
     const missing = await collectMissingSubtitleOcrBitmapAssets([v1, v2], async (bitmaps) => (
       bitmaps.filter((bitmap) => {
-        if (!bitmap.thumbnailPath?.includes('missing') && !bitmap.previewPath?.includes('missing')) {
+        if (!bitmap.previewPath?.includes('missing')) {
           return false;
         }
 
@@ -309,13 +307,12 @@ describe('subtitle OCR bitmap asset restore helpers', () => {
       width: 640,
       height: 120,
       cacheKey: 'shared-cache',
-      thumbnailPath: '/tmp/existing-thumb.png',
       previewPath: '/tmp/existing-preview.png',
     };
     const missingDuplicate = {
       ...existingDuplicate,
       cueId: 'cue-1-copy',
-      thumbnailPath: '/tmp/missing-thumb.png',
+      previewPath: '/tmp/missing-preview.png',
     };
     v1.bitmaps = [existingDuplicate];
     v2.bitmaps = [missingDuplicate];
@@ -323,14 +320,14 @@ describe('subtitle OCR bitmap asset restore helpers', () => {
     const seenByCollector: SubtitleOcrVersion['bitmaps'] = [];
     const missing = await collectMissingSubtitleOcrBitmapAssets([v1, v2], async (bitmaps) => {
       seenByCollector.push(...bitmaps);
-      return bitmaps.filter((bitmap) => bitmap.thumbnailPath?.includes('missing'));
+      return bitmaps.filter((bitmap) => bitmap.previewPath?.includes('missing'));
     });
 
     expect(seenByCollector).toEqual([existingDuplicate, missingDuplicate]);
     expect(missing).toEqual([missingDuplicate]);
   });
 
-  it('treats absent thumbnail or preview paths as restore targets', async () => {
+  it('treats absent preview paths as restore targets', async () => {
     const sourceSnapshot = {
       sourceKind: 'standalone_sup' as const,
       sourcePath: '/subs/source.sup',
@@ -383,7 +380,6 @@ describe('subtitle OCR bitmap asset restore helpers', () => {
       width: 640,
       height: 120,
       cacheKey: 'shared-cache',
-      thumbnailPath: '/tmp/old-thumb.png',
       previewPath: '/tmp/old-preview.png',
     }];
     v2.bitmaps = [{
@@ -393,7 +389,6 @@ describe('subtitle OCR bitmap asset restore helpers', () => {
       width: 640,
       height: 120,
       cacheKey: 'shared-cache',
-      thumbnailPath: '/tmp/old-thumb-copy.png',
       previewPath: '/tmp/old-preview-copy.png',
     }];
 
@@ -404,16 +399,13 @@ describe('subtitle OCR bitmap asset restore helpers', () => {
       width: 640,
       height: 120,
       cacheKey: 'shared-cache',
-      thumbnailPath: '/tmp/new-thumb.png',
       previewPath: '/tmp/new-preview.png',
     }]);
 
     expect(merged[0].bitmaps[0]).toMatchObject({
-      thumbnailPath: '/tmp/new-thumb.png',
       previewPath: '/tmp/new-preview.png',
     });
     expect(merged[1].bitmaps[0]).toMatchObject({
-      thumbnailPath: '/tmp/new-thumb.png',
       previewPath: '/tmp/new-preview.png',
     });
     expect(merged[0].rawOcr).toEqual(v1.rawOcr);
@@ -435,7 +427,6 @@ describe('subtitle OCR bitmap asset restore helpers', () => {
       width: 640,
       height: 120,
       cacheKey: 'cache-target',
-      thumbnailPath: '/tmp/old-thumb.png',
       previewPath: '/tmp/old-preview.png',
     }];
 
@@ -447,7 +438,6 @@ describe('subtitle OCR bitmap asset restore helpers', () => {
         width: 640,
         height: 120,
         cacheKey: 'other-cache',
-        thumbnailPath: '/tmp/cue-id-thumb.png',
         previewPath: '/tmp/cue-id-preview.png',
       },
       {
@@ -457,13 +447,11 @@ describe('subtitle OCR bitmap asset restore helpers', () => {
         width: 640,
         height: 120,
         cacheKey: 'cache-target',
-        thumbnailPath: '/tmp/cache-thumb.png',
         previewPath: '/tmp/cache-preview.png',
       },
     ]);
 
     expect(merged[0].bitmaps[0]).toMatchObject({
-      thumbnailPath: '/tmp/cache-thumb.png',
       previewPath: '/tmp/cache-preview.png',
     });
   });
@@ -480,7 +468,6 @@ describe('buildSubtitleOcrDraftVersionInput', () => {
       width: 640,
       height: 120,
       cacheKey: 'bitmap-cache',
-      thumbnailPath: '/tmp/thumb.png',
       previewPath: '/tmp/preview.png',
     }];
     activeVersion.rawOcr = [{

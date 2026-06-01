@@ -129,7 +129,6 @@ fn run_subtitle_ocr_pipeline_blocking(
         processed_count.store(decoded_count, Ordering::Relaxed);
         let bitmap_assets =
             write_decoded_bitmap_assets(item_id, run_id, &decoded.metadata, &decoded.rgba)?;
-        decoded.metadata.thumbnail_path = Some(bitmap_assets.thumbnail_path);
         decoded.metadata.preview_path = Some(bitmap_assets.preview_path);
         let metadata = decoded.metadata.clone();
         let raw_cue = ocr_decoded_bitmap(&engine, decoded)?;

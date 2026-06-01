@@ -47,7 +47,6 @@ export interface SubtitleOcrCueBitmap {
   width: number;
   height: number;
   cacheKey?: string;
-  thumbnailPath?: string;
   previewPath?: string;
 }
 

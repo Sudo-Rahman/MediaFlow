@@ -176,7 +176,7 @@
   }
 
   function getReviewBitmapPath(bitmap: SubtitleOcrCueBitmap | null): string | undefined {
-    return bitmap?.previewPath ?? bitmap?.thumbnailPath;
+    return bitmap?.previewPath;
   }
 
   function formatTime(ms: number): string {
@@ -313,14 +313,14 @@
                 {#if getReviewBitmapPath(bitmap)}
                   <img
                     src={resolveBitmapSrc(getReviewBitmapPath(bitmap) ?? '')}
-                    alt={`Cue ${virtualTile.index + 1} thumbnail`}
+                    alt={`Cue ${virtualTile.index + 1} preview`}
                     loading="lazy"
                     class="max-h-full max-w-full object-contain"
                   />
                 {:else}
                   <span class="flex flex-col items-center gap-1 text-xs text-zinc-400">
                     <ImageOff class="size-5" aria-hidden="true" />
-                    No thumbnail
+                    No preview
                   </span>
                 {/if}
               </span>

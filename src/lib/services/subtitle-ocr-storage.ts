@@ -129,7 +129,6 @@ function isSubtitleOcrCueBitmap(value: unknown): value is SubtitleOcrCueBitmap {
     && isPositiveNumber(value.width)
     && isPositiveNumber(value.height)
     && isOptionalString(value.cacheKey)
-    && isOptionalString(value.thumbnailPath)
     && isOptionalString(value.previewPath);
 }
 
@@ -250,7 +249,6 @@ function cloneBitmap(bitmap: SubtitleOcrCueBitmap): SubtitleOcrCueBitmap {
     width: bitmap.width,
     height: bitmap.height,
     ...(bitmap.cacheKey !== undefined ? { cacheKey: bitmap.cacheKey } : {}),
-    ...(bitmap.thumbnailPath !== undefined ? { thumbnailPath: bitmap.thumbnailPath } : {}),
     ...(bitmap.previewPath !== undefined ? { previewPath: bitmap.previewPath } : {}),
   };
 }

@@ -24,8 +24,6 @@ pub(crate) struct SubtitleOcrRestoreBitmap {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) thumbnail_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) preview_path: Option<String>,
 }
 
@@ -129,14 +127,11 @@ fn bitmap_restore_key(bitmap: &SubtitleOcrRestoreBitmap) -> String {
 }
 
 fn bitmap_asset_is_missing(bitmap: &SubtitleOcrRestoreBitmap) -> bool {
-    let Some(thumbnail_path) = bitmap.thumbnail_path.as_deref() else {
-        return true;
-    };
     let Some(preview_path) = bitmap.preview_path.as_deref() else {
         return true;
     };
 
-    !subtitle_ocr_asset_path_exists(thumbnail_path) || !subtitle_ocr_asset_path_exists(preview_path)
+    !subtitle_ocr_asset_path_exists(preview_path)
 }
 
 fn subtitle_ocr_asset_path_exists(path: &str) -> bool {
@@ -234,7 +229,6 @@ fn restore_bitmap_paths(
     decoded: &DecodedBitmapCue,
 ) -> Result<SubtitleOcrRestoreBitmap, String> {
     let assets = write_decoded_bitmap_assets(item_id, run_id, &decoded.metadata, &decoded.rgba)?;
-    target.thumbnail_path = Some(assets.thumbnail_path);
     target.preview_path = Some(assets.preview_path);
     if target.cache_key.is_none() {
         target.cache_key = Some(decoded.metadata.cache_key.clone());
@@ -323,7 +317,6 @@ mod tests {
             width: 720,
             height: 360,
             cache_key: cache_key.map(ToOwned::to_owned),
-            thumbnail_path: Some(format!("/tmp/{cue_id}-old-thumb.png")),
             preview_path: Some(format!("/tmp/{cue_id}-old-preview.png")),
         }
     }
@@ -336,7 +329,6 @@ mod tests {
             width: 720,
             height: 360,
             cache_key: cache_key.to_string(),
-            thumbnail_path: None,
             preview_path: None,
         }
     }
@@ -404,24 +396,20 @@ mod tests {
             .prefix("restore-test")
             .tempdir_in(&asset_root)
             .expect("temp dir should be created");
-        let thumbnail_path = temp_dir.path().join("existing-thumb.png");
         let preview_path = temp_dir.path().join("existing-preview.png");
-        std::fs::write(&thumbnail_path, b"thumb").expect("thumbnail should be written");
         std::fs::write(&preview_path, b"preview").expect("preview should be written");
 
         let mut existing = bitmap("existing", Some("existing-cache"), 1_000);
-        existing.thumbnail_path = Some(thumbnail_path.to_string_lossy().to_string());
         existing.preview_path = Some(preview_path.to_string_lossy().to_string());
 
         let mut missing = bitmap("missing", Some("missing-cache"), 2_000);
-        missing.thumbnail_path = Some(
+        missing.preview_path = Some(
             temp_dir
                 .path()
-                .join("missing-thumb.png")
+                .join("missing-preview.png")
                 .to_string_lossy()
                 .to_string(),
         );
-        missing.preview_path = Some(preview_path.to_string_lossy().to_string());
 
         let found = collect_missing_bitmap_assets(vec![
             existing,
@@ -443,24 +431,20 @@ mod tests {
             .prefix("restore-duplicate-test")
             .tempdir_in(&asset_root)
             .expect("temp dir should be created");
-        let thumbnail_path = temp_dir.path().join("existing-thumb.png");
         let preview_path = temp_dir.path().join("existing-preview.png");
-        std::fs::write(&thumbnail_path, b"thumb").expect("thumbnail should be written");
         std::fs::write(&preview_path, b"preview").expect("preview should be written");
 
         let mut existing = bitmap("existing", Some("shared-cache"), 1_000);
-        existing.thumbnail_path = Some(thumbnail_path.to_string_lossy().to_string());
         existing.preview_path = Some(preview_path.to_string_lossy().to_string());
 
         let mut missing = bitmap("missing", Some("shared-cache"), 2_000);
-        missing.thumbnail_path = Some(
+        missing.preview_path = Some(
             temp_dir
                 .path()
-                .join("missing-thumb.png")
+                .join("missing-preview.png")
                 .to_string_lossy()
                 .to_string(),
         );
-        missing.preview_path = Some(preview_path.to_string_lossy().to_string());
 
         let found = collect_missing_bitmap_assets(vec![existing, missing.clone()]);
 
@@ -470,13 +454,10 @@ mod tests {
     #[test]
     fn collect_missing_bitmap_assets_treats_out_of_scope_paths_as_missing_without_probing() {
         let temp_dir = tempfile::tempdir().expect("temp dir should be created");
-        let thumbnail_path = temp_dir.path().join("existing-thumb.png");
         let preview_path = temp_dir.path().join("existing-preview.png");
-        std::fs::write(&thumbnail_path, b"thumb").expect("thumbnail should be written");
         std::fs::write(&preview_path, b"preview").expect("preview should be written");
 
         let mut target = bitmap("target", Some("target-cache"), 1_000);
-        target.thumbnail_path = Some(thumbnail_path.to_string_lossy().to_string());
         target.preview_path = Some(preview_path.to_string_lossy().to_string());
 
         assert_eq!(
@@ -488,7 +469,6 @@ mod tests {
     #[test]
     fn collect_missing_bitmap_assets_treats_absent_paths_as_missing() {
         let target = SubtitleOcrRestoreBitmap {
-            thumbnail_path: None,
             preview_path: None,
             ..bitmap("target", Some("target-cache"), 1_000)
         };
@@ -513,16 +493,10 @@ mod tests {
 
         assert_eq!(restored.cue_id, "target");
         assert_eq!(restored.cache_key.as_deref(), Some("cache-new"));
-        assert!(restored.thumbnail_path.as_deref().is_some_and(|path| {
-            path.contains("MediaFlow") && std::path::Path::new(path).is_file()
-        }));
         assert!(restored.preview_path.as_deref().is_some_and(|path| {
             path.contains("MediaFlow") && std::path::Path::new(path).is_file()
         }));
 
-        if let Some(path) = restored.thumbnail_path {
-            let _ = std::fs::remove_file(path);
-        }
         if let Some(path) = restored.preview_path {
             let _ = std::fs::remove_file(path);
         }

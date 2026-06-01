@@ -222,7 +222,6 @@ function mergeRestoredBitmapPath(
 
   return {
     ...bitmap,
-    ...(restored.thumbnailPath !== undefined ? { thumbnailPath: restored.thumbnailPath } : {}),
     ...(restored.previewPath !== undefined ? { previewPath: restored.previewPath } : {}),
   };
 }

@@ -193,7 +193,6 @@ describe('subtitleOcrStore', () => {
       width: 720,
       height: 360,
       previewPath: '/tmp/restored-preview.png',
-      thumbnailPath: '/tmp/restored-thumb.png',
     }];
     subtitleOcrStore.addItems([source('a')]);
     subtitleOcrStore.replaceItemVersions('a', [hydratedVersion], hydratedVersion.id, {

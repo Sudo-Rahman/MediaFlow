@@ -47,7 +47,6 @@ function bitmap(cueId: string): SubtitleOcrCueBitmap {
     width: 1920,
     height: 1080,
     cacheKey: `cache-${cueId}`,
-    thumbnailPath: `/tmp/${cueId}.png`,
     previewPath: `/tmp/${cueId}-preview.png`,
   };
 }

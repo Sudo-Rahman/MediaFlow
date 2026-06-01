@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { SubtitleOcrCue, SubtitleOcrSourceItem, SubtitleOcrVersion } from '$lib/types';
 import { DEFAULT_SUBTITLE_OCR_CONFIG } from '$lib/types';
+import { logStore } from './logs.svelte';
 import { subtitleOcrStore } from './subtitle-ocr.svelte';
 
 function assertUpdateItemTyping(): void {
@@ -100,6 +101,7 @@ function version(id: string, text: string): SubtitleOcrVersion {
 describe('subtitleOcrStore', () => {
   beforeEach(() => {
     subtitleOcrStore.reset();
+    logStore.clearLogs();
   });
 
   it('adds and selects source items', () => {
@@ -395,6 +397,26 @@ describe('subtitleOcrStore', () => {
 
     expect(subtitleOcrStore.items).toEqual([]);
     expect(subtitleOcrStore.selectedItemId).toBeNull();
+  });
+
+  it('writes Subtitle OCR logs to the global log store with item context', () => {
+    subtitleOcrStore.addItems([source('a')]);
+
+    subtitleOcrStore.addLog('success', 'Generated 2 cues', 'a');
+
+    expect(subtitleOcrStore.logs).toMatchObject([
+      {
+        level: 'success',
+        message: '[a.sup] Generated 2 cues',
+      },
+    ]);
+    expect(logStore.logs[0]).toMatchObject({
+      level: 'success',
+      source: 'subtitle-ocr',
+      title: 'Generated 2 cues',
+      details: '[a.sup] Generated 2 cues',
+      context: { filePath: '/subs/a.sup' },
+    });
   });
 
   it('updates only safe item metadata through updateItem', () => {

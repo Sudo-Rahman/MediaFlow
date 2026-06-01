@@ -4,7 +4,7 @@
  */
 
 export type LogLevel = 'info' | 'success' | 'warning' | 'error';
-export type LogSource = 'ffmpeg' | 'ffprobe' | 'translation' | 'merge' | 'extraction' | 'rename' | 'transcode' | 'video-ocr' | 'deepgram' | 'mediaflow' | 'updater' | 'system';
+export type LogSource = 'ffmpeg' | 'ffprobe' | 'translation' | 'merge' | 'extraction' | 'rename' | 'transcode' | 'video-ocr' | 'subtitle-ocr' | 'deepgram' | 'mediaflow' | 'updater' | 'system';
 
 export interface LogContext {
   filePath?: string;
@@ -206,6 +206,7 @@ export function getSourceColor(source: LogSource): string {
     rename: 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border-yellow-500/30',
     transcode: 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/30',
     'video-ocr': 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/30',
+    'subtitle-ocr': 'bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 border-fuchsia-500/30',
     deepgram: 'bg-pink-500/10 text-pink-600 dark:text-pink-400 border-pink-500/30',
     mediaflow: 'bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/30',
     updater: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',

@@ -10,7 +10,6 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
-  import { toast } from 'svelte-sonner';
 
   import {
     SubtitleOcrImportTracksDialog,
@@ -92,6 +91,7 @@
   }
 
   type ProcessItemResult = 'completed' | 'cancelled' | 'error';
+  type ProcessingResultCounts = Record<ProcessItemResult, number>;
 
   let { onNavigateToSettings }: SubtitleOcrViewProps = $props();
 
@@ -134,6 +134,41 @@
     'ocr',
     'ai_cleaning',
   ]);
+
+  function createProcessingResultCounts(): ProcessingResultCounts {
+    return {
+      completed: 0,
+      cancelled: 0,
+      error: 0,
+    };
+  }
+
+  function recordProcessingResult(counts: ProcessingResultCounts, result: ProcessItemResult): void {
+    counts[result] += 1;
+  }
+
+  function summarizeProcessingResults(counts: ProcessingResultCounts): string {
+    const parts: string[] = [];
+    if (counts.completed > 0) parts.push(`${counts.completed} completed`);
+    if (counts.error > 0) parts.push(`${counts.error} failed`);
+    if (counts.cancelled > 0) parts.push(`${counts.cancelled} cancelled`);
+    return parts.join(', ');
+  }
+
+  function reportProcessingSummary(title: string, counts: ProcessingResultCounts): void {
+    const details = summarizeProcessingResults(counts);
+    if (!details) {
+      return;
+    }
+
+    const level = counts.error > 0 ? 'warning' : 'success';
+    logAndToast[level]({
+      source: 'subtitle-ocr',
+      title: `${title}: ${details}`,
+      details,
+      showAction: false,
+    });
+  }
 
   const items = $derived(subtitleOcrStore.items);
   const selectedItem = $derived(subtitleOcrStore.selectedItem ?? null);
@@ -248,7 +283,12 @@
 
   function showImportWarnings(warnings: readonly string[]): void {
     for (const warning of warnings) {
-      toast.warning(warning);
+      logAndToast.warning({
+        source: 'subtitle-ocr',
+        title: 'Subtitle OCR import warning',
+        details: warning,
+        showAction: false,
+      });
     }
   }
 
@@ -262,10 +302,9 @@
 
   function reportImportError(error: unknown): void {
     logAndToast.error({
-      source: 'system',
+      source: 'subtitle-ocr',
       title: 'Subtitle OCR import failed',
       details: getSanitizedImportErrorDetails(error),
-      showAction: false,
     });
   }
 
@@ -409,7 +448,7 @@
       await restoreMissingPreviewAssets(item.id);
     } catch (error) {
       logAndToast.warning({
-        source: 'system',
+        source: 'subtitle-ocr',
         title: 'Could not load saved Subtitle OCR versions',
         details: sanitizeProcessingMessage(error),
         showAction: false,
@@ -424,9 +463,26 @@
 
     const addedItems = subtitleOcrStore.addItems(nextItems);
     if (addedItems.length === 0) {
-      toast.warning('Subtitle sources are already imported');
+      logAndToast.warning({
+        source: 'subtitle-ocr',
+        title: 'Subtitle sources are already imported',
+        details: 'No new Subtitle OCR sources were added because every selected source is already in the workspace.',
+        showAction: false,
+      });
     } else if (addedItems.length < nextItems.length) {
-      toast.warning('Some subtitle sources were already imported');
+      logAndToast.warning({
+        source: 'subtitle-ocr',
+        title: 'Some subtitle sources were already imported',
+        details: `${addedItems.length} of ${nextItems.length} selected Subtitle OCR sources were added.`,
+        showAction: false,
+      });
+    } else {
+      logAndToast.success({
+        source: 'subtitle-ocr',
+        title: addedItems.length === 1 ? 'Subtitle source imported' : 'Subtitle sources imported',
+        details: `${addedItems.length} Subtitle OCR source${addedItems.length === 1 ? '' : 's'} added.`,
+        showAction: false,
+      });
     }
 
     for (const item of addedItems) {
@@ -444,7 +500,12 @@
     showImportWarnings(result.warnings);
 
     if (result.items.length === 0 && result.warnings.length === 0) {
-      toast.warning('No complete standalone subtitle sources found');
+      logAndToast.warning({
+        source: 'subtitle-ocr',
+        title: 'No complete standalone subtitle sources found',
+        details: 'Standalone Subtitle OCR imports must be SUP files or complete IDX/SUB pairs.',
+        showAction: false,
+      });
     }
   }
 
@@ -456,14 +517,25 @@
     try {
       const tracks = await invoke<SubtitleOcrTrackMetadata[]>('probe_subtitle_ocr_tracks', { path });
       if (tracks.length === 0) {
-        toast.warning(`No bitmap subtitle tracks found in ${getFileName(path)}`);
+        logAndToast.warning({
+          source: 'subtitle-ocr',
+          title: `No bitmap subtitle tracks found in ${getFileName(path)}`,
+          details: `MediaFlow could not find PGS or VobSub subtitle tracks in ${path}.`,
+          context: { filePath: path },
+          showAction: false,
+        });
         return null;
       }
 
       return { sourcePath: path, tracks };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      toast.error(`Could not inspect ${getFileName(path)}: ${message}`);
+      logAndToast.error({
+        source: 'subtitle-ocr',
+        title: `Could not inspect ${getFileName(path)}`,
+        details: sanitizeProcessingMessage(message),
+        context: { filePath: path },
+      });
       return null;
     }
   }
@@ -555,7 +627,12 @@
     }
 
     if (standalonePaths.length === 0 && containerPaths.length === 0) {
-      toast.warning('No supported subtitle OCR sources found');
+      logAndToast.warning({
+        source: 'subtitle-ocr',
+        title: 'No supported subtitle OCR sources found',
+        details: 'Supported Subtitle OCR sources are containers with bitmap subtitle tracks, SUP files, or IDX/SUB pairs.',
+        showAction: false,
+      });
       return;
     }
 
@@ -693,6 +770,7 @@
     previewRestoreRunIdsByItemId.set(item.id, runId);
     activeRunIdsByItemId.set(item.id, runId);
     subtitleOcrStore.startProcessing([item.id]);
+    subtitleOcrStore.addLog('info', `Restoring ${missingBitmaps.length} missing preview asset${missingBitmaps.length === 1 ? '' : 's'}`, item.id);
 
     try {
       setManualProgress(item.id, 'decoding');
@@ -723,10 +801,15 @@
         },
       );
       await persistItem(item.id);
+      subtitleOcrStore.addLog(
+        'success',
+        `Restored ${restoredBitmaps.length}/${missingBitmaps.length} missing preview assets`,
+        item.id,
+      );
 
       if (restoredBitmaps.length < missingBitmaps.length) {
         logAndToast.warning({
-          source: 'system',
+          source: 'subtitle-ocr',
           title: 'Some Subtitle OCR previews were not restored',
           details: 'The OCR text remains available, but some cue images could not be regenerated.',
           showAction: false,
@@ -737,7 +820,7 @@
       subtitleOcrStore.setProgress(item.id, undefined);
       if (!isCancellationError(error) && !cancelRequested) {
         logAndToast.warning({
-          source: 'system',
+          source: 'subtitle-ocr',
           title: 'Subtitle OCR previews were not restored',
           details: 'The OCR text remains available, but missing cue images could not be regenerated.',
           showAction: false,
@@ -762,6 +845,7 @@
     const controller = new AbortController();
     aiCleanupControllers.set(itemId, controller);
     setManualProgress(itemId, 'ai_cleaning');
+    subtitleOcrStore.addLog('info', 'Running Subtitle OCR AI cleanup', itemId);
 
     try {
       const result = await cleanupSubtitleOcrCuesWithAi(cues, {
@@ -776,7 +860,7 @@
 
       if (!result.success) {
         logAndToast.warning({
-          source: 'system',
+          source: 'subtitle-ocr',
           title: 'Subtitle OCR AI cleanup skipped',
           details: result.error ? sanitizeProcessingMessage(result.error) : 'AI cleanup failed.',
           showAction: false,
@@ -784,6 +868,11 @@
         return { cues, applied: false, cancelled: false };
       }
 
+      subtitleOcrStore.addLog(
+        'success',
+        `AI cleanup completed (${cues.length} -> ${result.cues.length} cues)`,
+        itemId,
+      );
       return { cues: result.cues, applied: true, cancelled: false };
     } finally {
       aiCleanupControllers.delete(itemId);
@@ -805,7 +894,7 @@
 
       if (!saved) {
         logAndToast.warning({
-          source: 'system',
+          source: 'subtitle-ocr',
           title: 'Subtitle OCR versions were not saved',
           details: 'The generated version could not be written to the MediaFlow sidecar.',
           showAction: false,
@@ -813,7 +902,7 @@
       }
     } catch (error) {
       logAndToast.warning({
-        source: 'system',
+        source: 'subtitle-ocr',
         title: 'Subtitle OCR versions were not saved',
         details: sanitizeProcessingMessage(error),
         showAction: false,
@@ -838,6 +927,7 @@
   ): Promise<ProcessItemResult> {
     const runId = createSubtitleOcrRunId(item.id);
     activeRunIdsByItemId.set(item.id, runId);
+    subtitleOcrStore.addLog('info', 'Starting Subtitle OCR run', item.id);
 
     try {
       setManualProgress(
@@ -861,6 +951,11 @@
       const result = await invoke<SubtitleOcrPipelineResult>('run_subtitle_ocr_pipeline', args);
       backendCancelableRunIdsByItemId.delete(item.id);
       activeRunIdsByItemId.delete(item.id);
+      subtitleOcrStore.addLog(
+        'info',
+        `Decoded ${result.decodedCues.length} bitmap cues, OCR kept ${result.rawOcrCues.length} raw cues, stabilized ${result.stabilizedCues.length} cues`,
+        item.id,
+      );
       if (cancelRequested) {
         throw new Error('Subtitle OCR operation cancelled');
       }
@@ -899,6 +994,7 @@
 
       subtitleOcrStore.addVersion(item.id, version);
       await persistItem(item.id);
+      subtitleOcrStore.addLog('success', `Generated ${version.finalCues.length} final cues`, item.id);
       return 'completed';
     } catch (error) {
       backendCancelableRunIdsByItemId.delete(item.id);
@@ -913,10 +1009,9 @@
       const details = sanitizeProcessingMessage(error);
       subtitleOcrStore.setItemStatus(item.id, 'error', details);
       logAndToast.error({
-        source: 'system',
+        source: 'subtitle-ocr',
         title: 'Subtitle OCR failed',
         details,
-        showAction: false,
       });
       return 'error';
     }
@@ -934,6 +1029,7 @@
 
     cancelRequested = false;
     subtitleOcrStore.startProcessing(processableItemIds);
+    const counts = createProcessingResultCounts();
 
     try {
       for (const itemId of processableItemIds) {
@@ -951,6 +1047,7 @@
           configByItemId.get(itemId),
           versionNameByItemId.get(itemId),
         );
+        recordProcessingResult(counts, result);
         if (result === 'cancelled') {
           break;
         }
@@ -959,6 +1056,8 @@
       subtitleOcrStore.stopProcessing();
       cancelRequested = false;
     }
+
+    reportProcessingSummary('Subtitle OCR finished', counts);
   }
 
   function getCurrentRetryableItemIds(): string[] {
@@ -979,7 +1078,12 @@
 
   function handleOpenRetryAllDialog(): void {
     if (getCurrentRetryableItemIds().length === 0) {
-      toast.warning('No Subtitle OCR versions available for retry');
+      logAndToast.warning({
+        source: 'subtitle-ocr',
+        title: 'No Subtitle OCR versions available for retry',
+        details: 'Run Subtitle OCR at least once before retrying existing versions.',
+        showAction: false,
+      });
       return;
     }
 
@@ -1000,6 +1104,10 @@
 
     cancelRequested = true;
     subtitleOcrStore.setCancelling(true);
+    subtitleOcrStore.addLog(
+      'warning',
+      itemIds.length === 1 ? 'Cancellation requested' : `Cancellation requested for ${itemIds.length} sources`,
+    );
     for (const itemId of itemIds) {
       aiCleanupControllers.get(itemId)?.abort();
     }
@@ -1060,7 +1168,12 @@
   ): void {
     const itemIds = getCurrentRetryableItemIds();
     if (itemIds.length === 0) {
-      toast.warning('No Subtitle OCR versions available for retry');
+      logAndToast.warning({
+        source: 'subtitle-ocr',
+        title: 'No Subtitle OCR versions available for retry',
+        details: 'Run Subtitle OCR at least once before retrying existing versions.',
+        showAction: false,
+      });
       return;
     }
 
@@ -1074,7 +1187,12 @@
 
     const aiCleanupItemIds = getCurrentAiCleanupRetryableItemIds();
     if (aiCleanupItemIds.length === 0) {
-      toast.warning('No active Subtitle OCR versions available for AI cleanup retry');
+      logAndToast.warning({
+        source: 'subtitle-ocr',
+        title: 'No active Subtitle OCR versions available for AI cleanup retry',
+        details: 'Select or create an active Subtitle OCR version before retrying AI cleanup.',
+        showAction: false,
+      });
       return;
     }
 
@@ -1092,13 +1210,16 @@
 
     cancelRequested = false;
     subtitleOcrStore.startProcessing([itemId]);
+    const counts = createProcessingResultCounts();
 
     try {
-      await processAiCleanupRetryItem(itemId, versionName, config);
+      recordProcessingResult(counts, await processAiCleanupRetryItem(itemId, versionName, config));
     } finally {
       subtitleOcrStore.stopProcessing();
       cancelRequested = false;
     }
+
+    reportProcessingSummary('Subtitle OCR AI cleanup retry finished', counts);
   }
 
   async function runAiCleanupRetryItems(
@@ -1111,6 +1232,7 @@
 
     cancelRequested = false;
     subtitleOcrStore.startProcessing(itemIds);
+    const counts = createProcessingResultCounts();
 
     try {
       for (const itemId of itemIds) {
@@ -1119,6 +1241,7 @@
         }
 
         const result = await processAiCleanupRetryItem(itemId, undefined, config);
+        recordProcessingResult(counts, result);
         if (result === 'cancelled') {
           break;
         }
@@ -1127,6 +1250,8 @@
       subtitleOcrStore.stopProcessing();
       cancelRequested = false;
     }
+
+    reportProcessingSummary('Subtitle OCR AI cleanup retry finished', counts);
   }
 
   async function processAiCleanupRetryItem(
@@ -1168,15 +1293,15 @@
 
       subtitleOcrStore.addVersion(itemId, version);
       await persistItem(itemId);
+      subtitleOcrStore.addLog('success', `Created ${version.name} with AI cleanup`, itemId);
       return 'completed';
     } catch (error) {
       const details = sanitizeProcessingMessage(error);
       subtitleOcrStore.setItemStatus(itemId, 'error', details);
       logAndToast.error({
-        source: 'system',
+        source: 'subtitle-ocr',
         title: 'Subtitle OCR AI cleanup retry failed',
         details,
-        showAction: false,
       });
       return 'error';
     }
@@ -1214,7 +1339,13 @@
 
     subtitleOcrStore.addVersion(itemId, version);
     await persistItem(itemId);
-    toast.success('Saved draft as a new Subtitle OCR version');
+    logAndToast.success({
+      source: 'subtitle-ocr',
+      title: 'Saved draft as a new Subtitle OCR version',
+      details: `${version.name} was created from the edited Subtitle OCR draft.`,
+      context: { filePath: item.sourcePath },
+      showAction: false,
+    });
   }
 
   function handleSelectCue(cueId: string): void {

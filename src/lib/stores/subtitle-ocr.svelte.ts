@@ -3,6 +3,7 @@ import type {
   SubtitleOcrCue,
   SubtitleOcrCueBitmap,
   SubtitleOcrDraft,
+  SubtitleOcrLogEntry,
   SubtitleOcrProgress,
   SubtitleOcrRawCue,
   SubtitleOcrSourceItem,
@@ -13,6 +14,7 @@ import type {
   SubtitleOcrVobSubPair,
 } from '$lib/types';
 import { DEFAULT_SUBTITLE_OCR_CONFIG } from '$lib/types';
+import { logStore } from './logs.svelte';
 import { mergeSubtitleOcrProgress } from './subtitle-ocr-progress';
 
 interface SubtitleOcrItemFields {
@@ -51,9 +53,14 @@ let config = $state<SubtitleOcrConfig>({ ...DEFAULT_SUBTITLE_OCR_CONFIG });
 let isProcessing = $state(false);
 let isCancelling = $state(false);
 let processingScopeItemIds = $state<Set<string>>(new Set());
+let logs = $state<SubtitleOcrLogEntry[]>([]);
 
 function hasOwn(value: object, key: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function generateLogId(): string {
+  return `subtitle-ocr-log-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 }
 
 function cloneConfig(value: SubtitleOcrConfig): SubtitleOcrConfig {
@@ -337,6 +344,10 @@ export const subtitleOcrStore = {
     return new Set(processingScopeItemIds);
   },
 
+  get logs(): SubtitleOcrLogEntry[] {
+    return logs.map((entry) => ({ ...entry, timestamp: new Date(entry.timestamp) }));
+  },
+
   reset() {
     items = [];
     selectedItemId = null;
@@ -344,6 +355,7 @@ export const subtitleOcrStore = {
     isProcessing = false;
     isCancelling = false;
     processingScopeItemIds = new Set();
+    logs = [];
   },
 
   addItems(nextItems: SubtitleOcrSourceItem[]): SubtitleOcrSourceItem[] {
@@ -552,6 +564,12 @@ export const subtitleOcrStore = {
     isProcessing = true;
     isCancelling = false;
     processingScopeItemIds = new Set(itemIds);
+    this.addLog(
+      'info',
+      itemIds.length === 1
+        ? 'Starting Subtitle OCR processing'
+        : `Starting Subtitle OCR processing for ${itemIds.length} sources`,
+    );
   },
 
   stopProcessing() {
@@ -562,5 +580,36 @@ export const subtitleOcrStore = {
 
   setCancelling(value: boolean) {
     isCancelling = value;
+  },
+
+  addLog(level: SubtitleOcrLogEntry['level'], message: string, itemId?: string): void {
+    const item = itemId ? findItem(itemId) : undefined;
+    const details = item ? `[${item.displayName}] ${message}` : message;
+
+    logStore.addLog({
+      level,
+      source: 'subtitle-ocr',
+      title: message,
+      details,
+      context: item ? { filePath: item.sourcePath } : undefined,
+    });
+
+    logs = [
+      ...logs,
+      {
+        id: generateLogId(),
+        timestamp: new Date(),
+        level,
+        message: details,
+      },
+    ];
+
+    if (logs.length > 100) {
+      logs = logs.slice(-100);
+    }
+  },
+
+  clearLogs(): void {
+    logs = [];
   },
 };

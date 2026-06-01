@@ -172,6 +172,14 @@ export interface SubtitleOcrProgress {
   overallPercentage?: number;
 }
 
+export interface SubtitleOcrLogEntry {
+  id: string;
+  timestamp: Date;
+  level: 'info' | 'success' | 'warning' | 'error';
+  message: string;
+  details?: string;
+}
+
 const DEFAULT_AI_CLEANUP_PROVIDER = getDefaultLLMProvider();
 const DEFAULT_AI_CLEANUP_MODEL = getDefaultLLMModel(DEFAULT_AI_CLEANUP_PROVIDER);
 

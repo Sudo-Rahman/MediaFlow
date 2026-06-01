@@ -276,21 +276,33 @@ export const DEFAULT_OCR_CONFIG: OcrConfig = {
 // OCR LANGUAGES
 // ============================================================================
 
-export type OcrLanguage = 
-  | 'multi'      // Default: CN/EN/JP
-  | 'en'         // English
-  | 'korean'     // Korean
-  | 'latin'      // Latin-based languages
-  | 'cyrillic'   // Russian, Ukrainian, etc.
-  | 'arabic'     // Arabic, Persian, Urdu
+export type OcrLanguage =
+  | 'multi' // Default: CN/EN/JP
+  | 'multi_server_recognition' // Mobile detector + server recognizer
+  | 'multi_high_accuracy' // Server model: CN/EN/JP
+  | 'en' // English
+  | 'korean' // Korean
+  | 'latin' // Latin-based languages
+  | 'cyrillic' // Russian, Ukrainian, etc.
+  | 'arabic' // Arabic, Persian, Urdu
   | 'devanagari' // Hindi, Marathi, etc.
-  | 'thai'       // Thai
-  | 'greek'      // Greek
-  | 'tamil'      // Tamil
-  | 'telugu';    // Telugu
+  | 'thai' // Thai
+  | 'greek' // Greek
+  | 'tamil' // Tamil
+  | 'telugu'; // Telugu
 
 export const OCR_LANGUAGES: { value: OcrLanguage; label: string; description: string }[] = [
-  { value: 'multi', label: 'Multi-language', description: 'Chinese, English, Japanese' },
+  { value: 'multi', label: 'Multi', description: 'Chinese, English, Japanese' },
+  {
+    value: 'multi_server_recognition',
+    label: 'Multi server recognition',
+    description: 'Mobile detection with server recognition',
+  },
+  {
+    value: 'multi_high_accuracy',
+    label: 'Multi high accuracy',
+    description: 'Server detection and recognition',
+  },
   { value: 'en', label: 'English', description: 'English only' },
   { value: 'korean', label: 'Korean', description: 'Korean, English' },
   { value: 'latin', label: 'Latin', description: 'French, German, Spanish, Italian, Portuguese, etc.' },

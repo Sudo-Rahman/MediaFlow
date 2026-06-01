@@ -9,9 +9,31 @@ pub(super) const DEFAULT_OCR_MODELS_DIR: &str = "ocr-models";
 /// Model file names for PP-OCRv5
 pub(super) const OCR_DET_MODEL: &str = "PP-OCRv5_mobile_det.mnn";
 pub(super) const OCR_CHARSET: &str = "ppocr_keys_v5.txt";
+pub(super) const OCR_SERVER_DET_MODEL: &str = "PP-OCRv5_server_det.mnn";
+pub(super) const OCR_SERVER_REC_MODEL: &str = "PP-OCRv5_server_rec.mnn";
+
+fn is_high_accuracy_model(language: &str) -> bool {
+    language == "multi_high_accuracy"
+}
+
+fn is_server_recognition_model(language: &str) -> bool {
+    language == "multi_high_accuracy" || language == "multi_server_recognition"
+}
+
+fn get_det_model_for_language(language: &str) -> &'static str {
+    if is_high_accuracy_model(language) {
+        OCR_SERVER_DET_MODEL
+    } else {
+        OCR_DET_MODEL
+    }
+}
 
 /// Language to recognition model mapping
 fn get_rec_model_for_language(language: &str) -> &'static str {
+    if is_server_recognition_model(language) {
+        return OCR_SERVER_REC_MODEL;
+    }
+
     match language {
         "en" | "english" => "en_PP-OCRv5_mobile_rec_infer.mnn",
         "multi" | "chinese" | "japanese" => "PP-OCRv5_mobile_rec.mnn",
@@ -110,7 +132,7 @@ pub(crate) fn create_ocr_engine(
     enable_parallel: bool,
 ) -> Result<OcrEngine, String> {
     // Build model paths
-    let det_path = models_dir.join(OCR_DET_MODEL);
+    let det_path = models_dir.join(get_det_model_for_language(language));
     let rec_model = get_rec_model_for_language(language);
     let rec_path = models_dir.join(rec_model);
     let charset_file = get_charset_for_language(language);
@@ -175,13 +197,22 @@ pub(crate) fn get_ocr_models_dir(app: &tauri::AppHandle) -> Result<PathBuf, Stri
 #[cfg(test)]
 mod tests {
     use super::{
-        create_ocr_engine, get_charset_for_language, get_rec_model_for_language, ocr_engine_config,
-        resolve_ocr_engine_threads, resolve_ocr_worker_count, resolve_ocr_worker_count_for_backend,
+        create_ocr_engine, get_charset_for_language, get_det_model_for_language,
+        get_rec_model_for_language, ocr_engine_config, resolve_ocr_engine_threads,
+        resolve_ocr_worker_count, resolve_ocr_worker_count_for_backend,
     };
     use ocr_rs::{Backend, PrecisionMode};
 
     #[test]
     fn language_model_mapping_returns_expected_model_file() {
+        assert_eq!(
+            get_det_model_for_language("multi_high_accuracy"),
+            "PP-OCRv5_server_det.mnn"
+        );
+        assert_eq!(
+            get_det_model_for_language("multi"),
+            "PP-OCRv5_mobile_det.mnn"
+        );
         assert_eq!(
             get_rec_model_for_language("korean"),
             "korean_PP-OCRv5_mobile_rec_infer.mnn"
@@ -194,12 +225,28 @@ mod tests {
             get_rec_model_for_language("unknown"),
             "PP-OCRv5_mobile_rec.mnn"
         );
+        assert_eq!(
+            get_rec_model_for_language("multi_high_accuracy"),
+            "PP-OCRv5_server_rec.mnn"
+        );
+        assert_eq!(
+            get_rec_model_for_language("multi_server_recognition"),
+            "PP-OCRv5_server_rec.mnn"
+        );
     }
 
     #[test]
     fn language_charset_mapping_returns_expected_charset_file() {
         assert_eq!(get_charset_for_language("en"), "ppocr_keys_en.txt");
         assert_eq!(get_charset_for_language("latin"), "ppocr_keys_latin.txt");
+        assert_eq!(
+            get_charset_for_language("multi_high_accuracy"),
+            "ppocr_keys_v5.txt"
+        );
+        assert_eq!(
+            get_charset_for_language("multi_server_recognition"),
+            "ppocr_keys_v5.txt"
+        );
         assert_eq!(get_charset_for_language("unknown"), "ppocr_keys_v5.txt");
     }
 
@@ -221,6 +268,22 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.contains("Detection model not found"));
+    }
+
+    #[test]
+    fn create_ocr_engine_initializes_high_accuracy_server_model() {
+        let models_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ocr-models");
+
+        create_ocr_engine(&models_dir, "multi_high_accuracy", false, 1, false)
+            .expect("server OCR model should initialize");
+    }
+
+    #[test]
+    fn create_ocr_engine_initializes_server_recognition_model() {
+        let models_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ocr-models");
+
+        create_ocr_engine(&models_dir, "multi_server_recognition", false, 1, false)
+            .expect("server recognition OCR model should initialize");
     }
 
     #[test]

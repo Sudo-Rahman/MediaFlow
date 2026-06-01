@@ -110,11 +110,21 @@ export interface SubtitleOcrPipelineResult {
   finalCues: SubtitleOcrCue[];
 }
 
-export interface SubtitleOcrDraft {
-  baseVersionId: string;
-  cues: SubtitleOcrCue[];
-  dirty: boolean;
-  updatedAt: string;
+export interface SubtitleOcrProcessingDraft {
+  runId: string;
+  name: string;
+  startedAt: string;
+  bitmaps: SubtitleOcrCueBitmap[];
+  rawOcr: SubtitleOcrRawCue[];
+  finalCues: SubtitleOcrCue[];
+}
+
+export interface SubtitleOcrLiveCueEvent {
+  itemId: string;
+  runId: string;
+  bitmap: SubtitleOcrCueBitmap;
+  rawCue: SubtitleOcrRawCue;
+  provisionalCue: SubtitleOcrCue;
 }
 
 export interface SubtitleOcrPersistenceData {
@@ -158,7 +168,8 @@ interface SubtitleOcrSourceItemFields {
   progress?: SubtitleOcrProgress;
   versions: SubtitleOcrVersion[];
   activeVersionId: string | null;
-  draft?: SubtitleOcrDraft;
+  reviewTargetId?: string | null;
+  processingDraft?: SubtitleOcrProcessingDraft;
 }
 
 export type SubtitleOcrSourceItem = SubtitleOcrSourceSnapshot & SubtitleOcrSourceItemFields;

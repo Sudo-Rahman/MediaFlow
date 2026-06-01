@@ -7,6 +7,7 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 
 use image::{DynamicImage, RgbaImage};
+use tauri::Emitter;
 
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::tools::ocr::{create_ocr_engine, get_ocr_models_dir, resolve_ocr_engine_threads};
@@ -19,7 +20,8 @@ use crate::tools::subtitle_ocr::progress::{ProgressTotal, SubtitleOcrProgressEmi
 use crate::tools::subtitle_ocr::stabilize::stabilize_cues;
 use crate::tools::subtitle_ocr::text::reconstruct_text_from_boxes;
 use crate::tools::subtitle_ocr::{
-    SubtitleOcrBox, SubtitleOcrCue, SubtitleOcrPipelineResult, SubtitleOcrRawCue,
+    SubtitleOcrBox, SubtitleOcrCue, SubtitleOcrLiveCueEvent, SubtitleOcrPipelineResult,
+    SubtitleOcrRawCue,
 };
 
 #[derive(Clone)]
@@ -89,6 +91,7 @@ fn run_subtitle_ocr_pipeline_blocking(
     expected_bitmap_count: Option<u32>,
 ) -> Result<SubtitleOcrPipelineResult, String> {
     ensure_not_cancelled(item_id, run_id)?;
+    let live_event_app = app.clone();
     let progress = PipelineProgress {
         ocr: SubtitleOcrProgressEmitter::new(
             app.clone(),
@@ -132,15 +135,17 @@ fn run_subtitle_ocr_pipeline_blocking(
         decoded.metadata.preview_path = Some(bitmap_assets.preview_path);
         let metadata = decoded.metadata.clone();
         let raw_cue = ocr_decoded_bitmap(&engine, decoded)?;
+        let provisional_cue = provisional_cue_from_raw(&raw_cue);
+        emit_live_cue_event(
+            &live_event_app,
+            item_id,
+            run_id,
+            &metadata,
+            &raw_cue,
+            &provisional_cue,
+        );
         if !raw_cue.text.trim().is_empty() {
-            final_candidates.push(SubtitleOcrCue {
-                id: raw_cue.cue_id.clone(),
-                source_cue_ids: vec![raw_cue.cue_id.clone()],
-                start_time_ms: raw_cue.start_time_ms,
-                end_time_ms: raw_cue.end_time_ms,
-                text: raw_cue.text.clone(),
-                confidence: raw_cue.confidence,
-            });
+            final_candidates.push(provisional_cue);
         }
         decoded_metadata.push(metadata);
         raw_ocr_cues.push(raw_cue);
@@ -318,6 +323,37 @@ fn ensure_not_cancelled(item_id: &str, run_id: &str) -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+fn provisional_cue_from_raw(raw_cue: &SubtitleOcrRawCue) -> SubtitleOcrCue {
+    SubtitleOcrCue {
+        id: raw_cue.cue_id.clone(),
+        source_cue_ids: vec![raw_cue.cue_id.clone()],
+        start_time_ms: raw_cue.start_time_ms,
+        end_time_ms: raw_cue.end_time_ms,
+        text: raw_cue.text.clone(),
+        confidence: raw_cue.confidence,
+    }
+}
+
+fn emit_live_cue_event(
+    app: &tauri::AppHandle,
+    item_id: &str,
+    run_id: &str,
+    bitmap: &super::SubtitleOcrDecodedCue,
+    raw_cue: &SubtitleOcrRawCue,
+    provisional_cue: &SubtitleOcrCue,
+) {
+    let _ = app.emit(
+        "subtitle-ocr-live-cue",
+        SubtitleOcrLiveCueEvent {
+            item_id: item_id.to_string(),
+            run_id: run_id.to_string(),
+            bitmap: bitmap.clone(),
+            raw_cue: raw_cue.clone(),
+            provisional_cue: provisional_cue.clone(),
+        },
+    );
 }
 
 fn ocr_decoded_bitmap(

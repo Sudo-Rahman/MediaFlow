@@ -7,7 +7,6 @@ import type {
 } from '$lib/types';
 import { DEFAULT_SUBTITLE_OCR_CONFIG } from '$lib/types';
 import {
-  buildSubtitleOcrDraftVersionInput,
   buildSubtitleOcrProgressFromEvent,
   buildSubtitleOcrSourceSnapshot,
   collectMissingSubtitleOcrBitmapAssets,
@@ -454,83 +453,6 @@ describe('subtitle OCR bitmap asset restore helpers', () => {
     expect(merged[0].bitmaps[0]).toMatchObject({
       previewPath: '/tmp/cache-preview.png',
     });
-  });
-});
-
-describe('buildSubtitleOcrDraftVersionInput', () => {
-  it('turns dirty draft cues into a new version input without replacing OCR artifacts', () => {
-    const item = containerItem(3);
-    const activeVersion = version('v1', buildSubtitleOcrSourceSnapshot(item));
-    activeVersion.bitmaps = [{
-      cueId: 'bitmap-1',
-      startTimeMs: 1_000,
-      endTimeMs: 2_000,
-      width: 640,
-      height: 120,
-      cacheKey: 'bitmap-cache',
-      previewPath: '/tmp/preview.png',
-    }];
-    activeVersion.rawOcr = [{
-      cueId: 'raw-1',
-      startTimeMs: 1_000,
-      endTimeMs: 2_000,
-      cacheKey: 'raw-cache',
-      boxes: [],
-      text: 'raw',
-      confidence: 0.9,
-    }];
-    activeVersion.stabilizedCues = [{
-      id: 'cue-1',
-      sourceCueIds: ['raw-1'],
-      startTimeMs: 1_000,
-      endTimeMs: 2_000,
-      text: 'before',
-      confidence: 0.9,
-    }];
-    activeVersion.finalCues = [{
-      id: 'cue-1',
-      sourceCueIds: ['raw-1'],
-      startTimeMs: 1_000,
-      endTimeMs: 2_000,
-      text: 'before',
-      confidence: 0.9,
-    }];
-    item.versions = [activeVersion];
-    item.activeVersionId = activeVersion.id;
-    item.draft = {
-      baseVersionId: activeVersion.id,
-      cues: [{ ...activeVersion.finalCues[0], text: 'edited' }],
-      dirty: true,
-      updatedAt: '2026-05-29T10:00:00.000Z',
-    };
-
-    const input = buildSubtitleOcrDraftVersionInput(item, activeVersion);
-
-    expect(input).toMatchObject({
-      mode: 'full_ocr',
-      bitmaps: activeVersion.bitmaps,
-      rawOcr: activeVersion.rawOcr,
-      stabilizedCues: activeVersion.stabilizedCues,
-      finalCues: item.draft.cues,
-      aiCleanupApplied: false,
-    });
-    expect(input?.finalCues[0]?.text).toBe('edited');
-    expect(activeVersion.finalCues[0]?.text).toBe('before');
-  });
-
-  it('ignores clean or stale drafts', () => {
-    const item = containerItem(3);
-    const activeVersion = version('v1', buildSubtitleOcrSourceSnapshot(item));
-
-    expect(buildSubtitleOcrDraftVersionInput(item, activeVersion)).toBeNull();
-
-    item.draft = {
-      baseVersionId: 'other-version',
-      cues: [],
-      dirty: true,
-      updatedAt: '2026-05-29T10:00:00.000Z',
-    };
-    expect(buildSubtitleOcrDraftVersionInput(item, activeVersion)).toBeNull();
   });
 });
 

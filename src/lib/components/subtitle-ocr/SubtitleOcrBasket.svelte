@@ -13,19 +13,32 @@
   interface SubtitleOcrBasketProps {
     cue: SubtitleOcrCue | null;
     disabled?: boolean;
-    onTextChange: (cueId: string, value: string) => void;
+    onTextCommit: (cueId: string, value: string) => void;
   }
 
   let {
     cue,
     disabled = false,
-    onTextChange,
+    onTextCommit,
   }: SubtitleOcrBasketProps = $props();
+
+  let textValue = $state('');
+  let textCueId = $state<string | null>(null);
+  let textFocused = $state(false);
 
   const textAreaId = `${useId()}-subtitle-text`;
   const confidencePercent = $derived(
     cue ? Math.max(0, Math.min(100, Math.round(cue.confidence * 100))) : 0,
   );
+
+  $effect(() => {
+    const nextCueId = cue?.id ?? null;
+    const nextText = cue?.text ?? '';
+    if (nextCueId !== textCueId || !textFocused) {
+      textCueId = nextCueId;
+      textValue = nextText;
+    }
+  });
 
   function formatTime(ms: number): string {
     const safeMs = Math.max(0, Math.round(ms));
@@ -42,12 +55,23 @@
     ].join(':') + `.${milliseconds.toString().padStart(3, '0')}`;
   }
 
+  function handleTextFocus(): void {
+    textFocused = true;
+  }
+
   function handleTextInput(event: Event): void {
     if (!cue || !(event.currentTarget instanceof HTMLTextAreaElement)) {
       return;
     }
 
-    onTextChange(cue.id, event.currentTarget.value);
+    textValue = event.currentTarget.value;
+  }
+
+  function handleTextBlur(): void {
+    textFocused = false;
+    if (cue && !disabled && cue.text !== textValue) {
+      onTextCommit(cue.id, textValue);
+    }
   }
 </script>
 
@@ -73,16 +97,15 @@
       <Field.FieldLabel for={textAreaId}>Recognized text</Field.FieldLabel>
       <Textarea
         id={textAreaId}
-        value={cue.text}
+        value={textValue}
         disabled={disabled}
         class="min-h-48 flex-1 overflow-auto font-mono text-sm leading-relaxed"
         aria-label="Recognized subtitle text"
         placeholder="Enter subtitle text"
+        onfocus={handleTextFocus}
         oninput={handleTextInput}
+        onblur={handleTextBlur}
       />
-      <Field.FieldDescription>
-        Edits are kept in the current subtitle OCR draft.
-      </Field.FieldDescription>
     </Field.Field>
   {:else}
     <Empty class="min-h-64 border">

@@ -9,3 +9,4 @@ export * from './media-tracks';
 export * from './file-run-state';
 export * from './file-item-card-visuals';
 export * from './output-folder';
+export * from './subtitle-ocr-review-target';

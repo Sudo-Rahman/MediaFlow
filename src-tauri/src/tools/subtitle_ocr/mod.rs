@@ -76,6 +76,16 @@ pub(crate) struct SubtitleOcrRawCue {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct SubtitleOcrLiveCueEvent {
+    pub(crate) item_id: String,
+    pub(crate) run_id: String,
+    pub(crate) bitmap: SubtitleOcrDecodedCue,
+    pub(crate) raw_cue: SubtitleOcrRawCue,
+    pub(crate) provisional_cue: SubtitleOcrCue,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SubtitleOcrPipelineResult {
     pub(crate) decoded_cues: Vec<SubtitleOcrDecodedCue>,
     pub(crate) raw_ocr_cues: Vec<SubtitleOcrRawCue>,
@@ -85,7 +95,10 @@ pub(crate) struct SubtitleOcrPipelineResult {
 
 #[cfg(test)]
 mod tests {
-    use super::SubtitleOcrDecodedCue;
+    use super::{
+        SubtitleOcrBox, SubtitleOcrCue, SubtitleOcrDecodedCue, SubtitleOcrLiveCueEvent,
+        SubtitleOcrRawCue,
+    };
 
     #[test]
     fn decoded_cue_serializes_optional_preview_path() {
@@ -122,5 +135,54 @@ mod tests {
         let value = serde_json::to_value(cue).expect("decoded cue should serialize");
 
         assert!(value.get("previewPath").is_none());
+    }
+
+    #[test]
+    fn live_cue_event_serializes_frontend_contract() {
+        let event = SubtitleOcrLiveCueEvent {
+            item_id: "item-1".to_string(),
+            run_id: "run-1".to_string(),
+            bitmap: SubtitleOcrDecodedCue {
+                cue_id: "cue-1".to_string(),
+                start_time_ms: 1_000,
+                end_time_ms: 2_000,
+                width: 1920,
+                height: 1080,
+                cache_key: "cache-key".to_string(),
+                preview_path: Some("/tmp/preview.png".to_string()),
+            },
+            raw_cue: SubtitleOcrRawCue {
+                cue_id: "cue-1".to_string(),
+                start_time_ms: 1_000,
+                end_time_ms: 2_000,
+                cache_key: "cache-key".to_string(),
+                boxes: vec![SubtitleOcrBox {
+                    text: "Hello".to_string(),
+                    confidence: 0.9,
+                    x: 0.1,
+                    y: 0.2,
+                    width: 0.3,
+                    height: 0.4,
+                }],
+                text: "Hello".to_string(),
+                confidence: 0.9,
+            },
+            provisional_cue: SubtitleOcrCue {
+                id: "cue-1".to_string(),
+                source_cue_ids: vec!["cue-1".to_string()],
+                start_time_ms: 1_000,
+                end_time_ms: 2_000,
+                text: "Hello".to_string(),
+                confidence: 0.9,
+            },
+        };
+
+        let value = serde_json::to_value(event).expect("live cue event should serialize");
+
+        assert_eq!(value["itemId"], "item-1");
+        assert_eq!(value["runId"], "run-1");
+        assert_eq!(value["bitmap"]["previewPath"], "/tmp/preview.png");
+        assert_eq!(value["rawCue"]["boxes"][0]["text"], "Hello");
+        assert_eq!(value["provisionalCue"]["sourceCueIds"][0], "cue-1");
     }
 }

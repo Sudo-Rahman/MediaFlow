@@ -26,8 +26,9 @@
     viewportSource?: ViewportSource;
     timelineWindowDragging?: boolean;
     disabled?: boolean;
+    textDisabled?: boolean;
     onSelectCue: (cueId: string) => void;
-    onTextChange: (cueId: string, text: string) => void;
+    onTextCommit: (cueId: string, text: string) => void;
     onViewportChange: (startMs: number, endMs: number, source: 'rail') => void;
   }
 
@@ -40,8 +41,9 @@
     viewportSource = null,
     timelineWindowDragging = false,
     disabled = false,
+    textDisabled = false,
     onSelectCue,
-    onTextChange,
+    onTextCommit,
     onViewportChange,
   }: SubtitleOcrCueRailProps = $props();
 
@@ -394,9 +396,10 @@
                 {selected}
                 mode="wide"
                 {disabled}
+                {textDisabled}
                 cueIndex={virtualCue.index}
                 onSelectCue={() => handleCueClick(cue, virtualCue.index)}
-                onTextChange={onTextChange}
+                {onTextCommit}
               />
             </div>
           {/if}

@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { Layers, Save, ScanText } from '@lucide/svelte';
+  import { Layers, ScanText } from '@lucide/svelte';
 
   import { Badge } from '$lib/components/ui/badge';
-  import { Button } from '$lib/components/ui/button';
   import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '$lib/components/ui/empty';
   import type {
     SubtitleOcrCue,
     SubtitleOcrCueBitmap,
+    SubtitleOcrProcessingDraft,
     SubtitleOcrSourceItem,
     SubtitleOcrVersion,
   } from '$lib/types';
@@ -29,14 +29,16 @@
 
   interface SubtitleOcrWorkspaceProps {
     item: SubtitleOcrSourceItem | null;
-    activeVersion: SubtitleOcrVersion | null;
+    reviewVersion: SubtitleOcrVersion | null;
+    reviewBitmaps: SubtitleOcrCueBitmap[];
     renderedCues: SubtitleOcrCue[];
     selectedCueId: string | null;
+    activeReviewTargetId: string | null;
+    processingDraft?: SubtitleOcrProcessingDraft;
+    isReadOnly: boolean;
     onSelectCue: (cueId: string) => void;
     onSelectVersion: (itemId: string, versionId: string) => void;
-    onCueTextChange: (itemId: string, cueId: string, text: string) => void;
-    onSaveDraftVersion: (itemId: string) => void | Promise<void>;
-    isProcessing: boolean;
+    onCueTextCommit: (itemId: string, cueId: string, text: string) => void;
   }
 
   type ViewportChangeSource = 'rail' | 'timeline-window' | 'timeline-zone' | 'timeline-zoom';
@@ -46,14 +48,16 @@
 
   let {
     item,
-    activeVersion,
+    reviewVersion: reviewVersionProp,
+    reviewBitmaps,
     renderedCues,
     selectedCueId,
+    activeReviewTargetId,
+    processingDraft,
+    isReadOnly,
     onSelectCue,
     onSelectVersion,
-    onCueTextChange,
-    onSaveDraftVersion,
-    isProcessing,
+    onCueTextCommit,
   }: SubtitleOcrWorkspaceProps = $props();
 
   let viewportStartMs = $state(0);
@@ -65,19 +69,14 @@
   let centerElement = $state<HTMLElement | null>(null);
   let centerWidthPx = $state(0);
 
-  const reviewVersion = $derived(
-    activeVersion
-      ?? item?.versions.find((version) => version.id === item.activeVersionId)
-      ?? item?.versions[0]
-      ?? null,
-  );
-  const bitmaps = $derived(reviewVersion?.bitmaps ?? []);
+  const reviewVersion = $derived(reviewVersionProp);
+  const bitmaps = $derived(reviewBitmaps);
   const durationMs = $derived(resolveDurationMs(renderedCues, bitmaps));
   const selectedCue = $derived(
     renderedCues.find((cue) => cue.id === selectedCueId) ?? renderedCues[0] ?? null,
   );
   const effectiveSelectedCueId = $derived(selectedCue?.id ?? null);
-  const activeVersionId = $derived(reviewVersion?.id ?? item?.activeVersionId ?? null);
+  const activeVersionId = $derived(activeReviewTargetId);
   const reviewMode: SubtitleOcrReviewMode = $derived(resolveSubtitleOcrReviewMode(centerWidthPx));
   const bitmapByCueId = $derived.by(() => {
     const map = new Map<string, SubtitleOcrCueBitmap>();
@@ -221,6 +220,10 @@
     return version.mode === 'ai_cleanup_only' ? 'AI cleanup' : 'Full OCR';
   }
 
+  function getReviewModeLabel(version: SubtitleOcrVersion | null): string {
+    return version ? getVersionModeLabel(version) : 'OCR draft';
+  }
+
   function handleViewportChange(
     startMs: number,
     endMs: number,
@@ -290,9 +293,9 @@
     return widthPx > 0 && widthPx < thresholdPx;
   }
 
-  function handleCueTextChange(cueId: string, text: string): void {
+  function handleCueTextCommit(cueId: string, text: string): void {
     if (item) {
-      onCueTextChange(item.id, cueId, text);
+      onCueTextCommit(item.id, cueId, text);
     }
   }
 </script>
@@ -306,7 +309,7 @@
       </EmptyDescription>
     </EmptyHeader>
   </Empty>
-{:else if item.versions.length === 0}
+{:else if item.versions.length === 0 && !processingDraft}
   <Empty class="h-full min-h-96 border-0">
     <EmptyHeader>
       <EmptyTitle>No OCR versions yet</EmptyTitle>
@@ -315,7 +318,7 @@
       </EmptyDescription>
     </EmptyHeader>
   </Empty>
-{:else if !reviewVersion}
+{:else if !reviewVersion && !processingDraft}
   <Empty class="h-full min-h-96 border-0">
     <EmptyHeader>
       <EmptyTitle>No active version</EmptyTitle>
@@ -338,12 +341,9 @@
             )}
           >
             <Badge variant="secondary">
-              {getVersionModeLabel(reviewVersion)}
+              {getReviewModeLabel(reviewVersion)}
             </Badge>
           </span>
-          {#if item.draft?.dirty}
-            <Badge variant="outline" class="shrink-0">Draft edits</Badge>
-          {/if}
         </div>
         <p class="mt-1 min-w-0 truncate text-xs text-muted-foreground" title={`${buildSubtitleOcrSourceLabel(item)} · ${subtitleOcrReviewStats}`}>
           <span>{buildSubtitleOcrSourceLabel(item)}</span>
@@ -359,18 +359,6 @@
       </div>
 
       <div class="flex shrink-0 items-center gap-1.5">
-        {#if item.draft?.dirty}
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onclick={() => void onSaveDraftVersion(item.id)}
-            disabled={isProcessing}
-          >
-            <Save class="size-4" />
-            Save Draft Version
-          </Button>
-        {/if}
         <span
           class={cn(
             'inline-flex shrink-0 overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-200 ease-out motion-reduce:transition-none',
@@ -381,7 +369,8 @@
         </span>
         <SubtitleOcrVersionSelector
           versions={item.versions}
-          activeVersionId={reviewVersion.id}
+          activeVersionId={activeVersionId}
+          {processingDraft}
           compact={compactVersionSelector}
           onSelectVersion={handleSelectVersion}
         />
@@ -404,9 +393,9 @@
           {viewportEndMs}
           viewportSource={activeViewportSource}
           {timelineWindowDragging}
-          disabled={isProcessing}
+          textDisabled={isReadOnly}
           onSelectCue={(cueId) => handleSelectCue(cueId, 'rail')}
-          onTextChange={handleCueTextChange}
+          onTextCommit={handleCueTextCommit}
           onViewportChange={handleViewportChange}
         />
 
@@ -429,12 +418,12 @@
             bitmap={selectedCueBitmap}
             selected={Boolean(selectedCue)}
             mode="compact"
-            disabled={isProcessing}
+            textDisabled={isReadOnly}
             cueIndex={selectedCueIndex >= 0 ? selectedCueIndex : undefined}
             showNavigation
             onPreviousCue={canSelectPreviousCue ? handlePreviousCue : undefined}
             onNextCue={canSelectNextCue ? handleNextCue : undefined}
-            onTextChange={handleCueTextChange}
+            onTextCommit={handleCueTextCommit}
           />
         </div>
       {/if}

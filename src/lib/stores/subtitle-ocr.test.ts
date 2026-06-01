@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import type { SubtitleOcrCue, SubtitleOcrSourceItem, SubtitleOcrVersion } from '$lib/types';
+import type {
+  SubtitleOcrCue,
+  SubtitleOcrCueBitmap,
+  SubtitleOcrRawCue,
+  SubtitleOcrSourceItem,
+  SubtitleOcrVersion,
+} from '$lib/types';
 import { DEFAULT_SUBTITLE_OCR_CONFIG } from '$lib/types';
 import { logStore } from './logs.svelte';
 import { subtitleOcrStore } from './subtitle-ocr.svelte';
@@ -72,6 +78,30 @@ function cue(id: string, text: string): SubtitleOcrCue {
     sourceCueIds: [id],
     startTimeMs: 1000,
     endTimeMs: 2000,
+    text,
+    confidence: 0.9,
+  };
+}
+
+function bitmap(cueId: string): SubtitleOcrCueBitmap {
+  return {
+    cueId,
+    startTimeMs: 1000,
+    endTimeMs: 2000,
+    width: 640,
+    height: 120,
+    cacheKey: `cache-${cueId}`,
+    previewPath: `/tmp/${cueId}.png`,
+  };
+}
+
+function rawCue(cueId: string, text: string): SubtitleOcrRawCue {
+  return {
+    cueId,
+    startTimeMs: 1000,
+    endTimeMs: 2000,
+    cacheKey: `cache-${cueId}`,
+    boxes: [],
     text,
     confidence: 0.9,
   };
@@ -208,14 +238,19 @@ describe('subtitleOcrStore', () => {
       percentage: 26,
       overallPercentage: 26,
     });
-    subtitleOcrStore.updateCueText('a', 'cue-v1', 'after');
+    expect(subtitleOcrStore.updateCueText('a', 'cue-v1', 'after')).toBe(true);
+
+    const editedVersion = subtitleOcrStore.getActiveVersion('a');
+    if (!editedVersion) {
+      throw new Error('Expected edited active version');
+    }
+    restoredVersion.finalCues = editedVersion.finalCues;
 
     subtitleOcrStore.replaceItemVersions('a', [restoredVersion], restoredVersion.id, {
-      preserveDraft: true,
       preserveProgress: true,
     });
 
-    expect(subtitleOcrStore.selectedItem?.draft?.cues[0]?.text).toBe('after');
+    expect(subtitleOcrStore.getActiveVersion('a')?.finalCues[0]?.text).toBe('after');
     expect(subtitleOcrStore.selectedItem?.progress).toMatchObject({
       phase: 'decoding',
       current: 183,
@@ -237,34 +272,145 @@ describe('subtitleOcrStore', () => {
     expect(subtitleOcrStore.getActiveCues('a')[0]?.text).toBe('one');
   });
 
-  it('ignores invalid selected version ids without dropping the active draft', () => {
+  it('ignores invalid selected version ids without dropping direct edits', () => {
     subtitleOcrStore.addItems([source('a')]);
     subtitleOcrStore.addVersion('a', version('v1', 'before'));
     subtitleOcrStore.updateCueText('a', 'cue-v1', 'after');
     subtitleOcrStore.selectVersion('a', 'missing');
 
     expect(subtitleOcrStore.selectedItem?.activeVersionId).toBe('v1');
-    expect(subtitleOcrStore.selectedItem?.draft?.dirty).toBe(true);
     expect(subtitleOcrStore.getRenderedCues('a')[0]?.text).toBe('after');
+    expect(subtitleOcrStore.getActiveVersion('a')?.finalCues[0]?.text).toBe('after');
   });
 
-  it('creates a draft from the active version without mutating final cues', () => {
+  it('updates recognized text directly on the selected version', () => {
+    subtitleOcrStore.addItems([source('a')]);
+    const originalVersion = version('v1', 'before');
+    subtitleOcrStore.addVersion('a', originalVersion);
+
+    expect(subtitleOcrStore.updateCueText('a', 'cue-v1', 'after')).toBe(true);
+
+    expect(subtitleOcrStore.getActiveVersion('a')?.finalCues[0]?.text).toBe('after');
+    expect(subtitleOcrStore.getRenderedCues('a')[0]?.text).toBe('after');
+    expect(originalVersion.finalCues[0]?.text).toBe('before');
+  });
+
+  it('ignores unchanged or missing recognized text edits', () => {
+    subtitleOcrStore.addItems([source('a')]);
+    subtitleOcrStore.addVersion('a', version('v1', 'before'));
+
+    expect(subtitleOcrStore.updateCueText('a', 'cue-v1', 'before')).toBe(false);
+    expect(subtitleOcrStore.updateCueText('a', 'missing', 'after')).toBe(false);
+
+    expect(subtitleOcrStore.getActiveVersion('a')?.finalCues[0]?.text).toBe('before');
+  });
+
+  it('renders live processing draft cues for a source without versions', () => {
+    subtitleOcrStore.addItems([source('a')]);
+    subtitleOcrStore.beginProcessingDraft('a', {
+      runId: 'run-1',
+      name: 'Version 1 Draft',
+    });
+    subtitleOcrStore.appendProcessingDraftCue('a', 'run-1', {
+      bitmap: bitmap('cue-live'),
+      rawCue: rawCue('cue-live', 'live raw'),
+      provisionalCue: cue('cue-live', 'live text'),
+    });
+
+    expect(subtitleOcrStore.selectedItem).toMatchObject({
+      activeVersionId: null,
+      reviewTargetId: 'processing-draft:run-1',
+      processingDraft: {
+        runId: 'run-1',
+        name: 'Version 1 Draft',
+      },
+    });
+    expect(subtitleOcrStore.getRenderedCues('a')[0]?.text).toBe('live text');
+    expect(subtitleOcrStore.getRenderedBitmaps('a')[0]?.previewPath).toBe('/tmp/cue-live.png');
+  });
+
+  it('keeps an existing completed version visible when a new OCR draft starts', () => {
+    subtitleOcrStore.addItems([source('a')]);
+    subtitleOcrStore.addVersion('a', version('v1', 'one'));
+    subtitleOcrStore.beginProcessingDraft('a', {
+      runId: 'run-2',
+      name: 'Version 2 Draft',
+    });
+
+    expect(subtitleOcrStore.selectedItem).toMatchObject({
+      activeVersionId: 'v1',
+      reviewTargetId: 'v1',
+      processingDraft: {
+        runId: 'run-2',
+        name: 'Version 2 Draft',
+      },
+    });
+    expect(subtitleOcrStore.getRenderedCues('a')[0]?.text).toBe('one');
+
+    subtitleOcrStore.selectVersion('a', 'processing-draft:run-2');
+    subtitleOcrStore.appendProcessingDraftCue('a', 'run-2', {
+      bitmap: bitmap('cue-live'),
+      rawCue: rawCue('cue-live', 'live raw'),
+      provisionalCue: cue('cue-live', 'live text'),
+    });
+
+    expect(subtitleOcrStore.getRenderedCues('a')[0]?.text).toBe('live text');
+  });
+
+  it('ignores text edits while the processing draft is selected', () => {
+    subtitleOcrStore.addItems([source('a')]);
+    subtitleOcrStore.beginProcessingDraft('a', {
+      runId: 'run-1',
+      name: 'Version 1 Draft',
+    });
+    subtitleOcrStore.appendProcessingDraftCue('a', 'run-1', {
+      bitmap: bitmap('cue-live'),
+      rawCue: rawCue('cue-live', 'live raw'),
+      provisionalCue: cue('cue-live', 'live text'),
+    });
+
+    expect(subtitleOcrStore.updateCueText('a', 'cue-live', 'edited')).toBe(false);
+
+    expect(subtitleOcrStore.getRenderedCues('a')[0]?.text).toBe('live text');
+  });
+
+  it('keeps completed versions editable while an OCR draft is processing', () => {
+    subtitleOcrStore.addItems([source('a')]);
+    subtitleOcrStore.addVersion('a', version('v1', 'before'));
+    subtitleOcrStore.beginProcessingDraft('a', {
+      runId: 'run-2',
+      name: 'Version 2 Draft',
+    });
+
+    expect(subtitleOcrStore.updateCueText('a', 'cue-v1', 'after')).toBe(true);
+
+    expect(subtitleOcrStore.getRenderedCues('a')[0]?.text).toBe('after');
+    expect(subtitleOcrStore.getActiveVersion('a')?.finalCues[0]?.text).toBe('after');
+  });
+
+  it('completion clears only the processing draft and preserves edited completed versions', () => {
     subtitleOcrStore.addItems([source('a')]);
     subtitleOcrStore.addVersion('a', version('v1', 'before'));
     subtitleOcrStore.updateCueText('a', 'cue-v1', 'after');
+    subtitleOcrStore.beginProcessingDraft('a', {
+      runId: 'run-2',
+      name: 'Version 2 Draft',
+    });
 
-    expect(subtitleOcrStore.getActiveVersion('a')?.finalCues[0]?.text).toBe('before');
+    subtitleOcrStore.completeProcessingDraft('a', 'run-2', version('v2', 'new ocr'));
+
+    expect(subtitleOcrStore.selectedItem?.processingDraft).toBeUndefined();
+    expect(subtitleOcrStore.selectedItem?.activeVersionId).toBe('v1');
     expect(subtitleOcrStore.getRenderedCues('a')[0]?.text).toBe('after');
-    expect(subtitleOcrStore.selectedItem?.draft?.dirty).toBe(true);
+    expect(subtitleOcrStore.items[0]?.versions.map((entry) => entry.id)).toEqual(['v1', 'v2']);
   });
 
-  it('clears a dirty draft when a draft-derived version is added', () => {
+  it('keeps direct edits isolated when a new OCR version is added', () => {
     subtitleOcrStore.addItems([source('a')]);
     const originalVersion = version('v1', 'before');
     subtitleOcrStore.addVersion('a', originalVersion);
     subtitleOcrStore.updateCueText('a', 'cue-v1', 'after');
 
-    const draftCues = subtitleOcrStore.getRenderedCues('a');
     subtitleOcrStore.addVersion('a', {
       ...version('v2', 'placeholder'),
       bitmaps: originalVersion.bitmaps.map((bitmap) => ({ ...bitmap })),
@@ -276,12 +422,13 @@ describe('subtitleOcrStore', () => {
         ...stabilizedCue,
         sourceCueIds: [...stabilizedCue.sourceCueIds],
       })),
-      finalCues: draftCues,
+      finalCues: [cue('cue-v2', 'new text')],
     });
 
-    expect(subtitleOcrStore.selectedItem?.draft).toBeUndefined();
     expect(subtitleOcrStore.getActiveVersion('a')?.id).toBe('v2');
-    expect(subtitleOcrStore.getActiveVersion('a')?.finalCues[0]?.text).toBe('after');
+    expect(subtitleOcrStore.getReviewVersion('a')?.finalCues[0]?.text).toBe('new text');
+    subtitleOcrStore.selectVersion('a', 'v1');
+    expect(subtitleOcrStore.getReviewVersion('a')?.finalCues[0]?.text).toBe('after');
     expect(originalVersion.finalCues[0]?.text).toBe('before');
   });
 
@@ -464,12 +611,7 @@ describe('subtitleOcrStore', () => {
       },
       versions: [],
       activeVersionId: null,
-      draft: {
-        baseVersionId: 'v1',
-        cues: [],
-        dirty: true,
-        updatedAt: '2026-05-28T00:00:00.000Z',
-      },
+      processingDraft: undefined,
     } as unknown as Parameters<typeof subtitleOcrStore.updateItem>[1];
 
     subtitleOcrStore.updateItem('a', unsafeUpdates);
@@ -481,6 +623,5 @@ describe('subtitleOcrStore', () => {
       activeVersionId: 'v1',
     });
     expect(subtitleOcrStore.getActiveVersion('a')?.id).toBe('v1');
-    expect(subtitleOcrStore.selectedItem?.draft).toBeUndefined();
   });
 });

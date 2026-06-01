@@ -14,7 +14,6 @@ import {
   hasActiveSubtitleOcrVersion,
   hasSubtitleOcrVersions,
 } from '$lib/types';
-import type { CreateSubtitleOcrVersionInput } from '$lib/services/subtitle-ocr-storage';
 
 interface SubtitleOcrSummaryItem {
   status: SubtitleOcrStatus;
@@ -243,27 +242,6 @@ export function mergeRestoredSubtitleOcrBitmapAssets(
       mergeRestoredBitmapPath(bitmap, restoredBitmaps)
     )),
   }));
-}
-
-export function buildSubtitleOcrDraftVersionInput(
-  item: SubtitleOcrSourceItem,
-  activeVersion: SubtitleOcrVersion,
-): Omit<CreateSubtitleOcrVersionInput, 'name'> | null {
-  if (!item.draft?.dirty || item.draft.baseVersionId !== activeVersion.id) {
-    return null;
-  }
-
-  return {
-    mode: activeVersion.mode,
-    configSnapshot: activeVersion.configSnapshot,
-    effectiveOcrModel: activeVersion.effectiveOcrModel,
-    sourceSnapshot: activeVersion.sourceSnapshot,
-    bitmaps: activeVersion.bitmaps,
-    rawOcr: activeVersion.rawOcr,
-    stabilizedCues: activeVersion.stabilizedCues,
-    finalCues: item.draft.cues,
-    aiCleanupApplied: activeVersion.aiCleanupApplied,
-  };
 }
 
 function sourceSnapshotMatchesItem(

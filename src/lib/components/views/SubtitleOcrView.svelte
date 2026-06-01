@@ -38,6 +38,7 @@
     type SubtitleOcrConfig,
     type SubtitleOcrPipelineResult,
     type SubtitleOcrProgress,
+    type SubtitleOcrLiveCueEvent,
     type SubtitleOcrRetryMode,
     type SubtitleOcrSourceItem,
     type SubtitleOcrStatus,
@@ -49,7 +50,6 @@
   import { logAndToast } from '$lib/utils/log-toast';
 
   import {
-    buildSubtitleOcrDraftVersionInput,
     buildSubtitleOcrProgressFromEvent,
     buildSubtitleOcrSourceSnapshot,
     collectMissingSubtitleOcrBitmapAssets,
@@ -106,11 +106,13 @@
   let selectedCueIdsByItemId = $state.raw<Record<string, string | null>>({});
   let unlistenSubtitleOcrProgress: UnlistenFn | null = null;
   let unlistenSubtitleOcrRestoredBitmap: UnlistenFn | null = null;
+  let unlistenSubtitleOcrLiveCue: UnlistenFn | null = null;
 
   const aiCleanupControllers = new SvelteMap<string, AbortController>();
   const activeRunIdsByItemId = new SvelteMap<string, string>();
   const backendCancelableRunIdsByItemId = new SvelteMap<string, string>();
   const previewRestoreRunIdsByItemId = new SvelteMap<string, string>();
+  const persistenceQueues = new SvelteMap<string, Promise<void>>();
   let cancelRequested = false;
 
   const IMPORT_EXTENSIONS = [
@@ -172,11 +174,19 @@
 
   const items = $derived(subtitleOcrStore.items);
   const selectedItem = $derived(subtitleOcrStore.selectedItem ?? null);
-  const activeVersion = $derived(
-    selectedItem ? subtitleOcrStore.getActiveVersion(selectedItem.id) ?? null : null,
+  const reviewVersion = $derived(
+    selectedItem ? subtitleOcrStore.getReviewVersion(selectedItem.id) ?? null : null,
   );
   const renderedCues = $derived(
     selectedItem ? subtitleOcrStore.getRenderedCues(selectedItem.id) : [],
+  );
+  const reviewBitmaps = $derived(
+    selectedItem ? subtitleOcrStore.getRenderedBitmaps(selectedItem.id) : [],
+  );
+  const selectedProcessingDraft = $derived(selectedItem?.processingDraft);
+  const activeReviewTargetId = $derived(selectedItem?.reviewTargetId ?? selectedItem?.activeVersionId ?? null);
+  const selectedReviewIsReadOnly = $derived(
+    selectedItem ? subtitleOcrStore.isProcessingDraftSelected(selectedItem.id) : false,
   );
   const retryDialogItem = $derived(
     retryDialogItemId
@@ -230,7 +240,7 @@
     let destroyed = false;
 
     const setup = async () => {
-      const [unlistenProgress, unlistenRestoredBitmap] = await Promise.all([
+      const [unlistenProgress, unlistenRestoredBitmap, unlistenLiveCue] = await Promise.all([
         listen<SubtitleOcrProgressEventPayload>(
           'subtitle-ocr-progress',
           (event) => {
@@ -251,16 +261,28 @@
             handleSubtitleOcrRestoredBitmap(event.payload);
           },
         ),
+        listen<SubtitleOcrLiveCueEvent>(
+          'subtitle-ocr-live-cue',
+          (event) => {
+            if (destroyed) {
+              return;
+            }
+
+            handleSubtitleOcrLiveCue(event.payload);
+          },
+        ),
       ]);
 
       if (destroyed) {
         unlistenProgress();
         unlistenRestoredBitmap();
+        unlistenLiveCue();
         return;
       }
 
       unlistenSubtitleOcrProgress = unlistenProgress;
       unlistenSubtitleOcrRestoredBitmap = unlistenRestoredBitmap;
+      unlistenSubtitleOcrLiveCue = unlistenLiveCue;
     };
 
     void setup();
@@ -271,6 +293,8 @@
       unlistenSubtitleOcrProgress = null;
       unlistenSubtitleOcrRestoredBitmap?.();
       unlistenSubtitleOcrRestoredBitmap = null;
+      unlistenSubtitleOcrLiveCue?.();
+      unlistenSubtitleOcrLiveCue = null;
       for (const controller of aiCleanupControllers.values()) {
         controller.abort();
       }
@@ -383,11 +407,27 @@
       restoredVersions,
       currentItem.activeVersionId,
       {
-        preserveDraft: true,
         preserveProgress: true,
         preserveError: true,
       },
     );
+  }
+
+  function handleSubtitleOcrLiveCue(payload: SubtitleOcrLiveCueEvent): void {
+    if (!shouldApplySubtitleOcrProgressEvent(
+      payload.itemId,
+      payload.runId,
+      activeRunIdsByItemId,
+      cancelRequested,
+    )) {
+      return;
+    }
+
+    subtitleOcrStore.appendProcessingDraftCue(payload.itemId, payload.runId, {
+      bitmap: payload.bitmap,
+      rawCue: payload.rawCue,
+      provisionalCue: payload.provisionalCue,
+    });
   }
 
   function sanitizeProcessingMessage(error: unknown): string {
@@ -797,7 +837,6 @@
         latestItem.activeVersionId,
         {
           status: 'completed',
-          preserveDraft: true,
         },
       );
       await persistItem(item.id);
@@ -885,28 +924,46 @@
       return;
     }
 
-    try {
-      const existingData = await loadSubtitleOcrData(item.sourcePath);
-      const saved = await saveSubtitleOcrData(
-        item.sourcePath,
-        mergeSubtitleOcrPersistenceForItem(item, existingData, new Date().toISOString()),
-      );
+    const sourcePath = item.sourcePath;
+    const previous = persistenceQueues.get(sourcePath) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(async () => {
+      const latestItem = getStoreItem(itemId);
+      if (!latestItem || latestItem.sourcePath !== sourcePath) {
+        return;
+      }
 
-      if (!saved) {
+      try {
+        const existingData = await loadSubtitleOcrData(sourcePath);
+        const saved = await saveSubtitleOcrData(
+          sourcePath,
+          mergeSubtitleOcrPersistenceForItem(latestItem, existingData, new Date().toISOString()),
+        );
+
+        if (!saved) {
+          logAndToast.warning({
+            source: 'subtitle-ocr',
+            title: 'Subtitle OCR versions were not saved',
+            details: 'The Subtitle OCR changes could not be written to the MediaFlow sidecar.',
+            showAction: false,
+          });
+        }
+      } catch (error) {
         logAndToast.warning({
           source: 'subtitle-ocr',
           title: 'Subtitle OCR versions were not saved',
-          details: 'The generated version could not be written to the MediaFlow sidecar.',
+          details: sanitizeProcessingMessage(error),
           showAction: false,
         });
       }
-    } catch (error) {
-      logAndToast.warning({
-        source: 'subtitle-ocr',
-        title: 'Subtitle OCR versions were not saved',
-        details: sanitizeProcessingMessage(error),
-        showAction: false,
-      });
+    });
+
+    persistenceQueues.set(sourcePath, next);
+    try {
+      await next;
+    } finally {
+      if (persistenceQueues.get(sourcePath) === next) {
+        persistenceQueues.delete(sourcePath);
+      }
     }
   }
 
@@ -926,7 +983,13 @@
     versionNameOverride?: string,
   ): Promise<ProcessItemResult> {
     const runId = createSubtitleOcrRunId(item.id);
+    const initialItem = getStoreItem(item.id) ?? item;
+    const versionName = versionNameOverride ?? `Version ${initialItem.versions.length + 1}`;
     activeRunIdsByItemId.set(item.id, runId);
+    subtitleOcrStore.beginProcessingDraft(item.id, {
+      runId,
+      name: `${versionName} Draft`,
+    });
     subtitleOcrStore.addLog('info', 'Starting Subtitle OCR run', item.id);
 
     try {
@@ -971,7 +1034,7 @@
 
       const latestItem = getStoreItem(item.id) ?? item;
       const version = createSubtitleOcrVersion({
-        name: versionNameOverride ?? `Version ${latestItem.versions.length + 1}`,
+        name: versionName,
         mode: 'full_ocr',
         configSnapshot: config,
         effectiveOcrModel,
@@ -992,13 +1055,14 @@
         aiCleanupApplied: cleanup.applied,
       });
 
-      subtitleOcrStore.addVersion(item.id, version);
+      subtitleOcrStore.completeProcessingDraft(item.id, runId, version);
       await persistItem(item.id);
       subtitleOcrStore.addLog('success', `Generated ${version.finalCues.length} final cues`, item.id);
       return 'completed';
     } catch (error) {
       backendCancelableRunIdsByItemId.delete(item.id);
       activeRunIdsByItemId.delete(item.id);
+      subtitleOcrStore.clearProcessingDraft(item.id, runId);
       subtitleOcrStore.setProgress(item.id, undefined);
 
       if (isCancellationError(error) || cancelRequested) {
@@ -1319,33 +1383,15 @@
     subtitleOcrStore.clearItems();
   }
 
-  async function handleSaveDraftVersion(itemId: string): Promise<void> {
+  async function handleCueTextCommit(itemId: string, cueId: string, text: string): Promise<void> {
     const item = getStoreItem(itemId);
-    const activeVersion = subtitleOcrStore.getActiveVersion(itemId);
-    if (!item || !activeVersion) {
+    if (!item) {
       return;
     }
 
-    const input = buildSubtitleOcrDraftVersionInput(item, activeVersion);
-    if (!input) {
-      return;
+    if (subtitleOcrStore.updateCueText(itemId, cueId, text)) {
+      await persistItem(itemId);
     }
-
-    const latestItem = getStoreItem(itemId) ?? item;
-    const version = createSubtitleOcrVersion({
-      name: `Version ${latestItem.versions.length + 1}`,
-      ...input,
-    });
-
-    subtitleOcrStore.addVersion(itemId, version);
-    await persistItem(itemId);
-    logAndToast.success({
-      source: 'subtitle-ocr',
-      title: 'Saved draft as a new Subtitle OCR version',
-      details: `${version.name} was created from the edited Subtitle OCR draft.`,
-      context: { filePath: item.sourcePath },
-      showAction: false,
-    });
   }
 
   function handleSelectCue(cueId: string): void {
@@ -1377,14 +1423,16 @@
   <div class="min-w-0 overflow-hidden">
     <SubtitleOcrWorkspace
       item={selectedItem}
-      {activeVersion}
+      {reviewVersion}
+      {reviewBitmaps}
       {renderedCues}
       {selectedCueId}
+      {activeReviewTargetId}
+      processingDraft={selectedProcessingDraft}
+      isReadOnly={selectedReviewIsReadOnly}
       onSelectCue={handleSelectCue}
       onSelectVersion={subtitleOcrStore.selectVersion}
-      onCueTextChange={subtitleOcrStore.updateCueText}
-      onSaveDraftVersion={(itemId) => void handleSaveDraftVersion(itemId)}
-      isProcessing={subtitleOcrStore.isProcessing}
+      onCueTextCommit={(itemId, cueId, text) => void handleCueTextCommit(itemId, cueId, text)}
     />
   </div>
 

@@ -1,3 +1,43 @@
+<script lang="ts" module>
+  export interface SubtitleOcrCueNavigationState {
+    disabled: boolean;
+    hasHandler: boolean;
+  }
+
+  export interface SubtitleOcrCueTextEditState {
+    disabled: boolean;
+    textDisabled: boolean;
+  }
+
+  export interface SubtitleOcrCueTextCommitState extends SubtitleOcrCueTextEditState {
+    currentText: string;
+    nextText: string;
+  }
+
+  export function canNavigateSubtitleOcrCue({
+    disabled,
+    hasHandler,
+  }: SubtitleOcrCueNavigationState): boolean {
+    return !disabled && hasHandler;
+  }
+
+  export function canEditSubtitleOcrCueText({
+    disabled,
+    textDisabled,
+  }: SubtitleOcrCueTextEditState): boolean {
+    return !disabled && !textDisabled;
+  }
+
+  export function shouldCommitSubtitleOcrCueText({
+    disabled,
+    textDisabled,
+    currentText,
+    nextText,
+  }: SubtitleOcrCueTextCommitState): boolean {
+    return canEditSubtitleOcrCueText({ disabled, textDisabled }) && currentText !== nextText;
+  }
+</script>
+
 <script lang="ts">
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { ChevronLeft, ChevronRight, ImageOff } from '@lucide/svelte';
@@ -18,12 +58,13 @@
     selected?: boolean;
     mode: 'compact' | 'wide';
     disabled?: boolean;
+    textDisabled?: boolean;
     cueIndex?: number;
     showNavigation?: boolean;
     onSelectCue?: (cueId: string) => void;
     onPreviousCue?: () => void;
     onNextCue?: () => void;
-    onTextChange: (cueId: string, value: string) => void;
+    onTextCommit: (cueId: string, value: string) => void;
   }
 
   let {
@@ -32,21 +73,44 @@
     selected = false,
     mode,
     disabled = false,
+    textDisabled = false,
     cueIndex,
     showNavigation = false,
     onSelectCue,
     onPreviousCue,
     onNextCue,
-    onTextChange,
+    onTextCommit,
   }: SubtitleOcrCueCardProps = $props();
+
+  let textValue = $state('');
+  let textCueId = $state<string | null>(null);
+  let textFocused = $state(false);
 
   const textAreaId = `${useId()}-subtitle-ocr-cue-text`;
   const BITMAP_URL_PATH = /^(?:[a-z][a-z\d+\-.]*:|\/\/)/i;
   const canSelectCue = $derived(Boolean(cue && onSelectCue && !disabled));
+  const canUsePreviousCue = $derived(canNavigateSubtitleOcrCue({
+    disabled,
+    hasHandler: Boolean(onPreviousCue),
+  }));
+  const canUseNextCue = $derived(canNavigateSubtitleOcrCue({
+    disabled,
+    hasHandler: Boolean(onNextCue),
+  }));
+  const canEditCueText = $derived(canEditSubtitleOcrCueText({ disabled, textDisabled }));
   const bitmapImagePath = $derived(bitmap?.previewPath);
   const confidencePercent = $derived(
     cue ? Math.max(0, Math.min(100, Math.round(cue.confidence * 100))) : 0,
   );
+
+  $effect(() => {
+    const nextCueId = cue?.id ?? null;
+    const nextText = cue?.text ?? '';
+    if (nextCueId !== textCueId || !textFocused) {
+      textCueId = nextCueId;
+      textValue = nextText;
+    }
+  });
 
   function resolveBitmapSrc(bitmapPath: string): string {
     return BITMAP_URL_PATH.test(bitmapPath) ? bitmapPath : convertFileSrc(bitmapPath);
@@ -67,12 +131,39 @@
     ].join(':') + `.${milliseconds.toString().padStart(3, '0')}`;
   }
 
+  function handleTextFocus(): void {
+    textFocused = true;
+    handleSelect();
+  }
+
   function handleTextInput(event: Event): void {
+    if (!canEditCueText) {
+      return;
+    }
+
     if (!cue || !(event.currentTarget instanceof HTMLTextAreaElement)) {
       return;
     }
 
-    onTextChange(cue.id, event.currentTarget.value);
+    textValue = event.currentTarget.value;
+  }
+
+  function handleTextBlur(): void {
+    textFocused = false;
+    if (!cue) {
+      return;
+    }
+
+    if (!shouldCommitSubtitleOcrCueText({
+      disabled,
+      textDisabled,
+      currentText: cue.text,
+      nextText: textValue,
+    })) {
+      return;
+    }
+
+    onTextCommit(cue.id, textValue);
   }
 
   function handleSelect(): void {
@@ -131,7 +222,7 @@
         class="absolute left-3 z-10 rounded-full bg-background/90"
         aria-label="Previous subtitle cue"
         onclick={onPreviousCue}
-        disabled={disabled || !onPreviousCue}
+        disabled={!canUsePreviousCue}
       >
         <ChevronLeft class="size-5" aria-hidden="true" />
       </Button>
@@ -145,7 +236,7 @@
         class="absolute right-3 z-10 rounded-full bg-background/90"
         aria-label="Next subtitle cue"
         onclick={onNextCue}
-        disabled={disabled || !onNextCue}
+        disabled={!canUseNextCue}
       >
         <ChevronRight class="size-5" aria-hidden="true" />
       </Button>
@@ -183,22 +274,18 @@
       <Field.FieldLabel for={textAreaId}>Recognized text</Field.FieldLabel>
       <Textarea
         id={textAreaId}
-        value={cue.text}
-        disabled={disabled}
+        value={textValue}
+        disabled={!canEditCueText}
         class={cn(
           'min-h-28 overflow-auto font-mono text-sm leading-relaxed',
           mode === 'compact' && 'min-h-36',
           mode === 'wide' && 'min-h-0 flex-1 resize-none',
         )}
         aria-label="Recognized subtitle text"
-        onfocus={handleSelect}
+        onfocus={handleTextFocus}
         oninput={handleTextInput}
+        onblur={handleTextBlur}
       />
-      {#if mode === 'compact'}
-        <Field.FieldDescription>
-          Edits are kept in the current subtitle OCR draft.
-        </Field.FieldDescription>
-      {/if}
     </Field.Field>
   {:else}
     <Item.Root variant="outline">

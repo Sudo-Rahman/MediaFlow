@@ -13,6 +13,7 @@ struct TextBox {
 #[derive(Debug)]
 struct TextLine {
     y: f64,
+    center_y: f64,
     max_height: f64,
     boxes: Vec<TextBox>,
 }
@@ -35,17 +36,24 @@ pub(crate) fn reconstruct_text_from_boxes(boxes: &[SubtitleOcrBox]) -> String {
 
     let mut lines: Vec<TextLine> = Vec::new();
     for text_box in text_boxes {
-        if let Some(line) = lines
-            .last_mut()
-            .filter(|line| is_same_line(line.y, line.max_height, text_box.y, text_box.height))
-        {
+        let text_box_center_y = box_center_y(text_box.y, text_box.height);
+        if let Some(line) = lines.last_mut().filter(|line| {
+            is_same_line(
+                line.center_y,
+                line.max_height,
+                text_box_center_y,
+                text_box.height,
+            )
+        }) {
             let box_count = line.boxes.len() as f64;
             line.y = ((line.y * box_count) + text_box.y) / (box_count + 1.0);
+            line.center_y = ((line.center_y * box_count) + text_box_center_y) / (box_count + 1.0);
             line.max_height = line.max_height.max(text_box.height);
             line.boxes.push(text_box);
         } else {
             lines.push(TextLine {
                 y: text_box.y,
+                center_y: text_box_center_y,
                 max_height: text_box.height,
                 boxes: vec![text_box],
             });
@@ -123,11 +131,19 @@ fn collapse_whitespace(text: &str) -> String {
     output.trim().to_string()
 }
 
-fn is_same_line(line_y: f64, line_height: f64, box_y: f64, box_height: f64) -> bool {
-    let height = line_height.max(box_height);
-    let threshold = if height > 0.0 { height * 0.7 } else { 0.01 };
+fn box_center_y(y: f64, height: f64) -> f64 {
+    y + (height / 2.0)
+}
 
-    (line_y - box_y).abs() <= threshold
+fn is_same_line(line_center_y: f64, line_height: f64, box_center_y: f64, box_height: f64) -> bool {
+    let height = line_height.max(box_height);
+    let threshold = if height > 0.0 {
+        (height * 0.45).max(8.0)
+    } else {
+        0.01
+    };
+
+    (line_center_y - box_center_y).abs() <= threshold
 }
 
 fn starts_with_dialogue_dash(text: &str) -> bool {
@@ -173,6 +189,35 @@ mod tests {
         let text = reconstruct_text_from_boxes(&boxes);
 
         assert_eq!(text, "- Stop.\n- I cannot.");
+    }
+
+    #[test]
+    fn reconstruct_text_keeps_close_subtitle_lines_separate() {
+        let boxes = vec![
+            SubtitleOcrBox {
+                text: "Of course, I'd expect nothing less".to_string(),
+                confidence: 0.9,
+                x: 159.0,
+                y: 343.0,
+                width: 401.0,
+                height: 45.0,
+            },
+            SubtitleOcrBox {
+                text: "from the master of the Kimeragi Clan.".to_string(),
+                confidence: 0.9,
+                x: 135.0,
+                y: 374.0,
+                width: 445.0,
+                height: 49.0,
+            },
+        ];
+
+        let text = reconstruct_text_from_boxes(&boxes);
+
+        assert_eq!(
+            text,
+            "Of course, I'd expect nothing less\nfrom the master of the Kimeragi Clan."
+        );
     }
 
     #[test]

@@ -330,8 +330,16 @@ fn ocr_decoded_bitmap(
         "Decoded Subtitle OCR bitmap dimensions did not match RGBA data".to_string()
     })?;
     let image = DynamicImage::ImageRgba8(image);
+    recognize_subtitle_ocr_image(engine, &metadata, &image)
+}
+
+fn recognize_subtitle_ocr_image(
+    engine: &ocr_rs::OcrEngine,
+    metadata: &crate::tools::subtitle_ocr::SubtitleOcrDecodedCue,
+    image: &DynamicImage,
+) -> Result<SubtitleOcrRawCue, String> {
     let ocr_results = engine
-        .recognize(&image)
+        .recognize(image)
         .map_err(|e| format!("Subtitle OCR recognition failed: {}", e))?;
     let boxes = ocr_results
         .iter()
@@ -348,10 +356,10 @@ fn ocr_decoded_bitmap(
     let confidence = average_confidence(&boxes);
 
     Ok(SubtitleOcrRawCue {
-        cue_id: metadata.cue_id,
+        cue_id: metadata.cue_id.clone(),
         start_time_ms: metadata.start_time_ms,
         end_time_ms: metadata.end_time_ms,
-        cache_key: metadata.cache_key,
+        cache_key: metadata.cache_key.clone(),
         boxes,
         text,
         confidence,
@@ -368,6 +376,8 @@ fn average_confidence(boxes: &[SubtitleOcrBox]) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::path::{Path, PathBuf};
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -375,12 +385,21 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    use image::{DynamicImage, Rgba, RgbaImage};
+
     use super::{
         BackgroundBitmapCountTask, build_final_subtitle_ocr_cues,
-        empty_subtitle_ocr_pipeline_result, initial_bitmap_total, should_start_background_count,
+        empty_subtitle_ocr_pipeline_result, initial_bitmap_total, ocr_decoded_bitmap,
+        should_start_background_count,
+    };
+    use crate::tools::ocr::{create_ocr_engine, resolve_ocr_engine_threads};
+    use crate::tools::subtitle_ocr::decode::{
+        BitmapSubtitleSource, decode_bitmap_subtitle_source_with_handler_and_stop,
     };
     use crate::tools::subtitle_ocr::progress::ProgressTotal;
-    use crate::tools::subtitle_ocr::{SubtitleOcrCue, SubtitleOcrRawCue};
+    use crate::tools::subtitle_ocr::{
+        SubtitleOcrBox, SubtitleOcrCue, SubtitleOcrPipelineResult, SubtitleOcrRawCue,
+    };
 
     #[test]
     fn empty_subtitle_ocr_pipeline_result_has_no_artifacts_or_cues() {
@@ -459,6 +478,315 @@ mod tests {
             text: text.to_string(),
             confidence: 0.8,
         }
+    }
+
+    #[test]
+    #[ignore]
+    fn diagnose_required_vobsub_pipeline() {
+        let Ok(idx_path) =
+            std::env::var("MEDIAFLOW_SUBTITLE_OCR_DIAGNOSTIC_IDX").map(PathBuf::from)
+        else {
+            eprintln!("Set MEDIAFLOW_SUBTITLE_OCR_DIAGNOSTIC_IDX to run this diagnostic");
+            return;
+        };
+        let Ok(sub_path) =
+            std::env::var("MEDIAFLOW_SUBTITLE_OCR_DIAGNOSTIC_SUB").map(PathBuf::from)
+        else {
+            eprintln!("Set MEDIAFLOW_SUBTITLE_OCR_DIAGNOSTIC_SUB to run this diagnostic");
+            return;
+        };
+        let models_dir = std::env::var("MEDIAFLOW_SUBTITLE_OCR_DIAGNOSTIC_MODELS")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("ocr-models"));
+        let output_dir = std::env::var("MEDIAFLOW_SUBTITLE_OCR_DIAGNOSTIC_OUT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                PathBuf::from("target")
+                    .join("subtitle-ocr-diagnostics")
+                    .join("env-vobsub-current")
+            });
+        let limit = std::env::var("MEDIAFLOW_SUBTITLE_OCR_DIAGNOSTIC_LIMIT")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0);
+        let language = std::env::var("MEDIAFLOW_SUBTITLE_OCR_DIAGNOSTIC_LANGUAGE")
+            .unwrap_or_else(|_| "multi".to_string());
+        let use_gpu = std::env::var("MEDIAFLOW_SUBTITLE_OCR_DIAGNOSTIC_GPU")
+            .map(|value| value != "0")
+            .unwrap_or(true);
+
+        std::fs::create_dir_all(output_dir.join("decoded"))
+            .expect("failed to create decoded output directory");
+        std::fs::create_dir_all(output_dir.join("ocr-input"))
+            .expect("failed to create ocr input output directory");
+        std::fs::create_dir_all(output_dir.join("overlays"))
+            .expect("failed to create overlay output directory");
+        std::fs::create_dir_all(output_dir.join("line-overlays"))
+            .expect("failed to create line overlay output directory");
+
+        let source = BitmapSubtitleSource::VobSub { idx_path, sub_path };
+        let engine_threads = resolve_ocr_engine_threads(1);
+        let engine = create_ocr_engine(&models_dir, &language, use_gpu, engine_threads, true)
+            .expect("failed to create OCR engine");
+        let mut decoded_cues = Vec::new();
+        let mut raw_ocr_cues = Vec::new();
+        let mut final_candidates = Vec::new();
+        let decoded_count = Cell::new(0usize);
+
+        let decode_result = decode_bitmap_subtitle_source_with_handler_and_stop(
+            &source,
+            "diagnostic-vobsub",
+            "diagnostic-run",
+            |decoded| {
+                decoded_count.set(decoded_count.get().saturating_add(1));
+                let sequence = decoded_count.get();
+                let decoded_path = output_dir
+                    .join("decoded")
+                    .join(format!("{sequence:04}-decoded.png"));
+                let ocr_input_path = output_dir
+                    .join("ocr-input")
+                    .join(format!("{sequence:04}-ocr-input.png"));
+                write_rgba_png(
+                    &decoded_path,
+                    decoded.metadata.width,
+                    decoded.metadata.height,
+                    &decoded.rgba,
+                );
+                let decoded_image = RgbaImage::from_raw(
+                    decoded.metadata.width,
+                    decoded.metadata.height,
+                    decoded.rgba.clone(),
+                )
+                .map(DynamicImage::ImageRgba8)
+                .expect("decoded RGBA dimensions should match data");
+                decoded_image
+                    .save(&ocr_input_path)
+                    .expect("failed to write diagnostic OCR input PNG");
+
+                let metadata = decoded.metadata.clone();
+                let raw_cue = ocr_decoded_bitmap(&engine, decoded)
+                    .expect("failed to OCR decoded VobSub bitmap");
+                write_detection_overlay(
+                    &output_dir
+                        .join("overlays")
+                        .join(format!("{sequence:04}-boxes.png")),
+                    &ocr_input_path,
+                    &raw_cue.boxes,
+                    Rgba([255, 0, 0, 255]),
+                );
+                write_line_overlay(
+                    &output_dir
+                        .join("line-overlays")
+                        .join(format!("{sequence:04}-lines.png")),
+                    &ocr_input_path,
+                    &raw_cue.boxes,
+                );
+
+                if !raw_cue.text.trim().is_empty() {
+                    final_candidates.push(SubtitleOcrCue {
+                        id: raw_cue.cue_id.clone(),
+                        source_cue_ids: vec![raw_cue.cue_id.clone()],
+                        start_time_ms: raw_cue.start_time_ms,
+                        end_time_ms: raw_cue.end_time_ms,
+                        text: raw_cue.text.clone(),
+                        confidence: raw_cue.confidence,
+                    });
+                }
+
+                decoded_cues.push(metadata);
+                raw_ocr_cues.push(raw_cue);
+                Ok(())
+            },
+            || limit > 0 && decoded_count.get() >= limit,
+        );
+        if limit > 0 {
+            let error = decode_result.expect_err("diagnostic decode limit should stop the stream");
+            assert!(
+                error.contains("stopped"),
+                "unexpected diagnostic decode error: {error}"
+            );
+        } else {
+            decode_result.expect("failed to decode and OCR VobSub diagnostic source");
+        }
+
+        let stabilized_cues =
+            crate::tools::subtitle_ocr::stabilize::stabilize_cues(&final_candidates);
+        let final_cues = build_final_subtitle_ocr_cues(&raw_ocr_cues, stabilized_cues.clone());
+        let result = SubtitleOcrPipelineResult {
+            decoded_cues,
+            raw_ocr_cues,
+            stabilized_cues,
+            final_cues,
+        };
+
+        std::fs::write(
+            output_dir.join("pipeline-result.json"),
+            serde_json::to_string_pretty(&result).expect("failed to serialize diagnostic result"),
+        )
+        .expect("failed to write diagnostic JSON");
+        std::fs::write(
+            output_dir.join("final.srt"),
+            format_diagnostic_srt(&result.final_cues),
+        )
+        .expect("failed to write diagnostic SRT");
+
+        println!(
+            "SUBTITLE_OCR_DIAGNOSTIC output={} decoded={} raw={} final={}",
+            output_dir.display(),
+            result.decoded_cues.len(),
+            result.raw_ocr_cues.len(),
+            result.final_cues.len()
+        );
+    }
+
+    fn write_rgba_png(path: &Path, width: u32, height: u32, rgba: &[u8]) {
+        let image = RgbaImage::from_raw(width, height, rgba.to_vec())
+            .expect("decoded RGBA dimensions should match data");
+        image.save(path).expect("failed to write RGBA PNG");
+    }
+
+    fn write_detection_overlay(
+        output_path: &Path,
+        source_path: &Path,
+        boxes: &[SubtitleOcrBox],
+        color: Rgba<u8>,
+    ) {
+        let mut image = image::open(source_path)
+            .expect("failed to open source image for overlay")
+            .to_rgba8();
+        for ocr_box in boxes {
+            draw_rect(&mut image, ocr_box, color);
+        }
+        image
+            .save(output_path)
+            .expect("failed to write detection overlay");
+    }
+
+    fn write_line_overlay(output_path: &Path, source_path: &Path, boxes: &[SubtitleOcrBox]) {
+        let mut image = image::open(source_path)
+            .expect("failed to open source image for line overlay")
+            .to_rgba8();
+        for (line_index, line) in diagnostic_lines(boxes).iter().enumerate() {
+            let color = if line_index % 2 == 0 {
+                Rgba([0, 192, 255, 255])
+            } else {
+                Rgba([255, 160, 0, 255])
+            };
+            draw_rect(&mut image, line, color);
+        }
+        image
+            .save(output_path)
+            .expect("failed to write line overlay");
+    }
+
+    fn diagnostic_lines(boxes: &[SubtitleOcrBox]) -> Vec<SubtitleOcrBox> {
+        let mut boxes = boxes
+            .iter()
+            .filter(|ocr_box| !ocr_box.text.trim().is_empty())
+            .cloned()
+            .collect::<Vec<_>>();
+        boxes.sort_by(|a, b| a.y.total_cmp(&b.y).then_with(|| a.x.total_cmp(&b.x)));
+
+        let mut lines: Vec<SubtitleOcrBox> = Vec::new();
+        for ocr_box in boxes {
+            let ocr_box_center_y = diagnostic_box_center_y(&ocr_box);
+            if let Some(line) = lines.last_mut().filter(|line| {
+                diagnostic_is_same_line(
+                    diagnostic_box_center_y(line),
+                    line.height,
+                    ocr_box_center_y,
+                    ocr_box.height,
+                )
+            }) {
+                let right = (line.x + line.width).max(ocr_box.x + ocr_box.width);
+                let bottom = (line.y + line.height).max(ocr_box.y + ocr_box.height);
+                line.x = line.x.min(ocr_box.x);
+                line.y = line.y.min(ocr_box.y);
+                line.width = (right - line.x).max(1.0);
+                line.height = (bottom - line.y).max(1.0);
+                line.text = format!("{} {}", line.text, ocr_box.text);
+            } else {
+                lines.push(ocr_box);
+            }
+        }
+
+        lines
+    }
+
+    fn diagnostic_box_center_y(ocr_box: &SubtitleOcrBox) -> f64 {
+        ocr_box.y + (ocr_box.height / 2.0)
+    }
+
+    fn diagnostic_is_same_line(
+        line_center_y: f64,
+        line_height: f64,
+        box_center_y: f64,
+        box_height: f64,
+    ) -> bool {
+        let height = line_height.max(box_height);
+        let threshold = if height > 0.0 {
+            (height * 0.45).max(8.0)
+        } else {
+            0.01
+        };
+
+        (line_center_y - box_center_y).abs() <= threshold
+    }
+
+    fn draw_rect(image: &mut RgbaImage, rect: &SubtitleOcrBox, color: Rgba<u8>) {
+        if image.width() == 0 || image.height() == 0 {
+            return;
+        }
+
+        let left = rect.x.max(0.0).floor() as u32;
+        let top = rect.y.max(0.0).floor() as u32;
+        let right = (rect.x + rect.width)
+            .max(0.0)
+            .ceil()
+            .min(f64::from(image.width().saturating_sub(1))) as u32;
+        let bottom = (rect.y + rect.height)
+            .max(0.0)
+            .ceil()
+            .min(f64::from(image.height().saturating_sub(1))) as u32;
+
+        if right < left || bottom < top {
+            return;
+        }
+
+        for x in left..=right {
+            image.put_pixel(x, top, color);
+            image.put_pixel(x, bottom, color);
+        }
+        for y in top..=bottom {
+            image.put_pixel(left, y, color);
+            image.put_pixel(right, y, color);
+        }
+    }
+
+    fn format_diagnostic_srt(cues: &[SubtitleOcrCue]) -> String {
+        cues.iter()
+            .filter(|cue| !cue.text.trim().is_empty())
+            .enumerate()
+            .map(|(index, cue)| {
+                format!(
+                    "{}\n{} --> {}\n{}\n",
+                    index + 1,
+                    format_diagnostic_srt_time(cue.start_time_ms),
+                    format_diagnostic_srt_time(cue.end_time_ms),
+                    cue.text
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn format_diagnostic_srt_time(ms: u64) -> String {
+        let hours = ms / 3_600_000;
+        let minutes = (ms % 3_600_000) / 60_000;
+        let seconds = (ms % 60_000) / 1_000;
+        let millis = ms % 1_000;
+
+        format!("{hours:02}:{minutes:02}:{seconds:02},{millis:03}")
     }
 
     #[test]

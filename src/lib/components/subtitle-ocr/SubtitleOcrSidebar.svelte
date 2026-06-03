@@ -8,6 +8,7 @@
     ScanText,
     Trash2,
     Upload,
+    X,
   } from '@lucide/svelte';
 
   import type { SubtitleOcrSourceItem, SubtitleOcrStatus } from '$lib/types';
@@ -21,6 +22,7 @@
   import {
     FILE_ITEM_CARD_ACTION_BUTTON_CLASS,
     FILE_ITEM_CARD_ACTION_ICON_CLASS,
+    FILE_ITEM_CARD_CANCEL_ACTION_CLASS,
     FILE_ITEM_CARD_META_CLASS,
     FILE_ITEM_CARD_PRIMARY_ACTION_CLASS,
     FILE_ITEM_CARD_REMOVE_ACTION_CLASS,
@@ -28,15 +30,19 @@
     FILE_ITEM_CARD_STATUS_ICON_CLASS,
   } from '$lib/utils/file-item-card-visuals';
 
+  import { shouldShowSubtitleOcrItemCancelAction } from './subtitle-ocr-sidebar-state';
+
   interface SubtitleOcrSidebarProps {
     items: SubtitleOcrSourceItem[];
     selectedItemId: string | null;
     isProcessing: boolean;
+    processingScopeItemIds: ReadonlySet<string>;
     restoringPreviewItemIds?: ReadonlySet<string>;
     onImport: () => void | Promise<void>;
     onSelectItem: (itemId: string) => void;
     onOpenVersions: (itemId: string) => void;
     onRetry: (itemId: string) => void;
+    onCancelItem: (itemId: string) => void | Promise<void>;
     onRemove: (itemId: string) => void;
     onClearAll: () => void;
   }
@@ -45,11 +51,13 @@
     items,
     selectedItemId,
     isProcessing,
+    processingScopeItemIds,
     restoringPreviewItemIds = new Set<string>(),
     onImport,
     onSelectItem,
     onOpenVersions,
     onRetry,
+    onCancelItem,
     onRemove,
     onClearAll,
   }: SubtitleOcrSidebarProps = $props();
@@ -161,7 +169,7 @@
       {/if}
       <Button size="sm" onclick={() => void onImport()} disabled={isProcessing}>
         <Upload class="size-4" />
-        Import
+        Add
       </Button>
     </div>
   </div>
@@ -182,6 +190,11 @@
           {@const processing = isItemProcessing(item.status)}
           {@const versionCount = item.versions.length}
           {@const hasActiveVersion = hasActiveSubtitleOcrVersion(item)}
+          {@const showCancelAction = shouldShowSubtitleOcrItemCancelAction(
+            item.status,
+            isProcessing,
+            processingScopeItemIds.has(item.id),
+          )}
           <FileItemCard
             title={item.displayName}
             selected={isSelected}
@@ -274,20 +287,36 @@
                   </Button>
                 {/if}
 
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_REMOVE_ACTION_CLASS}`}
-                  onclick={(event: MouseEvent) => {
-                    event.stopPropagation();
-                    onRemove(item.id);
-                  }}
-                  disabled={isProcessing}
-                  title="Remove"
-                  aria-label={`Remove ${item.displayName}`}
-                >
-                  <Trash2 class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
-                </Button>
+                {#if showCancelAction}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_CANCEL_ACTION_CLASS}`}
+                    onclick={(event: MouseEvent) => {
+                      event.stopPropagation();
+                      void onCancelItem(item.id);
+                    }}
+                    title="Cancel"
+                    aria-label={`Cancel ${item.displayName}`}
+                  >
+                    <X class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
+                  </Button>
+                {:else}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    class={`${FILE_ITEM_CARD_ACTION_BUTTON_CLASS} ${FILE_ITEM_CARD_REMOVE_ACTION_CLASS}`}
+                    onclick={(event: MouseEvent) => {
+                      event.stopPropagation();
+                      onRemove(item.id);
+                    }}
+                    disabled={isProcessing}
+                    title="Remove"
+                    aria-label={`Remove ${item.displayName}`}
+                  >
+                    <Trash2 class={FILE_ITEM_CARD_ACTION_ICON_CLASS} />
+                  </Button>
+                {/if}
               </div>
             {/snippet}
           </FileItemCard>

@@ -58,6 +58,7 @@ let config = $state<SubtitleOcrConfig>({ ...DEFAULT_SUBTITLE_OCR_CONFIG });
 let isProcessing = $state(false);
 let isCancelling = $state(false);
 let processingScopeItemIds = $state<Set<string>>(new Set());
+let cancelledItemIds = $state<Set<string>>(new Set());
 let logs = $state<SubtitleOcrLogEntry[]>([]);
 
 function hasOwn(value: object, key: PropertyKey): boolean {
@@ -427,6 +428,10 @@ export const subtitleOcrStore = {
     return new Set(processingScopeItemIds);
   },
 
+  get cancelledItemIds() {
+    return new Set(cancelledItemIds);
+  },
+
   get logs(): SubtitleOcrLogEntry[] {
     return logs.map((entry) => ({ ...entry, timestamp: new Date(entry.timestamp) }));
   },
@@ -438,6 +443,7 @@ export const subtitleOcrStore = {
     isProcessing = false;
     isCancelling = false;
     processingScopeItemIds = new Set();
+    cancelledItemIds = new Set();
     logs = [];
   },
 
@@ -484,6 +490,8 @@ export const subtitleOcrStore = {
     }
 
     items = items.filter((item) => item.id !== itemId);
+    processingScopeItemIds = new Set([...processingScopeItemIds].filter((id) => id !== itemId));
+    cancelledItemIds = new Set([...cancelledItemIds].filter((id) => id !== itemId));
     if (selectedItemId === itemId) {
       selectedItemId = items[removedIndex]?.id ?? items[removedIndex - 1]?.id ?? null;
     }
@@ -492,6 +500,8 @@ export const subtitleOcrStore = {
   clearItems() {
     items = [];
     selectedItemId = null;
+    processingScopeItemIds = new Set();
+    cancelledItemIds = new Set();
   },
 
   setItemStatus(itemId: string, status: SubtitleOcrStatus, error?: string) {
@@ -508,6 +518,10 @@ export const subtitleOcrStore = {
   },
 
   setProgress(itemId: string, progress: SubtitleOcrProgress | undefined) {
+    if (cancelledItemIds.has(itemId)) {
+      return;
+    }
+
     items = items.map((item) => (item.id === itemId ? applyItemUpdates(item, { progress }) : item));
   },
 
@@ -724,6 +738,10 @@ export const subtitleOcrStore = {
     runId: string,
     liveCue: Omit<SubtitleOcrLiveCueEvent, 'itemId' | 'runId'>,
   ) {
+    if (cancelledItemIds.has(itemId)) {
+      return;
+    }
+
     items = items.map((item) => {
       if (item.id !== itemId || item.processingDraft?.runId !== runId) {
         return item;
@@ -800,6 +818,7 @@ export const subtitleOcrStore = {
     isProcessing = true;
     isCancelling = false;
     processingScopeItemIds = new Set(itemIds);
+    cancelledItemIds = new Set();
     this.addLog(
       'info',
       itemIds.length === 1
@@ -812,10 +831,48 @@ export const subtitleOcrStore = {
     isProcessing = false;
     isCancelling = false;
     processingScopeItemIds = new Set();
+    cancelledItemIds = new Set();
   },
 
   setCancelling(value: boolean) {
     isCancelling = value;
+  },
+
+  isItemCancelled(itemId: string): boolean {
+    return cancelledItemIds.has(itemId);
+  },
+
+  cancelProcessing(itemId: string) {
+    cancelledItemIds = new Set([...cancelledItemIds, itemId]);
+    processingScopeItemIds = new Set([...processingScopeItemIds].filter((id) => id !== itemId));
+
+    items = items.map((item) => {
+      if (item.id !== itemId) {
+        return item;
+      }
+
+      const activeVersionId = normalizeActiveVersionId(item.versions, item.activeVersionId);
+      const status: SubtitleOcrStatus = item.versions.length > 0 ? 'completed' : 'ready';
+
+      return applyItemUpdates(item, {
+        status,
+        activeVersionId,
+        reviewTargetId: activeVersionId,
+        processingDraft: undefined,
+        progress: undefined,
+        error: undefined,
+      });
+    });
+
+    this.addLog('warning', 'Processing cancelled by user', itemId);
+  },
+
+  finishProcessingItem(itemId: string) {
+    if (!processingScopeItemIds.has(itemId)) {
+      return;
+    }
+
+    processingScopeItemIds = new Set([...processingScopeItemIds].filter((id) => id !== itemId));
   },
 
   addLog(level: SubtitleOcrLogEntry['level'], message: string, itemId?: string): void {

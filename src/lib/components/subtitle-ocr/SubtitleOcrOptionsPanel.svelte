@@ -4,9 +4,19 @@
     label: string;
   }
 
+  export type SubtitleOcrCancelActionKind = 'ocr' | 'restore';
+
   export function getSubtitleOcrCancelActionState(
     isCancelling: boolean,
+    kind: SubtitleOcrCancelActionKind = 'ocr',
   ): SubtitleOcrCancelActionState {
+    if (kind === 'restore') {
+      return {
+        disabled: isCancelling,
+        label: isCancelling ? 'Cancelling restore...' : 'Cancel Restore',
+      };
+    }
+
     return {
       disabled: isCancelling,
       label: isCancelling ? 'Cancelling...' : 'Cancel Subtitle OCR',
@@ -33,6 +43,7 @@
     canRetryAll: boolean;
     isProcessing: boolean;
     isCancelling?: boolean;
+    cancelActionKind?: SubtitleOcrCancelActionKind;
     readyCount: number;
     retryCount: number;
     actionHint: string;
@@ -50,6 +61,7 @@
     canRetryAll,
     isProcessing,
     isCancelling = false,
+    cancelActionKind = 'ocr',
     readyCount,
     retryCount,
     actionHint,
@@ -79,7 +91,7 @@
   const primaryLabel = $derived(
     primaryIsRetry ? `Retry OCR (${retryCount})` : `Start OCR (${readyCount})`,
   );
-  const cancelActionState = $derived(getSubtitleOcrCancelActionState(isCancelling));
+  const cancelActionState = $derived(getSubtitleOcrCancelActionState(isCancelling, cancelActionKind));
 
   function handlePrimaryAction(): void {
     if (primaryIsRetry) {

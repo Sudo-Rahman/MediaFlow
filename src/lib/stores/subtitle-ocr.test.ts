@@ -473,6 +473,58 @@ describe('subtitleOcrStore', () => {
     expect([...subtitleOcrStore.processingScopeItemIds]).toEqual(['a', 'b']);
   });
 
+  it('cancels one processing item without marking the whole batch as cancelling', () => {
+    subtitleOcrStore.addItems([source('a'), source('b')]);
+    subtitleOcrStore.startProcessing(['a', 'b']);
+    subtitleOcrStore.setItemStatus('a', 'ocr_processing');
+
+    subtitleOcrStore.cancelProcessing('a');
+
+    expect(subtitleOcrStore.isItemCancelled('a')).toBe(true);
+    expect(subtitleOcrStore.isCancelling).toBe(false);
+    expect([...subtitleOcrStore.processingScopeItemIds]).toEqual(['b']);
+    expect(subtitleOcrStore.items.find((item) => item.id === 'a')?.status).toBe('ready');
+  });
+
+  it('restores a cancelled versioned item to completed status', () => {
+    subtitleOcrStore.addItems([source('a'), source('b')]);
+    subtitleOcrStore.addVersion('a', version('v1', 'before'));
+    subtitleOcrStore.startProcessing(['a', 'b']);
+    subtitleOcrStore.setItemStatus('a', 'ai_cleaning');
+
+    subtitleOcrStore.cancelProcessing('a');
+
+    const item = subtitleOcrStore.items.find((entry) => entry.id === 'a');
+    expect(item?.status).toBe('completed');
+    expect(item?.progress).toBeUndefined();
+    expect(item?.activeVersionId).toBe('v1');
+    expect([...subtitleOcrStore.processingScopeItemIds]).toEqual(['b']);
+  });
+
+  it('ignores stale progress after an item is cancelled', () => {
+    subtitleOcrStore.addItems([source('a')]);
+    subtitleOcrStore.startProcessing(['a']);
+    subtitleOcrStore.setItemStatus('a', 'ocr_processing');
+    subtitleOcrStore.setProgress('a', {
+      phase: 'ocr',
+      current: 10,
+      total: 100,
+      percentage: 10,
+    });
+
+    subtitleOcrStore.cancelProcessing('a');
+    subtitleOcrStore.setProgress('a', {
+      phase: 'ocr',
+      current: 80,
+      total: 100,
+      percentage: 80,
+    });
+
+    const item = subtitleOcrStore.items.find((entry) => entry.id === 'a');
+    expect(item?.status).toBe('ready');
+    expect(item?.progress).toBeUndefined();
+  });
+
   it('derives overall progress from streamed OCR bitmap progress', () => {
     subtitleOcrStore.addItems([source('a')]);
     subtitleOcrStore.setProgress('a', {

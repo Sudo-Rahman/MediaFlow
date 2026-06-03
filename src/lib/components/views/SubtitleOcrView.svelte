@@ -353,6 +353,10 @@
       return;
     }
 
+    if (subtitleOcrStore.isItemCancelled(payload.itemId)) {
+      return;
+    }
+
     if (!shouldApplySubtitleOcrProgressEvent(
       payload.itemId,
       payload.runId,
@@ -384,6 +388,10 @@
   }
 
   function handleSubtitleOcrRestoredBitmap(payload: SubtitleOcrRestoredBitmapEventPayload): void {
+    if (subtitleOcrStore.isItemCancelled(payload.itemId)) {
+      return;
+    }
+
     if (!shouldApplySubtitleOcrProgressEvent(
       payload.itemId,
       payload.runId,
@@ -414,6 +422,10 @@
   }
 
   function handleSubtitleOcrLiveCue(payload: SubtitleOcrLiveCueEvent): void {
+    if (subtitleOcrStore.isItemCancelled(payload.itemId)) {
+      return;
+    }
+
     if (!shouldApplySubtitleOcrProgressEvent(
       payload.itemId,
       payload.runId,
@@ -815,7 +827,7 @@
     try {
       setManualProgress(item.id, 'decoding');
       const sourcePath = await preparePipelineSource(item, runId);
-      if (cancelRequested) {
+      if (cancelRequested || subtitleOcrStore.isItemCancelled(item.id)) {
         throw new Error('Subtitle OCR operation cancelled');
       }
 
@@ -857,7 +869,7 @@
     } catch (error) {
       subtitleOcrStore.setItemStatus(item.id, 'completed');
       subtitleOcrStore.setProgress(item.id, undefined);
-      if (!isCancellationError(error) && !cancelRequested) {
+      if (!isCancellationError(error) && !cancelRequested && !subtitleOcrStore.isItemCancelled(item.id)) {
         logAndToast.warning({
           source: 'subtitle-ocr',
           title: 'Subtitle OCR previews were not restored',
@@ -894,6 +906,10 @@
       });
 
       if (result.cancelled || controller.signal.aborted) {
+        return { cues, applied: false, cancelled: true };
+      }
+
+      if (subtitleOcrStore.isItemCancelled(itemId)) {
         return { cues, applied: false, cancelled: true };
       }
 
@@ -999,7 +1015,7 @@
       );
 
       const sourcePath = await preparePipelineSource(item, runId);
-      if (cancelRequested) {
+      if (cancelRequested || subtitleOcrStore.isItemCancelled(item.id)) {
         throw new Error('Subtitle OCR operation cancelled');
       }
 
@@ -1019,7 +1035,7 @@
         `Decoded ${result.decodedCues.length} bitmap cues, OCR kept ${result.rawOcrCues.length} raw cues, stabilized ${result.stabilizedCues.length} cues`,
         item.id,
       );
-      if (cancelRequested) {
+      if (cancelRequested || subtitleOcrStore.isItemCancelled(item.id)) {
         throw new Error('Subtitle OCR operation cancelled');
       }
 
@@ -1028,7 +1044,7 @@
         ? await runAiCleanupForItem(item.id, ocrFinalCues, config)
         : { cues: ocrFinalCues, applied: false, cancelled: false };
 
-      if (cleanup.cancelled || cancelRequested) {
+      if (cleanup.cancelled || cancelRequested || subtitleOcrStore.isItemCancelled(item.id)) {
         throw new Error('Subtitle OCR operation cancelled');
       }
 
@@ -1065,7 +1081,7 @@
       subtitleOcrStore.clearProcessingDraft(item.id, runId);
       subtitleOcrStore.setProgress(item.id, undefined);
 
-      if (isCancellationError(error) || cancelRequested) {
+      if (isCancellationError(error) || cancelRequested || subtitleOcrStore.isItemCancelled(item.id)) {
         restoreCancelledItemStatus(item.id);
         return 'cancelled';
       }
@@ -1101,6 +1117,11 @@
           break;
         }
 
+        if (subtitleOcrStore.isItemCancelled(itemId)) {
+          recordProcessingResult(counts, 'cancelled');
+          continue;
+        }
+
         const item = getStoreItem(itemId);
         if (!item) {
           continue;
@@ -1112,7 +1133,10 @@
           versionNameByItemId.get(itemId),
         );
         recordProcessingResult(counts, result);
-        if (result === 'cancelled') {
+        if (!cancelRequested) {
+          subtitleOcrStore.finishProcessingItem(itemId);
+        }
+        if (result === 'cancelled' && cancelRequested) {
           break;
         }
       }
@@ -1184,6 +1208,41 @@
         invoke('cancel_subtitle_ocr_operation', { itemId, runId })
       )),
     );
+  }
+
+  async function handleCancelItem(itemId: string): Promise<void> {
+    if (!subtitleOcrStore.isProcessing || subtitleOcrStore.isItemCancelled(itemId)) {
+      return;
+    }
+
+    const item = getStoreItem(itemId);
+    if (!item) {
+      return;
+    }
+
+    const backendRunId = backendCancelableRunIdsByItemId.get(itemId);
+    if (backendRunId) {
+      try {
+        await invoke('cancel_subtitle_ocr_operation', { itemId, runId: backendRunId });
+      } catch (error) {
+        logAndToast.warning({
+          source: 'subtitle-ocr',
+          title: 'Subtitle OCR cancel request failed',
+          details: sanitizeProcessingMessage(error),
+          context: { filePath: item.sourcePath },
+          showAction: false,
+        });
+        return;
+      }
+
+      backendCancelableRunIdsByItemId.delete(itemId);
+    }
+
+    aiCleanupControllers.get(itemId)?.abort();
+    aiCleanupControllers.delete(itemId);
+    activeRunIdsByItemId.delete(itemId);
+    previewRestoreRunIdsByItemId.delete(itemId);
+    subtitleOcrStore.cancelProcessing(itemId);
   }
 
   function handleOpenRetryDialog(itemId: string): void {
@@ -1304,9 +1363,17 @@
           break;
         }
 
+        if (subtitleOcrStore.isItemCancelled(itemId)) {
+          recordProcessingResult(counts, 'cancelled');
+          continue;
+        }
+
         const result = await processAiCleanupRetryItem(itemId, undefined, config);
         recordProcessingResult(counts, result);
-        if (result === 'cancelled') {
+        if (!cancelRequested) {
+          subtitleOcrStore.finishProcessingItem(itemId);
+        }
+        if (result === 'cancelled' && cancelRequested) {
           break;
         }
       }
@@ -1331,7 +1398,7 @@
 
     try {
       const cleanup = await runAiCleanupForItem(itemId, activeVersion.finalCues, config);
-      if (cleanup.cancelled || cancelRequested) {
+      if (cleanup.cancelled || cancelRequested || subtitleOcrStore.isItemCancelled(itemId)) {
         restoreCancelledItemStatus(itemId);
         return 'cancelled';
       }
@@ -1360,6 +1427,11 @@
       subtitleOcrStore.addLog('success', `Created ${version.name} with AI cleanup`, itemId);
       return 'completed';
     } catch (error) {
+      if (isCancellationError(error) || cancelRequested || subtitleOcrStore.isItemCancelled(itemId)) {
+        restoreCancelledItemStatus(itemId);
+        return 'cancelled';
+      }
+
       const details = sanitizeProcessingMessage(error);
       subtitleOcrStore.setItemStatus(itemId, 'error', details);
       logAndToast.error({
@@ -1411,11 +1483,13 @@
     {items}
     selectedItemId={selectedItem?.id ?? null}
     isProcessing={subtitleOcrStore.isProcessing}
+    processingScopeItemIds={subtitleOcrStore.processingScopeItemIds}
     {restoringPreviewItemIds}
     onImport={handleImport}
     onSelectItem={handleSelectItem}
     onOpenVersions={handleOpenVersions}
     onRetry={handleOpenRetryDialog}
+    onCancelItem={handleCancelItem}
     onRemove={handleRemove}
     onClearAll={handleClearAll}
   />
@@ -1443,6 +1517,7 @@
       {canRetryAll}
       isProcessing={subtitleOcrStore.isProcessing}
       isCancelling={subtitleOcrStore.isCancelling}
+      cancelActionKind={restoringPreviewItemIds.size > 0 ? 'restore' : 'ocr'}
       readyCount={summary.readyCount}
       {retryCount}
       {actionHint}

@@ -97,6 +97,8 @@
     disabled,
     hasHandler: Boolean(onNextCue),
   }));
+  const PREVIEW_NAV_BUTTON_CLASS =
+    'absolute z-10 size-10 rounded-full border-transparent bg-zinc-50 text-zinc-900 shadow-[0_3px_14px_rgba(0,0,0,0.32)] hover:bg-white dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-white';
   const canEditCueText = $derived(canEditSubtitleOcrCueText({ disabled, textDisabled }));
   const bitmapImagePath = $derived(bitmap?.previewPath);
   const confidencePercent = $derived(
@@ -219,12 +221,12 @@
         type="button"
         variant="outline"
         size="icon"
-        class="absolute left-3 z-10 rounded-full bg-background/90"
+        class={cn('left-3', PREVIEW_NAV_BUTTON_CLASS)}
         aria-label="Previous subtitle cue"
         onclick={onPreviousCue}
         disabled={!canUsePreviousCue}
       >
-        <ChevronLeft class="size-5" aria-hidden="true" />
+        <ChevronLeft class="size-5" strokeWidth={2.25} aria-hidden="true" />
       </Button>
     {/if}
 
@@ -233,12 +235,12 @@
         type="button"
         variant="outline"
         size="icon"
-        class="absolute right-3 z-10 rounded-full bg-background/90"
+        class={cn('right-3', PREVIEW_NAV_BUTTON_CLASS)}
         aria-label="Next subtitle cue"
         onclick={onNextCue}
         disabled={!canUseNextCue}
       >
-        <ChevronRight class="size-5" aria-hidden="true" />
+        <ChevronRight class="size-5" strokeWidth={2.25} aria-hidden="true" />
       </Button>
     {/if}
   </div>

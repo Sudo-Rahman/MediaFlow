@@ -9,11 +9,6 @@ pub(super) const DEFAULT_OCR_MODELS_DIR: &str = "ocr-models";
 /// Model file names for PP-OCRv5
 pub(super) const OCR_DET_MODEL: &str = "PP-OCRv5_mobile_det.mnn";
 pub(super) const OCR_CHARSET: &str = "ppocr_keys_v5.txt";
-pub(super) const OCR_SERVER_REC_MODEL: &str = "PP-OCRv5_server_rec.mnn";
-
-fn is_server_recognition_model(language: &str) -> bool {
-    language == "multi_server_recognition"
-}
 
 fn get_det_model_for_language(_language: &str) -> &'static str {
     OCR_DET_MODEL
@@ -21,10 +16,6 @@ fn get_det_model_for_language(_language: &str) -> &'static str {
 
 /// Language to recognition model mapping
 fn get_rec_model_for_language(language: &str) -> &'static str {
-    if is_server_recognition_model(language) {
-        return OCR_SERVER_REC_MODEL;
-    }
-
     match language {
         "en" | "english" => "en_PP-OCRv5_mobile_rec_infer.mnn",
         "multi" | "chinese" | "japanese" => "PP-OCRv5_mobile_rec.mnn",
@@ -197,10 +188,6 @@ mod tests {
     #[test]
     fn language_model_mapping_returns_expected_model_file() {
         assert_eq!(
-            get_det_model_for_language("multi_server_recognition"),
-            "PP-OCRv5_mobile_det.mnn"
-        );
-        assert_eq!(
             get_det_model_for_language("multi"),
             "PP-OCRv5_mobile_det.mnn"
         );
@@ -216,20 +203,12 @@ mod tests {
             get_rec_model_for_language("unknown"),
             "PP-OCRv5_mobile_rec.mnn"
         );
-        assert_eq!(
-            get_rec_model_for_language("multi_server_recognition"),
-            "PP-OCRv5_server_rec.mnn"
-        );
     }
 
     #[test]
     fn language_charset_mapping_returns_expected_charset_file() {
         assert_eq!(get_charset_for_language("en"), "ppocr_keys_en.txt");
         assert_eq!(get_charset_for_language("latin"), "ppocr_keys_latin.txt");
-        assert_eq!(
-            get_charset_for_language("multi_server_recognition"),
-            "ppocr_keys_v5.txt"
-        );
         assert_eq!(get_charset_for_language("unknown"), "ppocr_keys_v5.txt");
     }
 
@@ -251,14 +230,6 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.contains("Detection model not found"));
-    }
-
-    #[test]
-    fn create_ocr_engine_initializes_server_recognition_model() {
-        let models_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ocr-models");
-
-        create_ocr_engine(&models_dir, "multi_server_recognition", false, 1, false)
-            .expect("server recognition OCR model should initialize");
     }
 
     #[test]

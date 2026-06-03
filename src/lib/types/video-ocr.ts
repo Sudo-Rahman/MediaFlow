@@ -278,7 +278,6 @@ export const DEFAULT_OCR_CONFIG: OcrConfig = {
 
 export type OcrLanguage =
   | 'multi' // Default: CN/EN/JP
-  | 'multi_server_recognition' // Mobile detector + server recognizer
   | 'en' // English
   | 'korean' // Korean
   | 'latin' // Latin-based languages
@@ -292,11 +291,6 @@ export type OcrLanguage =
 
 export const OCR_LANGUAGES: { value: OcrLanguage; label: string; description: string }[] = [
   { value: 'multi', label: 'Multi', description: 'Chinese, English, Japanese' },
-  {
-    value: 'multi_server_recognition',
-    label: 'Multi high accuracy',
-    description: 'Mobile detection with server recognition',
-  },
   { value: 'en', label: 'English', description: 'English only' },
   { value: 'korean', label: 'Korean', description: 'Korean, English' },
   { value: 'latin', label: 'Latin', description: 'French, German, Spanish, Italian, Portuguese, etc.' },

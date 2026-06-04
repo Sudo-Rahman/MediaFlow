@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
@@ -6,6 +6,8 @@ use crate::shared::store::resolve_ffprobe_path;
 use crate::shared::validation::validate_media_path;
 use crate::tools::ffprobe::probe::probe_file_with_ffprobe;
 use crate::tools::subtitle_ocr::SubtitleOcrTrackInfo;
+
+const VOBSUB_CONTAINER_EXTRACTION_UNSUPPORTED: &str = "Container VobSub extraction is not supported by the bundled FFmpeg path. Import the .idx/.sub pair directly.";
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +55,9 @@ pub(super) fn parse_tracks_from_probe_json(
         .iter()
         .filter_map(parse_track_from_stream)
         .collect::<Vec<_>>();
+    if tracks.is_empty() && streams.iter().any(stream_is_container_vobsub) {
+        return Err(VOBSUB_CONTAINER_EXTRACTION_UNSUPPORTED.to_string());
+    }
 
     Ok(tracks)
 }
@@ -96,6 +101,14 @@ fn tag_value(stream: &Value, key: &str) -> Option<String> {
         })
 }
 
+fn stream_is_container_vobsub(stream: &Value) -> bool {
+    stream.get("codec_type").and_then(Value::as_str) == Some("subtitle")
+        && stream
+            .get("codec_name")
+            .and_then(Value::as_str)
+            .is_some_and(|codec| codec.eq_ignore_ascii_case("dvd_subtitle"))
+}
+
 fn disposition_flag(stream: &Value, key: &str) -> bool {
     stream
         .get("disposition")
@@ -126,7 +139,7 @@ fn resolve_vobsub_pair(path: &str) -> Result<SubtitleOcrVobSubPairInfo, String> 
     match extension.as_str() {
         "idx" => {
             validate_existing_vobsub_part(path, "idx")?;
-            let sub_path = path.with_extension("sub");
+            let sub_path = sibling_with_extension(path, "sub");
             validate_existing_vobsub_sidecar(&sub_path, "sub")?;
             Ok(SubtitleOcrVobSubPairInfo {
                 idx_path: path.to_string_lossy().to_string(),
@@ -135,7 +148,7 @@ fn resolve_vobsub_pair(path: &str) -> Result<SubtitleOcrVobSubPairInfo, String> 
         }
         "sub" => {
             validate_existing_vobsub_part(path, "sub")?;
-            let idx_path = path.with_extension("idx");
+            let idx_path = sibling_with_extension(path, "idx");
             validate_existing_vobsub_sidecar(&idx_path, "idx")?;
             Ok(SubtitleOcrVobSubPairInfo {
                 idx_path: idx_path.to_string_lossy().to_string(),
@@ -184,6 +197,35 @@ fn lower_extension(path: &Path) -> Option<String> {
     path.extension()
         .and_then(|extension| extension.to_str())
         .map(|extension| extension.to_ascii_lowercase())
+}
+
+fn sibling_with_extension(path: &Path, extension: &str) -> PathBuf {
+    let direct = path.with_extension(extension);
+    find_sibling_with_extension(path, extension).unwrap_or(direct)
+}
+
+fn find_sibling_with_extension(path: &Path, extension: &str) -> Option<PathBuf> {
+    let parent = path.parent()?;
+    let stem = path.file_stem()?.to_string_lossy();
+
+    for entry in std::fs::read_dir(parent).ok()?.flatten() {
+        let candidate = entry.path();
+        let Some(candidate_stem) = candidate.file_stem() else {
+            continue;
+        };
+        let Some(candidate_extension) = candidate.extension() else {
+            continue;
+        };
+        let candidate_stem = candidate_stem.to_string_lossy();
+        let candidate_extension = candidate_extension.to_string_lossy();
+        if candidate_stem.eq_ignore_ascii_case(&stem)
+            && candidate_extension.eq_ignore_ascii_case(extension)
+        {
+            return Some(candidate);
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -243,6 +285,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_tracks_from_probe_json_reports_container_vobsub_as_unsupported() {
+        let json = r#"{
+            "streams": [
+                { "index": 0, "codec_type": "video", "codec_name": "h264" },
+                {
+                    "index": 3,
+                    "codec_type": "subtitle",
+                    "codec_name": "dvd_subtitle",
+                    "tags": { "language": "eng" }
+                }
+            ]
+        }"#;
+
+        let error = parse_tracks_from_probe_json(json)
+            .expect_err("container VobSub should get an actionable unsupported message");
+
+        assert!(error.contains("Container VobSub extraction is not supported"));
+    }
+
+    #[test]
     fn resolve_vobsub_pair_accepts_selected_sub_with_sibling_idx() {
         let dir = tempfile::tempdir().expect("failed to create tempdir");
         let idx = dir.path().join("Movie.idx");
@@ -267,6 +329,21 @@ mod tests {
 
         let pair = resolve_vobsub_pair(idx.to_string_lossy().as_ref())
             .expect("selected .idx should resolve sibling .sub");
+
+        assert_eq!(pair.idx_path, idx.to_string_lossy());
+        assert_eq!(pair.sub_path, sub.to_string_lossy());
+    }
+
+    #[test]
+    fn resolve_vobsub_pair_accepts_uppercase_sidecar_extensions() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let idx = dir.path().join("Movie.IDX");
+        let sub = dir.path().join("Movie.SUB");
+        std::fs::write(&idx, b"# VobSub index file").expect("failed to write idx");
+        std::fs::write(&sub, b"sub").expect("failed to write sub");
+
+        let pair = resolve_vobsub_pair(idx.to_string_lossy().as_ref())
+            .expect("selected uppercase .idx should resolve uppercase .sub");
 
         assert_eq!(pair.idx_path, idx.to_string_lossy());
         assert_eq!(pair.sub_path, sub.to_string_lossy());

@@ -108,7 +108,7 @@ pub(super) fn validate_bitmap_subtitle_source(
         }
         Some("idx") => {
             let idx_path = validate_existing_file_with_extension(source_path, "idx")?;
-            let sub_path = source.with_extension("sub");
+            let sub_path = sibling_with_extension(source, "sub");
             if !sub_path.exists() {
                 return Err(format!(
                     "VobSub .sub sidecar not found: {}",
@@ -121,7 +121,7 @@ pub(super) fn validate_bitmap_subtitle_source(
         }
         Some("sub") => {
             let sub_path = validate_existing_file_with_extension(source_path, "sub")?;
-            let idx_path = source.with_extension("idx");
+            let idx_path = sibling_with_extension(source, "idx");
             if !idx_path.exists() {
                 return Err(format!(
                     "VobSub .idx sidecar not found: {}",
@@ -623,7 +623,7 @@ fn validate_existing_file_with_extension(path: &str, extension: &str) -> Result<
 }
 
 fn ensure_vobsub_pair_matches(idx_path: &Path, sub_path: &Path) -> Result<(), String> {
-    if idx_path.with_extension("sub") == sub_path {
+    if vobsub_paths_match(idx_path, sub_path) {
         Ok(())
     } else {
         Err(format!(
@@ -631,6 +631,53 @@ fn ensure_vobsub_pair_matches(idx_path: &Path, sub_path: &Path) -> Result<(), St
             idx_path.with_extension("sub").display()
         ))
     }
+}
+
+fn vobsub_paths_match(idx_path: &Path, sub_path: &Path) -> bool {
+    idx_path.parent() == sub_path.parent()
+        && path_stem_eq_ignore_ascii_case(idx_path, sub_path)
+        && lower_extension(idx_path).as_deref() == Some("idx")
+        && lower_extension(sub_path).as_deref() == Some("sub")
+}
+
+fn path_stem_eq_ignore_ascii_case(first: &Path, second: &Path) -> bool {
+    let Some(first_stem) = first.file_stem().and_then(|stem| stem.to_str()) else {
+        return false;
+    };
+    let Some(second_stem) = second.file_stem().and_then(|stem| stem.to_str()) else {
+        return false;
+    };
+
+    first_stem.eq_ignore_ascii_case(second_stem)
+}
+
+fn sibling_with_extension(path: &Path, extension: &str) -> PathBuf {
+    let direct = path.with_extension(extension);
+    find_sibling_with_extension(path, extension).unwrap_or(direct)
+}
+
+fn find_sibling_with_extension(path: &Path, extension: &str) -> Option<PathBuf> {
+    let parent = path.parent()?;
+    let stem = path.file_stem()?.to_string_lossy();
+
+    for entry in std::fs::read_dir(parent).ok()?.flatten() {
+        let candidate = entry.path();
+        let Some(candidate_stem) = candidate.file_stem() else {
+            continue;
+        };
+        let Some(candidate_extension) = candidate.extension() else {
+            continue;
+        };
+        let candidate_stem = candidate_stem.to_string_lossy();
+        let candidate_extension = candidate_extension.to_string_lossy();
+        if candidate_stem.eq_ignore_ascii_case(&stem)
+            && candidate_extension.eq_ignore_ascii_case(extension)
+        {
+            return Some(candidate);
+        }
+    }
+
+    None
 }
 
 fn lower_extension(path: &Path) -> Option<String> {
@@ -810,6 +857,24 @@ mod tests {
             Some(sub.to_string_lossy().as_ref()),
         )
         .expect("vobsub source should be valid");
+
+        assert!(matches!(source, BitmapSubtitleSource::VobSub { .. }));
+    }
+
+    #[test]
+    fn validate_bitmap_subtitle_source_accepts_uppercase_vobsub_pair() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let idx = dir.path().join("Movie.IDX");
+        let sub = dir.path().join("Movie.SUB");
+        std::fs::write(&idx, b"# VobSub index file").expect("failed to write idx");
+        std::fs::write(&sub, b"sub").expect("failed to write sub");
+
+        let source = validate_bitmap_subtitle_source(
+            idx.to_string_lossy().as_ref(),
+            Some(idx.to_string_lossy().as_ref()),
+            Some(sub.to_string_lossy().as_ref()),
+        )
+        .expect("uppercase VobSub pair should be valid");
 
         assert!(matches!(source, BitmapSubtitleSource::VobSub { .. }));
     }

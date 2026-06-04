@@ -13,6 +13,8 @@ use crate::tools::subtitle_ocr::decode::{
 use crate::tools::subtitle_ocr::progress::SubtitleOcrProgressEmitter;
 use tauri::Emitter;
 
+const BITMAP_DECODE_STOPPED_ERROR: &str = "Subtitle OCR bitmap decode stopped";
+
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SubtitleOcrRestoreBitmap {
@@ -183,7 +185,7 @@ fn restore_subtitle_ocr_bitmap_assets_blocking(
     let mut restored = Vec::new();
     let mut restored_count = 0u32;
 
-    decode_bitmap_subtitle_source_with_handler_and_stop(
+    let decode_result = decode_bitmap_subtitle_source_with_handler_and_stop(
         source,
         item_id,
         run_id,
@@ -200,10 +202,21 @@ fn restore_subtitle_ocr_bitmap_assets_blocking(
             Ok(())
         },
         || restore_complete.get(),
-    )?;
+    );
+    normalize_restore_decode_result(decode_result, restore_complete.get())?;
 
     progress.emit_force_with_total(restored_count, total);
     Ok(restored)
+}
+
+fn normalize_restore_decode_result(
+    result: Result<(), String>,
+    restore_complete: bool,
+) -> Result<(), String> {
+    match result {
+        Err(error) if restore_complete && error == BITMAP_DECODE_STOPPED_ERROR => Ok(()),
+        other => other,
+    }
 }
 
 fn emit_restored_bitmap_event(
@@ -299,8 +312,9 @@ impl RestoreBitmapMatcher {
 #[cfg(test)]
 mod tests {
     use super::{
-        RestoreBitmapMatcher, SubtitleOcrRestoreBitmap, SubtitleOcrRestoredBitmapEvent,
-        collect_missing_bitmap_assets, restore_bitmap_paths, subtitle_ocr_temp_asset_root,
+        BITMAP_DECODE_STOPPED_ERROR, RestoreBitmapMatcher, SubtitleOcrRestoreBitmap,
+        SubtitleOcrRestoredBitmapEvent, collect_missing_bitmap_assets,
+        normalize_restore_decode_result, restore_bitmap_paths, subtitle_ocr_temp_asset_root,
     };
     use crate::tools::subtitle_ocr::SubtitleOcrDecodedCue;
     use crate::tools::subtitle_ocr::decode::{DecodedBitmapCue, bitmap_content_hash};
@@ -502,5 +516,21 @@ mod tests {
         if let Some(path) = restored.preview_path {
             let _ = std::fs::remove_file(path);
         }
+    }
+
+    #[test]
+    fn completed_restore_stop_error_is_success() {
+        let result =
+            normalize_restore_decode_result(Err(BITMAP_DECODE_STOPPED_ERROR.to_string()), true);
+
+        assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn incomplete_restore_stop_error_stays_error() {
+        let result =
+            normalize_restore_decode_result(Err(BITMAP_DECODE_STOPPED_ERROR.to_string()), false);
+
+        assert_eq!(result, Err(BITMAP_DECODE_STOPPED_ERROR.to_string()));
     }
 }

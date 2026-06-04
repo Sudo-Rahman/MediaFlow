@@ -118,7 +118,6 @@
   const IMPORT_EXTENSIONS = [
     'mkv',
     'm2ts',
-    'vob',
     'mp4',
     'avi',
     'mov',

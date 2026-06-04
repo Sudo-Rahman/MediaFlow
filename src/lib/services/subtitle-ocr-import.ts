@@ -24,7 +24,6 @@ export type ResolveVobSubPair = (path: string) => Promise<SubtitleOcrVobSubPair>
 const CONTAINER_EXTENSIONS = new Set([
   'mkv',
   'm2ts',
-  'vob',
   'mp4',
   'avi',
   'mov',

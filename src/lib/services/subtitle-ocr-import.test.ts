@@ -29,11 +29,15 @@ describe('subtitle OCR import helpers', () => {
   });
 
   it('detects supported container extensions', () => {
-    const extensions = ['mkv', 'm2ts', 'vob', 'mp4', 'avi', 'mov', 'webm', 'm4v', 'mks'];
+    const extensions = ['mkv', 'm2ts', 'mp4', 'avi', 'mov', 'webm', 'm4v', 'mks'];
 
     for (const extension of extensions) {
       expect(getSubtitleOcrImportKind(`/media/Movie.${extension}`)).toBe('container');
     }
+  });
+
+  it('does not advertise DVD VOB containers as Subtitle OCR sources', () => {
+    expect(getSubtitleOcrImportKind('/media/VIDEO_TS/VTS_01_1.vob')).toBe('unsupported');
   });
 
   it('deduplicates idx and sub into one VobSub pair candidate', () => {

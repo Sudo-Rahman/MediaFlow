@@ -10,10 +10,13 @@ import {
   findCueNearestTimelineWindowCenter,
   findRailIndexNearestCenter,
   getTimelineAutoScrollIntent,
+  getTimelineScaleForWindowMinWidth,
   getTimelineSelectedMarkerTimeMs,
+  getTimelineVisualWindowPx,
   getTimelineWheelIntent,
   getVisibleCueRange,
   MIN_TIMELINE_WINDOW_WIDTH_PX,
+  MAX_TIMELINE_SCALE,
   panTimelineViewport,
   resolveSubtitleOcrReviewMode,
   shouldCommitRailScrollSelection,
@@ -391,6 +394,72 @@ describe('subtitle OCR review state', () => {
   });
 
   describe('timeline scale window helpers', () => {
+    it('draws narrow timeline windows with the approved minimum visual width', () => {
+      expect(getTimelineVisualWindowPx({
+        startPx: 500,
+        endPx: 520,
+        contentWidthPx: 1_000,
+      })).toEqual({
+        leftPx: 410,
+        widthPx: MIN_TIMELINE_WINDOW_WIDTH_PX,
+      });
+    });
+
+    it('keeps the timeline window visual width inside content bounds', () => {
+      expect(getTimelineVisualWindowPx({
+        startPx: 10,
+        endPx: 20,
+        contentWidthPx: 120,
+      })).toEqual({
+        leftPx: 0,
+        widthPx: 120,
+      });
+    });
+
+    it('raises timeline scale when a real filmstrip window would render below the minimum width', () => {
+      expect(getTimelineScaleForWindowMinWidth({
+        window: { startMs: 10_000, endMs: 20_000 },
+        durationMs: 100_000,
+        viewportWidthPx: 1_000,
+        currentScale: 1,
+      })).toBe(2);
+    });
+
+    it('does not lower an already fitted timeline scale', () => {
+      expect(getTimelineScaleForWindowMinWidth({
+        window: { startMs: 10_000, endMs: 20_000 },
+        durationMs: 100_000,
+        viewportWidthPx: 1_000,
+        currentScale: 4,
+      })).toBe(4);
+    });
+
+    it('keeps automatic timeline fitting inside the maximum zoom level', () => {
+      expect(getTimelineScaleForWindowMinWidth({
+        window: { startMs: 10_000, endMs: 10_100 },
+        durationMs: 100_000,
+        viewportWidthPx: 1_000,
+        currentScale: 1,
+      })).toBe(MAX_TIMELINE_SCALE);
+    });
+
+    it('can preserve a narrow rail window without forcing the timeline scale upward', () => {
+      const result = zoomTimelineScaleWindow({
+        window: { startMs: 10_000, endMs: 20_000 },
+        durationMs: 100_000,
+        viewportWidthPx: 1_000,
+        scale: 1,
+        factor: 1,
+        minWindowWidthPx: 1,
+      });
+
+      expect(result.scale).toBe(1);
+      expect(result.window).toEqual({
+        startMs: 10_000,
+        endMs: 20_000,
+      });
+    });
+
     it('enforces the minimum filmstrip window pixel width', () => {
       const window = zoomTimelineScaleWindow({
         window: { startMs: 10_000, endMs: 11_000 },
@@ -595,11 +664,14 @@ describe('subtitle OCR review state', () => {
       })).toBe(true);
     });
 
-    it('does not report rail viewport updates for selection or zoom synchronization', () => {
+    it('reports the rail viewport after selection synchronization', () => {
       expect(shouldReportProgrammaticRailViewport({
         source: 'selection',
         timelineWindowDragging: false,
-      })).toBe(false);
+      })).toBe(true);
+    });
+
+    it('does not report rail viewport updates for zoom synchronization', () => {
       expect(shouldReportProgrammaticRailViewport({
         source: 'timeline-zoom',
         timelineWindowDragging: false,

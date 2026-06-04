@@ -12,8 +12,12 @@
     clampTimelineScaleWindow,
     getTimelineAutoScrollIntent,
     getTimelineContentWidthPx,
+    getTimelineScaleForWindowMinWidth,
     getTimelineSelectedMarkerTimeMs,
+    getTimelineVisualWindowPx,
     getTimelineWheelIntent,
+    MIN_TIMELINE_SCALE,
+    MIN_TIMELINE_WINDOW_WIDTH_PX,
     shouldReleaseTimelineLocalWindow,
     shouldSuppressTimelineZoneSelection,
     timelineMsToPx,
@@ -71,6 +75,7 @@
   const AUTO_SCROLL_BASE_PX = 8;
   const AUTO_SCROLL_PRESSURE_PX = 24;
   const TIMELINE_SCROLL_SETTLE_MS = 140;
+  const TIMELINE_WINDOW_SEMANTIC_MIN_WIDTH_PX = 1;
 
   let viewportElement = $state<HTMLDivElement | null>(null);
   let timelineWidthPx = $state(0);
@@ -88,12 +93,7 @@
   const safeDurationMs = $derived(Math.max(0, Math.round(durationMs)));
   const safeScale = $derived(clampTimelineScale(timelineScale));
   const propWindow = $derived({ startMs: viewportStartMs, endMs: viewportEndMs });
-  const renderedWindow = $derived.by(() => clampTimelineScaleWindow({
-    window: localWindow ?? propWindow,
-    durationMs: safeDurationMs,
-    viewportWidthPx: timelineWidthPx,
-    scale: safeScale,
-  }));
+  const renderedWindow = $derived.by(() => clampSemanticTimelineWindow(localWindow ?? propWindow));
   const contentWidthPx = $derived(getTimelineContentWidthPx(safeDurationMs, timelineWidthPx, safeScale));
   const cueZones = $derived.by((): TimelineCueZone<SubtitleOcrCue>[] => (
     buildTimelineCueZones(cues, {
@@ -104,11 +104,31 @@
   ));
   const timelineTicks = $derived.by(() => buildTimelineTicks(safeDurationMs, timelineWidthPx, safeScale));
   const selectedMarkerLeftPx = $derived(getSelectedMarkerLeftPx());
-  const windowLeftPx = $derived(timelineMsToPx(renderedWindow.startMs, safeDurationMs, timelineWidthPx, safeScale));
-  const windowWidthPx = $derived(Math.max(
-    1,
-    timelineMsToPx(renderedWindow.endMs, safeDurationMs, timelineWidthPx, safeScale) - windowLeftPx,
+  const semanticWindowLeftPx = $derived(timelineMsToPx(
+    renderedWindow.startMs,
+    safeDurationMs,
+    timelineWidthPx,
+    safeScale,
   ));
+  const semanticWindowEndPx = $derived(timelineMsToPx(
+    renderedWindow.endMs,
+    safeDurationMs,
+    timelineWidthPx,
+    safeScale,
+  ));
+  const visualWindowPx = $derived(getTimelineVisualWindowPx({
+    startPx: semanticWindowLeftPx,
+    endPx: semanticWindowEndPx,
+    contentWidthPx,
+    minWindowWidthPx: MIN_TIMELINE_WINDOW_WIDTH_PX,
+  }));
+  const timelineScaleFloor = $derived(getTimelineScaleForWindowMinWidth({
+    window: renderedWindow,
+    durationMs: safeDurationMs,
+    viewportWidthPx: timelineWidthPx,
+    currentScale: MIN_TIMELINE_SCALE,
+    minWindowWidthPx: MIN_TIMELINE_WINDOW_WIDTH_PX,
+  }));
   const suppressTimelineZoneSelection = $derived(shouldSuppressTimelineZoneSelection({
     timelineScrolling,
     draggingWindow: Boolean(dragState),
@@ -159,6 +179,22 @@
     timelineScaleScopeKey = nextScopeKey;
     timelineScale = 1;
     localWindow = null;
+  });
+
+  $effect(() => {
+    const window = propWindow;
+    if (
+      !timelineScaleScopeKey
+      || dragState
+      || localWindow
+      || safeDurationMs <= 0
+      || timelineWidthPx <= 0
+      || window.endMs <= window.startMs
+    ) {
+      return;
+    }
+
+    autoFitTimelineScale(window, 'auto');
   });
 
   $effect(() => {
@@ -255,25 +291,31 @@
     return `Filmstrip window, ${formatTime(renderedWindow.startMs)} to ${formatTime(renderedWindow.endMs)}`;
   }
 
-  function queueWindowChange(
-    nextWindow: TimelineViewport,
-    source: TimelineViewportChangeSource,
-  ): void {
-    if (safeDurationMs <= 0 || timelineWidthPx <= 0) {
-      return;
-    }
-
-    pendingWindow = clampTimelineScaleWindow({
-      window: nextWindow,
+  function clampSemanticTimelineWindow(window: TimelineViewport): TimelineViewport {
+    return clampTimelineScaleWindow({
+      window,
       durationMs: safeDurationMs,
       viewportWidthPx: timelineWidthPx,
       scale: safeScale,
+      minWindowWidthPx: TIMELINE_WINDOW_SEMANTIC_MIN_WIDTH_PX,
     });
+  }
+
+  function queueWindowChange(
+    nextWindow: TimelineViewport,
+    source: TimelineViewportChangeSource,
+  ): TimelineViewport | null {
+    if (safeDurationMs <= 0 || timelineWidthPx <= 0) {
+      return null;
+    }
+
+    const clampedWindow = clampSemanticTimelineWindow(nextWindow);
+    pendingWindow = clampedWindow;
     pendingWindowSource = source;
-    localWindow = pendingWindow;
+    localWindow = clampedWindow;
 
     if (viewportFrameId !== null) {
-      return;
+      return clampedWindow;
     }
 
     viewportFrameId = requestAnimationFrame(() => {
@@ -288,6 +330,32 @@
 
       onViewportChange(queuedWindow.startMs, queuedWindow.endMs, queuedSource);
     });
+
+    return clampedWindow;
+  }
+
+  function autoFitTimelineScale(window: TimelineViewport, behavior: ScrollBehavior = 'smooth'): void {
+    if (safeDurationMs <= 0 || timelineWidthPx <= 0) {
+      return;
+    }
+
+    const nextScale = getTimelineScaleForWindowMinWidth({
+      window,
+      durationMs: safeDurationMs,
+      viewportWidthPx: timelineWidthPx,
+      currentScale: safeScale,
+      minWindowWidthPx: MIN_TIMELINE_WINDOW_WIDTH_PX,
+    });
+    if (nextScale <= safeScale + 0.001) {
+      return;
+    }
+
+    timelineScale = nextScale;
+    scrollTimelineToTime(getWindowCenterMs(window), 0.5, behavior);
+  }
+
+  function getWindowCenterMs(window: TimelineViewport): number {
+    return window.startMs + (window.endMs - window.startMs) / 2;
   }
 
   function scrollTimelineToTime(timeMs: number, anchorRatio = 0.5, behavior: ScrollBehavior = 'smooth'): void {
@@ -330,26 +398,37 @@
       safeScale,
     );
     const factor = wheelIntent === 'zoom-out' ? WHEEL_ZOOM_OUT_FACTOR : WHEEL_ZOOM_IN_FACTOR;
-    const result = zoomTimelineScaleWindow({
-      window: renderedWindow,
-      durationMs: safeDurationMs,
-      viewportWidthPx: timelineWidthPx,
-      scale: safeScale,
-      factor,
-    });
+    const result = zoomTimelineWindow(factor);
+    if (!result) {
+      return;
+    }
 
     timelineScale = result.scale;
     queueWindowChange(result.window, 'timeline-zoom');
+    preserveTimelineAnchor(anchorTimeMs, pointerX, result.scale);
+  }
 
-    void tick().then(() => {
-      if (!viewportElement) {
-        return;
-      }
+  function zoomTimelineWindow(factor: number): { scale: number; window: TimelineViewport } | null {
+    if (safeDurationMs <= 0 || timelineWidthPx <= 0) {
+      return null;
+    }
 
-      viewportElement.scrollLeft = Math.max(
-        0,
-        timelineMsToPx(anchorTimeMs, safeDurationMs, timelineWidthPx, result.scale) - pointerX,
-      );
+    const requestedScale = safeScale * (Number.isFinite(factor) ? factor : 1);
+    const boundedScale = factor < 1
+      ? Math.max(timelineScaleFloor, requestedScale)
+      : requestedScale;
+
+    if (factor < 1 && boundedScale >= safeScale - 0.001) {
+      return null;
+    }
+
+    return zoomTimelineScaleWindow({
+      window: renderedWindow,
+      durationMs: safeDurationMs,
+      viewportWidthPx: timelineWidthPx,
+      scale: boundedScale,
+      factor: 1,
+      minWindowWidthPx: TIMELINE_WINDOW_SEMANTIC_MIN_WIDTH_PX,
     });
   }
 
@@ -382,22 +461,35 @@
   }
 
   function zoomByButton(factor: number): void {
-    if (safeDurationMs <= 0 || timelineWidthPx <= 0) {
+    const element = viewportElement;
+    if (!element || safeDurationMs <= 0 || timelineWidthPx <= 0) {
       return;
     }
 
-    const centerMs = renderedWindow.startMs + (renderedWindow.endMs - renderedWindow.startMs) / 2;
-    const result = zoomTimelineScaleWindow({
-      window: renderedWindow,
-      durationMs: safeDurationMs,
-      viewportWidthPx: timelineWidthPx,
-      scale: safeScale,
-      factor,
-    });
+    const centerMs = getWindowCenterMs(renderedWindow);
+    const centerOffsetPx = timelineMsToPx(centerMs, safeDurationMs, timelineWidthPx, safeScale)
+      - element.scrollLeft;
+    const result = zoomTimelineWindow(factor);
+    if (!result) {
+      return;
+    }
 
     timelineScale = result.scale;
     queueWindowChange(result.window, 'timeline-zoom');
-    scrollTimelineToTime(centerMs);
+    preserveTimelineAnchor(centerMs, centerOffsetPx, result.scale);
+  }
+
+  function preserveTimelineAnchor(anchorTimeMs: number, anchorOffsetPx: number, scale: number): void {
+    void tick().then(() => {
+      if (!viewportElement) {
+        return;
+      }
+
+      viewportElement.scrollLeft = Math.max(
+        0,
+        timelineMsToPx(anchorTimeMs, safeDurationMs, timelineWidthPx, scale) - anchorOffsetPx,
+      );
+    });
   }
 
   function panTimeline(direction: -1 | 1): void {
@@ -488,7 +580,7 @@
     dragState = {
       pointerId: event.pointerId,
       pointerClientX: event.clientX,
-      grabOffsetPx: event.clientX - rect.left + viewportElement.scrollLeft - windowLeftPx,
+      grabOffsetPx: event.clientX - rect.left + viewportElement.scrollLeft - visualWindowPx.leftPx,
     };
 
     const target = event.currentTarget;
@@ -531,6 +623,7 @@
   function finishWindowDrag(event: PointerEvent): void {
     event.preventDefault();
     clearNativeSelection();
+    const fittedWindow = updateWindowFromPointer(event.clientX) ?? renderedWindow;
 
     const target = event.currentTarget;
     if (target instanceof HTMLElement && target.hasPointerCapture(event.pointerId)) {
@@ -540,27 +633,29 @@
     dragState = null;
     stopAutoScroll();
     onWindowDragChange(false);
+    autoFitTimelineScale(fittedWindow);
   }
 
   function clearNativeSelection(): void {
     document.getSelection()?.removeAllRanges();
   }
 
-  function updateWindowFromPointer(pointerClientX: number): void {
+  function updateWindowFromPointer(pointerClientX: number): TimelineViewport | null {
     const element = viewportElement;
     const drag = dragState;
     if (!element || !drag || safeDurationMs <= 0) {
-      return;
+      return null;
     }
 
     const rect = element.getBoundingClientRect();
     const localX = pointerClientX - rect.left + element.scrollLeft;
-    const startMs = timelinePxToMs(localX - drag.grabOffsetPx, safeDurationMs, timelineWidthPx, safeScale);
+    const visualCenterPx = localX - drag.grabOffsetPx + visualWindowPx.widthPx / 2;
+    const centerMs = timelinePxToMs(visualCenterPx, safeDurationMs, timelineWidthPx, safeScale);
     const spanMs = renderedWindow.endMs - renderedWindow.startMs;
 
-    queueWindowChange({
-      startMs,
-      endMs: startMs + spanMs,
+    return queueWindowChange({
+      startMs: centerMs - spanMs / 2,
+      endMs: centerMs + spanMs / 2,
     }, 'timeline-window');
   }
 
@@ -769,7 +864,7 @@
           'touch-none select-none',
           dragState ? 'cursor-grabbing' : 'cursor-grab',
         )}
-        style={`left: ${windowLeftPx}px; width: ${windowWidthPx}px;`}
+        style={`left: ${visualWindowPx.leftPx}px; width: ${visualWindowPx.widthPx}px;`}
         aria-label={getWindowLabel()}
         aria-valuemin={0}
         aria-valuemax={safeDurationMs}

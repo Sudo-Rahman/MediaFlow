@@ -64,6 +64,26 @@ export interface TimelineCueZone<TCue extends TimedCue = TimedCue> {
   widthPx: number;
 }
 
+export interface TimelineVisualWindowPx {
+  leftPx: number;
+  widthPx: number;
+}
+
+export interface TimelineVisualWindowPxOptions {
+  startPx: number;
+  endPx: number;
+  contentWidthPx: number;
+  minWindowWidthPx?: number;
+}
+
+export interface TimelineScaleForWindowMinWidthOptions {
+  window: TimelineViewport;
+  durationMs: number;
+  viewportWidthPx: number;
+  currentScale: number;
+  minWindowWidthPx?: number;
+}
+
 export interface BuildTimelineCueZonesOptions {
   durationMs: number;
   viewportWidthPx: number;
@@ -139,7 +159,7 @@ export const MAX_TIMELINE_WINDOW_MARGIN_PX = 24;
 export const MIN_TIMELINE_WINDOW_DURATION_MS = 1_000;
 export const MIN_CUE_ZONE_WIDTH_PX = 4;
 export const MIN_TIMELINE_SCALE = 1;
-export const MAX_TIMELINE_SCALE = 8;
+export const MAX_TIMELINE_SCALE = 32;
 
 const DEFAULT_TILE_MIN_WIDTH = 112;
 const DEFAULT_TILE_MAX_WIDTH = 280;
@@ -290,6 +310,43 @@ export function timelinePxToMs(
 
 export function clampTimelineScale(scale: number): number {
   return clamp(Number.isFinite(scale) ? scale : MIN_TIMELINE_SCALE, MIN_TIMELINE_SCALE, MAX_TIMELINE_SCALE);
+}
+
+export function getTimelineVisualWindowPx(options: TimelineVisualWindowPxOptions): TimelineVisualWindowPx {
+  const contentWidthPx = Math.max(1, normalizeTime(options.contentWidthPx));
+  const normalizedStartPx = Math.min(normalizeTime(options.startPx), normalizeTime(options.endPx));
+  const normalizedEndPx = Math.max(normalizeTime(options.startPx), normalizeTime(options.endPx));
+  const semanticWidthPx = Math.max(1, normalizedEndPx - normalizedStartPx);
+  const minWindowWidthPx = Math.max(1, normalizeTime(options.minWindowWidthPx ?? MIN_TIMELINE_WINDOW_WIDTH_PX));
+  const widthPx = Math.min(contentWidthPx, Math.max(semanticWidthPx, minWindowWidthPx));
+  const centerPx = normalizedStartPx + semanticWidthPx / 2;
+  const leftPx = clamp(Math.round(centerPx - widthPx / 2), 0, Math.max(0, contentWidthPx - widthPx));
+
+  return {
+    leftPx,
+    widthPx: Math.round(widthPx),
+  };
+}
+
+export function getTimelineScaleForWindowMinWidth(options: TimelineScaleForWindowMinWidthOptions): number {
+  const safeDurationMs = normalizeTime(options.durationMs);
+  const safeViewportWidthPx = Math.max(1, normalizeTime(options.viewportWidthPx));
+  const currentScale = clampTimelineScale(options.currentScale);
+  if (safeDurationMs <= 0) {
+    return currentScale;
+  }
+
+  const normalizedStartMs = Math.min(normalizeTime(options.window.startMs), normalizeTime(options.window.endMs));
+  const normalizedEndMs = Math.max(normalizeTime(options.window.startMs), normalizeTime(options.window.endMs));
+  const windowSpanMs = normalizedEndMs - normalizedStartMs;
+  if (windowSpanMs <= 0) {
+    return currentScale;
+  }
+
+  const minWindowWidthPx = Math.max(1, normalizeTime(options.minWindowWidthPx ?? MIN_TIMELINE_WINDOW_WIDTH_PX));
+  const requiredScale = (minWindowWidthPx * safeDurationMs) / (safeViewportWidthPx * windowSpanMs);
+
+  return clampTimelineScale(Math.max(currentScale, requiredScale));
 }
 
 export function clampTimelineScaleWindow(options: Omit<TimelineScaleWindowOptions, 'factor'>): TimelineViewport {
@@ -468,7 +525,9 @@ export function shouldReportProgrammaticRailViewport(options: ProgrammaticRailVi
     return false;
   }
 
-  return options.source === 'timeline-window' || options.source === 'timeline-zone';
+  return options.source === 'selection'
+    || options.source === 'timeline-window'
+    || options.source === 'timeline-zone';
 }
 
 export function shouldPublishRailViewportUpdate(options: RailViewportPublishOptions): boolean {

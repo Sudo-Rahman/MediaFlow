@@ -48,7 +48,7 @@
   }: SubtitleOcrCueRailProps = $props();
 
   const CARD_WIDTH = 352;
-  const CARD_GAP = 16;
+  const CARD_GAP = 0;
   const CARD_SLOT_WIDTH = CARD_WIDTH + CARD_GAP;
   const OVERSCAN = 2;
   const PROGRAMMATIC_SCROLL_SETTLE_MS = 120;
@@ -375,20 +375,20 @@
     <ScrollArea
       bind:viewportRef={viewport}
       orientation="horizontal"
-      class="h-[33rem] min-w-0"
+      class="h-[35rem] min-w-0"
       scrollbarXClasses="h-2"
     >
       <div
-        class="relative"
-        style={`height: 32rem; width: ${$cueVirtualizer.getTotalSize()}px;`}
+        class="relative h-full"
+        style={`width: ${$cueVirtualizer.getTotalSize()}px;`}
       >
         {#each $cueVirtualizer.getVirtualItems() as virtualCue (virtualCue.key)}
           {@const cue = cues[virtualCue.index]}
           {#if cue}
             {@const selected = cue.id === selectedCueId}
             <div
-              class="absolute top-5 will-change-transform"
-              style={`width: ${CARD_WIDTH}px; height: 29.25rem; transform: translate3d(${virtualCue.start + CARD_GAP / 2}px, 0, 0); contain: layout paint style; content-visibility: auto; contain-intrinsic-size: ${CARD_WIDTH}px 29.25rem;`}
+              class="absolute top-5 will-change-transform p-1.5 h-[33rem]"
+              style={`width: ${CARD_WIDTH}px; transform: translate3d(${virtualCue.start + CARD_GAP / 2}px, 0, 0); contain: layout paint style; content-visibility: auto; contain-intrinsic-size: ${CARD_WIDTH}px 33rem;`}
             >
               <SubtitleOcrCueCard
                 {cue}

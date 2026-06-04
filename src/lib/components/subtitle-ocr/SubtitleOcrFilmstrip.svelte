@@ -36,7 +36,7 @@
   }: SubtitleOcrFilmstripProps = $props();
 
   const TILE_GAP = 10;
-  const TILE_HEIGHT = 112;
+  const TILE_HEIGHT = 126;
   const TILE_OVERSCAN = 6;
   const BITMAP_URL_PATH = /^(?:https?:\/\/|data:|blob:|\/\/)/i;
 
@@ -281,7 +281,7 @@
     <ScrollArea
       bind:viewportRef={viewport}
       orientation="horizontal"
-      class="h-36 min-w-0"
+      class="h-40 min-w-0"
       scrollbarXClasses="h-2"
     >
       <div

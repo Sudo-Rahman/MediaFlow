@@ -39,8 +39,7 @@
 </script>
 
 <script lang="ts">
-  import { convertFileSrc } from '@tauri-apps/api/core';
-  import { ChevronLeft, ChevronRight, ImageOff } from '@lucide/svelte';
+  import { ChevronLeft, ChevronRight } from '@lucide/svelte';
   import { useId } from 'bits-ui';
 
   import { Badge } from '$lib/components/ui/badge';
@@ -51,10 +50,13 @@
   import { Textarea } from '$lib/components/ui/textarea';
   import type { SubtitleOcrCue, SubtitleOcrCueBitmap } from '$lib/types';
   import { cn } from '$lib/utils';
+  import SubtitleOcrPreviewScroller from './SubtitleOcrPreviewScroller.svelte';
 
   interface SubtitleOcrCueCardProps {
     cue: SubtitleOcrCue | null;
     bitmap: SubtitleOcrCueBitmap | null;
+    previewBitmaps?: SubtitleOcrCueBitmap[];
+    previewCues?: SubtitleOcrCue[];
     selected?: boolean;
     mode: 'compact' | 'wide';
     disabled?: boolean;
@@ -70,6 +72,8 @@
   let {
     cue,
     bitmap,
+    previewBitmaps = [],
+    previewCues = [],
     selected = false,
     mode,
     disabled = false,
@@ -87,7 +91,6 @@
   let textFocused = $state(false);
 
   const textAreaId = `${useId()}-subtitle-ocr-cue-text`;
-  const BITMAP_URL_PATH = /^(?:[a-z][a-z\d+\-.]*:|\/\/)/i;
   const canSelectCue = $derived(Boolean(cue && onSelectCue && !disabled));
   const canUsePreviousCue = $derived(canNavigateSubtitleOcrCue({
     disabled,
@@ -100,7 +103,6 @@
   const PREVIEW_NAV_BUTTON_CLASS =
     'absolute z-10 size-10 rounded-full border-transparent bg-zinc-50 text-zinc-900 shadow-[0_3px_14px_rgba(0,0,0,0.32)] hover:bg-white dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-white';
   const canEditCueText = $derived(canEditSubtitleOcrCueText({ disabled, textDisabled }));
-  const bitmapImagePath = $derived(bitmap?.previewPath);
   const confidencePercent = $derived(
     cue ? Math.max(0, Math.min(100, Math.round(cue.confidence * 100))) : 0,
   );
@@ -113,10 +115,6 @@
       textValue = nextText;
     }
   });
-
-  function resolveBitmapSrc(bitmapPath: string): string {
-    return BITMAP_URL_PATH.test(bitmapPath) ? bitmapPath : convertFileSrc(bitmapPath);
-  }
 
   function formatTime(ms: number): string {
     const safeMs = Math.max(0, Math.round(ms));
@@ -194,27 +192,16 @@
     'relative flex min-h-0 items-center justify-center overflow-hidden rounded-2xl bg-zinc-950',
     mode === 'wide' && 'h-48',
   )}>
-    <button
-      type="button"
-      class="flex size-full min-h-0 appearance-none items-center justify-center border-0 bg-transparent p-0 text-inherit disabled:pointer-events-none"
-      aria-label="Select subtitle cue"
-      onclick={handleSelect}
-      disabled={!canSelectCue}
-    >
-      {#if bitmapImagePath}
-        <img
-          src={resolveBitmapSrc(bitmapImagePath)}
-          alt={cueIndex !== undefined ? `Cue ${cueIndex + 1} bitmap` : 'Selected cue bitmap'}
-          loading={selected || mode === 'compact' ? 'eager' : 'lazy'}
-          class="max-h-full max-w-full object-contain"
-        />
-      {:else}
-        <span class="flex flex-col items-center gap-2 py-16 text-sm text-zinc-400">
-          <ImageOff class="size-6" aria-hidden="true" />
-          No preview
-        </span>
-      {/if}
-    </button>
+    <SubtitleOcrPreviewScroller
+      {cue}
+      {bitmap}
+      cues={mode === 'compact' ? previewCues : []}
+      bitmaps={mode === 'compact' ? previewBitmaps : []}
+      {cueIndex}
+      {selected}
+      {disabled}
+      {onSelectCue}
+    />
 
     {#if showNavigation}
       <Button

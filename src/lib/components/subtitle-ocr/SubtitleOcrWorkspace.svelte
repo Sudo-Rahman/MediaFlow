@@ -416,11 +416,14 @@
           <SubtitleOcrCueCard
             cue={selectedCue}
             bitmap={selectedCueBitmap}
+            previewBitmaps={bitmaps}
+            previewCues={renderedCues}
             selected={Boolean(selectedCue)}
             mode="compact"
             textDisabled={isReadOnly}
             cueIndex={selectedCueIndex >= 0 ? selectedCueIndex : undefined}
             showNavigation
+            onSelectCue={(cueId) => handleSelectCue(cueId, 'selection')}
             onPreviousCue={canSelectPreviousCue ? handlePreviousCue : undefined}
             onNextCue={canSelectNextCue ? handleNextCue : undefined}
             onTextCommit={handleCueTextCommit}

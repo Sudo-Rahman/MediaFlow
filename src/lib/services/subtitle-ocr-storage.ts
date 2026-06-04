@@ -45,6 +45,10 @@ function isFiniteNonNegativeNumber(value: unknown): value is number {
   return isFiniteNumber(value) && value >= 0;
 }
 
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
 function isPositiveNumber(value: unknown): value is number {
   return isFiniteNumber(value) && value > 0;
 }
@@ -142,6 +146,33 @@ function isSubtitleOcrRawBox(value: unknown): value is SubtitleOcrRawBox {
     && isPositiveNumber(value.height);
 }
 
+function isSubtitleOcrPlacement(value: unknown): value is NonNullable<SubtitleOcrCue['placement']> {
+  return value === 'top' || value === 'bottom';
+}
+
+function placementFromSourceCounts(
+  placementSourceCount: number,
+  topPlacementSourceCount: number
+): NonNullable<SubtitleOcrCue['placement']> {
+  return topPlacementSourceCount > placementSourceCount / 2 ? 'top' : 'bottom';
+}
+
+function hasValidSubtitleOcrPlacementCounts(value: Record<string, unknown>): boolean {
+  if (value.placementSourceCount === undefined && value.topPlacementSourceCount === undefined) {
+    return true;
+  }
+
+  return isNonNegativeInteger(value.placementSourceCount)
+    && isNonNegativeInteger(value.topPlacementSourceCount)
+    && value.placementSourceCount > 0
+    && value.topPlacementSourceCount <= value.placementSourceCount
+    && isSubtitleOcrPlacement(value.placement)
+    && value.placement === placementFromSourceCounts(
+      value.placementSourceCount,
+      value.topPlacementSourceCount
+    );
+}
+
 function isSubtitleOcrRawCue(value: unknown): value is SubtitleOcrRawCue {
   return isRecord(value)
     && typeof value.cueId === 'string'
@@ -152,7 +183,9 @@ function isSubtitleOcrRawCue(value: unknown): value is SubtitleOcrRawCue {
     && Array.isArray(value.boxes)
     && value.boxes.every(isSubtitleOcrRawBox)
     && typeof value.text === 'string'
-    && isUnitInterval(value.confidence);
+    && isUnitInterval(value.confidence)
+    && (value.placement === undefined || isSubtitleOcrPlacement(value.placement))
+    && hasValidSubtitleOcrPlacementCounts(value);
 }
 
 function isSubtitleOcrCue(value: unknown): value is SubtitleOcrCue {
@@ -164,7 +197,9 @@ function isSubtitleOcrCue(value: unknown): value is SubtitleOcrCue {
     && isFiniteNonNegativeNumber(value.endTimeMs)
     && value.endTimeMs > value.startTimeMs
     && typeof value.text === 'string'
-    && isUnitInterval(value.confidence);
+    && isUnitInterval(value.confidence)
+    && (value.placement === undefined || isSubtitleOcrPlacement(value.placement))
+    && hasValidSubtitleOcrPlacementCounts(value);
 }
 
 function isSubtitleOcrVersion(value: unknown): value is SubtitleOcrVersion {
@@ -273,6 +308,13 @@ function cloneRawCue(rawCue: SubtitleOcrRawCue): SubtitleOcrRawCue {
     boxes: rawCue.boxes.map(cloneRawBox),
     text: rawCue.text,
     confidence: rawCue.confidence,
+    ...(isSubtitleOcrPlacement(rawCue.placement) ? { placement: rawCue.placement } : {}),
+    ...(isNonNegativeInteger(rawCue.placementSourceCount)
+      ? { placementSourceCount: rawCue.placementSourceCount }
+      : {}),
+    ...(isNonNegativeInteger(rawCue.topPlacementSourceCount)
+      ? { topPlacementSourceCount: rawCue.topPlacementSourceCount }
+      : {}),
   };
 }
 
@@ -284,6 +326,13 @@ function cloneCue(cue: SubtitleOcrCue): SubtitleOcrCue {
     endTimeMs: cue.endTimeMs,
     text: cue.text,
     confidence: cue.confidence,
+    ...(isSubtitleOcrPlacement(cue.placement) ? { placement: cue.placement } : {}),
+    ...(isNonNegativeInteger(cue.placementSourceCount)
+      ? { placementSourceCount: cue.placementSourceCount }
+      : {}),
+    ...(isNonNegativeInteger(cue.topPlacementSourceCount)
+      ? { topPlacementSourceCount: cue.topPlacementSourceCount }
+      : {}),
   };
 }
 

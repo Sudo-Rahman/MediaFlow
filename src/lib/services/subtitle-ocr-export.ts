@@ -28,6 +28,9 @@ export interface RustSubtitleOcrCue {
   endTimeMs: number;
   text: string;
   confidence: number;
+  placement: 'top' | 'bottom';
+  placementSourceCount?: number;
+  topPlacementSourceCount?: number;
 }
 
 interface ExportSubtitleOcrVersionRequest {
@@ -70,14 +73,33 @@ export function countExportableSubtitleOcrCues(cues: readonly SubtitleOcrCue[]):
 }
 
 export function toRustSubtitleOcrCues(cues: readonly SubtitleOcrCue[]): RustSubtitleOcrCue[] {
-  return cues.map((cue) => ({
-    id: cue.id,
-    sourceCueIds: [...cue.sourceCueIds],
-    startTimeMs: cue.startTimeMs,
-    endTimeMs: cue.endTimeMs,
-    text: cue.text,
-    confidence: cue.confidence,
-  }));
+  return cues.map((cue) => {
+    const rustCue: RustSubtitleOcrCue = {
+      id: cue.id,
+      sourceCueIds: [...cue.sourceCueIds],
+      startTimeMs: cue.startTimeMs,
+      endTimeMs: cue.endTimeMs,
+      text: cue.text,
+      confidence: cue.confidence,
+      placement: cue.placement === 'top' ? 'top' : 'bottom',
+    };
+
+    const placementSourceCount = cue.placementSourceCount;
+    if (typeof placementSourceCount === 'number'
+      && Number.isInteger(placementSourceCount)
+      && placementSourceCount >= 0) {
+      rustCue.placementSourceCount = placementSourceCount;
+    }
+
+    const topPlacementSourceCount = cue.topPlacementSourceCount;
+    if (typeof topPlacementSourceCount === 'number'
+      && Number.isInteger(topPlacementSourceCount)
+      && topPlacementSourceCount >= 0) {
+      rustCue.topPlacementSourceCount = topPlacementSourceCount;
+    }
+
+    return rustCue;
+  });
 }
 
 function formatSrtTime(ms: number): string {
@@ -111,6 +133,11 @@ function formatAssText(text: string): string {
     .replace(/\n/g, '\\N');
 }
 
+function formatAssCueText(cue: SubtitleOcrCue): string {
+  const text = formatAssText(cue.text);
+  return cue.placement === 'top' ? `{\\an8}${text}` : text;
+}
+
 export function buildSubtitleOcrPreview(
   cues: readonly SubtitleOcrCue[],
   format: SubtitleOcrExportFormat,
@@ -124,7 +151,7 @@ export function buildSubtitleOcrPreview(
     case 'ass': {
       const events = exportableCues
         .map((cue) => (
-          `Dialogue: 0,${formatAssTime(cue.startTimeMs)},${formatAssTime(cue.endTimeMs)},Default,,0,0,0,,${formatAssText(cue.text)}`
+          `Dialogue: 0,${formatAssTime(cue.startTimeMs)},${formatAssTime(cue.endTimeMs)},Default,,0,0,0,,${formatAssCueText(cue)}`
         ))
         .join('\n');
 

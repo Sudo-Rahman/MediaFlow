@@ -211,6 +211,130 @@ describe('subtitle OCR AI cleanup', () => {
     });
   });
 
+  it('keeps top placement when merged duplicate sources have top majority', async () => {
+    const originalCues = [
+      cue({
+        id: 'cue-1',
+        sourceCueIds: ['raw-1'],
+        startTimeMs: 1000,
+        endTimeMs: 2000,
+        text: 'HeIIo',
+        confidence: 0.6,
+        placement: 'top',
+      }),
+      cue({
+        id: 'cue-2',
+        sourceCueIds: ['raw-2'],
+        startTimeMs: 2100,
+        endTimeMs: 3000,
+        text: 'Hello',
+        confidence: 0.8,
+        placement: 'bottom',
+      }),
+      cue({
+        id: 'cue-3',
+        sourceCueIds: ['raw-3'],
+        startTimeMs: 3100,
+        endTimeMs: 3600,
+        text: 'Hello',
+        confidence: 0.7,
+        placement: 'top',
+      }),
+    ];
+    callLlmMock.mockResolvedValue({
+      content: JSON.stringify({
+        cues: [
+          responseCue('0', 'Hello'),
+          responseCue('1', 'Hello'),
+          responseCue('2', 'Hello'),
+        ],
+      }),
+    });
+    const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    expect(result).toEqual({
+      success: true,
+      cues: [
+        {
+          id: 'cue-1',
+          sourceCueIds: ['raw-1', 'raw-2', 'raw-3'],
+          startTimeMs: 1000,
+          endTimeMs: 3600,
+          text: 'Hello',
+          confidence: 0.8,
+          placement: 'top',
+          placementSourceCount: 3,
+          topPlacementSourceCount: 2,
+        },
+      ],
+      usage: undefined,
+    });
+  });
+
+  it('uses placement source counts when merging an already stabilized duplicate cue', async () => {
+    const originalCues = [
+      cue({
+        id: 'cue-1',
+        sourceCueIds: ['raw-1', 'raw-2'],
+        startTimeMs: 1000,
+        endTimeMs: 3000,
+        text: 'Hello',
+        confidence: 0.8,
+        placement: 'bottom',
+        placementSourceCount: 2,
+        topPlacementSourceCount: 1,
+      }),
+      cue({
+        id: 'cue-2',
+        sourceCueIds: ['raw-3'],
+        startTimeMs: 3100,
+        endTimeMs: 3600,
+        text: 'Hello',
+        confidence: 0.7,
+        placement: 'top',
+        placementSourceCount: 1,
+        topPlacementSourceCount: 1,
+      }),
+    ];
+    callLlmMock.mockResolvedValue({
+      content: JSON.stringify({
+        cues: [
+          responseCue('0', 'Hello'),
+          responseCue('1', 'Hello'),
+        ],
+      }),
+    });
+    const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    expect(result).toEqual({
+      success: true,
+      cues: [
+        {
+          id: 'cue-1',
+          sourceCueIds: ['raw-1', 'raw-2', 'raw-3'],
+          startTimeMs: 1000,
+          endTimeMs: 3600,
+          text: 'Hello',
+          confidence: 0.8,
+          placement: 'top',
+          placementSourceCount: 3,
+          topPlacementSourceCount: 2,
+        },
+      ],
+      usage: undefined,
+    });
+  });
+
   it('returns original cues when AI omits corrected cues', async () => {
     const originalCues = [cue({ id: 'cue-1' }), cue({ id: 'cue-2' })];
     const usage = { promptTokens: 8, completionTokens: 2, totalTokens: 10 };

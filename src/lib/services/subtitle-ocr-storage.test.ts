@@ -39,6 +39,13 @@ function cue(id: string, text: string): SubtitleOcrCue {
   };
 }
 
+function placedCue(id: string, text: string, placement: SubtitleOcrCue['placement']): SubtitleOcrCue {
+  return {
+    ...cue(id, text),
+    placement,
+  };
+}
+
 function bitmap(cueId: string): SubtitleOcrCueBitmap {
   return {
     cueId,
@@ -232,6 +239,89 @@ describe('subtitle OCR storage', () => {
     });
 
     expect(sanitized).toEqual(data);
+  });
+
+  it('accepts old persisted cues without placement', () => {
+    const data = persistenceData();
+    const cueWithoutPlacement = cue('cue-1', 'Legacy cue');
+
+    const sanitized = sanitizeSubtitleOcrPersistenceData({
+      ...data,
+      versions: [{
+        ...data.versions[0],
+        stabilizedCues: [cueWithoutPlacement],
+        finalCues: [cueWithoutPlacement],
+      }],
+    });
+
+    expect(sanitized?.versions[0]?.finalCues[0]).not.toHaveProperty('placement');
+  });
+
+  it('preserves cue placement in persisted versions', () => {
+    const data = persistenceData();
+    const topCue = {
+      ...placedCue('cue-1', 'Top cue', 'top'),
+      placementSourceCount: 3,
+      topPlacementSourceCount: 2,
+    };
+
+    const sanitized = sanitizeSubtitleOcrPersistenceData({
+      ...data,
+      versions: [{
+        ...data.versions[0],
+        rawOcr: [{
+          ...data.versions[0].rawOcr[0],
+          placement: 'top',
+          placementSourceCount: 3,
+          topPlacementSourceCount: 2,
+        }],
+        stabilizedCues: [topCue],
+        finalCues: [topCue],
+      }],
+    });
+
+    expect(sanitized?.versions[0]?.rawOcr[0]?.placement).toBe('top');
+    expect(sanitized?.versions[0]?.rawOcr[0]?.placementSourceCount).toBe(3);
+    expect(sanitized?.versions[0]?.rawOcr[0]?.topPlacementSourceCount).toBe(2);
+    expect(sanitized?.versions[0]?.stabilizedCues[0]?.placement).toBe('top');
+    expect(sanitized?.versions[0]?.stabilizedCues[0]?.placementSourceCount).toBe(3);
+    expect(sanitized?.versions[0]?.stabilizedCues[0]?.topPlacementSourceCount).toBe(2);
+    expect(sanitized?.versions[0]?.finalCues[0]?.placement).toBe('top');
+    expect(sanitized?.versions[0]?.finalCues[0]?.placementSourceCount).toBe(3);
+    expect(sanitized?.versions[0]?.finalCues[0]?.topPlacementSourceCount).toBe(2);
+  });
+
+  it('rejects persisted placement counts that disagree with placement', () => {
+    const data = persistenceData();
+    const inconsistentCue = {
+      ...placedCue('cue-1', 'Inconsistent cue', 'bottom'),
+      placementSourceCount: 3,
+      topPlacementSourceCount: 2,
+    };
+
+    expect(sanitizeSubtitleOcrPersistenceData({
+      ...data,
+      versions: [{
+        ...data.versions[0],
+        finalCues: [inconsistentCue],
+      }],
+    })).toBeNull();
+  });
+
+  it('rejects persisted placement counts without placement', () => {
+    const data = persistenceData();
+
+    expect(sanitizeSubtitleOcrPersistenceData({
+      ...data,
+      versions: [{
+        ...data.versions[0],
+        rawOcr: [{
+          ...data.versions[0].rawOcr[0],
+          placementSourceCount: 1,
+          topPlacementSourceCount: 0,
+        }],
+      }],
+    })).toBeNull();
   });
 
   it('sanitizes valid persistence data and preserves optional raw OCR cache keys', () => {

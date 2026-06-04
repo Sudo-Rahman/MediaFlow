@@ -59,6 +59,8 @@ export interface SubtitleOcrRawBox {
   height: number;
 }
 
+export type SubtitleOcrPlacement = 'top' | 'bottom';
+
 export interface SubtitleOcrRawCue {
   cueId: string;
   startTimeMs: number;
@@ -67,6 +69,9 @@ export interface SubtitleOcrRawCue {
   boxes: SubtitleOcrRawBox[];
   text: string;
   confidence: number;
+  placement?: SubtitleOcrPlacement;
+  placementSourceCount?: number;
+  topPlacementSourceCount?: number;
 }
 
 export interface SubtitleOcrCue {
@@ -76,6 +81,9 @@ export interface SubtitleOcrCue {
   endTimeMs: number;
   text: string;
   confidence: number;
+  placement?: SubtitleOcrPlacement;
+  placementSourceCount?: number;
+  topPlacementSourceCount?: number;
 }
 
 export type SubtitleOcrRetryMode = 'full_ocr' | 'ai_cleanup_only';

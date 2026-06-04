@@ -1,5 +1,5 @@
 use crate::shared::validation::validate_output_path;
-use crate::tools::subtitle_ocr::SubtitleOcrCue;
+use crate::tools::subtitle_ocr::{SubtitleOcrCue, SubtitleOcrPlacement};
 
 enum SubtitleOcrExportFormat {
     Ass,
@@ -101,11 +101,12 @@ fn format_ass(cues: &[&SubtitleOcrCue], width: u32, height: u32) -> String {
     let events = cues
         .iter()
         .map(|cue| {
+            let text = format_ass_cue_text(cue);
             format!(
                 "Dialogue: 0,{},{},Default,,0,0,0,,{}",
                 format_ass_time(cue.start_time_ms),
                 format_ass_time(cue.end_time_ms),
-                format_ass_text(&cue.text)
+                text
             )
         })
         .collect::<Vec<_>>()
@@ -126,6 +127,15 @@ fn format_ass(cues: &[&SubtitleOcrCue], width: u32, height: u32) -> String {
         events,
     ]
     .join("\n")
+}
+
+fn format_ass_cue_text(cue: &SubtitleOcrCue) -> String {
+    let text = format_ass_text(&cue.text);
+    if cue.placement == Some(SubtitleOcrPlacement::Top) {
+        format!("{{\\an8}}{}", text)
+    } else {
+        text
+    }
 }
 
 fn format_ass_text(text: &str) -> String {
@@ -170,7 +180,7 @@ fn format_ass_time(ms: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::export_subtitle_ocr_version;
-    use crate::tools::subtitle_ocr::SubtitleOcrCue;
+    use crate::tools::subtitle_ocr::{SubtitleOcrCue, SubtitleOcrPlacement};
 
     fn cue(id: &str, start_time_ms: u64, end_time_ms: u64, text: &str) -> SubtitleOcrCue {
         SubtitleOcrCue {
@@ -180,6 +190,18 @@ mod tests {
             end_time_ms,
             text: text.to_string(),
             confidence: 0.9,
+            placement: Some(SubtitleOcrPlacement::Bottom),
+            placement_source_count: Some(1),
+            top_placement_source_count: Some(0),
+        }
+    }
+
+    fn top_cue(id: &str, start_time_ms: u64, end_time_ms: u64, text: &str) -> SubtitleOcrCue {
+        SubtitleOcrCue {
+            placement: Some(SubtitleOcrPlacement::Top),
+            placement_source_count: Some(1),
+            top_placement_source_count: Some(1),
+            ..cue(id, start_time_ms, end_time_ms, text)
         }
     }
 
@@ -236,6 +258,55 @@ mod tests {
 
         let content = std::fs::read_to_string(output).expect("failed to read export");
         assert!(content.contains("- Stop.\\N- I cannot."));
+    }
+
+    #[tokio::test]
+    async fn ass_prefixes_top_cues_with_alignment_override() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let output = dir.path().join("subtitle-ocr.ass");
+
+        export_subtitle_ocr_version(
+            vec![
+                top_cue("top", 1_000, 2_000, "Top line"),
+                cue("bottom", 3_000, 4_000, "Bottom line"),
+            ],
+            output.to_string_lossy().to_string(),
+            "ass".to_string(),
+        )
+        .await
+        .expect("export should succeed");
+
+        let content = std::fs::read_to_string(output).expect("failed to read export");
+        assert!(content.contains(r"{\an8}Top line"));
+        assert!(content.contains(",,Bottom line"));
+        assert!(!content.contains(r"{\an8}Bottom line"));
+    }
+
+    #[tokio::test]
+    async fn srt_and_vtt_ignore_top_alignment() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        let srt_output = dir.path().join("subtitle-ocr.srt");
+        let vtt_output = dir.path().join("subtitle-ocr.vtt");
+
+        export_subtitle_ocr_version(
+            vec![top_cue("top", 1_000, 2_000, "Top line")],
+            srt_output.to_string_lossy().to_string(),
+            "srt".to_string(),
+        )
+        .await
+        .expect("srt export should succeed");
+        export_subtitle_ocr_version(
+            vec![top_cue("top", 1_000, 2_000, "Top line")],
+            vtt_output.to_string_lossy().to_string(),
+            "vtt".to_string(),
+        )
+        .await
+        .expect("vtt export should succeed");
+
+        let srt = std::fs::read_to_string(srt_output).expect("failed to read srt export");
+        let vtt = std::fs::read_to_string(vtt_output).expect("failed to read vtt export");
+        assert!(!srt.contains(r"{\an8}"));
+        assert!(!vtt.contains(r"{\an8}"));
     }
 
     #[tokio::test]

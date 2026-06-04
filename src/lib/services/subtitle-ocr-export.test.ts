@@ -161,6 +161,9 @@ describe('Subtitle OCR export service', () => {
       createCue({
         sourceCueIds,
         text: 'First line\nSecond line',
+        placement: 'top',
+        placementSourceCount: 2,
+        topPlacementSourceCount: 2,
       }),
     ]);
 
@@ -172,6 +175,9 @@ describe('Subtitle OCR export service', () => {
         endTimeMs: 2_000,
         text: 'First line\nSecond line',
         confidence: 0.95,
+        placement: 'top',
+        placementSourceCount: 2,
+        topPlacementSourceCount: 2,
       },
     ]);
     expect(rustCues[0]?.sourceCueIds).not.toBe(sourceCueIds);
@@ -190,6 +196,17 @@ describe('Subtitle OCR export service', () => {
     expect(buildSubtitleOcrPreview(cues, 'vtt')).toContain('00:00:01.000 --> 00:00:02.000');
     expect(buildSubtitleOcrPreview(cues, 'ass')).toContain('First line\\NSecond line');
     expect(buildSubtitleOcrPreview([createCue({ text: '   ' })], 'srt')).toBe('');
+  });
+
+  it('builds ASS previews with top alignment overrides only for top cues', () => {
+    const preview = buildSubtitleOcrPreview([
+      createCue({ id: 'top', text: 'Top line', placement: 'top' }),
+      createCue({ id: 'bottom', startTimeMs: 3_000, endTimeMs: 4_000, text: 'Bottom line', placement: 'bottom' }),
+    ], 'ass');
+
+    expect(preview).toContain('{\\an8}Top line');
+    expect(preview).toContain(',,Bottom line');
+    expect(preview).not.toContain('{\\an8}Bottom line');
   });
 
   it('counts only exportable cues for version metadata', () => {
@@ -218,6 +235,7 @@ describe('Subtitle OCR export service', () => {
         endTimeMs: 2_000,
         text: 'Detected text',
         confidence: 0.95,
+        placement: 'bottom',
       }],
       outputPath: '/exports/movie.srt',
       format: 'srt',
@@ -250,6 +268,7 @@ describe('Subtitle OCR export service', () => {
           endTimeMs: 2_000,
           text: 'First line\nSecond line',
           confidence: 0.95,
+          placement: 'bottom',
         },
       ],
       outputPath: '/exports/Movie.en_clean_pass.srt',

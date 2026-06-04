@@ -21,7 +21,7 @@ use crate::tools::subtitle_ocr::stabilize::stabilize_cues;
 use crate::tools::subtitle_ocr::text::reconstruct_text_from_boxes;
 use crate::tools::subtitle_ocr::{
     SubtitleOcrBox, SubtitleOcrCue, SubtitleOcrLiveCueEvent, SubtitleOcrPipelineResult,
-    SubtitleOcrRawCue,
+    SubtitleOcrPlacement, SubtitleOcrRawCue,
 };
 
 #[derive(Clone)]
@@ -134,7 +134,11 @@ fn run_subtitle_ocr_pipeline_blocking(
             write_decoded_bitmap_assets(item_id, run_id, &decoded.metadata, &decoded.rgba)?;
         decoded.metadata.preview_path = Some(bitmap_assets.preview_path);
         let metadata = decoded.metadata.clone();
-        let raw_cue = ocr_decoded_bitmap(&engine, decoded)?;
+        let raw_cue = ocr_decoded_bitmap(
+            &engine,
+            decoded,
+            matches!(source, BitmapSubtitleSource::Pgs { .. }),
+        )?;
         let provisional_cue = provisional_cue_from_raw(&raw_cue);
         emit_live_cue_event(
             &live_event_app,
@@ -314,6 +318,9 @@ fn blank_final_cue_from_raw(raw_cue: &SubtitleOcrRawCue) -> SubtitleOcrCue {
         end_time_ms: raw_cue.end_time_ms,
         text: String::new(),
         confidence: raw_cue.confidence,
+        placement: raw_cue.placement,
+        placement_source_count: raw_cue.placement_source_count,
+        top_placement_source_count: raw_cue.top_placement_source_count,
     }
 }
 
@@ -333,6 +340,9 @@ fn provisional_cue_from_raw(raw_cue: &SubtitleOcrRawCue) -> SubtitleOcrCue {
         end_time_ms: raw_cue.end_time_ms,
         text: raw_cue.text.clone(),
         confidence: raw_cue.confidence,
+        placement: raw_cue.placement,
+        placement_source_count: raw_cue.placement_source_count,
+        top_placement_source_count: raw_cue.top_placement_source_count,
     }
 }
 
@@ -359,19 +369,21 @@ fn emit_live_cue_event(
 fn ocr_decoded_bitmap(
     engine: &ocr_rs::OcrEngine,
     decoded: DecodedBitmapCue,
+    detect_placement: bool,
 ) -> Result<SubtitleOcrRawCue, String> {
     let DecodedBitmapCue { metadata, rgba } = decoded;
     let image = RgbaImage::from_raw(metadata.width, metadata.height, rgba).ok_or_else(|| {
         "Decoded Subtitle OCR bitmap dimensions did not match RGBA data".to_string()
     })?;
     let image = DynamicImage::ImageRgba8(image);
-    recognize_subtitle_ocr_image(engine, &metadata, &image)
+    recognize_subtitle_ocr_image(engine, &metadata, &image, detect_placement)
 }
 
 fn recognize_subtitle_ocr_image(
     engine: &ocr_rs::OcrEngine,
     metadata: &crate::tools::subtitle_ocr::SubtitleOcrDecodedCue,
     image: &DynamicImage,
+    detect_placement: bool,
 ) -> Result<SubtitleOcrRawCue, String> {
     let ocr_results = engine
         .recognize(image)
@@ -389,6 +401,10 @@ fn recognize_subtitle_ocr_image(
         .collect::<Vec<_>>();
     let text = reconstruct_text_from_boxes(&boxes);
     let confidence = average_confidence(&boxes);
+    let placement = detect_placement.then(|| placement_from_boxes(&boxes, metadata.height));
+    let placement_source_count = placement.map(|_| 1);
+    let top_placement_source_count =
+        placement.map(|value| u32::from(value == SubtitleOcrPlacement::Top));
 
     Ok(SubtitleOcrRawCue {
         cue_id: metadata.cue_id.clone(),
@@ -398,7 +414,38 @@ fn recognize_subtitle_ocr_image(
         boxes,
         text,
         confidence,
+        placement,
+        placement_source_count,
+        top_placement_source_count,
     })
+}
+
+fn placement_from_boxes(boxes: &[SubtitleOcrBox], bitmap_height: u32) -> SubtitleOcrPlacement {
+    if bitmap_height == 0 {
+        return SubtitleOcrPlacement::Bottom;
+    }
+
+    let mut min_y = f64::INFINITY;
+    let mut max_y = f64::NEG_INFINITY;
+    for ocr_box in boxes {
+        if !ocr_box.y.is_finite() || !ocr_box.height.is_finite() || ocr_box.height <= 0.0 {
+            continue;
+        }
+
+        min_y = min_y.min(ocr_box.y.max(0.0));
+        max_y = max_y.max((ocr_box.y + ocr_box.height).max(0.0));
+    }
+
+    if !min_y.is_finite() || !max_y.is_finite() || max_y <= min_y {
+        return SubtitleOcrPlacement::Bottom;
+    }
+
+    let center_y = min_y + ((max_y - min_y) / 2.0);
+    if center_y < f64::from(bitmap_height) / 2.0 {
+        SubtitleOcrPlacement::Top
+    } else {
+        SubtitleOcrPlacement::Bottom
+    }
 }
 
 fn average_confidence(boxes: &[SubtitleOcrBox]) -> f64 {
@@ -425,7 +472,7 @@ mod tests {
     use super::{
         BackgroundBitmapCountTask, build_final_subtitle_ocr_cues,
         empty_subtitle_ocr_pipeline_result, initial_bitmap_total, ocr_decoded_bitmap,
-        should_start_background_count,
+        placement_from_boxes, should_start_background_count,
     };
     use crate::tools::ocr::{create_ocr_engine, resolve_ocr_engine_threads};
     use crate::tools::subtitle_ocr::decode::{
@@ -433,7 +480,8 @@ mod tests {
     };
     use crate::tools::subtitle_ocr::progress::ProgressTotal;
     use crate::tools::subtitle_ocr::{
-        SubtitleOcrBox, SubtitleOcrCue, SubtitleOcrPipelineResult, SubtitleOcrRawCue,
+        SubtitleOcrBox, SubtitleOcrCue, SubtitleOcrPipelineResult, SubtitleOcrPlacement,
+        SubtitleOcrRawCue,
     };
 
     #[test]
@@ -501,6 +549,9 @@ mod tests {
             boxes: Vec::new(),
             text: text.to_string(),
             confidence: if text.is_empty() { 0.0 } else { 0.8 },
+            placement: Some(SubtitleOcrPlacement::Bottom),
+            placement_source_count: Some(1),
+            top_placement_source_count: Some(0),
         }
     }
 
@@ -512,7 +563,48 @@ mod tests {
             end_time_ms: 2_500,
             text: text.to_string(),
             confidence: 0.8,
+            placement: Some(SubtitleOcrPlacement::Bottom),
+            placement_source_count: Some(1),
+            top_placement_source_count: Some(0),
         }
+    }
+
+    #[test]
+    fn placement_from_boxes_detects_top_half() {
+        let boxes = vec![SubtitleOcrBox {
+            text: "Top".to_string(),
+            confidence: 0.9,
+            x: 100.0,
+            y: 80.0,
+            width: 400.0,
+            height: 60.0,
+        }];
+
+        assert_eq!(
+            placement_from_boxes(&boxes, 1080),
+            SubtitleOcrPlacement::Top
+        );
+    }
+
+    #[test]
+    fn placement_from_boxes_defaults_bottom_for_lower_or_missing_boxes() {
+        let boxes = vec![SubtitleOcrBox {
+            text: "Bottom".to_string(),
+            confidence: 0.9,
+            x: 100.0,
+            y: 880.0,
+            width: 400.0,
+            height: 60.0,
+        }];
+
+        assert_eq!(
+            placement_from_boxes(&boxes, 1080),
+            SubtitleOcrPlacement::Bottom
+        );
+        assert_eq!(
+            placement_from_boxes(&[], 1080),
+            SubtitleOcrPlacement::Bottom
+        );
     }
 
     #[test]
@@ -599,7 +691,7 @@ mod tests {
                     .expect("failed to write diagnostic OCR input PNG");
 
                 let metadata = decoded.metadata.clone();
-                let raw_cue = ocr_decoded_bitmap(&engine, decoded)
+                let raw_cue = ocr_decoded_bitmap(&engine, decoded, false)
                     .expect("failed to OCR decoded VobSub bitmap");
                 write_detection_overlay(
                     &output_dir
@@ -625,6 +717,9 @@ mod tests {
                         end_time_ms: raw_cue.end_time_ms,
                         text: raw_cue.text.clone(),
                         confidence: raw_cue.confidence,
+                        placement: raw_cue.placement,
+                        placement_source_count: raw_cue.placement_source_count,
+                        top_placement_source_count: raw_cue.top_placement_source_count,
                     });
                 }
 

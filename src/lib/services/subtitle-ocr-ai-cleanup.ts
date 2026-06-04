@@ -188,8 +188,67 @@ function normalizeForMerge(text: string): string {
     .toLowerCase();
 }
 
+interface PlacementMergeState {
+  placedWeight: number;
+  topWeight: number;
+}
+
+function createPlacementMergeState(cue: SubtitleOcrCue): PlacementMergeState {
+  const state: PlacementMergeState = {
+    placedWeight: 0,
+    topWeight: 0,
+  };
+  addCuePlacementToMergeState(state, cue);
+  return state;
+}
+
+function hasPlacementSourceCounts(cue: SubtitleOcrCue): boolean {
+  return Number.isInteger(cue.placementSourceCount)
+    && Number.isInteger(cue.topPlacementSourceCount)
+    && (cue.placementSourceCount ?? -1) > 0
+    && (cue.topPlacementSourceCount ?? -1) >= 0
+    && (cue.topPlacementSourceCount ?? 0) <= (cue.placementSourceCount ?? 0);
+}
+
+function addCuePlacementToMergeState(state: PlacementMergeState, cue: SubtitleOcrCue): void {
+  if (hasPlacementSourceCounts(cue)) {
+    state.placedWeight += cue.placementSourceCount ?? 0;
+    state.topWeight += cue.topPlacementSourceCount ?? 0;
+    return;
+  }
+
+  const weight = Math.max(1, cue.sourceCueIds.length);
+  if (cue.placement === 'top') {
+    state.placedWeight += weight;
+    state.topWeight += weight;
+  } else if (cue.placement === 'bottom') {
+    state.placedWeight += weight;
+  }
+}
+
+function resolvePlacementMergeState(state: PlacementMergeState): SubtitleOcrCue['placement'] {
+  if (state.placedWeight === 0) {
+    return undefined;
+  }
+
+  return state.topWeight > state.placedWeight / 2 ? 'top' : 'bottom';
+}
+
+function applyPlacementMergeState(cue: SubtitleOcrCue, state: PlacementMergeState): void {
+  cue.placement = resolvePlacementMergeState(state);
+  if (state.placedWeight === 0) {
+    delete cue.placementSourceCount;
+    delete cue.topPlacementSourceCount;
+    return;
+  }
+
+  cue.placementSourceCount = state.placedWeight;
+  cue.topPlacementSourceCount = state.topWeight;
+}
+
 function mergeConsecutiveDuplicateCues(cues: SubtitleOcrCue[]): SubtitleOcrCue[] {
   const merged: SubtitleOcrCue[] = [];
+  const placementStates: PlacementMergeState[] = [];
 
   for (const cue of cues) {
     if (!cue.text.trim()) {
@@ -204,6 +263,15 @@ function mergeConsecutiveDuplicateCues(cues: SubtitleOcrCue[]): SubtitleOcrCue[]
       : false;
 
     if (previous && currentNormalized && previousNormalized === currentNormalized && isAdjacent) {
+      const placementState = placementStates.at(-1);
+      if (!placementState) {
+        merged.push(cloneCue(cue));
+        placementStates.push(createPlacementMergeState(cue));
+        continue;
+      }
+
+      addCuePlacementToMergeState(placementState, cue);
+      applyPlacementMergeState(previous, placementState);
       previous.endTimeMs = Math.max(previous.endTimeMs, cue.endTimeMs);
       previous.sourceCueIds.push(...cue.sourceCueIds);
       if (
@@ -217,6 +285,7 @@ function mergeConsecutiveDuplicateCues(cues: SubtitleOcrCue[]): SubtitleOcrCue[]
     }
 
     merged.push(cloneCue(cue));
+    placementStates.push(createPlacementMergeState(cue));
   }
 
   return merged;

@@ -38,6 +38,13 @@ pub(crate) struct SubtitleOcrBox {
     pub(crate) height: f64,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum SubtitleOcrPlacement {
+    Top,
+    Bottom,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SubtitleOcrCue {
@@ -47,6 +54,12 @@ pub(crate) struct SubtitleOcrCue {
     pub(crate) end_time_ms: u64,
     pub(crate) text: String,
     pub(crate) confidence: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) placement: Option<SubtitleOcrPlacement>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) placement_source_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) top_placement_source_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -72,6 +85,12 @@ pub(crate) struct SubtitleOcrRawCue {
     pub(crate) boxes: Vec<SubtitleOcrBox>,
     pub(crate) text: String,
     pub(crate) confidence: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) placement: Option<SubtitleOcrPlacement>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) placement_source_count: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) top_placement_source_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -97,7 +116,7 @@ pub(crate) struct SubtitleOcrPipelineResult {
 mod tests {
     use super::{
         SubtitleOcrBox, SubtitleOcrCue, SubtitleOcrDecodedCue, SubtitleOcrLiveCueEvent,
-        SubtitleOcrRawCue,
+        SubtitleOcrPlacement, SubtitleOcrRawCue,
     };
 
     #[test]
@@ -166,6 +185,9 @@ mod tests {
                 }],
                 text: "Hello".to_string(),
                 confidence: 0.9,
+                placement: Some(SubtitleOcrPlacement::Top),
+                placement_source_count: Some(1),
+                top_placement_source_count: Some(1),
             },
             provisional_cue: SubtitleOcrCue {
                 id: "cue-1".to_string(),
@@ -174,6 +196,9 @@ mod tests {
                 end_time_ms: 2_000,
                 text: "Hello".to_string(),
                 confidence: 0.9,
+                placement: Some(SubtitleOcrPlacement::Top),
+                placement_source_count: Some(1),
+                top_placement_source_count: Some(1),
             },
         };
 
@@ -183,6 +208,12 @@ mod tests {
         assert_eq!(value["runId"], "run-1");
         assert_eq!(value["bitmap"]["previewPath"], "/tmp/preview.png");
         assert_eq!(value["rawCue"]["boxes"][0]["text"], "Hello");
+        assert_eq!(value["rawCue"]["placement"], "top");
+        assert_eq!(value["rawCue"]["placementSourceCount"], 1);
+        assert_eq!(value["rawCue"]["topPlacementSourceCount"], 1);
+        assert_eq!(value["provisionalCue"]["placement"], "top");
+        assert_eq!(value["provisionalCue"]["placementSourceCount"], 1);
+        assert_eq!(value["provisionalCue"]["topPlacementSourceCount"], 1);
         assert_eq!(value["provisionalCue"]["sourceCueIds"][0], "cue-1");
     }
 }

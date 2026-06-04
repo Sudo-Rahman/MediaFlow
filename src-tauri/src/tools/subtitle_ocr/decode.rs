@@ -29,6 +29,7 @@ pub(super) enum BitmapSubtitleSource {
 pub(super) struct DecodedBitmapCue {
     pub(super) metadata: SubtitleOcrDecodedCue,
     pub(super) rgba: Vec<u8>,
+    pub(super) content_hash: u64,
 }
 
 #[tauri::command]
@@ -493,7 +494,7 @@ fn decoded_frame_to_cue(
         normalize_missing_palette_vobsub_rgba(&mut rgba);
     }
     let cue_id = format!("{}-cue-{}", item_id, cue_index + 1);
-    let bitmap_hash = stable_hash64_bytes(&rgba);
+    let bitmap_hash = bitmap_content_hash(&rgba);
     let cache_key = format!(
         "subtitle-ocr:{}:{:016x}",
         item_id,
@@ -517,6 +518,7 @@ fn decoded_frame_to_cue(
             preview_path: None,
         },
         rgba,
+        content_hash: bitmap_hash,
     })
 }
 
@@ -641,6 +643,41 @@ fn non_empty_path(path: Option<&str>) -> Option<&str> {
     path.map(str::trim).filter(|path| !path.is_empty())
 }
 
+pub(super) fn bitmap_content_hash(rgba: &[u8]) -> u64 {
+    stable_hash64_bytes(rgba)
+}
+
+pub(super) fn is_empty_subtitle_bitmap_rgba(rgba: &[u8]) -> bool {
+    if rgba.is_empty() {
+        return true;
+    }
+
+    let mut pixels = rgba.chunks_exact(4);
+    if !pixels.remainder().is_empty() {
+        return false;
+    }
+
+    let Some(first_pixel) = pixels.next() else {
+        return true;
+    };
+    let mut is_uniform = true;
+    let mut is_transparent = first_pixel[3] <= TRANSPARENT_ALPHA_THRESHOLD;
+
+    for pixel in pixels {
+        if pixel != first_pixel {
+            is_uniform = false;
+        }
+        if pixel[3] > TRANSPARENT_ALPHA_THRESHOLD {
+            is_transparent = false;
+        }
+        if !is_uniform && !is_transparent {
+            return false;
+        }
+    }
+
+    is_uniform || is_transparent
+}
+
 fn stable_hash64_bytes(bytes: &[u8]) -> u64 {
     const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
@@ -659,8 +696,10 @@ mod tests {
 
     use super::{
         BitmapSubtitleSource, DecodedBitmapCue, StreamingCueTimingNormalizer,
+        TRANSPARENT_ALPHA_THRESHOLD, bitmap_content_hash,
         decode_bitmap_subtitle_source_with_handler,
-        decode_bitmap_subtitle_source_with_handler_and_stop, validate_bitmap_subtitle_source,
+        decode_bitmap_subtitle_source_with_handler_and_stop, is_empty_subtitle_bitmap_rgba,
+        validate_bitmap_subtitle_source,
     };
     use crate::tools::subtitle_ocr::SubtitleOcrDecodedCue;
 
@@ -676,7 +715,65 @@ mod tests {
                 preview_path: None,
             },
             rgba: Vec::new(),
+            content_hash: bitmap_content_hash(&[]),
         }
+    }
+
+    #[test]
+    fn empty_bitmap_detection_accepts_empty_and_uniform_rgba() {
+        assert!(is_empty_subtitle_bitmap_rgba(&[]));
+        assert!(is_empty_subtitle_bitmap_rgba(&[
+            0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255,
+        ]));
+    }
+
+    #[test]
+    fn empty_bitmap_detection_accepts_quasi_transparent_pixels() {
+        assert!(is_empty_subtitle_bitmap_rgba(&[
+            255,
+            255,
+            255,
+            0,
+            32,
+            64,
+            128,
+            TRANSPARENT_ALPHA_THRESHOLD,
+        ]));
+    }
+
+    #[test]
+    fn empty_bitmap_detection_rejects_non_uniform_visible_pixels() {
+        assert!(!is_empty_subtitle_bitmap_rgba(&[
+            0, 0, 0, 255, 255, 255, 255, 255,
+        ]));
+    }
+
+    #[test]
+    fn empty_bitmap_detection_rejects_black_glyph_on_transparent_background() {
+        assert!(!is_empty_subtitle_bitmap_rgba(&[
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            TRANSPARENT_ALPHA_THRESHOLD,
+            0,
+            0,
+            0,
+            255,
+        ]));
+    }
+
+    #[test]
+    fn bitmap_content_hash_changes_with_bitmap_content() {
+        let first = bitmap_content_hash(&[0, 0, 0, 255]);
+        let duplicate = bitmap_content_hash(&[0, 0, 0, 255]);
+        let different = bitmap_content_hash(&[255, 255, 255, 255]);
+
+        assert_eq!(first, duplicate);
+        assert_ne!(first, different);
     }
 
     fn select_pattern_palette_entry(spu: &mut [u8], palette_entry: u8) {

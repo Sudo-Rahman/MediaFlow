@@ -1030,9 +1030,10 @@
       const result = await invoke<SubtitleOcrPipelineResult>('run_subtitle_ocr_pipeline', args);
       backendCancelableRunIdsByItemId.delete(item.id);
       activeRunIdsByItemId.delete(item.id);
+      const stats = result.stats;
       subtitleOcrStore.addLog(
         'info',
-        `Decoded ${result.decodedCues.length} bitmap cues, OCR kept ${result.rawOcrCues.length} raw cues, stabilized ${result.stabilizedCues.length} cues`,
+        `Decoded ${stats.decodedBitmapCount} bitmap cues, skipped ${stats.skippedEmptyBitmapCount} empty, reused ${stats.deduplicatedBitmapCount} duplicates, OCR processed ${stats.ocrProcessedBitmapCount}, kept ${result.rawOcrCues.length} raw cues, stabilized ${result.stabilizedCues.length} cues`,
         item.id,
       );
       if (cancelRequested || subtitleOcrStore.isItemCancelled(item.id)) {

@@ -110,6 +110,16 @@ pub(crate) struct SubtitleOcrPipelineResult {
     pub(crate) raw_ocr_cues: Vec<SubtitleOcrRawCue>,
     pub(crate) stabilized_cues: Vec<SubtitleOcrCue>,
     pub(crate) final_cues: Vec<SubtitleOcrCue>,
+    pub(crate) stats: SubtitleOcrPipelineStats,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SubtitleOcrPipelineStats {
+    pub(crate) decoded_bitmap_count: u32,
+    pub(crate) skipped_empty_bitmap_count: u32,
+    pub(crate) ocr_processed_bitmap_count: u32,
+    pub(crate) deduplicated_bitmap_count: u32,
 }
 
 #[cfg(test)]

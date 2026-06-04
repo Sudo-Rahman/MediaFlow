@@ -116,6 +116,14 @@ export interface SubtitleOcrPipelineResult {
   rawOcrCues: SubtitleOcrRawCue[];
   stabilizedCues: SubtitleOcrCue[];
   finalCues: SubtitleOcrCue[];
+  stats: SubtitleOcrPipelineStats;
+}
+
+export interface SubtitleOcrPipelineStats {
+  decodedBitmapCount: number;
+  skippedEmptyBitmapCount: number;
+  ocrProcessedBitmapCount: number;
+  deduplicatedBitmapCount: number;
 }
 
 export interface SubtitleOcrProcessingDraft {

@@ -303,7 +303,7 @@ mod tests {
         collect_missing_bitmap_assets, restore_bitmap_paths, subtitle_ocr_temp_asset_root,
     };
     use crate::tools::subtitle_ocr::SubtitleOcrDecodedCue;
-    use crate::tools::subtitle_ocr::decode::DecodedBitmapCue;
+    use crate::tools::subtitle_ocr::decode::{DecodedBitmapCue, bitmap_content_hash};
 
     fn bitmap(
         cue_id: &str,
@@ -483,8 +483,10 @@ mod tests {
     fn restore_bitmap_paths_returns_requested_bitmap_with_new_paths() {
         let target = bitmap("target", None, 1_000);
         let metadata = decoded("decoded", "cache-new", 1_000);
+        let rgba = vec![255; (metadata.width * metadata.height * 4) as usize];
         let decoded = DecodedBitmapCue {
-            rgba: vec![255; (metadata.width * metadata.height * 4) as usize],
+            content_hash: bitmap_content_hash(&rgba),
+            rgba,
             metadata,
         };
 

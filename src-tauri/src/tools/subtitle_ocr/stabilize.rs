@@ -167,6 +167,17 @@ mod tests {
     }
 
     #[test]
+    fn non_adjacent_identical_text_does_not_merge() {
+        let cues = vec![cue("a", 0, 1_000, "OK"), cue("b", 60_000, 61_000, "OK")];
+
+        let stabilized = stabilize_cues(&cues);
+
+        assert_eq!(stabilized.len(), 2);
+        assert_eq!(stabilized[0].source_cue_ids, vec!["a"]);
+        assert_eq!(stabilized[1].source_cue_ids, vec!["b"]);
+    }
+
+    #[test]
     fn case_and_whitespace_differences_do_not_merge() {
         let cues = vec![
             cue("a", 0, 1_000, "Hello  world"),

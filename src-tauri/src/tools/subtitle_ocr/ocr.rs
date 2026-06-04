@@ -14,20 +14,73 @@ use crate::tools::ocr::{create_ocr_engine, get_ocr_models_dir, resolve_ocr_engin
 use crate::tools::subtitle_ocr::assets::write_decoded_bitmap_assets;
 use crate::tools::subtitle_ocr::decode::{
     BitmapSubtitleSource, DecodedBitmapCue, count_bitmap_subtitle_source_with_stop,
-    decode_bitmap_subtitle_source_with_handler, validate_bitmap_subtitle_source,
+    decode_bitmap_subtitle_source_with_handler, is_empty_subtitle_bitmap_rgba,
+    validate_bitmap_subtitle_source,
 };
 use crate::tools::subtitle_ocr::progress::{ProgressTotal, SubtitleOcrProgressEmitter};
 use crate::tools::subtitle_ocr::stabilize::stabilize_cues;
 use crate::tools::subtitle_ocr::text::reconstruct_text_from_boxes;
 use crate::tools::subtitle_ocr::{
-    SubtitleOcrBox, SubtitleOcrCue, SubtitleOcrLiveCueEvent, SubtitleOcrPipelineResult,
-    SubtitleOcrPlacement, SubtitleOcrRawCue,
+    SubtitleOcrBox, SubtitleOcrCue, SubtitleOcrDecodedCue, SubtitleOcrLiveCueEvent,
+    SubtitleOcrPipelineResult, SubtitleOcrPipelineStats, SubtitleOcrPlacement, SubtitleOcrRawCue,
 };
 
 #[derive(Clone)]
 struct PipelineProgress {
     ocr: SubtitleOcrProgressEmitter,
     ai_cleaning: SubtitleOcrProgressEmitter,
+}
+
+#[derive(Debug, Clone)]
+struct CachedSubtitleOcrBitmap {
+    width: u32,
+    height: u32,
+    preview_path: String,
+    boxes: Vec<SubtitleOcrBox>,
+    text: String,
+    confidence: f64,
+    placement: Option<SubtitleOcrPlacement>,
+    placement_source_count: Option<u32>,
+    top_placement_source_count: Option<u32>,
+}
+
+impl CachedSubtitleOcrBitmap {
+    fn from_raw(
+        preview_path: String,
+        metadata: &SubtitleOcrDecodedCue,
+        raw_cue: &SubtitleOcrRawCue,
+    ) -> Self {
+        Self {
+            width: metadata.width,
+            height: metadata.height,
+            preview_path,
+            boxes: raw_cue.boxes.clone(),
+            text: raw_cue.text.clone(),
+            confidence: raw_cue.confidence,
+            placement: raw_cue.placement,
+            placement_source_count: raw_cue.placement_source_count,
+            top_placement_source_count: raw_cue.top_placement_source_count,
+        }
+    }
+
+    fn matches_dimensions(&self, metadata: &SubtitleOcrDecodedCue) -> bool {
+        self.width == metadata.width && self.height == metadata.height
+    }
+
+    fn raw_cue_for_metadata(&self, metadata: &SubtitleOcrDecodedCue) -> SubtitleOcrRawCue {
+        SubtitleOcrRawCue {
+            cue_id: metadata.cue_id.clone(),
+            start_time_ms: metadata.start_time_ms,
+            end_time_ms: metadata.end_time_ms,
+            cache_key: metadata.cache_key.clone(),
+            boxes: self.boxes.clone(),
+            text: self.text.clone(),
+            confidence: self.confidence,
+            placement: self.placement,
+            placement_source_count: self.placement_source_count,
+            top_placement_source_count: self.top_placement_source_count,
+        }
+    }
 }
 
 #[tauri::command]
@@ -125,47 +178,99 @@ fn run_subtitle_ocr_pipeline_blocking(
     let mut decoded_metadata = Vec::new();
     let mut raw_ocr_cues = Vec::new();
     let mut final_candidates = Vec::new();
-    let mut decoded_count = 0u32;
+    let mut stats = SubtitleOcrPipelineStats::default();
+    let mut ocr_cache: HashMap<u64, Vec<CachedSubtitleOcrBitmap>> = HashMap::new();
     decode_bitmap_subtitle_source_with_handler(source, item_id, run_id, |mut decoded| {
         ensure_not_cancelled(item_id, run_id)?;
-        decoded_count = decoded_count.saturating_add(1);
-        processed_count.store(decoded_count, Ordering::Relaxed);
+        stats.decoded_bitmap_count = stats.decoded_bitmap_count.saturating_add(1);
+        processed_count.store(stats.decoded_bitmap_count, Ordering::Relaxed);
+
+        if is_empty_subtitle_bitmap_rgba(&decoded.rgba) {
+            stats.skipped_empty_bitmap_count = stats.skipped_empty_bitmap_count.saturating_add(1);
+            progress.ocr.emit(stats.decoded_bitmap_count);
+            return Ok(());
+        }
+
+        if let Some(cached) = ocr_cache
+            .get(&decoded.content_hash)
+            .and_then(|cached_entries| {
+                cached_entries
+                    .iter()
+                    .find(|entry| entry.matches_dimensions(&decoded.metadata))
+            })
+        {
+            stats.deduplicated_bitmap_count = stats.deduplicated_bitmap_count.saturating_add(1);
+            decoded.metadata.preview_path = Some(cached.preview_path.clone());
+            let metadata = decoded.metadata.clone();
+            let raw_cue = cached.raw_cue_for_metadata(&metadata);
+            append_ocr_result(
+                &live_event_app,
+                item_id,
+                run_id,
+                metadata,
+                raw_cue,
+                &mut decoded_metadata,
+                &mut raw_ocr_cues,
+                &mut final_candidates,
+            );
+            progress.ocr.emit(stats.decoded_bitmap_count);
+            return Ok(());
+        }
+
+        let content_hash = decoded.content_hash;
         let bitmap_assets =
             write_decoded_bitmap_assets(item_id, run_id, &decoded.metadata, &decoded.rgba)?;
-        decoded.metadata.preview_path = Some(bitmap_assets.preview_path);
+        let preview_path = bitmap_assets.preview_path;
+        decoded.metadata.preview_path = Some(preview_path.clone());
         let metadata = decoded.metadata.clone();
         let raw_cue = ocr_decoded_bitmap(
             &engine,
             decoded,
             matches!(source, BitmapSubtitleSource::Pgs { .. }),
         )?;
-        let provisional_cue = provisional_cue_from_raw(&raw_cue);
-        emit_live_cue_event(
+        stats.ocr_processed_bitmap_count = stats.ocr_processed_bitmap_count.saturating_add(1);
+        ocr_cache
+            .entry(content_hash)
+            .or_default()
+            .push(CachedSubtitleOcrBitmap::from_raw(
+                preview_path,
+                &metadata,
+                &raw_cue,
+            ));
+        append_ocr_result(
             &live_event_app,
             item_id,
             run_id,
-            &metadata,
-            &raw_cue,
-            &provisional_cue,
+            metadata,
+            raw_cue,
+            &mut decoded_metadata,
+            &mut raw_ocr_cues,
+            &mut final_candidates,
         );
-        if !raw_cue.text.trim().is_empty() {
-            final_candidates.push(provisional_cue);
-        }
-        decoded_metadata.push(metadata);
-        raw_ocr_cues.push(raw_cue);
-        progress.ocr.emit(decoded_count);
+        progress.ocr.emit(stats.decoded_bitmap_count);
         Ok(())
     })?;
 
     stop_background_bitmap_count(&mut background_count);
     progress
         .ocr
-        .emit_force_with_total(decoded_count, decoded_count);
+        .emit_force_with_total(stats.decoded_bitmap_count, stats.decoded_bitmap_count);
 
     ensure_not_cancelled(item_id, run_id)?;
-    if decoded_count == 0 {
+    if stats.decoded_bitmap_count == 0 {
         progress.ai_cleaning.emit_force(1);
         return Ok(empty_subtitle_ocr_pipeline_result());
+    }
+
+    if raw_ocr_cues.is_empty() {
+        progress.ai_cleaning.emit_force(1);
+        return Ok(SubtitleOcrPipelineResult {
+            decoded_cues: decoded_metadata,
+            raw_ocr_cues,
+            final_cues: Vec::new(),
+            stabilized_cues: Vec::new(),
+            stats,
+        });
     }
 
     progress.ai_cleaning.emit_force(0);
@@ -178,6 +283,7 @@ fn run_subtitle_ocr_pipeline_blocking(
         raw_ocr_cues,
         final_cues,
         stabilized_cues,
+        stats,
     })
 }
 
@@ -258,6 +364,7 @@ fn empty_subtitle_ocr_pipeline_result() -> SubtitleOcrPipelineResult {
         raw_ocr_cues: Vec::new(),
         final_cues: Vec::new(),
         stabilized_cues: Vec::new(),
+        stats: SubtitleOcrPipelineStats::default(),
     }
 }
 
@@ -308,6 +415,25 @@ fn build_final_subtitle_ocr_cues(
     }
 
     final_cues
+}
+
+fn append_ocr_result(
+    app: &tauri::AppHandle,
+    item_id: &str,
+    run_id: &str,
+    metadata: SubtitleOcrDecodedCue,
+    raw_cue: SubtitleOcrRawCue,
+    decoded_metadata: &mut Vec<SubtitleOcrDecodedCue>,
+    raw_ocr_cues: &mut Vec<SubtitleOcrRawCue>,
+    final_candidates: &mut Vec<SubtitleOcrCue>,
+) {
+    let provisional_cue = provisional_cue_from_raw(&raw_cue);
+    emit_live_cue_event(app, item_id, run_id, &metadata, &raw_cue, &provisional_cue);
+    if !raw_cue.text.trim().is_empty() {
+        final_candidates.push(provisional_cue);
+    }
+    decoded_metadata.push(metadata);
+    raw_ocr_cues.push(raw_cue);
 }
 
 fn blank_final_cue_from_raw(raw_cue: &SubtitleOcrRawCue) -> SubtitleOcrCue {
@@ -371,7 +497,7 @@ fn ocr_decoded_bitmap(
     decoded: DecodedBitmapCue,
     detect_placement: bool,
 ) -> Result<SubtitleOcrRawCue, String> {
-    let DecodedBitmapCue { metadata, rgba } = decoded;
+    let DecodedBitmapCue { metadata, rgba, .. } = decoded;
     let image = RgbaImage::from_raw(metadata.width, metadata.height, rgba).ok_or_else(|| {
         "Decoded Subtitle OCR bitmap dimensions did not match RGBA data".to_string()
     })?;
@@ -470,7 +596,7 @@ mod tests {
     use image::{DynamicImage, Rgba, RgbaImage};
 
     use super::{
-        BackgroundBitmapCountTask, build_final_subtitle_ocr_cues,
+        BackgroundBitmapCountTask, CachedSubtitleOcrBitmap, build_final_subtitle_ocr_cues,
         empty_subtitle_ocr_pipeline_result, initial_bitmap_total, ocr_decoded_bitmap,
         placement_from_boxes, should_start_background_count,
     };
@@ -480,8 +606,8 @@ mod tests {
     };
     use crate::tools::subtitle_ocr::progress::ProgressTotal;
     use crate::tools::subtitle_ocr::{
-        SubtitleOcrBox, SubtitleOcrCue, SubtitleOcrPipelineResult, SubtitleOcrPlacement,
-        SubtitleOcrRawCue,
+        SubtitleOcrBox, SubtitleOcrCue, SubtitleOcrDecodedCue, SubtitleOcrPipelineResult,
+        SubtitleOcrPipelineStats, SubtitleOcrPlacement, SubtitleOcrRawCue,
     };
 
     #[test]
@@ -492,6 +618,7 @@ mod tests {
         assert!(result.raw_ocr_cues.is_empty());
         assert!(result.stabilized_cues.is_empty());
         assert!(result.final_cues.is_empty());
+        assert_eq!(result.stats, SubtitleOcrPipelineStats::default());
     }
 
     #[test]
@@ -605,6 +732,81 @@ mod tests {
             placement_from_boxes(&[], 1080),
             SubtitleOcrPlacement::Bottom
         );
+    }
+
+    #[test]
+    fn cached_ocr_bitmap_creates_distinct_raw_cues_for_duplicate_timings() {
+        let mut original = raw_cue_at("cue-a", 1_000, 2_000, "OK");
+        original.cache_key = "cache-a".to_string();
+        original.boxes = vec![SubtitleOcrBox {
+            text: "OK".to_string(),
+            confidence: 0.95,
+            x: 100.0,
+            y: 900.0,
+            width: 90.0,
+            height: 40.0,
+        }];
+        let duplicate_metadata = SubtitleOcrDecodedCue {
+            cue_id: "cue-b".to_string(),
+            start_time_ms: 60_000,
+            end_time_ms: 61_000,
+            width: 1920,
+            height: 1080,
+            cache_key: "cache-b".to_string(),
+            preview_path: None,
+        };
+        let cached = CachedSubtitleOcrBitmap::from_raw(
+            "/tmp/shared-preview.png".to_string(),
+            &duplicate_metadata,
+            &original,
+        );
+
+        let duplicate = cached.raw_cue_for_metadata(&duplicate_metadata);
+
+        assert_eq!(duplicate.cue_id, "cue-b");
+        assert_eq!(duplicate.start_time_ms, 60_000);
+        assert_eq!(duplicate.end_time_ms, 61_000);
+        assert_eq!(duplicate.cache_key, "cache-b");
+        assert_eq!(duplicate.text, "OK");
+        assert_eq!(duplicate.boxes, original.boxes);
+        assert_eq!(duplicate.placement_source_count, Some(1));
+        assert_eq!(duplicate.top_placement_source_count, Some(0));
+    }
+
+    #[test]
+    fn cached_ocr_bitmap_requires_matching_dimensions() {
+        let raw = raw_cue_at("cue-a", 1_000, 2_000, "OK");
+        let original_metadata = SubtitleOcrDecodedCue {
+            cue_id: "cue-a".to_string(),
+            start_time_ms: 1_000,
+            end_time_ms: 2_000,
+            width: 1920,
+            height: 1080,
+            cache_key: "cache-a".to_string(),
+            preview_path: Some("/tmp/shared-preview.png".to_string()),
+        };
+        let cached = CachedSubtitleOcrBitmap::from_raw(
+            "/tmp/shared-preview.png".to_string(),
+            &original_metadata,
+            &raw,
+        );
+        let same_dimensions = SubtitleOcrDecodedCue {
+            cue_id: "cue-b".to_string(),
+            start_time_ms: 60_000,
+            end_time_ms: 61_000,
+            width: 1920,
+            height: 1080,
+            cache_key: "cache-b".to_string(),
+            preview_path: None,
+        };
+        let different_dimensions = SubtitleOcrDecodedCue {
+            width: 960,
+            height: 540,
+            ..same_dimensions.clone()
+        };
+
+        assert!(cached.matches_dimensions(&same_dimensions));
+        assert!(!cached.matches_dimensions(&different_dimensions));
     }
 
     #[test]
@@ -747,6 +949,7 @@ mod tests {
             raw_ocr_cues,
             stabilized_cues,
             final_cues,
+            stats: SubtitleOcrPipelineStats::default(),
         };
 
         std::fs::write(

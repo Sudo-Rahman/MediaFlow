@@ -892,6 +892,10 @@
       return 'File not found.';
     }
 
+    if (audioToSubsStore.provider === 'mediaflow' && !mediaflowModelCatalogStore.hasTranscriptionModels) {
+      return 'MediaFlow transcription models are unavailable.';
+    }
+
     const resolution = resolveTranscriptionConfig(file, config);
     if (!resolution.ok) {
       const message = buildMissingLanguageMessage([file]);
@@ -1158,7 +1162,7 @@
 
   const apiKeyConfigured = $derived(
     audioToSubsStore.provider === 'mediaflow'
-      ? settingsStore.hasMediaFlowSession() && mediaflowModelCatalogStore.hasTranscriptionModels
+      ? settingsStore.hasMediaFlowSession()
       : settingsStore.hasDeepgramApiKey()
   );
   const audioFiles = $derived(audioToSubsStore.audioFiles);

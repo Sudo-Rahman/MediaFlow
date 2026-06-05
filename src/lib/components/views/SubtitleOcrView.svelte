@@ -30,9 +30,10 @@
     saveSubtitleOcrData,
   } from '$lib/services/subtitle-ocr-storage';
   import { cleanupSubtitleOcrCuesWithAi } from '$lib/services/subtitle-ocr-ai-cleanup';
-  import { subtitleOcrStore } from '$lib/stores';
+  import { mediaflowModelCatalogStore, subtitleOcrStore } from '$lib/stores';
   import { isSubtitleOcrProgressPhaseStale } from '$lib/stores/subtitle-ocr-progress';
   import {
+    isLLMSelectionAvailable,
     type SubtitleOcrCue,
     type SubtitleOcrCueBitmap,
     type SubtitleOcrConfig,
@@ -210,6 +211,7 @@
   ));
   const retryCount = $derived(retryableItemIds.length);
   const aiCleanupRetryCount = $derived(aiCleanupRetryableItemIds.length);
+  const aiCleanupModelAvailable = $derived(canUseSubtitleOcrAiCleanup(subtitleOcrStore.config));
   const primaryAction = $derived.by<'start' | 'retry'>(() => {
     if (summary.readyCount > 0) {
       return 'start';
@@ -221,7 +223,11 @@
 
     return 'start';
   });
-  const canStart = $derived(summary.readyCount > 0 && !subtitleOcrStore.isProcessing);
+  const canStart = $derived(
+    summary.readyCount > 0
+      && !subtitleOcrStore.isProcessing
+      && (!subtitleOcrStore.config.aiCleanupEnabled || aiCleanupModelAvailable)
+  );
   const canRetryAll = $derived(retryCount > 0 && !subtitleOcrStore.isProcessing);
   const actionHint = $derived.by(() => {
     if (summary.scanningCount > 0) {
@@ -232,8 +238,34 @@
       return 'Add subtitle sources to begin';
     }
 
+    if (summary.readyCount > 0 && subtitleOcrStore.config.aiCleanupEnabled && !aiCleanupModelAvailable) {
+      return 'Select an available AI cleanup model';
+    }
+
     return 'No sources ready for OCR';
   });
+
+  function doesSubtitleOcrConfigRunAi(mode: SubtitleOcrRetryMode, config: SubtitleOcrConfig): boolean {
+    return mode === 'ai_cleanup_only' || (mode === 'full_ocr' && config.aiCleanupEnabled);
+  }
+
+  function canUseSubtitleOcrAiCleanup(config: SubtitleOcrConfig): boolean {
+    return isLLMSelectionAvailable(
+      config.aiCleanupProvider,
+      config.aiCleanupModel,
+      import.meta.env.DEV,
+      mediaflowModelCatalogStore.chatModels,
+    );
+  }
+
+  function warnSubtitleOcrAiCleanupUnavailable(): void {
+    logAndToast.warning({
+      source: 'subtitle-ocr',
+      title: 'Subtitle OCR AI cleanup unavailable',
+      details: 'Select an available AI cleanup model before running AI cleanup.',
+      showAction: false,
+    });
+  }
 
   onMount(() => {
     let destroyed = false;
@@ -1107,6 +1139,14 @@
       return;
     }
 
+    const unavailableAiConfig = processableItemIds
+      .map((itemId) => configByItemId.get(itemId) ?? subtitleOcrStore.config)
+      .find((config) => config.aiCleanupEnabled && !canUseSubtitleOcrAiCleanup(config));
+    if (unavailableAiConfig) {
+      warnSubtitleOcrAiCleanupUnavailable();
+      return;
+    }
+
     cancelRequested = false;
     subtitleOcrStore.startProcessing(processableItemIds);
     const counts = createProcessingResultCounts();
@@ -1273,6 +1313,11 @@
     mode: SubtitleOcrRetryMode,
     config: SubtitleOcrConfig,
   ): void {
+    if (doesSubtitleOcrConfigRunAi(mode, config) && !canUseSubtitleOcrAiCleanup(config)) {
+      warnSubtitleOcrAiCleanupUnavailable();
+      return;
+    }
+
     if (mode === 'full_ocr') {
       void runProcessingItems(
         [itemId],
@@ -1289,6 +1334,11 @@
     mode: SubtitleOcrRetryMode,
     config: SubtitleOcrConfig,
   ): void {
+    if (doesSubtitleOcrConfigRunAi(mode, config) && !canUseSubtitleOcrAiCleanup(config)) {
+      warnSubtitleOcrAiCleanupUnavailable();
+      return;
+    }
+
     const itemIds = getCurrentRetryableItemIds();
     if (itemIds.length === 0) {
       logAndToast.warning({
@@ -1331,6 +1381,11 @@
       return;
     }
 
+    if (!canUseSubtitleOcrAiCleanup(config)) {
+      warnSubtitleOcrAiCleanupUnavailable();
+      return;
+    }
+
     cancelRequested = false;
     subtitleOcrStore.startProcessing([itemId]);
     const counts = createProcessingResultCounts();
@@ -1350,6 +1405,11 @@
     config: SubtitleOcrConfig,
   ): Promise<void> {
     if (itemIds.length === 0 || subtitleOcrStore.isProcessing) {
+      return;
+    }
+
+    if (!canUseSubtitleOcrAiCleanup(config)) {
+      warnSubtitleOcrAiCleanupUnavailable();
       return;
     }
 

@@ -102,10 +102,10 @@ export function parseMediaFlowModelCatalogResponse(response: MediaFlowHttpRespon
 export function splitMediaFlowModelCatalog(catalog: MediaFlowModelCatalog): SplitMediaFlowModelCatalog {
   return {
     chatModels: catalog.data
-      .filter((model) => model.type === 'chat')
+      .filter((model) => model.type === 'chat' && model.capabilities.includes('text'))
       .map((model) => ({ id: model.id, name: model.label })),
     transcriptionModels: catalog.data
-      .filter((model) => model.type === 'transcription')
+      .filter((model) => model.type === 'transcription' && model.capabilities.includes('audio'))
       .map((model) => ({ id: model.id, name: model.label })),
   };
 }

@@ -5,6 +5,8 @@
   import { DEFAULT_OCR_CONFIG, OCR_LANGUAGES } from '$lib/types/video-ocr';
   import { LlmProviderModelSelector } from '$lib/components/llm';
   import { RetryVersionDialogShell } from '$lib/components/shared';
+  import { mediaflowModelCatalogStore } from '$lib/stores';
+  import { isLLMSelectionAvailable } from '$lib/types';
   import { canRunOcrRetryMode, willRetryFallbackToFullPipeline } from './video-ocr-processing';
 
   import * as Field from '$lib/components/ui/field';
@@ -50,11 +52,21 @@
   const canRunSelectedMode = $derived(file ? canRunOcrRetryMode(file, mode) : false);
   const showPipelineOptions = $derived(mode === 'full_pipeline');
   const showCleanupOptions = $derived(mode === 'full_pipeline' || mode === 'cleanup_only' || mode === 'cleanup_and_ai');
-  const showAiOptions = $derived(
+  const selectedModeRunsAi = $derived(
     mode === 'cleanup_and_ai'
     || mode === 'ai_only'
     || (mode === 'full_pipeline' && config.aiCleanupEnabled)
   );
+  const showAiOptions = $derived(selectedModeRunsAi);
+  const aiCleanupModelAvailable = $derived(
+    isLLMSelectionAvailable(
+      config.aiCleanupProvider,
+      config.aiCleanupModel,
+      import.meta.env.DEV,
+      mediaflowModelCatalogStore.chatModels,
+    )
+  );
+  const canConfirm = $derived(canRunSelectedMode && (!selectedModeRunsAi || aiCleanupModelAvailable));
 
   $effect(() => {
     if (open && file) {
@@ -65,7 +77,7 @@
   });
 
   function handleConfirm() {
-    if (!file || !canRunSelectedMode) {
+    if (!file || !canConfirm) {
       return;
     }
 
@@ -105,7 +117,7 @@
   bind:versionName
   versionNamePlaceholder="Version 1"
   confirmLabel="Run"
-  confirmDisabled={!canRunSelectedMode}
+  confirmDisabled={!canConfirm}
   maxWidthClass="max-w-xl"
   onConfirm={handleConfirm}
 >
@@ -337,6 +349,19 @@
           onProviderChange={(provider) => config = { ...config, aiCleanupProvider: provider }}
           onModelChange={(model) => config = { ...config, aiCleanupModel: model }}
         />
+        {#if !aiCleanupModelAvailable}
+          <Item.Root variant="outline" size="xs" class="border-amber-500/40 text-amber-700 dark:text-amber-300">
+            <Item.Media>
+              <AlertTriangle class="size-4" />
+            </Item.Media>
+            <Item.Content>
+              <Item.Title>AI cleanup unavailable</Item.Title>
+              <Item.Description>
+                Select an available AI model before running this retry.
+              </Item.Description>
+            </Item.Content>
+          </Item.Root>
+        {/if}
       </Field.FieldSet>
     {/if}
   {/snippet}

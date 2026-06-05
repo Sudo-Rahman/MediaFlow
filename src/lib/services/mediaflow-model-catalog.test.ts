@@ -44,6 +44,31 @@ describe('MediaFlow model catalog parsing', () => {
     });
   });
 
+  it('omits models that do not expose capabilities required by their UI surface', () => {
+    const parsed = parseMediaFlowModelCatalogResponse({
+      status: 200,
+      body: JSON.stringify({
+        object: 'list',
+        provider: 'MediaFlow',
+        data: [
+          { id: 'chat-text', label: 'Chat Text', type: 'chat', capabilities: ['text'] },
+          { id: 'chat-image-only', label: 'Chat Image Only', type: 'chat', capabilities: ['image'] },
+          { id: 'transcribe-audio', label: 'Transcribe Audio', type: 'transcription', capabilities: ['audio'] },
+          { id: 'transcribe-text-only', label: 'Transcribe Text Only', type: 'transcription', capabilities: ['text'] },
+        ],
+      }),
+    });
+
+    expect(splitMediaFlowModelCatalog(parsed)).toEqual({
+      chatModels: [
+        { id: 'chat-text', name: 'Chat Text' },
+      ],
+      transcriptionModels: [
+        { id: 'transcribe-audio', name: 'Transcribe Audio' },
+      ],
+    });
+  });
+
   it('rejects non-success HTTP responses', () => {
     expect(() => parseMediaFlowModelCatalogResponse({
       status: 503,

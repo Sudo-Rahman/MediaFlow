@@ -10,7 +10,8 @@
   import * as Field from '$lib/components/ui/field';
   import * as Item from '$lib/components/ui/item';
   import { Textarea } from '$lib/components/ui/textarea';
-  import type { TranscodeAiIntent, TranscodeAiSizePreference, TranscodeFile, LLMProvider } from '$lib/types';
+  import { mediaflowModelCatalogStore } from '$lib/stores';
+  import { isLLMSelectionAvailable, type TranscodeAiIntent, type TranscodeAiSizePreference, type TranscodeFile, type LLMProvider } from '$lib/types';
 
   const INTENT_OPTIONS: Array<{ value: TranscodeAiIntent; label: string }> = [
     { value: 'speed', label: 'Speed' },
@@ -60,11 +61,23 @@
     onNavigateToSettings,
   }: Props = $props();
 
+  const aiSelectionAvailable = $derived(
+    isLLMSelectionAvailable(provider, model, import.meta.env.DEV, mediaflowModelCatalogStore.chatModels)
+  );
+
   function handleAnalyzeSelected(): void {
+    if (!aiSelectionAvailable) {
+      return;
+    }
+
     void onAnalyzeSelected?.();
   }
 
   function handleAnalyzeAll(): void {
+    if (!aiSelectionAvailable) {
+      return;
+    }
+
     void onAnalyzeAll?.();
   }
 
@@ -183,7 +196,7 @@
     </Field.Field>
 
     <div class="flex flex-wrap gap-2">
-      <Button onclick={handleAnalyzeSelected} disabled={isAnalyzing || selectedFile.status !== 'ready'}>
+      <Button onclick={handleAnalyzeSelected} disabled={isAnalyzing || selectedFile.status !== 'ready' || !aiSelectionAvailable}>
         {#if isAnalyzing}
           <Loader2 class="size-4 mr-2 animate-spin" />
         {:else}
@@ -191,7 +204,7 @@
         {/if}
         Analyze Selected File
       </Button>
-      <Button variant="outline" onclick={handleAnalyzeAll} disabled={isAnalyzing}>
+      <Button variant="outline" onclick={handleAnalyzeAll} disabled={isAnalyzing || !aiSelectionAvailable}>
         {#if isAnalyzing}
           <Loader2 class="size-4 mr-2 animate-spin" />
         {:else}

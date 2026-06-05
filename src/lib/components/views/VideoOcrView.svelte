@@ -54,7 +54,7 @@
     VideoOcrSelection,
     VideoOcrPersistenceData,
   } from '$lib/types';
-  import { VIDEO_EXTENSIONS } from '$lib/types';
+  import { isLLMSelectionAvailable, VIDEO_EXTENSIONS } from '$lib/types';
   import { createAsyncTaskQueue } from '$lib/services/async-task-queue';
   import { scanFile } from '$lib/services/ffprobe';
   import {
@@ -69,7 +69,7 @@
     invalidateOcrPreview,
     prepareOcrPreview,
   } from '$lib/services/ocr-preview';
-  import { settingsStore, toolImportStore, videoOcrStore } from '$lib/stores';
+  import { mediaflowModelCatalogStore, settingsStore, toolImportStore, videoOcrStore } from '$lib/stores';
   import {
     OcrOptionsPanel,
     VideoOcrDialogs,
@@ -180,6 +180,7 @@
   const fileSummary = $derived.by(() => summarizeOcrFiles(videoOcrStore.videoFiles));
   const startCount = $derived(fileSummary.startTargets.length);
   const retryCount = $derived(fileSummary.retryTargets.length);
+  const aiCleanupModelAvailable = $derived(canUseVideoOcrAiCleanup(videoOcrStore.config));
   const primaryAction = $derived.by<'start' | 'retry'>(() => {
     if (startCount > 0) {
       return 'start';
@@ -191,7 +192,11 @@
 
     return 'start';
   });
-  const canStart = $derived(startCount > 0 && !videoOcrStore.isProcessing);
+  const canStart = $derived(
+    startCount > 0
+      && !videoOcrStore.isProcessing
+      && (!videoOcrStore.config.aiCleanupEnabled || aiCleanupModelAvailable)
+  );
   const canRetryAll = $derived(retryCount > 0 && !videoOcrStore.isProcessing);
   const actionHint = $derived.by(() => {
     if (fileSummary.scanningCount > 0) {
@@ -206,8 +211,31 @@
       return 'Add videos to begin';
     }
 
+    if (startCount > 0 && videoOcrStore.config.aiCleanupEnabled && !aiCleanupModelAvailable) {
+      return 'Select an available AI cleanup model';
+    }
+
     return 'No files ready for OCR';
   });
+
+  function doesVideoOcrConfigRunAi(mode: OcrRetryMode, config: OcrConfig): boolean {
+    return mode === 'cleanup_and_ai'
+      || mode === 'ai_only'
+      || (mode === 'full_pipeline' && config.aiCleanupEnabled);
+  }
+
+  function canUseVideoOcrAiCleanup(config: OcrConfig): boolean {
+    return isLLMSelectionAvailable(
+      config.aiCleanupProvider,
+      config.aiCleanupModel,
+      import.meta.env.DEV,
+      mediaflowModelCatalogStore.chatModels,
+    );
+  }
+
+  function warnAiCleanupUnavailable(): void {
+    toast.warning('Selected AI cleanup model is unavailable.');
+  }
 
   function getFreshFile(fileId: string): OcrVideoFile | undefined {
     return videoOcrStore.videoFiles.find((file) => file.id === fileId);
@@ -817,6 +845,11 @@
       return;
     }
 
+    if (videoOcrStore.config.aiCleanupEnabled && !canUseVideoOcrAiCleanup(videoOcrStore.config)) {
+      warnAiCleanupUnavailable();
+      return;
+    }
+
     let successCount = 0;
     let failCount = 0;
     let cancelledCount = 0;
@@ -887,6 +920,11 @@
       return;
     }
 
+    if (doesVideoOcrConfigRunAi(mode, config) && !canUseVideoOcrAiCleanup(config)) {
+      warnAiCleanupUnavailable();
+      return;
+    }
+
     videoOcrStore.updateFile(file.id, {
       status: 'ready',
       progress: undefined,
@@ -922,6 +960,11 @@
   async function handleRetryAllConfirm(mode: OcrRetryMode, config: OcrConfig): Promise<void> {
     const retryTargets = [...fileSummary.retryTargets];
     if (retryTargets.length === 0) {
+      return;
+    }
+
+    if (doesVideoOcrConfigRunAi(mode, config) && !canUseVideoOcrAiCleanup(config)) {
+      warnAiCleanupUnavailable();
       return;
     }
 

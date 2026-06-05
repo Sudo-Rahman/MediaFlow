@@ -346,9 +346,7 @@ export const audioToSubsStore = {
       provider,
       deepgramConfig: {
         ...config.deepgramConfig,
-        model: provider === 'mediaflow'
-          ? firstMediaFlowModel ?? config.deepgramConfig.model
-          : config.deepgramConfig.model,
+        model: provider === 'mediaflow' ? firstMediaFlowModel ?? '' : config.deepgramConfig.model,
       },
     };
   },

@@ -92,7 +92,7 @@
   }
 
   function handlePrimaryAction() {
-    if (primaryAction === 'retry') {
+    if (effectivePrimaryAction === 'retry') {
       if (!canRetryAll) {
         return;
       }
@@ -125,12 +125,16 @@
   }
 
   const hasAnyAction = $derived(canStart || canRetryAll);
+  const effectivePrimaryAction = $derived(
+    primaryAction === 'start' && !canStart && canRetryAll ? 'retry' : primaryAction
+  );
+  const primaryIsRetry = $derived(effectivePrimaryAction === 'retry');
   const primaryLabel = $derived(
-    primaryAction === 'retry'
+    primaryIsRetry
       ? `Retry all (${retryCount})`
       : `Start OCR (${startCount})`
   );
-  const primaryIsRetry = $derived(primaryAction === 'retry');
+  const primaryDisabled = $derived(primaryIsRetry ? !canRetryAll : !canStart);
 </script>
 
 <Field.FieldGroup class="gap-6">
@@ -361,7 +365,7 @@
       <ButtonGroup.Root class="w-full">
         <Button
           class="flex-1 rounded-r-none"
-          disabled={!hasAnyAction}
+          disabled={primaryDisabled}
           onclick={handlePrimaryAction}
         >
           {#if primaryIsRetry}

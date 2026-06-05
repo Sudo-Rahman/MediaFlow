@@ -109,6 +109,28 @@ export function getLLMModelDisplayName(
   return getLLMProviderModels(provider, mediaflowModels).find((entry) => entry.id === model)?.name ?? model;
 }
 
+export function isLLMSelectionAvailable(
+  provider: LLMProvider,
+  model: string,
+  isDev: boolean = import.meta.env.DEV,
+  mediaflowModels: readonly ProviderModel[] = []
+): boolean {
+  if (!model.trim()) {
+    return false;
+  }
+
+  const selectableProviders = getSelectableLLMProviders(isDev, mediaflowModels.length > 0);
+  if (!selectableProviders.includes(provider)) {
+    return false;
+  }
+
+  if (provider === 'openrouter') {
+    return true;
+  }
+
+  return getLLMProviderModels(provider, mediaflowModels).some((entry) => entry.id === model);
+}
+
 export function normalizeLLMSelection(
   provider: LLMProvider,
   model: string,

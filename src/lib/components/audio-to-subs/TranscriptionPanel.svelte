@@ -170,12 +170,14 @@
           <Separator />
         {/if}
 
-        <ModelSelector
-          value={config.deepgramConfig.model}
-          models={modelOptions}
-          onValueChange={(model) => onDeepgramConfigChange({ model })}
-          disabled={isTranscribing || !hasModelOptions}
-        />
+        {#if hasModelOptions}
+          <ModelSelector
+            value={config.deepgramConfig.model}
+            models={modelOptions}
+            onValueChange={(model) => onDeepgramConfigChange({ model })}
+            disabled={isTranscribing}
+          />
+        {/if}
 
         {#if isMediaFlow && !hasModelOptions}
           <Alert.Root role="note" aria-live="off">

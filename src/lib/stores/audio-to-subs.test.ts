@@ -29,13 +29,13 @@ describe('audioToSubsStore MediaFlow model selection', () => {
     expect(audioToSubsStore.config.deepgramConfig.model).toBe('mf-transcribe-fast');
   });
 
-  it('keeps the current model when MediaFlow has no loaded transcription models', async () => {
+  it('clears the selected model when MediaFlow has no loaded transcription models', async () => {
     mediaflowModelCatalogStoreMock.transcriptionModels = [];
     const { audioToSubsStore } = await import('./audio-to-subs.svelte');
 
     audioToSubsStore.setModel('nova-2');
     audioToSubsStore.setTranscriptionProvider('mediaflow');
 
-    expect(audioToSubsStore.config.deepgramConfig.model).toBe('nova-2');
+    expect(audioToSubsStore.config.deepgramConfig.model).toBe('');
   });
 });

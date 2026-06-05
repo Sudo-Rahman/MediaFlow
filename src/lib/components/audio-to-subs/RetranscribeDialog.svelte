@@ -43,6 +43,9 @@
   const diarizeSwitchId = `${idPrefix}-diarize`;
   const uttSplitSliderId = `${idPrefix}-utt-split`;
   const modelOptions = $derived(provider === 'mediaflow' ? mediaflowModelCatalogStore.transcriptionModels : undefined);
+  const mediaflowModelsUnavailable = $derived(
+    provider === 'mediaflow' && mediaflowModelCatalogStore.transcriptionModels.length === 0
+  );
 
   $effect(() => {
     if (open && file) {
@@ -54,7 +57,7 @@
   });
 
   async function handleConfirm() {
-    if (!file) {
+    if (!file || mediaflowModelsUnavailable) {
       return;
     }
 
@@ -76,6 +79,7 @@
   bind:versionName
   versionNamePlaceholder="Version 1"
   confirmLabel="Transcribe"
+  confirmDisabled={mediaflowModelsUnavailable}
   maxWidthClass="max-w-lg"
   onConfirm={handleConfirm}
 >
@@ -94,10 +98,10 @@
       value={config.model}
       models={modelOptions}
       onValueChange={(model) => config = { ...config, model }}
-      disabled={provider === 'mediaflow' && mediaflowModelCatalogStore.transcriptionModels.length === 0}
+      disabled={mediaflowModelsUnavailable}
     />
 
-    {#if provider === 'mediaflow' && mediaflowModelCatalogStore.transcriptionModels.length === 0}
+    {#if mediaflowModelsUnavailable}
       <Alert.Root role="note" aria-live="off">
         <AlertTriangle class="size-4" />
         <Alert.Title>MediaFlow models unavailable</Alert.Title>

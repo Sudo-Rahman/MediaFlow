@@ -6,9 +6,11 @@
   import * as Item from '$lib/components/ui/item';
   import {
     DEFAULT_SUBTITLE_OCR_CONFIG,
+    isLLMSelectionAvailable,
     type SubtitleOcrConfig,
     type SubtitleOcrRetryMode,
   } from '$lib/types';
+  import { mediaflowModelCatalogStore } from '$lib/stores';
   import SubtitleOcrRetryOptionsFields from './SubtitleOcrRetryOptionsFields.svelte';
   import {
     buildSubtitleOcrRetryAllDialogDefaults,
@@ -44,7 +46,20 @@
   const activeTargetCount = $derived(
     mode === 'ai_cleanup_only' ? aiCleanupRetryCount : targetCount,
   );
-  const canConfirm = $derived(activeTargetCount > 0 && !isProcessing);
+  const selectedModeRunsAi = $derived(mode === 'ai_cleanup_only' || (mode === 'full_ocr' && config.aiCleanupEnabled));
+  const aiCleanupModelAvailable = $derived(
+    isLLMSelectionAvailable(
+      config.aiCleanupProvider,
+      config.aiCleanupModel,
+      import.meta.env.DEV,
+      mediaflowModelCatalogStore.chatModels,
+    )
+  );
+  const canConfirm = $derived(
+    activeTargetCount > 0
+      && !isProcessing
+      && (!selectedModeRunsAi || aiCleanupModelAvailable)
+  );
   const confirmLabel = $derived(
     mode === 'ai_cleanup_only' ? 'Run AI Cleanup Retry' : 'Run Full OCR Retry',
   );
@@ -105,6 +120,7 @@
         bind:mode
         bind:config
         scope="all"
+        aiSelectionUnavailable={selectedModeRunsAi && !aiCleanupModelAvailable}
         {onNavigateToSettings}
       />
     </div>

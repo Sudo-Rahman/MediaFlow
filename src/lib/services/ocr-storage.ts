@@ -564,6 +564,7 @@ export async function saveOcrData(
     version: 1,
     audioToSubs: existing?.audioToSubs,
     translation: existing?.translation,
+    subtitleOcr: existing?.subtitleOcr,
     videoOcr: {
       version: 2,
       videoPath,

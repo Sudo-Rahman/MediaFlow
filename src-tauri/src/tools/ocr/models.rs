@@ -9,6 +9,11 @@ const REQUIRED_MODELS: &[(&str, &str)] = &[
 
 const LANGUAGE_MODELS: &[(&str, &str, &str)] = &[
     (
+        "en_PP-OCRv5_mobile_rec_infer.mnn",
+        "ppocr_keys_en.txt",
+        "en",
+    ),
+    (
         "korean_PP-OCRv5_mobile_rec_infer.mnn",
         "ppocr_keys_korean.txt",
         "korean",
@@ -159,6 +164,29 @@ mod tests {
         let (missing, available_languages, installed) = collect_model_status(dir.path());
         assert!(missing.is_empty());
         assert!(available_languages.iter().any(|lang| lang == "multi"));
+        assert!(installed);
+    }
+
+    #[test]
+    fn collect_model_status_marks_english_language_as_available() {
+        let dir = tempfile::tempdir().expect("failed to create tempdir");
+        std::fs::write(dir.path().join("PP-OCRv5_mobile_det.mnn"), b"det")
+            .expect("failed to create det model");
+        std::fs::write(dir.path().join("PP-OCRv5_mobile_rec.mnn"), b"rec")
+            .expect("failed to create rec model");
+        std::fs::write(dir.path().join("ppocr_keys_v5.txt"), b"charset")
+            .expect("failed to create charset file");
+        std::fs::write(
+            dir.path().join("en_PP-OCRv5_mobile_rec_infer.mnn"),
+            b"en rec",
+        )
+        .expect("failed to create English rec model");
+        std::fs::write(dir.path().join("ppocr_keys_en.txt"), b"en charset")
+            .expect("failed to create English charset file");
+
+        let (missing, available_languages, installed) = collect_model_status(dir.path());
+        assert!(missing.is_empty());
+        assert!(available_languages.iter().any(|lang| lang == "en"));
         assert!(installed);
     }
 }

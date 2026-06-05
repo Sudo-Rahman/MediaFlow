@@ -11,16 +11,25 @@ function normalizeMediaflowData(value: unknown): MediaflowData | null {
     return null;
   }
 
-  if (!('audioToSubs' in value || 'videoOcr' in value || 'translation' in value)) {
+  if (!('audioToSubs' in value || 'videoOcr' in value || 'translation' in value || 'subtitleOcr' in value)) {
     return null;
   }
 
-  return {
-    version: 1,
-    audioToSubs: value.audioToSubs as MediaflowData['audioToSubs'],
-    videoOcr: value.videoOcr as MediaflowData['videoOcr'],
-    translation: value.translation as MediaflowData['translation'],
-  };
+  const data: MediaflowData = { version: 1 };
+  if (value.audioToSubs !== undefined) {
+    data.audioToSubs = value.audioToSubs as MediaflowData['audioToSubs'];
+  }
+  if (value.videoOcr !== undefined) {
+    data.videoOcr = value.videoOcr as MediaflowData['videoOcr'];
+  }
+  if (value.translation !== undefined) {
+    data.translation = value.translation as MediaflowData['translation'];
+  }
+  if (value.subtitleOcr !== undefined) {
+    data.subtitleOcr = value.subtitleOcr as MediaflowData['subtitleOcr'];
+  }
+
+  return data;
 }
 
 export async function loadMediaflowData(mediaPath: string): Promise<MediaflowData | null> {
@@ -45,6 +54,7 @@ export async function saveMediaflowData(mediaPath: string, data: MediaflowData):
       audioToSubs: data.audioToSubs,
       videoOcr: data.videoOcr,
       translation: data.translation,
+      subtitleOcr: data.subtitleOcr,
     };
 
     await invoke('save_mediaflow_data', {

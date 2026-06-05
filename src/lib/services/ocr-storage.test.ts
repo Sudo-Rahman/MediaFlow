@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { VideoOcrPersistenceData } from '$lib/types';
+import type { SubtitleOcrPersistenceData, VideoOcrPersistenceData } from '$lib/types';
 import { DEFAULT_OCR_CONFIG } from '$lib/types';
 import { createDefaultVideoOcrSelection } from '$lib/utils';
 import { addOcrVersion, loadOcrData, saveOcrData } from './ocr-storage';
@@ -18,6 +18,15 @@ const OCR_RESULT_METADATA = {
     height: 0.2,
   },
 } as const;
+
+const SUBTITLE_OCR_DATA: SubtitleOcrPersistenceData = {
+  version: 1,
+  sourcePath: '/subs/movie.sup',
+  versions: [],
+  activeVersionId: null,
+  createdAt: '2026-05-28T09:00:00.000Z',
+  updatedAt: '2026-05-28T09:00:00.000Z',
+};
 
 vi.mock('./mediaflow-storage', () => ({
   loadMediaflowData: loadMediaflowDataMock,
@@ -45,6 +54,32 @@ describe('OCR storage', () => {
     await saveOcrData('/movie.mp4', data);
 
     expect(saveMediaflowDataMock).toHaveBeenCalledWith('/movie.mp4', expect.objectContaining({
+      videoOcr: expect.objectContaining({
+        version: 2,
+        ocrSelection: data.ocrSelection,
+      }),
+    }));
+  });
+
+  it('preserves existing subtitle OCR data when saving video OCR data', async () => {
+    saveMediaflowDataMock.mockResolvedValueOnce(true);
+    loadMediaflowDataMock.mockResolvedValueOnce({
+      version: 1,
+      subtitleOcr: SUBTITLE_OCR_DATA,
+    });
+    const data: VideoOcrPersistenceData = {
+      version: 2,
+      videoPath: '/movie.mp4',
+      ocrSelection: createDefaultVideoOcrSelection(60_000),
+      ocrVersions: [],
+      createdAt: '2026-05-14T00:00:00.000Z',
+      updatedAt: '2026-05-14T00:00:00.000Z',
+    };
+
+    await saveOcrData('/movie.mp4', data);
+
+    expect(saveMediaflowDataMock).toHaveBeenCalledWith('/movie.mp4', expect.objectContaining({
+      subtitleOcr: SUBTITLE_OCR_DATA,
       videoOcr: expect.objectContaining({
         version: 2,
         ocrSelection: data.ocrSelection,

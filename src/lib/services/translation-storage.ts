@@ -47,6 +47,7 @@ export async function saveTranslationData(
       version: 1,
       audioToSubs: existing?.audioToSubs,
       videoOcr: existing?.videoOcr,
+      subtitleOcr: existing?.subtitleOcr,
       translation: {
         ...data,
         version: 1,
@@ -71,11 +72,12 @@ export async function deleteTranslationData(filePath: string): Promise<boolean> 
       return true;
     }
 
-    if (existing.audioToSubs || existing.videoOcr) {
+    if (existing.audioToSubs || existing.videoOcr || existing.subtitleOcr) {
       return saveMediaflowData(filePath, {
         version: 1,
         audioToSubs: existing.audioToSubs,
         videoOcr: existing.videoOcr,
+        subtitleOcr: existing.subtitleOcr,
       });
     }
 

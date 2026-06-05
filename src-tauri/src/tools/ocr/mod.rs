@@ -8,6 +8,8 @@ mod progress;
 mod state;
 pub(crate) mod subtitles;
 
+pub(crate) use engine::{create_ocr_engine, get_ocr_models_dir, resolve_ocr_engine_threads};
+
 use serde::{Deserialize, Serialize};
 
 const OCR_SELECTION_END_TOLERANCE_MS: u64 = 1;

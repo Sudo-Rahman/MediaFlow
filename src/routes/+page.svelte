@@ -20,7 +20,7 @@
   import AppHeader from '$lib/components/layout/app-header.svelte';
   import { getPlatformChrome } from '$lib/components/layout/platform-chrome';
   import { setToolHeader } from '$lib/components/layout/tool-header-context.svelte';
-  import { ExtractView, MergeView, SettingsView, InfoView, TranslationView, RenameView, AudioToSubsView, VideoOcrView, TranscodeView } from '$lib/components/views';
+  import { ExtractView, MergeView, SettingsView, InfoView, TranslationView, RenameView, AudioToSubsView, VideoOcrView, SubtitleOcrView, TranscodeView } from '$lib/components/views';
   import { TranslationExportDialog } from '$lib/components/translation';
   import { getFormattedOutput } from '$lib/services/deepgram';
   import {
@@ -32,14 +32,19 @@
     type VersionedExportGroup,
     type VersionedExportRequest,
   } from '$lib/services/versioned-export';
+  import {
+    buildSubtitleOcrExportGroups,
+    runSubtitleOcrBatchExport,
+    SUBTITLE_OCR_EXPORT_FORMAT_OPTIONS,
+  } from '$lib/services/subtitle-ocr-export';
   import { LogsSheet } from '$lib/components/logs';
-  import { AlertCircle, ScrollText, Download, AudioLines, ScanText, Languages, FileOutput, FileVideo, GitMerge, PenLine, SlidersHorizontal } from '@lucide/svelte';
+  import { AlertCircle, ScrollText, Download, AudioLines, ScanText, Captions, Languages, FileOutput, FileVideo, GitMerge, PenLine, SlidersHorizontal } from '@lucide/svelte';
   import { OCR_OUTPUT_FORMATS } from '$lib/types';
   import type { ToolId } from '$lib/types/tool-import';
   import { formatFileSize } from '$lib/utils/format';
   import { OS, formatTransferRate, getAllowedOcrVersionExportFormats, normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils';
   import { logStore } from '$lib/stores/logs.svelte';
-  import { audioToSubsStore, videoOcrStore, translationStore, extractionStore, mergeStore, renameStore, transcodeStore, updaterStore } from '$lib/stores';
+  import { audioToSubsStore, videoOcrStore, translationStore, extractionStore, mergeStore, renameStore, transcodeStore, updaterStore, subtitleOcrStore } from '$lib/stores';
   import { logAndToast } from '$lib/utils/log-toast';
 
   type ViewId = ToolId | 'settings';
@@ -53,6 +58,7 @@
   let translationExportDialogOpen = $state(false);
   let audioExportDialogOpen = $state(false);
   let ocrExportDialogOpen = $state(false);
+  let subtitleOcrExportDialogOpen = $state(false);
   let updateDialogOpen = $state(false);
   let videoOcrOptionsSheetOpen = $state(false);
   let videoOcrOptionsCompact = $state(true);
@@ -76,13 +82,14 @@
   let renameViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let audioToSubsViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
   let videoOcrViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let subtitleOcrViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
 
   const platformChrome = getPlatformChrome(OS());
   const isMacOS = platformChrome === 'macos-overlay';
   const toolHeader = setToolHeader();
 
   interface ToolProgressMetric {
-    toolId: 'audio-to-subs' | 'video-ocr' | 'translate' | 'extract' | 'merge' | 'rename' | 'transcode';
+    toolId: 'audio-to-subs' | 'video-ocr' | 'subtitle-ocr' | 'translate' | 'extract' | 'merge' | 'rename' | 'transcode';
     label: string;
     doneUnits: number;
     totalUnits: number;
@@ -211,6 +218,46 @@
       active: videoOcrStore.isProcessing && totalUnits > 0,
       detailText: `${settledCount}/${totalUnits} files`,
       icon: ScanText,
+    };
+  });
+
+  const subtitleOcrMetric = $derived.by((): ToolProgressMetric => {
+    const scopeIds = Array.from(subtitleOcrStore.processingScopeItemIds);
+    const items = subtitleOcrStore.items;
+    let doneUnits = 0;
+    let settledCount = 0;
+
+    for (const itemId of scopeIds) {
+      const item = items.find((entry) => entry.id === itemId);
+      if (!item) {
+        doneUnits += 1;
+        settledCount += 1;
+        continue;
+      }
+
+      if (item.status === 'completed' || item.status === 'error') {
+        doneUnits += 1;
+        settledCount += 1;
+      } else if (subtitleOcrStore.isProcessing) {
+        doneUnits += clampPercentage(
+          item.progress?.overallPercentage ?? item.progress?.percentage ?? 0,
+        ) / 100;
+      } else {
+        doneUnits += 1;
+        settledCount += 1;
+      }
+    }
+
+    const totalUnits = scopeIds.length;
+    return {
+      toolId: 'subtitle-ocr',
+      label: 'Subtitle OCR',
+      doneUnits,
+      totalUnits,
+      percentage: ratioToPercentage(doneUnits, totalUnits),
+      active: subtitleOcrStore.isProcessing && totalUnits > 0,
+      detailText: `${settledCount}/${totalUnits} sources`,
+      icon: Captions,
     };
   });
 
@@ -345,7 +392,7 @@
   });
 
   const activeToolMetrics = $derived.by(() => {
-    return [audioMetric, videoOcrMetric, translationMetric, extractionMetric, mergeMetric, transcodeMetric, renameMetric]
+    return [audioMetric, videoOcrMetric, subtitleOcrMetric, translationMetric, extractionMetric, mergeMetric, transcodeMetric, renameMetric]
       .filter((metric) => metric.active);
   });
 
@@ -420,8 +467,17 @@
 
   const hasOcrExportableData = $derived(ocrExportGroups.length > 0);
 
+  const subtitleOcrExportGroups = $derived.by(() => {
+    return buildSubtitleOcrExportGroups(subtitleOcrStore.items);
+  });
+
+  const hasSubtitleOcrExportableData = $derived(subtitleOcrExportGroups.length > 0);
+
   const showGlobalExportButton = $derived(
-    currentView === 'translate' || currentView === 'audio-to-subs' || currentView === 'video-ocr',
+    currentView === 'translate'
+    || currentView === 'audio-to-subs'
+    || currentView === 'video-ocr'
+    || currentView === 'subtitle-ocr',
   );
 
   const globalExportDisabled = $derived.by(() => {
@@ -437,6 +493,10 @@
       return !hasOcrExportableData;
     }
 
+    if (currentView === 'subtitle-ocr') {
+      return !hasSubtitleOcrExportableData;
+    }
+
     return true;
   });
 
@@ -449,6 +509,9 @@
     }
     if (currentView === 'video-ocr') {
       return 'Export OCR subtitle versions';
+    }
+    if (currentView === 'subtitle-ocr') {
+      return 'Export Subtitle OCR versions';
     }
     return 'Export';
   });
@@ -464,6 +527,10 @@
     }
     if (currentView === 'video-ocr') {
       ocrExportDialogOpen = true;
+      return;
+    }
+    if (currentView === 'subtitle-ocr') {
+      subtitleOcrExportDialogOpen = true;
     }
   }
 
@@ -553,14 +620,19 @@
     transcode: 'Transcode',
     'audio-to-subs': 'Audio to Subs',
     'video-ocr': 'Video OCR',
+    'subtitle-ocr': 'Subtitle OCR',
     translate: 'AI Translation',
     rename: 'Batch Rename',
     info: 'File Information',
     settings: 'Settings'
   };
 
+  function hasToolHeader(viewId: ViewId): viewId is ToolId {
+    return viewId !== 'settings';
+  }
+
   const activeToolHeader = $derived.by(() =>
-    currentView === 'settings' ? undefined : toolHeader.getHeader(currentView),
+    hasToolHeader(currentView) ? toolHeader.getHeader(currentView) : undefined,
   );
   const activeHeaderTitle = $derived.by(() => {
     if (activeToolHeader?.title) {
@@ -638,6 +710,8 @@
         await audioToSubsViewRef.handleFileDrop(event.payload.paths);
       } else if (currentView === 'video-ocr' && videoOcrViewRef) {
         await videoOcrViewRef.handleFileDrop(event.payload.paths);
+      } else if (currentView === 'subtitle-ocr' && subtitleOcrViewRef) {
+        await subtitleOcrViewRef.handleFileDrop(event.payload.paths);
       }
     });
 
@@ -660,6 +734,9 @@
     if (currentView !== 'video-ocr') {
       ocrExportDialogOpen = false;
       videoOcrOptionsSheetOpen = false;
+    }
+    if (currentView !== 'subtitle-ocr') {
+      subtitleOcrExportDialogOpen = false;
     }
   }
 </script>
@@ -852,6 +929,14 @@
           />
         </div>
 
+        <!-- Subtitle OCR View - persists when switching views -->
+        <div class="absolute inset-0" style="display: {currentView === 'subtitle-ocr' ? 'block' : 'none'}">
+          <SubtitleOcrView
+            bind:this={subtitleOcrViewRef}
+            onNavigateToSettings={() => handleNavigate('settings')}
+          />
+        </div>
+
         <!-- Translation View -->
         <div class="absolute inset-0" style="display: {currentView === 'translate' ? 'block' : 'none'}">
           <TranslationView bind:this={translateViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
@@ -908,6 +993,19 @@
   formatOptions={OCR_EXPORT_FORMAT_OPTIONS}
   defaultFormat="srt"
   onExport={handleExportOcr}
+/>
+
+<VersionedExportDialog
+  open={subtitleOcrExportDialogOpen}
+  onOpenChange={(open) => {
+    subtitleOcrExportDialogOpen = open;
+  }}
+  title="Export Subtitle OCR Versions"
+  description="Export Subtitle OCR versions as ASS, SRT, or VTT files."
+  defaultFormat="srt"
+  groups={subtitleOcrExportGroups}
+  formatOptions={SUBTITLE_OCR_EXPORT_FORMAT_OPTIONS}
+  onExport={(request) => runSubtitleOcrBatchExport(request, subtitleOcrStore.items)}
 />
 
 <AppUpdateDialog

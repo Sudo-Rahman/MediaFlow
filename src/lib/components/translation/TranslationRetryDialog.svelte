@@ -7,9 +7,11 @@
   import { Input } from '$lib/components/ui/input';
   import * as Item from '$lib/components/ui/item';
   import * as Select from '$lib/components/ui/select';
+  import { mediaflowModelCatalogStore } from '$lib/stores';
   import {
     getDefaultLLMModel,
     getDefaultLLMProvider,
+    getLLMModelDisplayName,
     LLM_PROVIDERS,
     normalizeLLMSelection,
     SUPPORTED_LANGUAGES,
@@ -74,7 +76,7 @@
   const compareModelDisplay = $derived(
     models.map((entry) => {
       const provider = LLM_PROVIDERS[entry.provider];
-      const modelName = provider.models.find((modelEntry) => modelEntry.id === entry.model)?.name ?? entry.model;
+      const modelName = getLLMModelDisplayName(entry.provider, entry.model, mediaflowModelCatalogStore.chatModels);
       return {
         id: entry.id,
         label: `${provider.name} - ${modelName}`,
@@ -85,7 +87,12 @@
 
   $effect(() => {
     if (open) {
-      const defaultSelection = normalizeLLMSelection(defaultProvider, defaultModel);
+      const defaultSelection = normalizeLLMSelection(
+        defaultProvider,
+        defaultModel,
+        import.meta.env.DEV,
+        mediaflowModelCatalogStore.chatModels
+      );
       versionName = `Version ${existingVersions.length + 1}`;
       provider = defaultSelection.provider;
       model = defaultSelection.model;
@@ -93,14 +100,19 @@
       targetLanguage = defaultTargetLanguage;
       batchCount = defaultBatchCount;
       models = defaultModels.map((entry) => {
-        const selection = normalizeLLMSelection(entry.provider, entry.model);
+        const selection = normalizeLLMSelection(
+          entry.provider,
+          entry.model,
+          import.meta.env.DEV,
+          mediaflowModelCatalogStore.chatModels
+        );
         return { ...entry, provider: selection.provider, model: selection.model };
       });
     }
   });
 
   function handleConfirm(): void {
-    const selection = normalizeLLMSelection(provider, model);
+    const selection = normalizeLLMSelection(provider, model, import.meta.env.DEV, mediaflowModelCatalogStore.chatModels);
     onConfirm({
       versionName: versionName.trim() || `Version ${existingVersions.length + 1}`,
       provider: selection.provider,
@@ -109,7 +121,12 @@
       targetLanguage,
       batchCount: Math.max(1, batchCount),
       models: models.map((entry) => {
-        const selection = normalizeLLMSelection(entry.provider, entry.model);
+        const selection = normalizeLLMSelection(
+          entry.provider,
+          entry.model,
+          import.meta.env.DEV,
+          mediaflowModelCatalogStore.chatModels
+        );
         return { ...entry, provider: selection.provider, model: selection.model };
       }),
     });

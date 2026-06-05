@@ -1,6 +1,7 @@
 <script lang="ts">
   import { AlertTriangle, Key, Loader2, Play, Settings2, Users } from '@lucide/svelte';
   import { DEEPGRAM_MODELS, type TranscriptionConfig, type DeepgramConfig, type TranscriptionProvider } from '$lib/types';
+  import { mediaflowModelCatalogStore } from '$lib/stores';
   import { cn } from '$lib/utils';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
@@ -64,6 +65,7 @@
     !isTranscribing && 
     !isTranscoding &&
     apiKeyConfigured &&
+    (config.provider !== 'mediaflow' || mediaflowModelCatalogStore.hasTranscriptionModels) &&
     !hasInvalidAutoLanguageFiles
   );
   
@@ -77,8 +79,15 @@
   const invalidFileCountLabel = $derived(
     `${invalidAutoLanguageFiles.length} affected file${invalidAutoLanguageFiles.length === 1 ? '' : 's'}`
   );
-  const mediaFlowModels = [DEEPGRAM_MODELS[0]] as const;
+  const mediaFlowModels = $derived(mediaflowModelCatalogStore.transcriptionModels);
+  const hasMediaFlowModels = $derived(mediaFlowModels.length > 0);
   const modelOptions = $derived(isMediaFlow ? mediaFlowModels : DEEPGRAM_MODELS);
+  const hasModelOptions = $derived(modelOptions.length > 0);
+  const providerOptions = $derived<TranscriptionProvider[]>(
+    import.meta.env.DEV
+      ? (hasMediaFlowModels ? ['deepgram', 'mediaflow'] : ['deepgram'])
+      : (hasMediaFlowModels ? ['mediaflow'] : [])
+  );
   const showProviderSelector = import.meta.env.DEV;
   const idPrefix = `transcription-panel-${Math.random().toString(36).slice(2)}`;
   const providerSelectId = `${idPrefix}-provider`;
@@ -88,6 +97,22 @@
   const diarizeSwitchId = `${idPrefix}-diarize`;
   const uttSplitSliderId = `${idPrefix}-utt-split`;
   const maxConcurrentInputId = `${idPrefix}-max-concurrent`;
+
+  $effect(() => {
+    if (config.provider === 'mediaflow' && !hasMediaFlowModels && import.meta.env.DEV) {
+      onProviderChange('deepgram');
+      return;
+    }
+
+    const firstMediaFlowModel = mediaFlowModels[0]?.id;
+    if (
+      config.provider === 'mediaflow' &&
+      firstMediaFlowModel &&
+      !mediaFlowModels.some((model) => model.id === config.deepgramConfig.model)
+    ) {
+      onDeepgramConfigChange({ model: firstMediaFlowModel });
+    }
+  });
 </script>
 
 <div class={cn("h-full flex flex-col overflow-auto", className)}>
@@ -132,8 +157,11 @@
               </Select.Trigger>
               <Select.Content>
                 <Select.Group>
-                  <Select.Item value="deepgram">Deepgram</Select.Item>
-                  <Select.Item value="mediaflow">MediaFlow</Select.Item>
+                  {#each providerOptions as provider (provider)}
+                    <Select.Item value={provider}>
+                      {provider === 'mediaflow' ? 'MediaFlow' : 'Deepgram'}
+                    </Select.Item>
+                  {/each}
                 </Select.Group>
               </Select.Content>
             </Select.Root>
@@ -146,8 +174,18 @@
           value={config.deepgramConfig.model}
           models={modelOptions}
           onValueChange={(model) => onDeepgramConfigChange({ model })}
-          disabled={isTranscribing || isMediaFlow}
+          disabled={isTranscribing || !hasModelOptions}
         />
+
+        {#if isMediaFlow && !hasModelOptions}
+          <Alert.Root role="note" aria-live="off">
+            <AlertTriangle class="size-4" />
+            <Alert.Title>MediaFlow models unavailable</Alert.Title>
+            <Alert.Description>
+              Managed transcription models could not be loaded.
+            </Alert.Description>
+          </Alert.Root>
+        {/if}
       </Card.Content>
     </Card.Root>
 

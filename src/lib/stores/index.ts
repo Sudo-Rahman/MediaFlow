@@ -17,5 +17,7 @@ export { transcodeStore } from './transcode.svelte';
 export { mediaflowAuthUiStore } from './mediaflow-auth-ui.svelte';
 export { mediaflowUsageStore } from './mediaflow-usage.svelte';
 export type { MediaFlowUsage, MediaFlowUsageStatus } from './mediaflow-usage.svelte';
+export { mediaflowModelCatalogStore } from './mediaflow-model-catalog.svelte';
+export type { MediaFlowModelCatalogStatus } from './mediaflow-model-catalog.svelte';
 export { updaterStore } from './updater.svelte';
 export type { UpdaterProgress, UpdaterStatus } from './updater.svelte';

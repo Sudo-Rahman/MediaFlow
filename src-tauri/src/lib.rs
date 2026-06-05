@@ -54,6 +54,7 @@ pub fn run() {
             commands::mediaflow_api::fetch_mediaflow_user_info,
             commands::mediaflow_api::revoke_mediaflow_refresh_token,
             commands::mediaflow_api::fetch_mediaflow_account_usage,
+            commands::mediaflow_api::fetch_mediaflow_model_catalog,
             commands::sleep_inhibit::acquire_sleep_inhibit,
             commands::sleep_inhibit::release_sleep_inhibit,
             // Audio transcription commands

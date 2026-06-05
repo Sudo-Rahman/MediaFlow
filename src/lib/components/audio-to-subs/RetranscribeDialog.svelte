@@ -1,8 +1,9 @@
 <script lang="ts">
   import { AlertTriangle, Settings2, Users } from '@lucide/svelte';
 
-  import type { AudioFile, DeepgramConfig } from '$lib/types';
+  import type { AudioFile, DeepgramConfig, TranscriptionProvider } from '$lib/types';
   import { DEFAULT_DEEPGRAM_CONFIG } from '$lib/types';
+  import { mediaflowModelCatalogStore } from '$lib/stores';
   import { RetryVersionDialogShell } from '$lib/components/shared';
   import * as Alert from '$lib/components/ui/alert';
 
@@ -19,6 +20,7 @@
     onOpenChange: (open: boolean) => void;
     file: AudioFile | null;
     baseConfig: DeepgramConfig;
+    provider: TranscriptionProvider;
     onConfirm: (fileId: string, versionName: string, config: DeepgramConfig) => Promise<string | null> | string | null;
   }
 
@@ -27,6 +29,7 @@
     onOpenChange,
     file,
     baseConfig,
+    provider,
     onConfirm,
   }: RetranscribeDialogProps = $props();
 
@@ -39,6 +42,7 @@
   const paragraphsSwitchId = `${idPrefix}-paragraphs`;
   const diarizeSwitchId = `${idPrefix}-diarize`;
   const uttSplitSliderId = `${idPrefix}-utt-split`;
+  const modelOptions = $derived(provider === 'mediaflow' ? mediaflowModelCatalogStore.transcriptionModels : undefined);
 
   $effect(() => {
     if (open && file) {
@@ -88,8 +92,20 @@
 
     <ModelSelector
       value={config.model}
+      models={modelOptions}
       onValueChange={(model) => config = { ...config, model }}
+      disabled={provider === 'mediaflow' && mediaflowModelCatalogStore.transcriptionModels.length === 0}
     />
+
+    {#if provider === 'mediaflow' && mediaflowModelCatalogStore.transcriptionModels.length === 0}
+      <Alert.Root role="note" aria-live="off">
+        <AlertTriangle class="size-4" />
+        <Alert.Title>MediaFlow models unavailable</Alert.Title>
+        <Alert.Description>
+          Managed transcription models could not be loaded.
+        </Alert.Description>
+      </Alert.Root>
+    {/if}
 
     <LanguageSelector
       value={config.language}

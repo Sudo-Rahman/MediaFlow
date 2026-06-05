@@ -3,7 +3,7 @@
   import '../app.css';
   import { ModeWatcher, setMode } from 'mode-watcher';
   import { Toaster } from '$lib/components/ui/sonner';
-  import { settingsStore } from '$lib/stores';
+  import { mediaflowModelCatalogStore, settingsStore } from '$lib/stores';
   import { restoreMediaFlowSession } from '$lib/services/mediaflow-auth';
 
   let { children } = $props();
@@ -13,6 +13,7 @@
     void (async () => {
       await settingsStore.load();
       setMode(settingsStore.settings.theme);
+      void mediaflowModelCatalogStore.loadOnce();
       await restoreMediaFlowSession();
     })();
   });

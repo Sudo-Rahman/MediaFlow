@@ -1,5 +1,6 @@
 import type { LanguageCode, LLMProvider, TranslationJob } from '$lib/types';
-import { LLM_PROVIDERS } from '$lib/types';
+import { getLLMModelDisplayName, LLM_PROVIDERS } from '$lib/types';
+import { mediaflowModelCatalogStore } from '$lib/stores/mediaflow-model-catalog.svelte';
 
 export const SUBTITLE_EXTENSIONS = ['.srt', '.ass', '.vtt', '.ssa'] as const;
 export const SUBTITLE_FORMATS = SUBTITLE_EXTENSIONS.map((extension) => extension.slice(1).toUpperCase());
@@ -28,8 +29,7 @@ export function getModelDisplayName(provider: string, model: string): string {
     return model;
   }
 
-  const foundModel = providerConfig.models.find((entry) => entry.id === model);
-  return foundModel?.name ?? model;
+  return getLLMModelDisplayName(provider as LLMProvider, model, mediaflowModelCatalogStore.chatModels);
 }
 
 export function getPendingTranslationVersionName(completedVersionCount: number): string {

@@ -1,17 +1,22 @@
 <script lang="ts">
-  import { DEEPGRAM_MODELS, type DeepgramModel } from '$lib/types';
+  import { DEEPGRAM_MODELS } from '$lib/types';
   import { cn } from '$lib/utils';
   import * as Select from '$lib/components/ui/select';
   import { Label } from '$lib/components/ui/label';
   import { Badge } from '$lib/components/ui/badge';
   import { Cpu, Sparkles, Zap } from '@lucide/svelte';
 
-  type DeepgramModelOption = typeof DEEPGRAM_MODELS[number];
+  export interface TranscriptionModelOption {
+    id: string;
+    name: string;
+    description?: string;
+    tier?: string;
+  }
 
   interface ModelSelectorProps {
-    value: DeepgramModel;
-    onValueChange: (model: DeepgramModel) => void;
-    models?: readonly DeepgramModelOption[];
+    value: string;
+    onValueChange: (model: string) => void;
+    models?: readonly TranscriptionModelOption[];
     disabled?: boolean;
     class?: string;
   }
@@ -26,14 +31,14 @@
 
   const selectedModel = $derived(models.find(m => m.id === value) ?? DEEPGRAM_MODELS.find(m => m.id === value));
 
-  function getTierBadge(tier: string): { variant: 'default' | 'secondary' | 'outline'; text: string } {
+  function getTierBadge(tier: string | undefined): { variant: 'default' | 'secondary' | 'outline'; text: string } {
     switch (tier) {
       case 'latest':
         return { variant: 'default', text: 'New' };
       case 'stable':
         return { variant: 'secondary', text: 'Stable' };
       default:
-        return { variant: 'outline', text: tier };
+        return { variant: 'outline', text: tier ?? 'Model' };
     }
   }
 </script>
@@ -44,7 +49,7 @@
   <Select.Root 
     type="single"
     value={value}
-    onValueChange={(v) => v && onValueChange(v as DeepgramModel)}
+    onValueChange={(v) => v && onValueChange(v)}
     {disabled}
   >
     <Select.Trigger class="w-full">
@@ -83,7 +88,7 @@
   </Select.Root>
 
   <!-- Model description -->
-  {#if selectedModel}
+  {#if selectedModel?.description}
     <p class="text-xs text-muted-foreground">
       {selectedModel.description}
     </p>

@@ -21,12 +21,25 @@ describe('LLM provider availability', () => {
     });
   });
 
+  it('hides MediaFlow in development builds when no chat models are loaded', () => {
+    expect(getSelectableLLMProviders(true, false)).toEqual([
+      'google',
+      'anthropic',
+      'openai',
+      'openrouter',
+    ]);
+  });
+
   it('restricts release builds to MediaFlow models', () => {
     expect(getSelectableLLMProviders(false)).toEqual(['mediaflow']);
 
-    expect(normalizeLLMSelection('google', 'gemini-3.5-flash', false)).toEqual({
+    expect(normalizeLLMSelection('google', 'gemini-3.5-flash', false, [{ id: 'Lite', name: 'Lite' }])).toEqual({
       provider: 'mediaflow',
       model: 'Lite',
     });
+  });
+
+  it('hides all release AI providers when MediaFlow chat models are unavailable', () => {
+    expect(getSelectableLLMProviders(false, false)).toEqual([]);
   });
 });

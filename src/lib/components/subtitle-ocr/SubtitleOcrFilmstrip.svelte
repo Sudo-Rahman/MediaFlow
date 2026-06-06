@@ -14,6 +14,7 @@
     findCueNearestTime,
     toCueTileWidth,
   } from './subtitle-ocr-review-state';
+  import { resolveSubtitleOcrBitmapSrc } from './subtitle-ocr-preview-src';
 
   interface SubtitleOcrFilmstripProps {
     bitmaps: SubtitleOcrCueBitmap[];
@@ -38,8 +39,6 @@
   const TILE_GAP = 10;
   const TILE_HEIGHT = 126;
   const TILE_OVERSCAN = 6;
-  const BITMAP_URL_PATH = /^(?:https?:\/\/|data:|blob:|\/\/)/i;
-
   let viewport = $state<HTMLElement | null>(null);
   let applyingViewportScroll = false;
   let scrollFrameId: number | null = null;
@@ -172,7 +171,7 @@
   }
 
   function resolveBitmapSrc(bitmapPath: string): string {
-    return BITMAP_URL_PATH.test(bitmapPath) ? bitmapPath : convertFileSrc(bitmapPath);
+    return resolveSubtitleOcrBitmapSrc(bitmapPath, convertFileSrc);
   }
 
   function getReviewBitmapPath(bitmap: SubtitleOcrCueBitmap | null): string | undefined {

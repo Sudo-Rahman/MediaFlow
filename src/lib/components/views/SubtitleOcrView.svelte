@@ -60,6 +60,7 @@
     getSubtitleOcrVersionedItemIds,
     mergeRestoredSubtitleOcrBitmapAssets,
     mergeSubtitleOcrPersistenceForItem,
+    parseSubtitleOcrProbeDurationSeconds,
     resolveSubtitleOcrExpectedBitmapCount,
     resolveSubtitleOcrEffectiveModelForConfig,
     shouldApplySubtitleOcrProgressEvent,
@@ -72,6 +73,7 @@
 
   interface TrackDialogRequest {
     sourcePath: string;
+    sourceDuration?: number;
     tracks: SubtitleOcrTrackMetadata[];
   }
 
@@ -98,6 +100,7 @@
 
   let trackDialogOpen = $state(false);
   let trackDialogSourcePath = $state('');
+  let trackDialogSourceDuration = $state<number | undefined>(undefined);
   let trackDialogTracks = $state.raw<SubtitleOcrTrackMetadata[]>([]);
   let queuedTrackDialogs = $state.raw<TrackDialogRequest[]>([]);
   let resultDialogOpen = $state(false);
@@ -596,6 +599,15 @@
     return invoke<SubtitleOcrVobSubPair>('resolve_subtitle_ocr_vobsub_pair', { path });
   }
 
+  async function probeContainerDuration(path: string): Promise<number | undefined> {
+    try {
+      const probeJson = await invoke<string>('probe_file', { path });
+      return parseSubtitleOcrProbeDurationSeconds(probeJson);
+    } catch {
+      return undefined;
+    }
+  }
+
   async function probeContainerPath(path: string): Promise<TrackDialogRequest | null> {
     try {
       const tracks = await invoke<SubtitleOcrTrackMetadata[]>('probe_subtitle_ocr_tracks', { path });
@@ -610,7 +622,11 @@
         return null;
       }
 
-      return { sourcePath: path, tracks };
+      return {
+        sourcePath: path,
+        sourceDuration: await probeContainerDuration(path),
+        tracks,
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logAndToast.error({
@@ -660,6 +676,7 @@
 
   function openTrackDialog(request: TrackDialogRequest): void {
     trackDialogSourcePath = request.sourcePath;
+    trackDialogSourceDuration = request.sourceDuration;
     trackDialogTracks = request.tracks;
     trackDialogOpen = true;
   }
@@ -667,6 +684,7 @@
   function closeTrackDialog(): void {
     trackDialogOpen = false;
     trackDialogSourcePath = '';
+    trackDialogSourceDuration = undefined;
     trackDialogTracks = [];
   }
 
@@ -1595,6 +1613,7 @@
   bind:open={trackDialogOpen}
   onOpenChange={handleTrackDialogOpenChange}
   sourcePath={trackDialogSourcePath}
+  sourceDuration={trackDialogSourceDuration}
   tracks={trackDialogTracks}
   onImport={handleImportTracks}
 />

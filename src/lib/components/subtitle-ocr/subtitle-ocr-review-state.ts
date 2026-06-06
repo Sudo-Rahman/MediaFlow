@@ -7,6 +7,11 @@ export interface TimedCue {
   endTimeMs: number;
 }
 
+export interface TimedRange {
+  startTimeMs: number;
+  endTimeMs: number;
+}
+
 export interface VisibleCueRange {
   startIndex: number;
   endIndex: number;
@@ -123,6 +128,23 @@ export interface TimelineLocalWindowReleaseOptions {
   nextPropWindowKey: string;
 }
 
+export interface SubtitleOcrReviewDurationOptions {
+  cues: readonly TimedRange[];
+  bitmaps: readonly TimedRange[];
+  sourceDurationSeconds?: number | null;
+}
+
+export interface SubtitleOcrReviewViewportScopeKeyOptions {
+  itemId: string | null | undefined;
+  reviewTargetId: string | null | undefined;
+}
+
+export interface SubtitleOcrTimelineScaleScopeKeyOptions {
+  reviewScopeKey: string | null | undefined;
+  firstCueId: string | null | undefined;
+  lastCueId: string | null | undefined;
+}
+
 export interface ProgrammaticRailViewportReportOptions {
   source: 'rail' | 'timeline-window' | 'timeline-zone' | 'timeline-zoom' | 'selection' | null;
   timelineWindowDragging: boolean;
@@ -181,6 +203,15 @@ function isFiniteMs(value: number): boolean {
 
 function normalizeTime(value: number): number {
   return isFiniteMs(value) ? value : 0;
+}
+
+function normalizeScopeSegment(value: string | null | undefined): string {
+  const normalized = value?.trim();
+  return normalized ? normalized : 'none';
+}
+
+function maxTimedRangeEndMs(values: readonly TimedRange[]): number {
+  return values.reduce((max, value) => Math.max(max, normalizeTime(value.endTimeMs)), 0);
 }
 
 function formatCompactDuration(ms: number): string {
@@ -248,6 +279,38 @@ export function buildSubtitleOcrReviewStats(
   const exportableCueCount = countExportableSubtitleOcrCues(cues);
 
   return `${exportableCueCount} cue${exportableCueCount === 1 ? '' : 's'} · ${formatCompactDuration(durationMs)}`;
+}
+
+export function resolveSubtitleOcrReviewDurationMs(options: SubtitleOcrReviewDurationOptions): number {
+  const sourceDurationMs = Number.isFinite(options.sourceDurationSeconds)
+    ? Math.max(0, Math.round((options.sourceDurationSeconds ?? 0) * 1_000))
+    : 0;
+
+  return Math.max(
+    sourceDurationMs,
+    maxTimedRangeEndMs(options.cues),
+    maxTimedRangeEndMs(options.bitmaps),
+  );
+}
+
+export function buildSubtitleOcrReviewViewportScopeKey(
+  options: SubtitleOcrReviewViewportScopeKeyOptions,
+): string {
+  return `${normalizeScopeSegment(options.itemId)}:${normalizeScopeSegment(options.reviewTargetId)}`;
+}
+
+export function buildSubtitleOcrTimelineScaleScopeKey(
+  options: SubtitleOcrTimelineScaleScopeKeyOptions,
+): string {
+  const reviewScopeKey = options.reviewScopeKey?.trim();
+  if (reviewScopeKey) {
+    return reviewScopeKey;
+  }
+
+  return [
+    normalizeScopeSegment(options.firstCueId),
+    normalizeScopeSegment(options.lastCueId),
+  ].join(':');
 }
 
 export function getCueCenterMs(cue: TimedCue): number {

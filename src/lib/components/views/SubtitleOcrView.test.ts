@@ -16,6 +16,7 @@ import {
   getSubtitleOcrVersionedItemIds,
   mergeRestoredSubtitleOcrBitmapAssets,
   mergeSubtitleOcrPersistenceForItem,
+  parseSubtitleOcrProbeDurationSeconds,
   resolveSubtitleOcrExpectedBitmapCount,
   resolveSubtitleOcrEffectiveModelForConfig,
   shouldApplySubtitleOcrProgressEvent,
@@ -79,6 +80,25 @@ describe('summarizeSubtitleOcrItems', () => {
       { status: 'error' },
       { status: 'scanning' },
     ])).toEqual({ readyCount: 1, scanningCount: 1 });
+  });
+});
+
+describe('parseSubtitleOcrProbeDurationSeconds', () => {
+  it('reads a positive ffprobe format duration', () => {
+    expect(parseSubtitleOcrProbeDurationSeconds(JSON.stringify({
+      format: { duration: '7421.250000' },
+    }))).toBe(7421.25);
+  });
+
+  it('ignores missing, invalid, and non-positive durations', () => {
+    expect(parseSubtitleOcrProbeDurationSeconds('{}')).toBeUndefined();
+    expect(parseSubtitleOcrProbeDurationSeconds('{')).toBeUndefined();
+    expect(parseSubtitleOcrProbeDurationSeconds(JSON.stringify({
+      format: { duration: 'N/A' },
+    }))).toBeUndefined();
+    expect(parseSubtitleOcrProbeDurationSeconds(JSON.stringify({
+      format: { duration: 0 },
+    }))).toBeUndefined();
   });
 });
 

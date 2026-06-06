@@ -9,6 +9,7 @@ export type SubtitleOcrImportTrack = SubtitleOcrTrackMetadata;
 
 interface ImportSelectedSubtitleOcrTracksOptions {
   sourcePath: string;
+  sourceDuration?: number;
   tracks: readonly SubtitleOcrImportTrack[];
   selectedTrackIndices: ReadonlySet<number>;
   getTrackOverride: (streamIndex: number) => SubtitleOcrModelOverride;
@@ -51,6 +52,7 @@ export function buildSubtitleOcrTrackItem(
   sourcePath: string,
   track: SubtitleOcrImportTrack,
   ocrModelOverride: SubtitleOcrModelOverride = 'default',
+  sourceDuration?: number,
 ): SubtitleOcrSourceItem {
   return {
     id: buildTrackItemId(sourcePath, track.streamIndex),
@@ -59,6 +61,7 @@ export function buildSubtitleOcrTrackItem(
     track: { ...track },
     displayName: getFileName(sourcePath),
     status: 'ready',
+    ...(sourceDuration !== undefined ? { duration: sourceDuration } : {}),
     ocrModelOverride,
     versions: [],
     activeVersionId: null,
@@ -79,6 +82,7 @@ export function resolveImportButtonLabel(count: number): string {
 
 export async function importSelectedSubtitleOcrTracks({
   sourcePath,
+  sourceDuration,
   tracks,
   selectedTrackIndices,
   getTrackOverride,
@@ -91,6 +95,7 @@ export async function importSelectedSubtitleOcrTracks({
       sourcePath,
       track,
       getTrackOverride(track.streamIndex),
+      sourceDuration,
     ));
 
   closeDialog();

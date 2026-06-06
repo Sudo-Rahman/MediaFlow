@@ -25,6 +25,7 @@
     open: boolean;
     onOpenChange: (open: boolean) => void;
     sourcePath: string;
+    sourceDuration?: number;
     tracks: SubtitleOcrImportTrack[];
     onImport: (items: SubtitleOcrSourceItem[]) => void | Promise<void>;
     onCancel?: () => void;
@@ -34,6 +35,7 @@
     open = $bindable(false),
     onOpenChange,
     sourcePath,
+    sourceDuration,
     tracks,
     onImport,
     onCancel,
@@ -118,6 +120,7 @@
     try {
       await importSelectedSubtitleOcrTracks({
         sourcePath,
+        sourceDuration,
         tracks,
         selectedTrackIndices,
         getTrackOverride,

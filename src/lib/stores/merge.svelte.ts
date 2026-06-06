@@ -24,6 +24,7 @@ import {
   getDefaultLLMProvider,
   normalizeLLMSelection,
 } from '$lib/types';
+import { mediaflowModelCatalogStore } from './mediaflow-model-catalog.svelte';
 
 const DEFAULT_AI_PROVIDER = getDefaultLLMProvider();
 const DEFAULT_AI_MODEL = getDefaultLLMModel(DEFAULT_AI_PROVIDER);
@@ -477,13 +478,13 @@ export const mergeStore = {
   },
 
   setAiProvider(provider: LLMProvider) {
-    const selection = normalizeLLMSelection(provider, '');
+    const selection = normalizeLLMSelection(provider, '', import.meta.env.DEV, mediaflowModelCatalogStore.chatModels);
     aiProvider = selection.provider;
     aiModel = selection.model;
   },
 
   setAiModel(model: string) {
-    const selection = normalizeLLMSelection(aiProvider, model);
+    const selection = normalizeLLMSelection(aiProvider, model, import.meta.env.DEV, mediaflowModelCatalogStore.chatModels);
     aiProvider = selection.provider;
     aiModel = selection.model;
   },

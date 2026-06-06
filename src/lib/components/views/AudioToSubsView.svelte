@@ -22,7 +22,7 @@
   import { scanFile } from '$lib/services/ffprobe';
   import { transcriptionVersionToSubtitleFile } from '$lib/services/subtitle-interop';
   import { loadTranscriptionData, saveTranscriptionData } from '$lib/services/transcription-storage';
-  import { audioToSubsStore, settingsStore, toolImportStore } from '$lib/stores';
+  import { audioToSubsStore, mediaflowModelCatalogStore, settingsStore, toolImportStore } from '$lib/stores';
   import { getFileName } from '$lib/utils/format';
   import { resolveDeepgramTrackLanguage } from '$lib/utils/audio-language';
   import { logAndToast } from '$lib/utils/log-toast';
@@ -892,6 +892,10 @@
       return 'File not found.';
     }
 
+    if (audioToSubsStore.provider === 'mediaflow' && !mediaflowModelCatalogStore.hasTranscriptionModels) {
+      return 'MediaFlow transcription models are unavailable.';
+    }
+
     const resolution = resolveTranscriptionConfig(file, config);
     if (!resolution.ok) {
       const message = buildMissingLanguageMessage([file]);
@@ -1217,6 +1221,7 @@
   bind:retranscribeDialogOpen
   retranscribeDialogFile={retranscribeDialogFile}
   deepgramConfig={audioToSubsStore.deepgramConfig}
+  provider={audioToSubsStore.provider}
   bind:trackSelectDialogOpen
   {trackSelectTracks}
   trackSelectFileName={trackSelectFileName}

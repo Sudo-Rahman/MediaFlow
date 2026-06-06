@@ -87,14 +87,18 @@
   }
 
   const hasPrimaryAction = $derived(canStart || canRetryAll);
-  const primaryIsRetry = $derived(primaryAction === 'retry');
+  const effectivePrimaryAction = $derived(
+    primaryAction === 'start' && !canStart && canRetryAll ? 'retry' : primaryAction
+  );
+  const primaryIsRetry = $derived(effectivePrimaryAction === 'retry');
   const primaryLabel = $derived(
     primaryIsRetry ? `Retry OCR (${retryCount})` : `Start OCR (${readyCount})`,
   );
+  const primaryDisabled = $derived(primaryIsRetry ? !canRetryAll : !canStart);
   const cancelActionState = $derived(getSubtitleOcrCancelActionState(isCancelling, cancelActionKind));
 
   function handlePrimaryAction(): void {
-    if (primaryIsRetry) {
+    if (effectivePrimaryAction === 'retry') {
       if (!canRetryAll) {
         return;
       }
@@ -192,7 +196,7 @@
         {cancelActionState.label}
       </Button>
     {:else}
-      <Button class="w-full" disabled={!hasPrimaryAction} onclick={handlePrimaryAction}>
+      <Button class="w-full" disabled={primaryDisabled} onclick={handlePrimaryAction}>
         {#if primaryIsRetry}
           <RotateCw class="mr-2 size-4" />
         {:else}

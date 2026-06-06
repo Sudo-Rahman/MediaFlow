@@ -8,8 +8,8 @@
   import * as Field from '$lib/components/ui/field';
   import * as Item from '$lib/components/ui/item';
   import * as Select from '$lib/components/ui/select';
-  import { settingsStore, translationStore } from '$lib/stores';
-  import { LLM_PROVIDERS, SUPPORTED_LANGUAGES } from '$lib/types';
+  import { mediaflowModelCatalogStore, settingsStore, translationStore } from '$lib/stores';
+  import { getLLMModelDisplayName, LLM_PROVIDERS, SUPPORTED_LANGUAGES } from '$lib/types';
   import type { LanguageCode, LLMProvider } from '$lib/types';
 
   interface TranslationConfigPanelProps {
@@ -34,8 +34,7 @@
 
   function getModelDisplayName(provider: LLMProvider, model: string): string {
     const providerConfig = LLM_PROVIDERS[provider];
-    const providerModel = providerConfig.models.find(m => m.id === model);
-    const modelName = providerModel?.name || model;
+    const modelName = getLLMModelDisplayName(provider, model, mediaflowModelCatalogStore.chatModels);
     const providerName = providerConfig.name;
     return `${providerName} - ${modelName}`;
   }

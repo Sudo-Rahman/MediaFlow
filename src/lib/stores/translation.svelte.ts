@@ -15,6 +15,7 @@ import {
   getDefaultLLMProvider,
   normalizeLLMSelection,
 } from '$lib/types';
+import { mediaflowModelCatalogStore } from './mediaflow-model-catalog.svelte';
 
 const PENDING_TRANSLATION_VERSION_ID = '__pending_translation__';
 const DEFAULT_TRANSLATION_PROVIDER = getDefaultLLMProvider();
@@ -30,7 +31,12 @@ function generateModelSelectionId(): string {
 }
 
 function normalizeModelSelection(entry: TranslationModelSelection): TranslationModelSelection {
-  const selection = normalizeLLMSelection(entry.provider, entry.model);
+  const selection = normalizeLLMSelection(
+    entry.provider,
+    entry.model,
+    import.meta.env.DEV,
+    mediaflowModelCatalogStore.chatModels
+  );
   return {
     ...entry,
     provider: selection.provider,
@@ -381,12 +387,12 @@ export const translationStore = {
   },
 
   setProvider(provider: LLMProvider) {
-    const selection = normalizeLLMSelection(provider, '');
+    const selection = normalizeLLMSelection(provider, '', import.meta.env.DEV, mediaflowModelCatalogStore.chatModels);
     config = { ...config, provider: selection.provider, model: selection.model };
   },
 
   setModel(model: string) {
-    const selection = normalizeLLMSelection(config.provider, model);
+    const selection = normalizeLLMSelection(config.provider, model, import.meta.env.DEV, mediaflowModelCatalogStore.chatModels);
     config = { ...config, provider: selection.provider, model: selection.model };
   },
 
@@ -399,7 +405,7 @@ export const translationStore = {
   },
 
   addModel(provider: LLMProvider, model: string) {
-    const normalizedSelection = normalizeLLMSelection(provider, model);
+    const normalizedSelection = normalizeLLMSelection(provider, model, import.meta.env.DEV, mediaflowModelCatalogStore.chatModels);
     const selection: TranslationModelSelection = {
       id: generateModelSelectionId(),
       provider: normalizedSelection.provider,

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Info, RotateCw, Sparkles } from '@lucide/svelte';
+  import { AlertTriangle, Info, RotateCw, Sparkles } from '@lucide/svelte';
   import { useId } from 'bits-ui';
 
   import { LlmProviderModelSelector } from '$lib/components/llm';
@@ -21,6 +21,7 @@
     config: SubtitleOcrConfig;
     scope: 'single' | 'all';
     activeVersionName?: string;
+    aiSelectionUnavailable?: boolean;
     onNavigateToSettings?: () => void;
   }
 
@@ -29,6 +30,7 @@
     config = $bindable<SubtitleOcrConfig>(cloneSubtitleOcrConfig(DEFAULT_SUBTITLE_OCR_CONFIG)),
     scope,
     activeVersionName,
+    aiSelectionUnavailable = false,
     onNavigateToSettings,
   }: SubtitleOcrRetryOptionsFieldsProps = $props();
 
@@ -171,4 +173,17 @@
     onModelChange={(model) => config = { ...config, aiCleanupModel: model }}
     {onNavigateToSettings}
   />
+  {#if aiSelectionUnavailable}
+    <Item.Root variant="outline" size="xs" class="border-amber-500/40 text-amber-700 dark:text-amber-300">
+      <Item.Media>
+        <AlertTriangle class="size-4" />
+      </Item.Media>
+      <Item.Content>
+        <Item.Title>AI cleanup unavailable</Item.Title>
+        <Item.Description>
+          Select an available AI model before running this retry.
+        </Item.Description>
+      </Item.Content>
+    </Item.Root>
+  {/if}
 {/if}

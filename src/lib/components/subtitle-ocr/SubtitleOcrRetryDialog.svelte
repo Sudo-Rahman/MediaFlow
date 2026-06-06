@@ -2,11 +2,13 @@
   import { RetryVersionDialogShell } from '$lib/components/shared';
   import {
     DEFAULT_SUBTITLE_OCR_CONFIG,
+    isLLMSelectionAvailable,
     type SubtitleOcrConfig,
     type SubtitleOcrRetryMode,
     type SubtitleOcrSourceItem,
     type SubtitleOcrVersion,
   } from '$lib/types';
+  import { mediaflowModelCatalogStore } from '$lib/stores';
   import SubtitleOcrRetryOptionsFields from './SubtitleOcrRetryOptionsFields.svelte';
   import {
     buildSubtitleOcrRetryDialogDefaults,
@@ -45,7 +47,21 @@
   let mode = $state<SubtitleOcrRetryMode>('full_ocr');
   let config = $state<SubtitleOcrConfig>(cloneSubtitleOcrConfig(DEFAULT_SUBTITLE_OCR_CONFIG));
 
-  const canConfirm = $derived(!!item && !!activeVersion && !isProcessing);
+  const selectedModeRunsAi = $derived(mode === 'ai_cleanup_only' || (mode === 'full_ocr' && config.aiCleanupEnabled));
+  const aiCleanupModelAvailable = $derived(
+    isLLMSelectionAvailable(
+      config.aiCleanupProvider,
+      config.aiCleanupModel,
+      import.meta.env.DEV,
+      mediaflowModelCatalogStore.chatModels,
+    )
+  );
+  const canConfirm = $derived(
+    !!item
+      && !!activeVersion
+      && !isProcessing
+      && (!selectedModeRunsAi || aiCleanupModelAvailable)
+  );
   const confirmLabel = $derived(
     mode === 'ai_cleanup_only' ? 'Run AI Cleanup Retry' : 'Run Full OCR Retry',
   );
@@ -95,6 +111,7 @@
       bind:config
       scope="single"
       activeVersionName={activeVersion?.name}
+      aiSelectionUnavailable={selectedModeRunsAi && !aiCleanupModelAvailable}
       {onNavigateToSettings}
     />
   {/snippet}

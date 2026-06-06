@@ -8,6 +8,8 @@
   import * as Dialog from '$lib/components/ui/dialog';
   import * as Field from '$lib/components/ui/field';
   import * as Item from '$lib/components/ui/item';
+  import { mediaflowModelCatalogStore } from '$lib/stores';
+  import { isLLMSelectionAvailable } from '$lib/types';
   import { Separator } from '$lib/components/ui/separator';
   import * as Select from '$lib/components/ui/select';
   import { Slider } from '$lib/components/ui/slider';
@@ -48,12 +50,22 @@
 
   const showPipelineOptions = $derived(mode === 'full_pipeline');
   const showCleanupOptions = $derived(mode === 'full_pipeline' || mode === 'cleanup_only' || mode === 'cleanup_and_ai');
-  const showAiOptions = $derived(
+  const selectedModeRunsAi = $derived(
     mode === 'cleanup_and_ai'
     || mode === 'ai_only'
     || (mode === 'full_pipeline' && config.aiCleanupEnabled)
   );
+  const showAiOptions = $derived(selectedModeRunsAi);
   const partialModeSelected = $derived(mode !== 'full_pipeline');
+  const aiCleanupModelAvailable = $derived(
+    isLLMSelectionAvailable(
+      config.aiCleanupProvider,
+      config.aiCleanupModel,
+      import.meta.env.DEV,
+      mediaflowModelCatalogStore.chatModels,
+    )
+  );
+  const canConfirm = $derived(targetCount > 0 && (!selectedModeRunsAi || aiCleanupModelAvailable));
 
   $effect(() => {
     if (open) {
@@ -68,6 +80,10 @@
   }
 
   function handleConfirm() {
+    if (!canConfirm) {
+      return;
+    }
+
     const finalConfig: OcrConfig = {
       ...config,
       aiCleanupEnabled:
@@ -345,6 +361,19 @@
             onProviderChange={(provider) => config = { ...config, aiCleanupProvider: provider }}
             onModelChange={(model) => config = { ...config, aiCleanupModel: model }}
           />
+          {#if !aiCleanupModelAvailable}
+            <Item.Root variant="outline" size="xs" class="border-amber-500/40 text-amber-700 dark:text-amber-300">
+              <Item.Media>
+                <AlertTriangle class="size-4" />
+              </Item.Media>
+              <Item.Content>
+                <Item.Title>AI cleanup unavailable</Item.Title>
+                <Item.Description>
+                  Select an available AI model before running this retry.
+                </Item.Description>
+              </Item.Content>
+            </Item.Root>
+          {/if}
         </Field.FieldSet>
       {/if}
     </div>
@@ -353,7 +382,7 @@
       <Button variant="outline" onclick={() => handleOpenChange(false)}>
         Cancel
       </Button>
-      <Button onclick={handleConfirm} disabled={targetCount === 0}>
+      <Button onclick={handleConfirm} disabled={!canConfirm}>
         Run retry all
       </Button>
     </Dialog.Footer>

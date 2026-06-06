@@ -95,7 +95,7 @@ export type DeepgramLanguageCode = typeof DEEPGRAM_LANGUAGES[number]['code'];
 // ============================================================================
 
 export interface DeepgramConfig {
-  model: DeepgramModel;
+  model: string;
   language: string;           // 'multi' for auto-detection or ISO code
   punctuate: boolean;         // Automatic punctuation
   paragraphs: boolean;        // Paragraph detection

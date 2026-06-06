@@ -1,6 +1,6 @@
 <script lang="ts">
   import * as AlertDialog from '$lib/components/ui/alert-dialog';
-  import type { AudioFile, AudioTrackInfo, BatchTrackStrategy, DeepgramConfig } from '$lib/types';
+  import type { AudioFile, AudioTrackInfo, BatchTrackStrategy, DeepgramConfig, TranscriptionProvider } from '$lib/types';
 
   import AudioTrackSelectDialog from './AudioTrackSelectDialog.svelte';
   import BatchTrackSelectDialog from './BatchTrackSelectDialog.svelte';
@@ -15,6 +15,7 @@
     retranscribeDialogOpen: boolean;
     retranscribeDialogFile: AudioFile | null;
     deepgramConfig: DeepgramConfig;
+    provider: TranscriptionProvider;
     trackSelectDialogOpen: boolean;
     trackSelectTracks: AudioTrackInfo[];
     trackSelectFileName: string;
@@ -43,6 +44,7 @@
     retranscribeDialogOpen = $bindable(false),
     retranscribeDialogFile,
     deepgramConfig,
+    provider,
     trackSelectDialogOpen = $bindable(false),
     trackSelectTracks,
     trackSelectFileName,
@@ -78,6 +80,7 @@
   }}
   file={retranscribeDialogFile}
   baseConfig={deepgramConfig}
+  {provider}
   onConfirm={onRetranscribeConfirm}
 />
 

@@ -11,11 +11,7 @@ export interface ProviderModel {
 export const LLM_PROVIDERS: Record<LLMProvider, { name: string; models: ProviderModel[] }> = {
   mediaflow: {
     name: 'MediaFlow',
-    models: [
-      { id: 'Lite', name: 'Lite' },
-      { id: 'Medium', name: 'Medium' },
-      { id: 'High', name: 'High' },
-    ],
+    models: [],
   },
   google: {
     name: 'Google AI',
@@ -60,29 +56,89 @@ export const LLM_PROVIDER_ORDER: readonly LLMProvider[] = [
   'openrouter',
 ];
 
-export function getSelectableLLMProviders(isDev: boolean = import.meta.env.DEV): readonly LLMProvider[] {
-  return isDev ? LLM_PROVIDER_ORDER : [MEDIAFLOW_LLM_PROVIDER];
+export function getSelectableLLMProviders(
+  isDev: boolean = import.meta.env.DEV,
+  mediaflowAvailable = true
+): readonly LLMProvider[] {
+  if (isDev) {
+    return LLM_PROVIDER_ORDER.filter((provider) => provider !== MEDIAFLOW_LLM_PROVIDER || mediaflowAvailable);
+  }
+
+  return mediaflowAvailable ? [MEDIAFLOW_LLM_PROVIDER] : [];
 }
 
-export function normalizeLLMProvider(provider: LLMProvider, isDev: boolean = import.meta.env.DEV): LLMProvider {
-  return isDev ? provider : MEDIAFLOW_LLM_PROVIDER;
+export function normalizeLLMProvider(
+  provider: LLMProvider,
+  isDev: boolean = import.meta.env.DEV,
+  mediaflowAvailable = true
+): LLMProvider {
+  const selectableProviders = getSelectableLLMProviders(isDev, mediaflowAvailable);
+  if (selectableProviders.includes(provider)) {
+    return provider;
+  }
+
+  return selectableProviders[0] ?? MEDIAFLOW_LLM_PROVIDER;
 }
 
-export function getDefaultLLMProvider(isDev: boolean = import.meta.env.DEV): LLMProvider {
-  return isDev ? DEV_DEFAULT_LLM_PROVIDER : MEDIAFLOW_LLM_PROVIDER;
+export function getDefaultLLMProvider(
+  isDev: boolean = import.meta.env.DEV,
+  mediaflowAvailable = true
+): LLMProvider {
+  return normalizeLLMProvider(isDev ? DEV_DEFAULT_LLM_PROVIDER : MEDIAFLOW_LLM_PROVIDER, isDev, mediaflowAvailable);
 }
 
-export function getDefaultLLMModel(provider: LLMProvider = getDefaultLLMProvider()): string {
-  return LLM_PROVIDERS[provider].models[0]?.id ?? '';
+export function getLLMProviderModels(
+  provider: LLMProvider,
+  mediaflowModels: readonly ProviderModel[] = []
+): readonly ProviderModel[] {
+  return provider === MEDIAFLOW_LLM_PROVIDER ? mediaflowModels : LLM_PROVIDERS[provider].models;
+}
+
+export function getDefaultLLMModel(
+  provider: LLMProvider = getDefaultLLMProvider(),
+  mediaflowModels: readonly ProviderModel[] = []
+): string {
+  return getLLMProviderModels(provider, mediaflowModels)[0]?.id ?? '';
+}
+
+export function getLLMModelDisplayName(
+  provider: LLMProvider,
+  model: string,
+  mediaflowModels: readonly ProviderModel[] = []
+): string {
+  return getLLMProviderModels(provider, mediaflowModels).find((entry) => entry.id === model)?.name ?? model;
+}
+
+export function isLLMSelectionAvailable(
+  provider: LLMProvider,
+  model: string,
+  isDev: boolean = import.meta.env.DEV,
+  mediaflowModels: readonly ProviderModel[] = []
+): boolean {
+  if (!model.trim()) {
+    return false;
+  }
+
+  const selectableProviders = getSelectableLLMProviders(isDev, mediaflowModels.length > 0);
+  if (!selectableProviders.includes(provider)) {
+    return false;
+  }
+
+  if (provider === 'openrouter') {
+    return true;
+  }
+
+  return getLLMProviderModels(provider, mediaflowModels).some((entry) => entry.id === model);
 }
 
 export function normalizeLLMSelection(
   provider: LLMProvider,
   model: string,
-  isDev: boolean = import.meta.env.DEV
+  isDev: boolean = import.meta.env.DEV,
+  mediaflowModels: readonly ProviderModel[] = []
 ): LLMSelection {
-  const normalizedProvider = normalizeLLMProvider(provider, isDev);
-  const providerModels = LLM_PROVIDERS[normalizedProvider].models;
+  const normalizedProvider = normalizeLLMProvider(provider, isDev, mediaflowModels.length > 0);
+  const providerModels = getLLMProviderModels(normalizedProvider, mediaflowModels);
 
   if (normalizedProvider === 'openrouter') {
     return { provider: normalizedProvider, model };

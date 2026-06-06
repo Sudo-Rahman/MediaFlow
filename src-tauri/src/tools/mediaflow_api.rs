@@ -57,6 +57,10 @@ pub(crate) fn audio_transcriptions_url() -> String {
     mediaflow_url("/api/v1/audio/transcriptions")
 }
 
+pub(crate) fn mediaflow_models_url() -> String {
+    mediaflow_url("/api/v1/models")
+}
+
 fn account_usage_url() -> String {
     mediaflow_url("/api/v1/account/usage")
 }
@@ -243,11 +247,22 @@ pub(crate) async fn fetch_mediaflow_account_usage(
     response_text(response).await
 }
 
+#[tauri::command]
+pub(crate) async fn fetch_mediaflow_model_catalog() -> Result<MediaFlowHttpResponse, String> {
+    let response = http_client()?
+        .get(mediaflow_models_url())
+        .send()
+        .await
+        .map_err(|e| format!("MediaFlow model catalog request failed: {e}"))?;
+
+    response_text(response).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         MEDIAFLOW_BASE_URL, audio_transcriptions_url, auth_form_post, authorize_redirect_to,
-        chat_completions_url, login_url, public_base_url,
+        chat_completions_url, login_url, mediaflow_models_url, public_base_url,
     };
 
     #[test]
@@ -273,6 +288,14 @@ mod tests {
         assert_eq!(
             audio_transcriptions_url(),
             format!("{MEDIAFLOW_BASE_URL}/api/v1/audio/transcriptions")
+        );
+    }
+
+    #[test]
+    fn mediaflow_models_url_uses_selected_base_url() {
+        assert_eq!(
+            mediaflow_models_url(),
+            format!("{MEDIAFLOW_BASE_URL}/api/v1/models")
         );
     }
 

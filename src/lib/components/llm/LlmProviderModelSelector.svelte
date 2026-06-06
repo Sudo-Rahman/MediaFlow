@@ -11,7 +11,9 @@
   import * as Popover from '$lib/components/ui/popover';
   import * as Select from '$lib/components/ui/select';
   import { settingsStore } from '$lib/stores';
+  import { mediaflowModelCatalogStore } from '$lib/stores/mediaflow-model-catalog.svelte';
   import {
+    getLLMProviderModels,
     getSelectableLLMProviders,
     LLM_PROVIDERS,
     normalizeLLMProvider,
@@ -26,6 +28,7 @@
     onProviderChange: (provider: LLMProvider) => void;
     onModelChange: (model: string) => void;
     onNavigateToSettings?: () => void;
+    mediaflowModels?: readonly ProviderModel[];
     class?: string;
   }
 
@@ -35,20 +38,34 @@
     onProviderChange,
     onModelChange,
     onNavigateToSettings,
+    mediaflowModels,
     class: className = '',
   }: LlmProviderModelSelectorProps = $props();
 
-  const providerKeys = getSelectableLLMProviders();
-  const showProviderSelector = providerKeys.length > 1;
+  const mediaFlowModels = $derived(mediaflowModels ?? mediaflowModelCatalogStore.chatModels);
+  const providerKeys = $derived(getSelectableLLMProviders(import.meta.env.DEV, mediaFlowModels.length > 0));
+  const hasSelectableProviders = $derived(providerKeys.length > 0);
+  const catalogLoading = $derived(
+    mediaflowModelCatalogStore.status === 'idle' || mediaflowModelCatalogStore.status === 'loading'
+  );
+  const catalogLoadResolved = $derived(
+    mediaflowModelCatalogStore.status === 'ready' || mediaflowModelCatalogStore.status === 'unavailable'
+  );
+  const showProviderSelector = $derived(providerKeys.length > 1);
   const baseId = useId();
   const providerSelectId = `${baseId}-provider`;
   const modelSelectId = `${baseId}-model`;
-  const normalizedSelection = $derived(normalizeLLMSelection(provider, model));
+  const normalizedSelection = $derived(
+    hasSelectableProviders
+      ? normalizeLLMSelection(provider, model, import.meta.env.DEV, mediaFlowModels)
+      : { provider, model: '' }
+  );
   const effectiveProvider = $derived(normalizedSelection.provider);
   const effectiveModel = $derived(normalizedSelection.model);
 
   const currentProvider = $derived(LLM_PROVIDERS[effectiveProvider]);
-  const hasModels = $derived(currentProvider.models.length > 0);
+  const currentProviderModels = $derived(getLLMProviderModels(effectiveProvider, mediaFlowModels));
+  const hasModels = $derived(currentProviderModels.length > 0);
   const currentApiKey = $derived(settingsStore.getLLMApiKey(effectiveProvider));
   const hasApiKey = $derived(!!currentApiKey);
 
@@ -65,6 +82,13 @@
 
   // Keep controlled parent state aligned with build-restricted provider rules.
   $effect(() => {
+    if (!hasSelectableProviders) {
+      if (catalogLoadResolved && model) {
+        onModelChange('');
+      }
+      return;
+    }
+
     if (provider !== effectiveProvider) {
       onProviderChange(effectiveProvider);
     }
@@ -79,17 +103,17 @@
   }
 
   function getSelectedModelName(): string {
-    const providerModel = currentProvider.models.find((providerItem: ProviderModel) => providerItem.id === effectiveModel);
+    const providerModel = currentProviderModels.find((providerItem: ProviderModel) => providerItem.id === effectiveModel);
     return providerModel?.name || 'Select model';
   }
 
   function handleProviderChange(value: string): void {
-    const nextProvider = normalizeLLMProvider(value as LLMProvider);
+    const nextProvider = normalizeLLMProvider(value as LLMProvider, import.meta.env.DEV, mediaFlowModels.length > 0);
     onProviderChange(nextProvider);
 
-    const providerConfig = LLM_PROVIDERS[nextProvider];
-    if (providerConfig.models.length > 0) {
-      onModelChange(providerConfig.models[0].id);
+    const providerModels = getLLMProviderModels(nextProvider, mediaFlowModels);
+    if (providerModels.length > 0) {
+      onModelChange(providerModels[0].id);
       return;
     }
 
@@ -97,7 +121,7 @@
   }
 
   function handleModelChange(value: string): void {
-    const nextSelection = normalizeLLMSelection(effectiveProvider, value);
+    const nextSelection = normalizeLLMSelection(effectiveProvider, value, import.meta.env.DEV, mediaFlowModels);
     if (nextSelection.provider !== effectiveProvider) {
       onProviderChange(nextSelection.provider);
     }
@@ -130,7 +154,15 @@
 </script>
 
 <div class={cn('space-y-4', className)}>
-  {#if showProviderSelector}
+  {#if !hasSelectableProviders}
+    <Alert.Root role="note" aria-live="off">
+      <Bot class="size-4" />
+      <Alert.Title>{catalogLoading ? 'MediaFlow models loading' : 'MediaFlow models unavailable'}</Alert.Title>
+      <Alert.Description>
+        {catalogLoading ? 'Managed AI models are loading.' : 'Managed AI models could not be loaded.'}
+      </Alert.Description>
+    </Alert.Root>
+  {:else if showProviderSelector}
     <Field.Field>
       <Field.FieldLabel for={providerSelectId}>AI Provider</Field.FieldLabel>
       <Select.Root
@@ -170,6 +202,7 @@
     </Field.Field>
   {/if}
 
+  {#if hasSelectableProviders}
   <Field.Field>
     <Field.FieldLabel for={modelSelectId}>Model</Field.FieldLabel>
     {#if hasModels}
@@ -183,7 +216,7 @@
         </Select.Trigger>
         <Select.Content>
           <Select.Group>
-            {#each currentProvider.models as providerModel (providerModel.id)}
+            {#each currentProviderModels as providerModel (providerModel.id)}
               <Select.Item value={providerModel.id}>{providerModel.name}</Select.Item>
             {/each}
           </Select.Group>
@@ -279,8 +312,9 @@
       </p>
     {/if}
   </Field.Field>
+  {/if}
 
-  {#if !hasApiKey}
+  {#if hasSelectableProviders && !hasApiKey}
     {#if effectiveProvider === 'mediaflow'}
       <MediaFlowSignInPrompt
         title="Sign in to use MediaFlow AI"

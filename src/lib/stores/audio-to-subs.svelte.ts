@@ -10,10 +10,10 @@ import type {
   TranscriptionConfig,
   TranscriptionProvider,
   DeepgramConfig,
-  DeepgramModel,
   TranscriptionVersion
 } from '$lib/types';
 import { DEFAULT_DEEPGRAM_CONFIG } from '$lib/types';
+import { mediaflowModelCatalogStore } from './mediaflow-model-catalog.svelte';
 
 // ============================================================================
 // STATE
@@ -28,7 +28,10 @@ let selectedFileId = $state<string | null>(null);
 // Transcription configuration
 let config = $state<TranscriptionConfig>({
   provider: DEFAULT_TRANSCRIPTION_PROVIDER,
-  deepgramConfig: { ...DEFAULT_DEEPGRAM_CONFIG },
+  deepgramConfig: {
+    ...DEFAULT_DEEPGRAM_CONFIG,
+    model: DEFAULT_TRANSCRIPTION_PROVIDER === 'mediaflow' ? '' : DEFAULT_DEEPGRAM_CONFIG.model,
+  },
   maxConcurrentTranscriptions: 5,
 });
 
@@ -337,17 +340,18 @@ export const audioToSubsStore = {
   },
 
   setTranscriptionProvider(provider: TranscriptionProvider) {
+    const firstMediaFlowModel = mediaflowModelCatalogStore.transcriptionModels[0]?.id;
     config = {
       ...config,
       provider,
       deepgramConfig: {
         ...config.deepgramConfig,
-        model: provider === 'mediaflow' ? 'nova-3' : config.deepgramConfig.model,
+        model: provider === 'mediaflow' ? firstMediaFlowModel ?? '' : config.deepgramConfig.model,
       },
     };
   },
 
-  setModel(model: DeepgramModel) {
+  setModel(model: string) {
     config = { 
       ...config, 
       deepgramConfig: { ...config.deepgramConfig, model } 

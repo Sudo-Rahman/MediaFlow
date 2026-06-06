@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { ProviderModel } from '$lib/types';
 
 export type MediaFlowPublicModelType = 'chat' | 'transcription';
-export type MediaFlowPublicModelCapability = 'text' | 'image' | 'audio';
+export type MediaFlowPublicModelCapability = 'text' | 'image' | 'audio' | 'video';
 
 export interface MediaFlowPublicModel {
   id: string;
@@ -25,6 +25,7 @@ export interface MediaFlowHttpResponse {
 
 export interface SplitMediaFlowModelCatalog {
   chatModels: ProviderModel[];
+  imageChatModels: ProviderModel[];
   transcriptionModels: ProviderModel[];
 }
 
@@ -47,7 +48,7 @@ function parseModelType(value: unknown): MediaFlowPublicModelType {
 }
 
 function parseCapability(value: unknown): MediaFlowPublicModelCapability {
-  if (value === 'text' || value === 'image' || value === 'audio') {
+  if (value === 'text' || value === 'image' || value === 'audio' || value === 'video') {
     return value;
   }
   throw new Error('Invalid MediaFlow model capability');
@@ -103,6 +104,13 @@ export function splitMediaFlowModelCatalog(catalog: MediaFlowModelCatalog): Spli
   return {
     chatModels: catalog.data
       .filter((model) => model.type === 'chat' && model.capabilities.includes('text'))
+      .map((model) => ({ id: model.id, name: model.label })),
+    imageChatModels: catalog.data
+      .filter((model) => (
+        model.type === 'chat'
+          && model.capabilities.includes('text')
+          && model.capabilities.includes('image')
+      ))
       .map((model) => ({ id: model.id, name: model.label })),
     transcriptionModels: catalog.data
       .filter((model) => model.type === 'transcription' && model.capabilities.includes('audio'))

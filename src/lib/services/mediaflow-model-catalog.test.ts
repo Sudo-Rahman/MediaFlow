@@ -38,6 +38,11 @@ describe('MediaFlow model catalog parsing', () => {
         { id: 'Medium', name: 'Medium' },
         { id: 'High', name: 'High' },
       ],
+      imageChatModels: [
+        { id: 'Lite', name: 'Lite' },
+        { id: 'Medium', name: 'Medium' },
+        { id: 'High', name: 'High' },
+      ],
       transcriptionModels: [
         { id: 'nova-3', name: 'Nova 3' },
       ],
@@ -52,7 +57,9 @@ describe('MediaFlow model catalog parsing', () => {
         provider: 'MediaFlow',
         data: [
           { id: 'chat-text', label: 'Chat Text', type: 'chat', capabilities: ['text'] },
+          { id: 'chat-image', label: 'Chat Image', type: 'chat', capabilities: ['text', 'image'] },
           { id: 'chat-image-only', label: 'Chat Image Only', type: 'chat', capabilities: ['image'] },
+          { id: 'chat-video', label: 'Chat Video', type: 'chat', capabilities: ['text', 'video'] },
           { id: 'transcribe-audio', label: 'Transcribe Audio', type: 'transcription', capabilities: ['audio'] },
           { id: 'transcribe-text-only', label: 'Transcribe Text Only', type: 'transcription', capabilities: ['text'] },
         ],
@@ -62,6 +69,11 @@ describe('MediaFlow model catalog parsing', () => {
     expect(splitMediaFlowModelCatalog(parsed)).toEqual({
       chatModels: [
         { id: 'chat-text', name: 'Chat Text' },
+        { id: 'chat-image', name: 'Chat Image' },
+        { id: 'chat-video', name: 'Chat Video' },
+      ],
+      imageChatModels: [
+        { id: 'chat-image', name: 'Chat Image' },
       ],
       transcriptionModels: [
         { id: 'transcribe-audio', name: 'Transcribe Audio' },
@@ -103,12 +115,24 @@ describe('MediaFlow model catalog parsing', () => {
     })).toThrow('Invalid MediaFlow model type');
   });
 
+  it('accepts video capabilities for future catalog entries', () => {
+    const parsed = parseMediaFlowModelCatalogResponse({
+      status: 200,
+      body: JSON.stringify({
+        ...validCatalog,
+        data: [{ id: 'Video', label: 'Video', type: 'chat', capabilities: ['text', 'video'] }],
+      }),
+    });
+
+    expect(parsed.data[0]?.capabilities).toEqual(['text', 'video']);
+  });
+
   it('rejects entries with unknown capabilities', () => {
     expect(() => parseMediaFlowModelCatalogResponse({
       status: 200,
       body: JSON.stringify({
         ...validCatalog,
-        data: [{ id: 'Lite', label: 'Lite', type: 'chat', capabilities: ['video'] }],
+        data: [{ id: 'Lite', label: 'Lite', type: 'chat', capabilities: ['realtime'] }],
       }),
     })).toThrow('Invalid MediaFlow model capability');
   });

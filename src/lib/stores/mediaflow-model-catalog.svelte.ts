@@ -64,6 +64,10 @@ export const mediaflowModelCatalogStore = {
     return splitMediaFlowModelCatalog({ object: 'list', provider: 'MediaFlow', data: models }).chatModels;
   },
 
+  get imageChatModels(): readonly ProviderModel[] {
+    return splitMediaFlowModelCatalog({ object: 'list', provider: 'MediaFlow', data: models }).imageChatModels;
+  },
+
   get transcriptionModels(): readonly ProviderModel[] {
     return splitMediaFlowModelCatalog({ object: 'list', provider: 'MediaFlow', data: models }).transcriptionModels;
   },

@@ -61,8 +61,9 @@
     onNavigateToSettings,
   }: Props = $props();
 
+  const mediaflowImageChatModels = $derived(mediaflowModelCatalogStore.imageChatModels);
   const aiSelectionAvailable = $derived(
-    isLLMSelectionAvailable(provider, model, import.meta.env.DEV, mediaflowModelCatalogStore.chatModels)
+    isLLMSelectionAvailable(provider, model, import.meta.env.DEV, mediaflowImageChatModels)
   );
 
   function handleAnalyzeSelected(): void {
@@ -146,6 +147,7 @@
       onProviderChange={onProviderChange ?? (() => undefined)}
       onModelChange={onModelChange ?? (() => undefined)}
       onNavigateToSettings={onNavigateToSettings}
+      mediaflowModels={mediaflowImageChatModels}
     />
 
     <div class="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">

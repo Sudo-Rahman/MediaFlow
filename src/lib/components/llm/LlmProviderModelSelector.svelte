@@ -28,6 +28,7 @@
     onProviderChange: (provider: LLMProvider) => void;
     onModelChange: (model: string) => void;
     onNavigateToSettings?: () => void;
+    mediaflowModels?: readonly ProviderModel[];
     class?: string;
   }
 
@@ -37,12 +38,19 @@
     onProviderChange,
     onModelChange,
     onNavigateToSettings,
+    mediaflowModels,
     class: className = '',
   }: LlmProviderModelSelectorProps = $props();
 
-  const mediaFlowModels = $derived(mediaflowModelCatalogStore.chatModels);
+  const mediaFlowModels = $derived(mediaflowModels ?? mediaflowModelCatalogStore.chatModels);
   const providerKeys = $derived(getSelectableLLMProviders(import.meta.env.DEV, mediaFlowModels.length > 0));
   const hasSelectableProviders = $derived(providerKeys.length > 0);
+  const catalogLoading = $derived(
+    mediaflowModelCatalogStore.status === 'idle' || mediaflowModelCatalogStore.status === 'loading'
+  );
+  const catalogLoadResolved = $derived(
+    mediaflowModelCatalogStore.status === 'ready' || mediaflowModelCatalogStore.status === 'unavailable'
+  );
   const showProviderSelector = $derived(providerKeys.length > 1);
   const baseId = useId();
   const providerSelectId = `${baseId}-provider`;
@@ -75,7 +83,7 @@
   // Keep controlled parent state aligned with build-restricted provider rules.
   $effect(() => {
     if (!hasSelectableProviders) {
-      if (model) {
+      if (catalogLoadResolved && model) {
         onModelChange('');
       }
       return;
@@ -149,9 +157,9 @@
   {#if !hasSelectableProviders}
     <Alert.Root role="note" aria-live="off">
       <Bot class="size-4" />
-      <Alert.Title>MediaFlow models unavailable</Alert.Title>
+      <Alert.Title>{catalogLoading ? 'MediaFlow models loading' : 'MediaFlow models unavailable'}</Alert.Title>
       <Alert.Description>
-        Managed AI models could not be loaded.
+        {catalogLoading ? 'Managed AI models are loading.' : 'Managed AI models could not be loaded.'}
       </Alert.Description>
     </Alert.Root>
   {:else if showProviderSelector}

@@ -44,6 +44,33 @@ export type SubtitleOcrMissingBitmapCollector = (
   bitmaps: SubtitleOcrCueBitmap[],
 ) => Promise<SubtitleOcrCueBitmap[]>;
 
+export function parseSubtitleOcrProbeDurationSeconds(probeJson: string): number | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(probeJson);
+  } catch {
+    return undefined;
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || !('format' in parsed)) {
+    return undefined;
+  }
+
+  const format = (parsed as { format?: unknown }).format;
+  if (typeof format !== 'object' || format === null || !('duration' in format)) {
+    return undefined;
+  }
+
+  const duration = (format as { duration?: unknown }).duration;
+  const value = typeof duration === 'number'
+    ? duration
+    : typeof duration === 'string'
+      ? Number.parseFloat(duration)
+      : NaN;
+
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
 export function summarizeSubtitleOcrItems(
   items: readonly SubtitleOcrSummaryItem[],
 ): SubtitleOcrItemsSummary {

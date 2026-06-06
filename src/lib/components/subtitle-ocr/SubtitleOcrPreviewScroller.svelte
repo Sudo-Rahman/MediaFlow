@@ -5,6 +5,7 @@
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import type { SubtitleOcrCue, SubtitleOcrCueBitmap } from '$lib/types';
   import { cn } from '$lib/utils';
+  import { resolveSubtitleOcrBitmapSrc } from './subtitle-ocr-preview-src';
 
   interface SubtitleOcrPreviewScrollerProps {
     cue: SubtitleOcrCue | null;
@@ -35,7 +36,6 @@
   let lastCommitMs = 0;
   let applyingScroll = false;
 
-  const BITMAP_URL_PATH = /^(?:[a-z][a-z\d+\-.]*:|\/\/)/i;
   const SCROLL_COMMIT_DELAY_MS = 140;
   const MIN_COMMIT_INTERVAL_MS = 180;
   const WHEEL_LINE_HEIGHT_PX = 16;
@@ -110,7 +110,7 @@
   });
 
   function resolveBitmapSrc(bitmapPath: string): string {
-    return BITMAP_URL_PATH.test(bitmapPath) ? bitmapPath : convertFileSrc(bitmapPath);
+    return resolveSubtitleOcrBitmapSrc(bitmapPath, convertFileSrc);
   }
 
   function getPreviewCueBitmap(previewCue: SubtitleOcrCue): SubtitleOcrCueBitmap | null {

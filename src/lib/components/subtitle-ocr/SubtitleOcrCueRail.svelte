@@ -9,6 +9,7 @@
     clampTimelineViewport,
     findCueNearestTimelineWindowCenter,
     findRailIndexNearestCenter,
+    resolveSubtitleOcrReviewDurationMs,
     shouldCommitRailScrollSelection,
     shouldPublishRailViewportUpdate,
     shouldReportProgrammaticRailViewport,
@@ -20,6 +21,7 @@
   interface SubtitleOcrCueRailProps {
     cues: SubtitleOcrCue[];
     bitmaps: SubtitleOcrCueBitmap[];
+    durationMs?: number;
     selectedCueId: string | null;
     viewportStartMs?: number;
     viewportEndMs?: number;
@@ -35,6 +37,7 @@
   let {
     cues,
     bitmaps,
+    durationMs = 0,
     selectedCueId,
     viewportStartMs = 0,
     viewportEndMs = 0,
@@ -74,7 +77,10 @@
   });
 
   const selectedIndex = $derived(cues.findIndex((cue) => cue.id === selectedCueId));
-  const durationMs = $derived(cues.reduce((max, cue) => Math.max(max, cue.endTimeMs), 0));
+  const railDurationMs = $derived(Math.max(
+    durationMs,
+    resolveSubtitleOcrReviewDurationMs({ cues, bitmaps }),
+  ));
 
   const cueVirtualizer = createVirtualizer<HTMLElement, HTMLDivElement>({
     count: 0,
@@ -298,7 +304,7 @@
     return clampTimelineViewport(
       startCue.startTimeMs,
       Math.max(startCue.endTimeMs, endCue.endTimeMs),
-      durationMs,
+      railDurationMs,
       1_000,
     );
   }

@@ -67,6 +67,12 @@ describe('subtitle OCR import dialog state', () => {
     expect(item.ocrModelOverride).toBe('latin');
   });
 
+  it('copies the source duration onto imported container track items', () => {
+    const item = buildSubtitleOcrTrackItem('/media/Movie.mkv', track, 'default', 7421.25);
+
+    expect(item.duration).toBe(7421.25);
+  });
+
   it('resolves import button labels from selected track count', () => {
     expect(resolveImportButtonLabel(0)).toBe('Import selected tracks');
     expect(resolveImportButtonLabel(1)).toBe('Import 1 track');
@@ -82,14 +88,16 @@ describe('subtitle OCR import dialog state', () => {
 
     const pending = importSelectedSubtitleOcrTracks({
       sourcePath: '/media/Movie.mkv',
+      sourceDuration: 7421.25,
       tracks: [track],
       selectedTrackIndices: new Set([track.streamIndex]),
       getTrackOverride: () => 'default',
       closeDialog: () => {
         events.push('close');
       },
-      onImport: async () => {
+      onImport: async (items) => {
         events.push('import-start');
+        expect(items[0]?.duration).toBe(7421.25);
         await importPromise;
         events.push('import-finish');
       },

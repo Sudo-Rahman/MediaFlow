@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildSubtitleOcrReviewStats,
+  buildSubtitleOcrReviewViewportScopeKey,
+  buildSubtitleOcrTimelineScaleScopeKey,
   buildTimelineCueZones,
   buildTimelineBuckets,
   centerTimelineViewport,
@@ -19,6 +21,7 @@ import {
   MAX_TIMELINE_SCALE,
   panTimelineViewport,
   resolveSubtitleOcrReviewMode,
+  resolveSubtitleOcrReviewDurationMs,
   shouldCommitRailScrollSelection,
   shouldPublishRailViewportUpdate,
   shouldReportProgrammaticRailViewport,
@@ -92,6 +95,57 @@ describe('subtitle OCR review state', () => {
       ];
 
       expect(buildSubtitleOcrReviewStats(reviewCues, 5_000)).toBe('2 cues · 0:05');
+    });
+  });
+
+  describe('live processing draft review scope', () => {
+    it('keeps the review viewport scope stable while live OCR appends cues', () => {
+      const draftScope = buildSubtitleOcrReviewViewportScopeKey({
+        itemId: 'source-1',
+        reviewTargetId: 'processing-draft:run-1',
+      });
+
+      expect(buildSubtitleOcrReviewViewportScopeKey({
+        itemId: 'source-1',
+        reviewTargetId: 'processing-draft:run-1',
+      })).toBe(draftScope);
+      expect(buildSubtitleOcrTimelineScaleScopeKey({
+        reviewScopeKey: draftScope,
+        firstCueId: 'cue-1',
+        lastCueId: 'cue-1',
+      })).toBe(draftScope);
+      expect(buildSubtitleOcrTimelineScaleScopeKey({
+        reviewScopeKey: draftScope,
+        firstCueId: 'cue-1',
+        lastCueId: 'cue-8',
+      })).toBe(draftScope);
+    });
+
+    it('uses a known source duration instead of shrinking to streamed cue coverage', () => {
+      const streamedCues: TimedCue[] = [
+        { id: 'cue-1', startTimeMs: 15_000, endTimeMs: 18_000 },
+      ];
+      const streamedBitmaps: TimedCue[] = [
+        { id: 'bitmap-1', startTimeMs: 15_000, endTimeMs: 18_000 },
+      ];
+
+      expect(resolveSubtitleOcrReviewDurationMs({
+        cues: streamedCues,
+        bitmaps: streamedBitmaps,
+        sourceDurationSeconds: 120,
+      })).toBe(120_000);
+    });
+
+    it('still extends beyond the known source duration if decoded subtitle timing exceeds it', () => {
+      const lateCues: TimedCue[] = [
+        { id: 'cue-late', startTimeMs: 121_000, endTimeMs: 124_000 },
+      ];
+
+      expect(resolveSubtitleOcrReviewDurationMs({
+        cues: lateCues,
+        bitmaps: [],
+        sourceDurationSeconds: 120,
+      })).toBe(124_000);
     });
   });
 

@@ -16,6 +16,7 @@
     getTimelineSelectedMarkerTimeMs,
     getTimelineVisualWindowPx,
     getTimelineWheelIntent,
+    buildSubtitleOcrTimelineScaleScopeKey,
     MIN_TIMELINE_SCALE,
     MIN_TIMELINE_WINDOW_WIDTH_PX,
     shouldReleaseTimelineLocalWindow,
@@ -32,6 +33,7 @@
   interface SubtitleOcrTimelineProps {
     cues: SubtitleOcrCue[];
     durationMs: number;
+    scopeKey?: string;
     viewportStartMs: number;
     viewportEndMs: number;
     selectedCueId?: string | null;
@@ -60,6 +62,7 @@
   let {
     cues,
     durationMs,
+    scopeKey = '',
     viewportStartMs,
     viewportEndMs,
     selectedCueId = null,
@@ -171,7 +174,13 @@
   $effect(() => {
     const firstCueId = cues[0]?.id ?? 'none';
     const lastCueId = cues[cues.length - 1]?.id ?? 'none';
-    const nextScopeKey = `${safeDurationMs}:${cues.length}:${firstCueId}:${lastCueId}`;
+    const nextScopeKey = scopeKey
+      ? buildSubtitleOcrTimelineScaleScopeKey({
+        reviewScopeKey: scopeKey,
+        firstCueId,
+        lastCueId,
+      })
+      : `${safeDurationMs}:${cues.length}:${firstCueId}:${lastCueId}`;
     if (nextScopeKey === timelineScaleScopeKey) {
       return;
     }

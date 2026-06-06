@@ -14,10 +14,12 @@
   import { cn } from '$lib/utils';
   import {
     buildSubtitleOcrReviewStats,
+    buildSubtitleOcrReviewViewportScopeKey,
     centerTimelineViewport,
     clampTimelineViewport,
     findCueNearestTimelineWindowCenter,
     resolveSubtitleOcrReviewMode,
+    resolveSubtitleOcrReviewDurationMs,
     shouldSuppressSubtitleOcrReviewTextSelection,
     type SubtitleOcrReviewMode,
     type TimelineViewport,
@@ -71,12 +73,20 @@
 
   const reviewVersion = $derived(reviewVersionProp);
   const bitmaps = $derived(reviewBitmaps);
-  const durationMs = $derived(resolveDurationMs(renderedCues, bitmaps));
+  const durationMs = $derived(resolveSubtitleOcrReviewDurationMs({
+    cues: renderedCues,
+    bitmaps,
+    sourceDurationSeconds: item?.duration,
+  }));
   const selectedCue = $derived(
     renderedCues.find((cue) => cue.id === selectedCueId) ?? renderedCues[0] ?? null,
   );
   const effectiveSelectedCueId = $derived(selectedCue?.id ?? null);
   const activeVersionId = $derived(activeReviewTargetId);
+  const reviewScopeKey = $derived(buildSubtitleOcrReviewViewportScopeKey({
+    itemId: item?.id,
+    reviewTargetId: activeVersionId,
+  }));
   const reviewMode: SubtitleOcrReviewMode = $derived(resolveSubtitleOcrReviewMode(centerWidthPx));
   const bitmapByCueId = $derived.by(() => {
     const map = new Map<string, SubtitleOcrCueBitmap>();
@@ -120,7 +130,7 @@
   });
 
   $effect(() => {
-    const nextScopeKey = `${item?.id ?? 'none'}:${activeVersionId ?? 'none'}:${durationMs}:${renderedCues.length}`;
+    const nextScopeKey = reviewScopeKey;
     if (nextScopeKey === viewportScopeKey) {
       return;
     }
@@ -154,13 +164,6 @@
     viewportStartMs = nextViewport.startMs;
     viewportEndMs = nextViewport.endMs;
   });
-
-  function resolveDurationMs(cues: readonly SubtitleOcrCue[], cueBitmaps: readonly SubtitleOcrCueBitmap[]): number {
-    const cueEndMs = cues.reduce((max, cue) => Math.max(max, cue.endTimeMs), 0);
-    const bitmapEndMs = cueBitmaps.reduce((max, bitmap) => Math.max(max, bitmap.endTimeMs), 0);
-
-    return Math.max(cueEndMs, bitmapEndMs);
-  }
 
   function createInitialViewport(cue: SubtitleOcrCue | null, totalDurationMs: number): TimelineViewport {
     if (totalDurationMs <= 0) {
@@ -388,6 +391,7 @@
         <SubtitleOcrCueRail
           cues={renderedCues}
           {bitmaps}
+          {durationMs}
           selectedCueId={effectiveSelectedCueId}
           {viewportStartMs}
           {viewportEndMs}
@@ -403,6 +407,7 @@
           <SubtitleOcrTimeline
             cues={renderedCues}
             durationMs={durationMs}
+            scopeKey={reviewScopeKey}
             viewportStartMs={viewportStartMs}
             viewportEndMs={viewportEndMs}
             selectedCueId={effectiveSelectedCueId}

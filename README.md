@@ -10,8 +10,8 @@
 
 <p align="center">
   Extract tracks, mux subtitles and audio, transcode media, generate subtitles from speech,
-  recover burned-in subtitles with OCR, translate subtitle files, batch rename files,
-  and inspect media metadata in one reviewable workflow.
+  recover burned-in and image-based subtitles with OCR, translate subtitle files,
+  batch rename files, and inspect media metadata in one reviewable workflow.
 </p>
 
 <p align="center">
@@ -59,6 +59,7 @@ Use MediaFlow to:
 - transcode video and audio files for playback, editing, sharing, archiving or smaller file size;
 - generate subtitles from audio or video speech;
 - recover burned-in subtitles from video frames with OCR;
+- convert image-based PGS or VobSub subtitle tracks into editable subtitles with OCR;
 - translate subtitle files while keeping timing and structure;
 - batch rename or copy media files with preview;
 - inspect codecs, streams, tracks, duration, languages, bitrate and metadata.
@@ -76,6 +77,7 @@ MediaFlow is designed around reviewable workflows: you can check tracks, filenam
 | **Transcode** | Convert video and audio for playback, editing, sharing, archiving or smaller file size. |
 | **Audio to Subs** | Turn speech from audio or video files into subtitle files you can review and export. |
 | **Video OCR** | Recover burned-in subtitles by reading text directly from video frames. |
+| **Subtitle OCR** | Convert image-based PGS and VobSub subtitles from containers or standalone files into editable ASS, SRT or VTT subtitles. |
 | **AI Translation** | Translate SRT, ASS, VTT and SSA subtitle files while keeping timing and structure. |
 | **Batch Rename** | Rename or copy large batches of files with a live preview before changes are applied. |
 | **File Information** | Inspect duration, size, codecs, streams, tracks, languages, bitrate and metadata without modifying files. |
@@ -95,6 +97,8 @@ MediaFlow helps with workflows such as:
 - generate SRT or VTT subtitles from audio;
 - transcribe video speech into subtitles;
 - OCR hardcoded or burned-in subtitles;
+- OCR PGS or VobSub image subtitle tracks from containers;
+- OCR standalone `.sup` or VobSub `.idx`/`.sub` subtitle files;
 - translate subtitles without breaking timestamps;
 - batch rename TV episodes, clips, exports or subtitle files;
 - check video codec, audio tracks, subtitle tracks and metadata;
@@ -170,6 +174,23 @@ MediaFlow helps with workflows such as:
 </details>
 
 <details>
+<summary>Subtitle OCR</summary>
+
+**Imports**
+
+Container subtitle tracks: `MKV`, `M2TS`, `MP4`, `AVI`, `MOV`, `WEBM`, `M4V`, `MKS`
+
+Standalone image subtitles: `SUP`, `IDX` + `SUB`
+
+Supported image subtitle codecs: `PGS`, `VobSub`
+
+**Exports**
+
+`ASS`, `SRT`, `VTT`
+
+</details>
+
+<details>
 <summary>AI Translation</summary>
 
 **Imports**
@@ -206,6 +227,7 @@ AI-assisted features are used for repetitive or time-consuming work such as:
 - subtitle translation;
 - audio-to-subtitles transcription;
 - video OCR;
+- subtitle OCR;
 - track matching;
 - transcode recommendations.
 

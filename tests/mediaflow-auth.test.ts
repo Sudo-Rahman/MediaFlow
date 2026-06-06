@@ -116,6 +116,7 @@ describe('MediaFlow OAuth helpers', () => {
         return {
           email: 'local@example.com',
           name: 'Local User',
+          avatarUrl: 'https://example.com/local-avatar.png',
         };
       }
       throw new Error(`Unexpected command: ${command}`);
@@ -134,6 +135,7 @@ describe('MediaFlow OAuth helpers', () => {
     expect(settingsStoreMock.settings.mediaflowUser).toEqual({
       email: 'local@example.com',
       name: 'Local User',
+      avatarUrl: 'https://example.com/local-avatar.png',
     });
   });
 

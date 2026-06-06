@@ -5,6 +5,7 @@ import type { LLMApiKeyProvider, LLMApiKeys, LLMProvider, OcrRegion, Translation
 export interface MediaFlowUser {
   email: string;
   name?: string;
+  avatarUrl?: string;
 }
 
 export type ThemePreference = 'system' | 'light' | 'dark';

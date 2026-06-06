@@ -1,3 +1,45 @@
+<script lang="ts" module>
+  import type { MediaFlowUser } from '$lib/stores/settings.svelte';
+
+  export interface AccountDisplayLines {
+    primary: string;
+    secondary: string | null;
+  }
+
+  function trimmed(value: string | undefined): string {
+    return value?.trim() ?? '';
+  }
+
+  export function getAccountDisplayLines(user: MediaFlowUser): AccountDisplayLines {
+    const name = trimmed(user.name);
+
+    if (name) {
+      return {
+        primary: name,
+        secondary: user.email,
+      };
+    }
+
+    return {
+      primary: user.email,
+      secondary: null,
+    };
+  }
+
+  export function getAccountInitials(user: MediaFlowUser | null | undefined): string {
+    const source = trimmed(user?.name) || user?.email || 'MF';
+    const parts = source.trim().split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    }
+    return source.slice(0, 2).toUpperCase();
+  }
+
+  export function getAccountAvatarAlt(user: MediaFlowUser): string {
+    return trimmed(user.name) || user.email;
+  }
+</script>
+
 <script lang="ts">
   import {
     ChevronsUpDown,
@@ -25,27 +67,20 @@
   const effectiveAccountAction = $derived(mediaflowAuthUiStore.action);
   const isAccountBusy = $derived(mediaflowAuthUiStore.isBusy);
   const isWaitingForCallback = $derived(mediaflowAuthUiStore.isWaitingForCallback);
-  const accountDisplayName = $derived(
-    mediaflowUser?.name ||
-      mediaflowUser?.email ||
-      (isWaitingForCallback ? 'Waiting for browser' : 'MediaFlow Account')
+  const signedInAccountLines = $derived(mediaflowUser ? getAccountDisplayLines(mediaflowUser) : null);
+  const accountPrimaryLine = $derived(
+    signedInAccountLines?.primary ?? (isWaitingForCallback ? 'Waiting for browser' : 'MediaFlow Account')
   );
-  const accountEmail = $derived.by(() => {
+  const accountSecondaryLine = $derived.by(() => {
+    if (signedInAccountLines) return signedInAccountLines.secondary;
     if (effectiveAccountAction !== 'idle') return mediaflowAuthUiStore.statusMessage;
-    return mediaflowUser?.email || 'Sign in to continue';
+    return 'Sign in to continue';
   });
   const accountButtonLabel = $derived.by(() => {
     if (effectiveAccountAction !== 'idle') return mediaflowAuthUiStore.buttonLabel;
     return 'Account';
   });
-  const accountInitials = $derived.by(() => {
-    const source = mediaflowUser?.name || mediaflowUser?.email || 'MF';
-    const parts = source.trim().split(/\s+/).filter(Boolean);
-    if (parts.length >= 2) {
-      return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-    }
-    return source.slice(0, 2).toUpperCase();
-  });
+  const accountInitials = $derived(getAccountInitials(mediaflowUser));
   const monthlyRemaining = $derived(usage?.monthlyBalance ?? 0);
   const monthlyAllocation = $derived(usage?.monthlyAllocation ?? 0);
   const monthlyUsagePercent = $derived(usage?.monthlyUsagePercent ?? 0);
@@ -89,6 +124,9 @@
     <DropdownMenu.Label>
       <div class="flex items-center gap-2 py-1">
         <Avatar.Root class={['transition-colors', isAccountBusy && 'after:border-primary/40']}>
+          {#if mediaflowUser?.avatarUrl}
+            <Avatar.Image src={mediaflowUser.avatarUrl} alt={getAccountAvatarAlt(mediaflowUser)} />
+          {/if}
           <Avatar.Fallback class={['bg-background text-xs font-medium transition-colors', isAccountBusy && 'bg-primary/10 text-primary']}>
             {#if mediaflowUser}
               {accountInitials}
@@ -97,9 +135,11 @@
             {/if}
           </Avatar.Fallback>
         </Avatar.Root>
-        <div class="min-w-0 leading-tight">
-          <p class="truncate text-sm font-medium">{accountDisplayName}</p>
-          <p class="truncate text-xs font-normal text-muted-foreground">{accountEmail}</p>
+        <div class={['min-w-0', accountSecondaryLine ? 'leading-tight' : 'leading-normal']}>
+          <p class="truncate text-sm font-medium">{accountPrimaryLine}</p>
+          {#if accountSecondaryLine}
+            <p class="truncate text-xs font-normal text-muted-foreground">{accountSecondaryLine}</p>
+          {/if}
         </div>
       </div>
     </DropdownMenu.Label>

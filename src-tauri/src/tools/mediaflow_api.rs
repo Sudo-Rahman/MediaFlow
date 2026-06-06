@@ -30,10 +30,13 @@ pub(crate) struct MediaFlowTokenResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct MediaFlowUser {
     email: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    avatar_url: Option<String>,
 }
 
 pub(crate) fn public_base_url() -> &'static str {
@@ -127,6 +130,27 @@ async fn response_text(response: reqwest::Response) -> Result<MediaFlowHttpRespo
     Ok(MediaFlowHttpResponse { status, body })
 }
 
+fn string_claim(body: &Value, key: &str) -> Option<String> {
+    body.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn parse_mediaflow_user_info_response(body: &Value) -> Result<MediaFlowUser, String> {
+    let email = string_claim(body, "email").unwrap_or_default();
+    if email.is_empty() {
+        return Err("MediaFlow account response did not include an email.".to_string());
+    }
+
+    Ok(MediaFlowUser {
+        email,
+        name: string_claim(body, "name"),
+        avatar_url: string_claim(body, "picture"),
+    })
+}
+
 async fn token_request(
     form: Vec<(&'static str, String)>,
 ) -> Result<MediaFlowTokenResponse, String> {
@@ -205,17 +229,7 @@ pub(crate) async fn fetch_mediaflow_user_info(
 
     let body = serde_json::from_str::<Value>(&transfer.body)
         .map_err(|e| format!("Failed to parse MediaFlow account response: {e}"))?;
-    let email = body
-        .get("email")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    if email.is_empty() {
-        return Err("MediaFlow account response did not include an email.".to_string());
-    }
-
-    let name = body.get("name").and_then(Value::as_str).map(str::to_string);
-    Ok(MediaFlowUser { email, name })
+    parse_mediaflow_user_info_response(&body)
 }
 
 #[tauri::command]
@@ -262,8 +276,10 @@ pub(crate) async fn fetch_mediaflow_model_catalog() -> Result<MediaFlowHttpRespo
 mod tests {
     use super::{
         MEDIAFLOW_BASE_URL, audio_transcriptions_url, auth_form_post, authorize_redirect_to,
-        chat_completions_url, login_url, mediaflow_models_url, public_base_url,
+        chat_completions_url, login_url, mediaflow_models_url, parse_mediaflow_user_info_response,
+        public_base_url,
     };
+    use serde_json::json;
 
     #[test]
     fn mediaflow_base_url_uses_debug_url_for_debug_builds() {
@@ -331,5 +347,60 @@ mod tests {
             request.headers().get(reqwest::header::ORIGIN).unwrap(),
             MEDIAFLOW_BASE_URL
         );
+    }
+
+    #[test]
+    fn parse_user_info_keeps_profile_picture() {
+        let user = parse_mediaflow_user_info_response(&json!({
+            "email": "ada@example.com",
+            "name": "Ada Lovelace",
+            "picture": "https://lh3.googleusercontent.com/a/profile"
+        }))
+        .expect("userinfo should parse");
+
+        assert_eq!(user.email, "ada@example.com");
+        assert_eq!(user.name.as_deref(), Some("Ada Lovelace"));
+        assert_eq!(
+            user.avatar_url.as_deref(),
+            Some("https://lh3.googleusercontent.com/a/profile")
+        );
+
+        let serialized = serde_json::to_value(&user).expect("user should serialize");
+        assert_eq!(
+            serialized
+                .get("avatarUrl")
+                .and_then(serde_json::Value::as_str),
+            Some("https://lh3.googleusercontent.com/a/profile")
+        );
+        assert!(serialized.get("avatar_url").is_none());
+    }
+
+    #[test]
+    fn parse_user_info_allows_picture_without_name() {
+        let user = parse_mediaflow_user_info_response(&json!({
+            "email": "apple@example.com",
+            "picture": "https://example.com/avatar.png"
+        }))
+        .expect("userinfo should parse");
+
+        assert_eq!(user.email, "apple@example.com");
+        assert_eq!(user.name, None);
+        assert_eq!(
+            user.avatar_url.as_deref(),
+            Some("https://example.com/avatar.png")
+        );
+    }
+
+    #[test]
+    fn parse_user_info_omits_missing_picture() {
+        let user = parse_mediaflow_user_info_response(&json!({
+            "email": "local@example.com",
+            "name": "Local User"
+        }))
+        .expect("userinfo should parse");
+
+        assert_eq!(user.email, "local@example.com");
+        assert_eq!(user.name.as_deref(), Some("Local User"));
+        assert_eq!(user.avatar_url, None);
     }
 }

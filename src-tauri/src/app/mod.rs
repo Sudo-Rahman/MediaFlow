@@ -2,12 +2,10 @@
 use objc2_app_kit::{NSColor, NSView, NSWindow};
 #[cfg(target_os = "macos")]
 use objc2_core_foundation::CGFloat;
-use std::time::Duration;
 use tauri::Manager;
 
 #[cfg(target_os = "macos")]
 const WINDOW_CORNER_RADIUS: CGFloat = 25.0;
-const STARTUP_SHOW_FALLBACK_DELAY: Duration = Duration::from_secs(8);
 
 pub(crate) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(any(windows, target_os = "linux"))]
@@ -17,8 +15,7 @@ pub(crate) fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Erro
     }
 
     let handle = app.handle().clone();
-    create_main_window(handle.clone());
-    schedule_startup_visibility_fallback(handle);
+    create_main_window(handle);
     Ok(())
 }
 
@@ -40,7 +37,7 @@ pub(crate) fn create_main_window(app: tauri::AppHandle) {
         .inner_size(1200.0, 600.0)
         .min_inner_size(1200.0, 600.0)
         .center()
-        .visible(false);
+        .visible(true);
 
     #[cfg(target_os = "macos")]
     let window = window
@@ -109,23 +106,6 @@ fn show_main_window(app: &tauri::AppHandle) {
     } else {
         create_main_window(app.clone());
     }
-}
-
-fn schedule_startup_visibility_fallback(app: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(STARTUP_SHOW_FALLBACK_DELAY).await;
-
-        let Some(window) = app.get_webview_window("main") else {
-            return;
-        };
-
-        if window.is_visible().unwrap_or(false) {
-            return;
-        }
-
-        let _ = window.show();
-        let _ = window.set_focus();
-    });
 }
 
 #[cfg(target_os = "macos")]

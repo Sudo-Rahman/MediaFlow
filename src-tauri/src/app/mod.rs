@@ -47,6 +47,7 @@ pub(crate) fn create_main_window(app: tauri::AppHandle) {
         .title_bar_style(tauri::TitleBarStyle::Overlay)
         .shadow(true)
         .transparent(true)
+        .effects(startup_window_effects())
         .traffic_light_position(tauri::Position::Logical(tauri::LogicalPosition {
             x: 20.0,
             y: 30.0,
@@ -64,6 +65,7 @@ pub(crate) fn create_main_window(app: tauri::AppHandle) {
             .decorations(false)
             .shadow(true)
             .transparent(true)
+            .effects(startup_window_effects())
             .build()
             .unwrap();
 
@@ -76,6 +78,27 @@ pub(crate) fn create_main_window(app: tauri::AppHandle) {
 
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     let _window = window.build().unwrap();
+}
+
+#[cfg(target_os = "macos")]
+fn startup_window_effects() -> tauri::utils::config::WindowEffectsConfig {
+    use tauri::window::{Effect, EffectState, EffectsBuilder};
+
+    EffectsBuilder::new()
+        .effect(Effect::HudWindow)
+        .state(EffectState::Active)
+        .radius(WINDOW_CORNER_RADIUS as f64)
+        .build()
+}
+
+#[cfg(target_os = "windows")]
+fn startup_window_effects() -> tauri::utils::config::WindowEffectsConfig {
+    use tauri::window::{Color, Effect, EffectsBuilder};
+
+    EffectsBuilder::new()
+        .effect(Effect::Acrylic)
+        .color(Color(18, 18, 24, 150))
+        .build()
 }
 
 fn show_main_window(app: &tauri::AppHandle) {

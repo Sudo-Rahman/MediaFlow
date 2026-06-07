@@ -57,6 +57,7 @@ pub fn run() {
             commands::mediaflow_api::fetch_mediaflow_model_catalog,
             commands::sleep_inhibit::acquire_sleep_inhibit,
             commands::sleep_inhibit::release_sleep_inhibit,
+            commands::startup::mark_startup_splash_ready,
             // Audio transcription commands
             commands::transcription_transcode::transcode_to_opus,
             commands::transcription_cancel::cancel_audio_transcode,

@@ -9,6 +9,7 @@ pub(crate) mod mediaflow_api;
 pub(crate) mod merge;
 pub(crate) mod ocr;
 pub(crate) mod power;
+pub(crate) mod startup;
 pub(crate) mod subtitle_ocr;
 pub(crate) mod tokens;
 pub(crate) mod transcode;

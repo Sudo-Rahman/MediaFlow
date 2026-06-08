@@ -3,7 +3,7 @@
   import { resolve } from '$app/paths';
   import { onMount, tick } from 'svelte';
 
-  import { markStartupSplashReady, waitForStartupPaint } from '$lib/services/startup';
+  import { waitForStartupPaint } from '$lib/services/startup';
 
   const MIN_SPLASH_VISIBLE_MS = 1000;
 
@@ -19,7 +19,6 @@
     void (async () => {
       await tick();
       await waitForStartupPaint();
-      await markStartupSplashReady();
       await delay(MIN_SPLASH_VISIBLE_MS);
 
       if (cancelled) {

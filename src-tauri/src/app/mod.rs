@@ -36,8 +36,7 @@ pub(crate) fn create_main_window(app: tauri::AppHandle) {
         .title("")
         .inner_size(1200.0, 600.0)
         .min_inner_size(1200.0, 600.0)
-        .center()
-        .visible(true);
+        .center();
 
     #[cfg(target_os = "macos")]
     let window = window

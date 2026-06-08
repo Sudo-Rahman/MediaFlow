@@ -2,7 +2,7 @@
 
 ## Context
 
-MediaFlow currently creates its main Tauri webview window immediately and makes it transparent on macOS and Windows. Before the Svelte application paints, users can see a native transparent window, including macOS traffic lights. The frontend startup path is also heavy because the main route imports and mounts every tool view up front to preserve tool state, progress listeners, and long-running workflow continuity.
+MediaFlow creates its main Tauri webview window immediately and makes it transparent on macOS and Windows. This direct show behavior is intentional: the native window should appear promptly, with the lightweight splash route providing the first branded frontend surface before the full app shell loads. The frontend startup path is heavy because the main route imports and mounts every tool view up front to preserve tool state, progress listeners, and long-running workflow continuity.
 
 The persistent SPA model is intentional. Tool views install Tauri event listeners in `onMount`, expose file-drop handlers through component refs, and keep local runtime state alongside shared rune stores. A naive lazy-loading or mount/unmount navigation change would risk losing progress events, cancellation state, refs, dialogs, and in-flight tool workflow state.
 
@@ -10,19 +10,17 @@ The persistent SPA model is intentional. Tool views install Tauri event listener
 
 Use a single-window startup flow:
 
-1. The Tauri `main` window is created hidden.
-2. The hidden main window loads a lightweight startup splash route or static splash entry.
-3. Once the splash has painted, the frontend notifies Rust that the first controlled paint is ready.
-4. Rust shows the same `main` window.
-5. The splash then loads or redirects to `/app`.
-6. `/app` contains the current full MediaFlow app shell, with all tool views still mounted and hidden with the existing persistence model.
+1. The Tauri `main` window is created visible.
+2. The visible main window loads a lightweight startup splash route.
+3. The splash waits for its first paint locally, remains visible for a short minimum duration, then navigates to `/app`.
+4. `/app` contains the current full MediaFlow app shell, with all tool views still mounted and hidden with the existing persistence model.
 
-This avoids both the transparent native-window flash and the perceived pop that can happen with a two-window splashscreen handoff.
+This avoids the perceived pop that can happen with a two-window splashscreen handoff while keeping startup simple and single-window.
 
 ## Goals
 
-- Eliminate the transparent startup window on macOS and Windows.
-- Show a controlled MediaFlow-branded startup surface quickly.
+- Keep the single main window visible immediately at startup.
+- Show a lightweight MediaFlow-branded startup surface quickly.
 - Preserve the current SPA behavior after the app loads.
 - Avoid regressions in long-running workflows, Tauri progress events, drag-and-drop forwarding, export dialogs, and tool-local state.
 - Keep the implementation scoped and reversible.
@@ -67,24 +65,23 @@ The splash route may apply a minimal inline/default theme before settings load. 
 
 ### Tauri Window Flow
 
-The main window builder should create the window hidden:
+The main window builder should create the window visible:
 
-- Use Tauri's `visible(false)` on the existing `WebviewWindowBuilder`.
+- Keep Tauri's default visible window behavior on the existing `WebviewWindowBuilder`.
+- Do not switch the main window to `visible(false)` for this splash flow.
 - Keep current platform chrome settings, transparency, traffic light placement, Windows custom chrome, and sizing behavior.
 - Load the startup splash path first.
 
-The frontend should notify Rust after the splash has reached first paint. The signal can be a narrow Tauri command such as `mark_startup_splash_ready`. Rust then calls `show()` on the main window.
-
-A fallback timer should show the main window if the frontend signal never arrives. This prevents a permanently invisible app if startup code fails before signaling.
+The frontend does not need to notify Rust when the splash has painted because the window is already visible. Splash timing remains local to the root route.
 
 ### App Readiness
 
 There are two readiness moments:
 
-- Splash readiness: the user can see a controlled startup surface. This is when Rust may show the window.
+- Splash readiness: the user can see the controlled startup surface. This is handled by the root route before it navigates to `/app`.
 - App readiness: `/app` has mounted the full app shell. This is when the splash can disappear.
 
-The design does not need Rust to wait for full app readiness before showing the window. Showing the splash quickly is preferable to hiding the window until all app JavaScript is evaluated.
+The design does not need Rust to wait for splash or full app readiness before showing the window. Showing the native window immediately is preferable to hiding the app until JavaScript is evaluated.
 
 ### Tool Persistence
 
@@ -112,8 +109,6 @@ Avoid an overly long or artificial delay. A very short minimum display duration 
 
 ## Error Handling
 
-- If the splash ready command fails, the frontend should still attempt navigation to `/app`.
-- If Rust never receives splash readiness, it should show the hidden window after a bounded timeout.
 - If navigation to `/app` fails, the splash should remain visible with a simple failure state rather than leaving a blank transparent window.
 - Existing tool-specific errors remain handled inside `/app` after the app shell loads.
 
@@ -123,9 +118,8 @@ Validation should cover both frontend and Tauri behavior:
 
 - `pnpm check` after Svelte route/layout changes.
 - `pnpm test` if shared services, stores, or routing helpers are changed.
-- `cargo test --manifest-path src-tauri/Cargo.toml` or a narrower Rust test if startup command logic is factored into testable helpers.
+- `cargo test --manifest-path src-tauri/Cargo.toml` if Rust startup behavior changes.
 - Manual startup verification on macOS and Windows.
-- Visual verification that there is no transparent native flash before the splash appears.
 - Visual verification that `/app` replaces the splash without a two-window pop or route flicker.
 - Functional smoke test that switching tools after `/app` loads still preserves state.
 - Functional smoke test for a progress-event workflow such as extraction, transcode, or OCR while switching tools.

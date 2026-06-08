@@ -1,0 +1,1020 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { cubicOut } from 'svelte/easing';
+  import { fly } from 'svelte/transition';
+  import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
+  import { join } from '@tauri-apps/api/path';
+  import { writeTextFile } from '@tauri-apps/plugin-fs';
+
+  import * as Sidebar from '$lib/components/ui/sidebar';
+  import { Separator } from '$lib/components/ui/separator';
+  import { Button } from '$lib/components/ui/button';
+  import { Progress } from '$lib/components/ui/progress';
+  import { Alert, AlertTitle, AlertDescription } from '$lib/components';
+  import * as HoverCard from '$lib/components/ui/hover-card';
+  import * as Item from '$lib/components/ui/item';
+  import * as Tooltip from '$lib/components/ui/tooltip';
+  import { AppUpdateDialog, HeaderUpdateButton, VersionedExportDialog } from '$lib/components/shared';
+  import AppSidebar from '$lib/components/AppSidebar.svelte';
+  import AppHeader from '$lib/components/layout/app-header.svelte';
+  import { getPlatformChrome } from '$lib/components/layout/platform-chrome';
+  import { setToolHeader } from '$lib/components/layout/tool-header-context.svelte';
+  import { ExtractView, MergeView, SettingsView, InfoView, TranslationView, RenameView, AudioToSubsView, VideoOcrView, SubtitleOcrView, TranscodeView } from '$lib/components/views';
+  import { TranslationExportDialog } from '$lib/components/translation';
+  import { getFormattedOutput } from '$lib/services/deepgram';
+  import {
+    buildUniqueExportFileName,
+    runBatchExport,
+    stripFileExtension,
+    type RunBatchExportResult,
+    type VersionedExportFormatOption,
+    type VersionedExportGroup,
+    type VersionedExportRequest,
+  } from '$lib/services/versioned-export';
+  import {
+    buildSubtitleOcrExportGroups,
+    runSubtitleOcrBatchExport,
+    SUBTITLE_OCR_EXPORT_FORMAT_OPTIONS,
+  } from '$lib/services/subtitle-ocr-export';
+  import { LogsSheet } from '$lib/components/logs';
+  import { AlertCircle, ScrollText, Download, AudioLines, ScanText, Captions, Languages, FileOutput, FileVideo, GitMerge, PenLine, SlidersHorizontal } from '@lucide/svelte';
+  import { OCR_OUTPUT_FORMATS } from '$lib/types';
+  import type { ToolId } from '$lib/types/tool-import';
+  import { formatFileSize } from '$lib/utils/format';
+  import { OS, formatTransferRate, getAllowedOcrVersionExportFormats, normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils';
+  import { logStore } from '$lib/stores/logs.svelte';
+  import { audioToSubsStore, videoOcrStore, translationStore, extractionStore, mergeStore, renameStore, transcodeStore, updaterStore, subtitleOcrStore } from '$lib/stores';
+  import { logAndToast } from '$lib/utils/log-toast';
+
+  type ViewId = ToolId | 'settings';
+
+  // Current view state
+  let currentView = $state<ViewId>('extract');
+  let sidebarOpen = $state(true);
+  let ffmpegAvailable = $state<boolean | null>(null);
+  let unlistenDragDrop: (() => void) | null = null;
+
+  let translationExportDialogOpen = $state(false);
+  let audioExportDialogOpen = $state(false);
+  let ocrExportDialogOpen = $state(false);
+  let subtitleOcrExportDialogOpen = $state(false);
+  let updateDialogOpen = $state(false);
+  let videoOcrOptionsSheetOpen = $state(false);
+  let videoOcrOptionsCompact = $state(true);
+
+  const AUDIO_EXPORT_FORMAT_OPTIONS: VersionedExportFormatOption[] = [
+    { value: 'srt', label: 'SRT - SubRip' },
+    { value: 'vtt', label: 'VTT - WebVTT' },
+    { value: 'json', label: 'JSON - Structured data' },
+  ];
+  const OCR_EXPORT_FORMAT_OPTIONS: VersionedExportFormatOption[] = OCR_OUTPUT_FORMATS.map((format) => ({
+    value: format.value,
+    label: format.label,
+  }));
+
+  // References to views for drag & drop forwarding
+  let extractViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let mergeViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let transcodeViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let infoViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let translateViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let renameViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let audioToSubsViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let videoOcrViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+  let subtitleOcrViewRef: { handleFileDrop: (paths: string[]) => Promise<void> } | undefined = $state();
+
+  const platformChrome = getPlatformChrome(OS());
+  const isMacOS = platformChrome === 'macos-overlay';
+  const toolHeader = setToolHeader();
+
+  interface ToolProgressMetric {
+    toolId: 'audio-to-subs' | 'video-ocr' | 'subtitle-ocr' | 'translate' | 'extract' | 'merge' | 'rename' | 'transcode';
+    label: string;
+    doneUnits: number;
+    totalUnits: number;
+    percentage: number;
+    active: boolean;
+    detailText: string;
+    icon: typeof AudioLines;
+  }
+
+  function clampPercentage(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.min(100, Math.max(0, value));
+  }
+
+  function ratioToPercentage(doneUnits: number, totalUnits: number): number {
+    if (totalUnits <= 0) return 0;
+    return clampPercentage((doneUnits / totalUnits) * 100);
+  }
+
+  const audioMetric = $derived.by((): ToolProgressMetric => {
+    const transcriptionScopeIds = Array.from(audioToSubsStore.transcriptionScopeFileIds);
+    const transcodingScopeIds = Array.from(audioToSubsStore.transcodingScopeFileIds);
+
+    let transcriptionDoneUnits = 0;
+    let transcriptionSettledCount = 0;
+    for (const fileId of transcriptionScopeIds) {
+      const file = audioToSubsStore.audioFiles.find((item) => item.id === fileId);
+      if (!file || audioToSubsStore.cancelledFileIds.has(fileId)) {
+        transcriptionDoneUnits += 1;
+        transcriptionSettledCount += 1;
+        continue;
+      }
+
+      if (file.status === 'completed' || file.status === 'error') {
+        transcriptionDoneUnits += 1;
+        transcriptionSettledCount += 1;
+      } else if (file.status === 'transcribing') {
+        transcriptionDoneUnits += clampPercentage(file.progress ?? 0) / 100;
+      } else if (!audioToSubsStore.isTranscribing) {
+        transcriptionDoneUnits += 1;
+        transcriptionSettledCount += 1;
+      }
+    }
+
+    let transcodingDoneUnits = 0;
+    let transcodingSettledCount = 0;
+    for (const fileId of transcodingScopeIds) {
+      const file = audioToSubsStore.audioFiles.find((item) => item.id === fileId);
+      if (!file) {
+        transcodingDoneUnits += 1;
+        transcodingSettledCount += 1;
+        continue;
+      }
+
+      if (file.status === 'ready' || file.status === 'completed' || file.status === 'error') {
+        transcodingDoneUnits += 1;
+        transcodingSettledCount += 1;
+      } else if (file.status === 'transcoding') {
+        transcodingDoneUnits += clampPercentage(file.transcodingProgress ?? 0) / 100;
+      } else if (!audioToSubsStore.isTranscoding) {
+        transcodingDoneUnits += 1;
+        transcodingSettledCount += 1;
+      }
+    }
+
+    const totalUnits = transcriptionScopeIds.length + transcodingScopeIds.length;
+    const doneUnits = transcriptionDoneUnits + transcodingDoneUnits;
+    const active =
+      (audioToSubsStore.isTranscribing || audioToSubsStore.isTranscoding) &&
+      totalUnits > 0;
+
+    let detailText = '';
+    if (transcriptionScopeIds.length > 0 && transcodingScopeIds.length > 0) {
+      detailText = `Transcribe ${transcriptionSettledCount}/${transcriptionScopeIds.length} · Convert ${transcodingSettledCount}/${transcodingScopeIds.length}`;
+    } else if (transcriptionScopeIds.length > 0) {
+      detailText = `${transcriptionSettledCount}/${transcriptionScopeIds.length} files`;
+    } else {
+      detailText = `${transcodingSettledCount}/${transcodingScopeIds.length} files`;
+    }
+
+    return {
+      toolId: 'audio-to-subs',
+      label: 'Audio to Subs',
+      doneUnits,
+      totalUnits,
+      percentage: ratioToPercentage(doneUnits, totalUnits),
+      active,
+      detailText,
+      icon: AudioLines,
+    };
+  });
+
+  const videoOcrMetric = $derived.by((): ToolProgressMetric => {
+    const scopeIds = Array.from(videoOcrStore.processingScopeFileIds);
+    let doneUnits = 0;
+    let settledCount = 0;
+
+    for (const fileId of scopeIds) {
+      const file = videoOcrStore.videoFiles.find((item) => item.id === fileId);
+      if (!file || videoOcrStore.cancelledFileIds.has(fileId)) {
+        doneUnits += 1;
+        settledCount += 1;
+        continue;
+      }
+
+      if (file.status === 'completed' || file.status === 'error') {
+        doneUnits += 1;
+        settledCount += 1;
+      } else if (file.status === 'transcoding') {
+        doneUnits += clampPercentage(file.transcodingProgress ?? 0) / 100;
+      } else if (file.status === 'extracting_frames' || file.status === 'ocr_processing' || file.status === 'generating_subs') {
+        doneUnits += clampPercentage(file.progress?.overallPercentage ?? file.progress?.percentage ?? 0) / 100;
+      } else if (!videoOcrStore.isProcessing) {
+        doneUnits += 1;
+        settledCount += 1;
+      }
+    }
+
+    const totalUnits = scopeIds.length;
+    return {
+      toolId: 'video-ocr',
+      label: 'Video OCR',
+      doneUnits,
+      totalUnits,
+      percentage: ratioToPercentage(doneUnits, totalUnits),
+      active: videoOcrStore.isProcessing && totalUnits > 0,
+      detailText: `${settledCount}/${totalUnits} files`,
+      icon: ScanText,
+    };
+  });
+
+  const subtitleOcrMetric = $derived.by((): ToolProgressMetric => {
+    const scopeIds = Array.from(subtitleOcrStore.processingScopeItemIds);
+    const items = subtitleOcrStore.items;
+    let doneUnits = 0;
+    let settledCount = 0;
+
+    for (const itemId of scopeIds) {
+      const item = items.find((entry) => entry.id === itemId);
+      if (!item) {
+        doneUnits += 1;
+        settledCount += 1;
+        continue;
+      }
+
+      if (item.status === 'completed' || item.status === 'error') {
+        doneUnits += 1;
+        settledCount += 1;
+      } else if (subtitleOcrStore.isProcessing) {
+        doneUnits += clampPercentage(
+          item.progress?.overallPercentage ?? item.progress?.percentage ?? 0,
+        ) / 100;
+      } else {
+        doneUnits += 1;
+        settledCount += 1;
+      }
+    }
+
+    const totalUnits = scopeIds.length;
+    return {
+      toolId: 'subtitle-ocr',
+      label: 'Subtitle OCR',
+      doneUnits,
+      totalUnits,
+      percentage: ratioToPercentage(doneUnits, totalUnits),
+      active: subtitleOcrStore.isProcessing && totalUnits > 0,
+      detailText: `${settledCount}/${totalUnits} sources`,
+      icon: Captions,
+    };
+  });
+
+  const translationMetric = $derived.by((): ToolProgressMetric => {
+    const scopeJobIds = Array.from(translationStore.activeScopeJobIds);
+    let doneUnits = 0;
+    let settledCount = 0;
+
+    for (const jobId of scopeJobIds) {
+      const job = translationStore.jobs.find((item) => item.id === jobId);
+      if (!job) {
+        doneUnits += 1;
+        settledCount += 1;
+        continue;
+      }
+
+      if (job.status === 'completed' || job.status === 'error' || job.status === 'cancelled') {
+        doneUnits += 1;
+        settledCount += 1;
+      } else if (job.status === 'translating') {
+        doneUnits += clampPercentage(job.progress) / 100;
+      }
+    }
+
+    const totalUnits = scopeJobIds.length;
+    return {
+      toolId: 'translate',
+      label: 'AI Translation',
+      doneUnits,
+      totalUnits,
+      percentage: ratioToPercentage(doneUnits, totalUnits),
+      active: translationStore.isTranslating && totalUnits > 0,
+      detailText: `${settledCount}/${totalUnits} jobs`,
+      icon: Languages,
+    };
+  });
+
+  const extractionMetric = $derived.by((): ToolProgressMetric => {
+    const progress = extractionStore.progress;
+    const totalUnits = progress.totalTracks;
+    const doneUnits = Math.min(
+      totalUnits,
+      Math.max(0, progress.completedTracks) +
+        (clampPercentage(progress.currentTrackProgress) / 100),
+    );
+    const speedText = progress.currentSpeedBytesPerSec && progress.currentSpeedBytesPerSec > 0
+      ? ` · ${formatTransferRate(progress.currentSpeedBytesPerSec)}`
+      : '';
+    return {
+      toolId: 'extract',
+      label: 'Extraction',
+      doneUnits,
+      totalUnits,
+      percentage: ratioToPercentage(doneUnits, totalUnits),
+      active: extractionStore.isExtracting && totalUnits > 0,
+      detailText: `${Math.min(Math.round(doneUnits), totalUnits)}/${totalUnits} tracks${speedText}`,
+      icon: FileOutput,
+    };
+  });
+
+  const mergeMetric = $derived.by((): ToolProgressMetric => {
+    const runtime = mergeStore.runtimeProgress;
+    const totalUnits = runtime.totalFiles;
+    const doneUnits = Math.min(
+      totalUnits,
+      Math.max(0, runtime.completedFiles) + (clampPercentage(runtime.currentFileProgress) / 100),
+    );
+    const speedText = runtime.currentSpeedBytesPerSec && runtime.currentSpeedBytesPerSec > 0
+      ? ` · ${formatTransferRate(runtime.currentSpeedBytesPerSec)}`
+      : '';
+    return {
+      toolId: 'merge',
+      label: 'Merge',
+      doneUnits,
+      totalUnits,
+      percentage: ratioToPercentage(doneUnits, totalUnits),
+      active: mergeStore.isProcessing && totalUnits > 0,
+      detailText: `${Math.min(Math.round(doneUnits), totalUnits)}/${totalUnits} files${speedText}`,
+      icon: GitMerge,
+    };
+  });
+
+  const transcodeMetric = $derived.by((): ToolProgressMetric => {
+    const runtime = transcodeStore.runtimeProgress;
+    const totalUnits = runtime.totalFiles;
+    const doneUnits = Math.min(
+      totalUnits,
+      Math.max(0, runtime.completedFiles) + (clampPercentage(runtime.currentFileProgress) / 100),
+    );
+    const speedText = runtime.currentSpeedBytesPerSec && runtime.currentSpeedBytesPerSec > 0
+      ? ` · ${formatTransferRate(runtime.currentSpeedBytesPerSec)}`
+      : '';
+    return {
+      toolId: 'transcode',
+      label: 'Transcode',
+      doneUnits,
+      totalUnits,
+      percentage: ratioToPercentage(doneUnits, totalUnits),
+      active: transcodeStore.isProcessing && totalUnits > 0,
+      detailText: `${Math.min(Math.round(doneUnits), totalUnits)}/${totalUnits} files${speedText}`,
+      icon: FileVideo,
+    };
+  });
+
+  const renameMetric = $derived.by((): ToolProgressMetric => {
+    const progress = renameStore.progress;
+    const totalUnits = progress.total;
+    const doneUnits = Math.min(
+      totalUnits,
+      Math.max(0, progress.current) + (clampPercentage(progress.currentFileProgress) / 100),
+    );
+    const copiedBytes = Math.max(0, progress.completedBytes + progress.currentFileBytesCopied);
+    const clampedCopiedBytes = progress.totalBytes > 0
+      ? Math.min(copiedBytes, progress.totalBytes)
+      : copiedBytes;
+    const bytesText = progress.totalBytes > 0
+      ? ` · ${formatFileSize(clampedCopiedBytes)}/${formatFileSize(progress.totalBytes)}`
+      : '';
+    const speedText = progress.currentSpeedBytesPerSec && progress.currentSpeedBytesPerSec > 0
+      ? ` · ${formatTransferRate(progress.currentSpeedBytesPerSec)}`
+      : '';
+    return {
+      toolId: 'rename',
+      label: 'Batch Rename',
+      doneUnits,
+      totalUnits,
+      percentage: ratioToPercentage(doneUnits, totalUnits),
+      active: renameStore.isProcessing && totalUnits > 0,
+      detailText: `${Math.min(Math.round(Math.max(0, progress.current)), totalUnits)}/${totalUnits} files${bytesText}${speedText}`,
+      icon: PenLine,
+    };
+  });
+
+  const activeToolMetrics = $derived.by(() => {
+    return [audioMetric, videoOcrMetric, subtitleOcrMetric, translationMetric, extractionMetric, mergeMetric, transcodeMetric, renameMetric]
+      .filter((metric) => metric.active);
+  });
+
+  const globalToolProgress = $derived.by(() => {
+    const totalUnits = activeToolMetrics.reduce((sum, metric) => sum + metric.totalUnits, 0);
+    const doneUnits = activeToolMetrics.reduce((sum, metric) => sum + metric.doneUnits, 0);
+
+    return {
+      active: activeToolMetrics.length > 0,
+      percentage: ratioToPercentage(doneUnits, totalUnits),
+      tools: activeToolMetrics,
+    };
+  });
+  const hasActiveJobs = $derived(globalToolProgress.active);
+
+  const hasTranslationExportableData = $derived.by(() => {
+    return translationStore.jobs.some((job) => {
+      if (job.translationVersions.length > 0) return true;
+      const content = job.result?.translatedContent;
+      return !!content && content.trim().length > 0;
+    });
+  });
+
+  const audioExportGroups = $derived.by(() => {
+    return audioToSubsStore.audioFiles
+      .map((file): VersionedExportGroup | null => {
+        if (file.transcriptionVersions.length === 0) {
+          return null;
+        }
+
+        return {
+          fileId: file.id,
+          fileName: file.name,
+          fileBadge: file.path.split('.').pop()?.toUpperCase(),
+          versions: file.transcriptionVersions.map((version) => ({
+            key: `${file.id}:${version.id}`,
+            versionId: version.id,
+            versionName: version.name,
+            createdAt: version.createdAt,
+          })),
+        };
+      })
+      .filter((group): group is VersionedExportGroup => group !== null);
+  });
+
+  const hasAudioExportableData = $derived(audioExportGroups.length > 0);
+
+  const ocrExportGroups = $derived.by(() => {
+    return videoOcrStore.videoFiles
+      .map((file): VersionedExportGroup | null => {
+        const versionEntries = file.ocrVersions.map((version) => ({
+          key: `${file.id}:${version.id}`,
+          versionId: version.id,
+          versionName: version.name,
+          createdAt: version.createdAt,
+          allowedFormats: getAllowedOcrVersionExportFormats(version),
+        }));
+
+        if (versionEntries.length === 0) {
+          return null;
+        }
+
+        return {
+          fileId: file.id,
+          fileName: file.name,
+          fileBadge: file.path.split('.').pop()?.toUpperCase(),
+          versions: versionEntries,
+        };
+      })
+      .filter((group): group is VersionedExportGroup => group !== null);
+  });
+
+  const hasOcrExportableData = $derived(ocrExportGroups.length > 0);
+
+  const subtitleOcrExportGroups = $derived.by(() => {
+    return buildSubtitleOcrExportGroups(subtitleOcrStore.items);
+  });
+
+  const hasSubtitleOcrExportableData = $derived(subtitleOcrExportGroups.length > 0);
+
+  const showGlobalExportButton = $derived(
+    currentView === 'translate'
+    || currentView === 'audio-to-subs'
+    || currentView === 'video-ocr'
+    || currentView === 'subtitle-ocr',
+  );
+
+  const globalExportDisabled = $derived.by(() => {
+    if (currentView === 'translate') {
+      return !hasTranslationExportableData;
+    }
+
+    if (currentView === 'audio-to-subs') {
+      return !hasAudioExportableData;
+    }
+
+    if (currentView === 'video-ocr') {
+      return !hasOcrExportableData;
+    }
+
+    if (currentView === 'subtitle-ocr') {
+      return !hasSubtitleOcrExportableData;
+    }
+
+    return true;
+  });
+
+  const globalExportTitle = $derived.by(() => {
+    if (currentView === 'translate') {
+      return 'Export translated subtitles';
+    }
+    if (currentView === 'audio-to-subs') {
+      return 'Export transcription versions';
+    }
+    if (currentView === 'video-ocr') {
+      return 'Export OCR subtitle versions';
+    }
+    if (currentView === 'subtitle-ocr') {
+      return 'Export Subtitle OCR versions';
+    }
+    return 'Export';
+  });
+
+  function handleOpenGlobalExportDialog(): void {
+    if (currentView === 'translate') {
+      translationExportDialogOpen = true;
+      return;
+    }
+    if (currentView === 'audio-to-subs') {
+      audioExportDialogOpen = true;
+      return;
+    }
+    if (currentView === 'video-ocr') {
+      ocrExportDialogOpen = true;
+      return;
+    }
+    if (currentView === 'subtitle-ocr') {
+      subtitleOcrExportDialogOpen = true;
+    }
+  }
+
+  async function handleExportTranscriptions(
+    request: VersionedExportRequest,
+  ): Promise<RunBatchExportResult> {
+    const targetFormat = request.format as 'srt' | 'vtt' | 'json';
+    if (!AUDIO_EXPORT_FORMAT_OPTIONS.some((option) => option.value === targetFormat)) {
+      throw new Error('Invalid export format');
+    }
+
+    const usedNames = new Set<string>();
+    const filesById = new Map(audioToSubsStore.audioFiles.map((file) => [file.id, file]));
+
+    return runBatchExport(request.targets, async (target) => {
+      const file = filesById.get(target.fileId);
+      if (!file) {
+        throw new Error(`Audio file not found: ${target.fileId}`);
+      }
+
+      const version = file.transcriptionVersions.find((entry) => entry.id === target.versionId);
+      if (!version) {
+        throw new Error(`Transcription version not found: ${target.versionId}`);
+      }
+
+      const exportContent = getFormattedOutput(version.result, targetFormat);
+      const exportFileName = buildUniqueExportFileName(
+        stripFileExtension(target.fileName),
+        target.versionName,
+        targetFormat,
+        usedNames,
+      );
+      const outputPath = await join(request.outputDir, exportFileName);
+      await writeTextFile(outputPath, exportContent);
+    });
+  }
+
+  async function handleExportOcr(request: VersionedExportRequest): Promise<RunBatchExportResult> {
+    const targetFormat = request.format as (typeof OCR_OUTPUT_FORMATS)[number]['value'];
+    if (!OCR_OUTPUT_FORMATS.some((format) => format.value === targetFormat)) {
+      throw new Error('Invalid export format');
+    }
+
+    const usedNames = new Set<string>();
+    const filesById = new Map(videoOcrStore.videoFiles.map((file) => [file.id, file]));
+
+    return runBatchExport(request.targets, async (target) => {
+      const file = filesById.get(target.fileId);
+      if (!file) {
+        throw new Error(`Video file not found: ${target.fileId}`);
+      }
+
+      const version = file.ocrVersions.find((entry) => entry.id === target.versionId);
+      if (!version) {
+        throw new Error(`OCR version not found: ${target.versionId}`);
+      }
+
+      const allowedFormats = getAllowedOcrVersionExportFormats(version);
+      if (!allowedFormats.includes(targetFormat)) {
+        throw new Error('Selected OCR version requires ASS export');
+      }
+
+      const normalizedSubtitles = normalizeOcrSubtitles(version.finalSubtitles);
+      if (normalizedSubtitles.length === 0) {
+        throw new Error('No valid subtitles to export');
+      }
+
+      const exportFileName = buildUniqueExportFileName(
+        stripFileExtension(target.fileName),
+        target.versionName,
+        targetFormat,
+        usedNames,
+      );
+      const outputPath = await join(request.outputDir, exportFileName);
+
+      await invoke('export_ocr_subtitles', {
+        subtitles: toRustOcrSubtitles(normalizedSubtitles),
+        outputPath,
+        format: targetFormat,
+      });
+    });
+  }
+
+  const viewTitles: Record<ViewId, string> = {
+    extract: 'Track Extraction',
+    merge: 'Track Merge',
+    transcode: 'Transcode',
+    'audio-to-subs': 'Audio to Subs',
+    'video-ocr': 'Video OCR',
+    'subtitle-ocr': 'Subtitle OCR',
+    translate: 'AI Translation',
+    rename: 'Batch Rename',
+    info: 'File Information',
+    settings: 'Settings'
+  };
+
+  function hasToolHeader(viewId: ViewId): viewId is ToolId {
+    return viewId !== 'settings';
+  }
+
+  const activeToolHeader = $derived.by(() =>
+    hasToolHeader(currentView) ? toolHeader.getHeader(currentView) : undefined,
+  );
+  const activeHeaderTitle = $derived.by(() => {
+    if (activeToolHeader?.title) {
+      return activeToolHeader.title;
+    }
+
+    return viewTitles[currentView];
+  });
+  const activeHeaderDescription = $derived(activeToolHeader?.description);
+
+  onMount(() => {
+    let destroyed = false;
+
+    updaterStore.initialize();
+
+    void initApp(() => destroyed);
+
+    return () => {
+      destroyed = true;
+      updaterStore.dispose();
+      unlistenDragDrop?.();
+      unlistenDragDrop = null;
+    };
+  });
+
+  async function initApp(isDestroyed: () => boolean): Promise<void> {
+    // Check if FFmpeg is available
+    try {
+      const available = await invoke<boolean>('check_ffmpeg');
+      if (isDestroyed()) {
+        return;
+      }
+
+      ffmpegAvailable = available;
+      if (!available) {
+        logAndToast.error({
+          source: 'system',
+          title: 'FFmpeg not found',
+          details: 'FFmpeg is not installed or not found in PATH. Please install FFmpeg to use this application.'
+        });
+      }
+    } catch (e) {
+      if (isDestroyed()) {
+        return;
+      }
+
+      ffmpegAvailable = false;
+      logAndToast.error({
+        source: 'system',
+        title: 'Error checking FFmpeg',
+        details: e instanceof Error ? e.message : String(e)
+      });
+    }
+
+    if (isDestroyed()) {
+      return;
+    }
+
+    // Listen for drag & drop events from Tauri
+    const unlisten = await listen<{ paths: string[] }>('tauri://drag-drop', async (event) => {
+      // Forward to the appropriate view based on current view
+      if (currentView === 'extract' && extractViewRef) {
+        await extractViewRef.handleFileDrop(event.payload.paths);
+      } else if (currentView === 'merge' && mergeViewRef) {
+        await mergeViewRef.handleFileDrop(event.payload.paths);
+      } else if (currentView === 'transcode' && transcodeViewRef) {
+        await transcodeViewRef.handleFileDrop(event.payload.paths);
+      } else if (currentView === 'info' && infoViewRef) {
+        await infoViewRef.handleFileDrop(event.payload.paths);
+      } else if (currentView === 'translate' && translateViewRef) {
+        await translateViewRef.handleFileDrop(event.payload.paths);
+      } else if (currentView === 'rename' && renameViewRef) {
+        await renameViewRef.handleFileDrop(event.payload.paths);
+      } else if (currentView === 'audio-to-subs' && audioToSubsViewRef) {
+        await audioToSubsViewRef.handleFileDrop(event.payload.paths);
+      } else if (currentView === 'video-ocr' && videoOcrViewRef) {
+        await videoOcrViewRef.handleFileDrop(event.payload.paths);
+      } else if (currentView === 'subtitle-ocr' && subtitleOcrViewRef) {
+        await subtitleOcrViewRef.handleFileDrop(event.payload.paths);
+      }
+    });
+
+    if (isDestroyed()) {
+      unlisten();
+      return;
+    }
+
+    unlistenDragDrop = unlisten;
+  }
+
+  function handleNavigate(viewId: string) {
+    currentView = viewId as ViewId;
+    if (currentView !== 'translate') {
+      translationExportDialogOpen = false;
+    }
+    if (currentView !== 'audio-to-subs') {
+      audioExportDialogOpen = false;
+    }
+    if (currentView !== 'video-ocr') {
+      ocrExportDialogOpen = false;
+      videoOcrOptionsSheetOpen = false;
+    }
+    if (currentView !== 'subtitle-ocr') {
+      subtitleOcrExportDialogOpen = false;
+    }
+  }
+</script>
+
+<div class="h-screen overflow-hidden bg-background">
+  <Sidebar.Provider bind:open={sidebarOpen}>
+    <AppSidebar
+      currentView={currentView}
+      onNavigate={handleNavigate}
+    />
+
+    <Sidebar.Inset class="flex flex-col h-screen overflow-hidden w-[calc(100%-var(--sidebar-width))]">
+      <AppHeader
+        title={activeHeaderTitle}
+        description={activeHeaderDescription}
+        showTitle={!sidebarOpen}
+        {platformChrome}
+      >
+        {#snippet leading()}
+          <Sidebar.Trigger class="{!sidebarOpen && isMacOS ? 'ml-20' : '-ml-1'} transition-all duration-300" />
+          <Separator orientation="vertical" class="data-[orientation=vertical]:h-4" />
+        {/snippet}
+
+        {#snippet titleSuffix()}
+          {#if updaterStore.hasUpdate && updaterStore.availableVersion}
+            <HeaderUpdateButton
+              version={updaterStore.availableVersion}
+              compact={!sidebarOpen}
+              onOpen={() => updateDialogOpen = true}
+            />
+          {/if}
+        {/snippet}
+
+        {#snippet status()}
+          {#if globalToolProgress.active}
+            <HoverCard.Root openDelay={150} closeDelay={100}>
+              <HoverCard.Trigger
+                class="flex w-38 h-8 items-center rounded-full border bg-muted/40 px-2 py-1.5 transition-colors hover:bg-muted/60"
+                title={`Global progress: ${Math.round(globalToolProgress.percentage)}%`}
+              >
+                <div class="flex h-full w-full items-center gap-2">
+                  <Progress value={globalToolProgress.percentage} class="h-2 flex-1" />
+                  <span class="text-[11px] font-medium tabular-nums">{Math.round(globalToolProgress.percentage)}%</span>
+                </div>
+              </HoverCard.Trigger>
+              <HoverCard.Content align="end" class="w-68 p-3">
+                <div class="mb-2 border-b pb-2">
+                  <div class="mb-2 flex items-center justify-between">
+                    <p class="text-[11px] uppercase tracking-wide text-muted-foreground">Global Progress</p>
+                    <p class="text-sm font-medium">{Math.round(globalToolProgress.percentage)}%</p>
+                  </div>
+                  <Progress value={globalToolProgress.percentage} class="h-2" />
+                  <p class="mt-1 text-[11px] text-muted-foreground">{globalToolProgress.tools.length} tools active</p>
+                </div>
+                <div class="space-y-2">
+                  {#each globalToolProgress.tools as metric (metric.toolId)}
+                    {@const ToolIcon = metric.icon}
+                    <Item.Root variant="muted" size="xs" class="items-start">
+                      <Item.Media class="mt-0.5">
+                        <ToolIcon class="size-4 text-muted-foreground" />
+                      </Item.Media>
+                      <Item.Content class="min-w-0 gap-1">
+                        <div class="flex items-center gap-2">
+                          <p class="truncate text-xs font-medium flex-1">{metric.label}</p>
+                          <p class="text-[11px] font-medium tabular-nums">{Math.round(metric.percentage)}%</p>
+                        </div>
+                        <Progress value={metric.percentage} class="h-1.5" />
+                        <p class="truncate text-[11px] text-muted-foreground">{metric.detailText}</p>
+                      </Item.Content>
+                    </Item.Root>
+                  {/each}
+                </div>
+              </HoverCard.Content>
+            </HoverCard.Root>
+          {/if}
+        {/snippet}
+
+        {#snippet actions()}
+          {#if activeToolHeader?.actions}
+            {@render activeToolHeader.actions()}
+          {/if}
+        {/snippet}
+
+        {#snippet trailing()}
+          {#if currentView === 'video-ocr' && videoOcrOptionsCompact}
+            <Tooltip.Root>
+              <div
+                class="mr-1 inline-flex"
+                transition:fly={{ x: 15, y: 0, duration: 200, opacity: 0, easing: cubicOut }}
+              >
+                <Tooltip.Trigger>
+                  {#snippet child({ props })}
+                    <Button
+                      {...props}
+                      variant="outline"
+                      size="icon-sm"
+                      aria-label="Open OCR options"
+                      onclick={() => videoOcrOptionsSheetOpen = true}
+                    >
+                      <SlidersHorizontal class="size-4" aria-hidden="true" />
+                    </Button>
+                  {/snippet}
+                </Tooltip.Trigger>
+              </div>
+              <Tooltip.Content side="top">OCR options</Tooltip.Content>
+            </Tooltip.Root>
+          {/if}
+
+          {#if showGlobalExportButton}
+            <Button
+              variant="outline"
+              size="sm"
+              onclick={handleOpenGlobalExportDialog}
+              disabled={globalExportDisabled}
+              title={globalExportTitle}
+            >
+              <Download class="size-4 mr-2" />
+              Export
+            </Button>
+          {/if}
+
+          <Separator orientation="vertical" class="h-6 ml-1 mr-1" />
+
+          <Button
+            variant="ghost"
+            size="icon"
+            onclick={() => logStore.open()}
+            class="relative"
+            title="View logs"
+          >
+            <ScrollText class="size-4" />
+            {#if logStore.unreadErrorCount > 0}
+              <span class="absolute -top-1 -right-1 size-4 bg-destructive text-white rounded-full text-[10px] font-medium flex items-center justify-center">
+                {logStore.unreadErrorCount > 9 ? '9+' : logStore.unreadErrorCount}
+              </span>
+            {/if}
+          </Button>
+        {/snippet}
+      </AppHeader>
+
+      <!-- FFmpeg warning -->
+      {#if ffmpegAvailable === false && currentView !== 'settings'}
+        <div class="p-4">
+          <Alert variant="destructive">
+            <AlertCircle class="size-4" />
+            <AlertTitle>FFmpeg not available</AlertTitle>
+            <AlertDescription>
+              Install FFmpeg to use this application.
+            </AlertDescription>
+          </Alert>
+        </div>
+      {/if}
+
+      <!-- Main content - all views mounted but hidden with display:none for persistence -->
+      <main class="flex-1 overflow-hidden relative">
+        <!-- Extract View -->
+        <div class="absolute inset-0" style="display: {currentView === 'extract' ? 'block' : 'none'}">
+          <ExtractView bind:this={extractViewRef} />
+        </div>
+
+        <!-- Merge View -->
+        <div class="absolute inset-0" style="display: {currentView === 'merge' ? 'block' : 'none'}">
+          <MergeView
+            bind:this={mergeViewRef}
+            onNavigateToSettings={() => handleNavigate('settings')}
+          />
+        </div>
+
+        <!-- Transcode View -->
+        <div class="absolute inset-0" style="display: {currentView === 'transcode' ? 'block' : 'none'}">
+          <TranscodeView
+            bind:this={transcodeViewRef}
+            onNavigateToSettings={() => handleNavigate('settings')}
+          />
+        </div>
+
+        <!-- Audio to Subs View - persists when switching views -->
+        <div class="absolute inset-0" style="display: {currentView === 'audio-to-subs' ? 'block' : 'none'}">
+          <AudioToSubsView bind:this={audioToSubsViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
+        </div>
+
+        <!-- Video OCR View - persists when switching views -->
+        <div class="absolute inset-0" style="display: {currentView === 'video-ocr' ? 'block' : 'none'}">
+          <VideoOcrView
+            bind:this={videoOcrViewRef}
+            bind:optionsSheetOpen={videoOcrOptionsSheetOpen}
+            bind:optionsPanelCompact={videoOcrOptionsCompact}
+            isActive={currentView === 'video-ocr'}
+            onNavigateToSettings={() => handleNavigate('settings')}
+          />
+        </div>
+
+        <!-- Subtitle OCR View - persists when switching views -->
+        <div class="absolute inset-0" style="display: {currentView === 'subtitle-ocr' ? 'block' : 'none'}">
+          <SubtitleOcrView
+            bind:this={subtitleOcrViewRef}
+            onNavigateToSettings={() => handleNavigate('settings')}
+          />
+        </div>
+
+        <!-- Translation View -->
+        <div class="absolute inset-0" style="display: {currentView === 'translate' ? 'block' : 'none'}">
+          <TranslationView bind:this={translateViewRef} onNavigateToSettings={() => handleNavigate('settings')} />
+        </div>
+
+        <!-- Rename View -->
+        <div class="absolute inset-0" style="display: {currentView === 'rename' ? 'block' : 'none'}">
+          <RenameView bind:this={renameViewRef} />
+        </div>
+
+        <!-- Info View -->
+        <div class="absolute inset-0" style="display: {currentView === 'info' ? 'block' : 'none'}">
+          <InfoView bind:this={infoViewRef} />
+        </div>
+
+        <!-- Settings View -->
+        <div class="absolute inset-0" style="display: {currentView === 'settings' ? 'block' : 'none'}">
+          <SettingsView onOpenUpdateDialog={() => updateDialogOpen = true} />
+        </div>
+      </main>
+    </Sidebar.Inset>
+  </Sidebar.Provider>
+</div>
+
+<TranslationExportDialog
+  open={translationExportDialogOpen}
+  onOpenChange={(open) => {
+    translationExportDialogOpen = open;
+  }}
+  jobs={translationStore.jobs}
+/>
+
+<VersionedExportDialog
+  open={audioExportDialogOpen}
+  onOpenChange={(open) => {
+    audioExportDialogOpen = open;
+  }}
+  title="Export Transcriptions"
+  description="Export transcription versions by file."
+  groups={audioExportGroups}
+  formatOptions={AUDIO_EXPORT_FORMAT_OPTIONS}
+  defaultFormat="srt"
+  onExport={handleExportTranscriptions}
+/>
+
+<VersionedExportDialog
+  open={ocrExportDialogOpen}
+  onOpenChange={(open) => {
+    ocrExportDialogOpen = open;
+  }}
+  title="Export OCR Subtitles"
+  description="Export OCR subtitle versions by file."
+  groups={ocrExportGroups}
+  formatOptions={OCR_EXPORT_FORMAT_OPTIONS}
+  defaultFormat="srt"
+  onExport={handleExportOcr}
+/>
+
+<VersionedExportDialog
+  open={subtitleOcrExportDialogOpen}
+  onOpenChange={(open) => {
+    subtitleOcrExportDialogOpen = open;
+  }}
+  title="Export Subtitle OCR Versions"
+  description="Export Subtitle OCR versions as ASS, SRT, or VTT files."
+  defaultFormat="srt"
+  groups={subtitleOcrExportGroups}
+  formatOptions={SUBTITLE_OCR_EXPORT_FORMAT_OPTIONS}
+  onExport={(request) => runSubtitleOcrBatchExport(request, subtitleOcrStore.items)}
+/>
+
+<AppUpdateDialog
+  open={updateDialogOpen}
+  onOpenChange={(open) => {
+    updateDialogOpen = open;
+  }}
+  {hasActiveJobs}
+/>
+
+<!-- Logs Sheet (global overlay) -->
+<LogsSheet />

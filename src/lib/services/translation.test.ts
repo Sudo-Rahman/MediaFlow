@@ -168,8 +168,28 @@ function countOccurrences(value: string, needle: string): number {
   return value.split(needle).length - 1;
 }
 
+interface PromptPayload {
+  cues: Array<{ id: string; text: string }>;
+  contextCues?: Array<{
+    id: string;
+    text: string;
+    translatedText?: string;
+    position?: string;
+    spanIndex?: number;
+  }>;
+}
+
+function parseUserPromptPayload(userPrompt: string): PromptPayload {
+  const parsed = JSON.parse(userPrompt.slice(userPrompt.indexOf('{'))) as Partial<PromptPayload>;
+
+  return {
+    cues: parsed.cues ?? [],
+    contextCues: parsed.contextCues,
+  };
+}
+
 function parseUserPromptCues(userPrompt: string): Array<{ id: string; text: string }> {
-  return JSON.parse(userPrompt.slice(userPrompt.indexOf('{'))).cues;
+  return parseUserPromptPayload(userPrompt).cues;
 }
 
 function allPromptCues(): Array<{ id: string; text: string }> {
@@ -1112,5 +1132,120 @@ describe('AI translation ASS visual text planning', () => {
 
     expect(result.success).toBe(true);
     expect(result.translatedContent).toBe(content);
+  });
+
+  it('retries unresolved main translation cues as one grouped request with translated context', async () => {
+    const { translateSubtitle } = await import('./translation');
+    const content = [
+      '0',
+      '00:00:01,000 --> 00:00:02,000',
+      'Line zero.',
+      '',
+      '1',
+      '00:00:02,000 --> 00:00:03,000',
+      'Line one.',
+      '',
+      '2',
+      '00:00:03,000 --> 00:00:04,000',
+      'Line two.',
+      '',
+      '3',
+      '00:00:04,000 --> 00:00:05,000',
+      'Line three.',
+      '',
+      '4',
+      '00:00:05,000 --> 00:00:06,000',
+      'Line four.',
+      '',
+      '5',
+      '00:00:06,000 --> 00:00:07,000',
+      'Line five.',
+    ].join('\n');
+
+    callLlmMock.mockImplementation(async (request: { userPrompt: string }) => {
+      const prompt = parseUserPromptPayload(request.userPrompt);
+      const callNumber = callLlmMock.mock.calls.length;
+
+      if (callNumber === 1) {
+        return {
+          content: JSON.stringify({
+            cues: prompt.cues
+              .filter(cue => cue.id !== 'SRT_2' && cue.id !== 'SRT_3')
+              .map(cue => ({
+                id: cue.id,
+                translatedText: `FR ${cue.text}`,
+              })),
+          }),
+          usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+        };
+      }
+
+      if (callNumber === 2) {
+        return {
+          content: JSON.stringify({
+            cues: [{ id: 'SRT_2', translatedText: 'FR Line two.' }],
+          }),
+          usage: { promptTokens: 8, completionTokens: 4, totalTokens: 12 },
+        };
+      }
+
+      return {
+        content: JSON.stringify({ cues: [] }),
+        usage: { promptTokens: 6, completionTokens: 2, totalTokens: 8 },
+      };
+    });
+
+    const result = await translateSubtitle(
+      { name: 'retry.srt', path: '/subs/retry.srt', content, format: 'srt', size: 1 },
+      'openai',
+      'gpt-test',
+      'en',
+      'fr'
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.translatedContent).toContain('FR Line two.');
+    expect(result.translatedContent).toContain('Line three.');
+    expect(result.error).toContain('1 cue(s) remained unchanged');
+    expect(callLlmMock).toHaveBeenCalledTimes(3);
+
+    const firstRetryPrompt = parseUserPromptPayload(callLlmMock.mock.calls[1][0].userPrompt);
+    expect(firstRetryPrompt.cues.map(cue => cue.id)).toEqual(['SRT_2', 'SRT_3']);
+    expect(firstRetryPrompt.contextCues?.map(cue => cue.id)).toEqual([
+      'SRT_0',
+      'SRT_1',
+      'SRT_4',
+      'SRT_5',
+    ]);
+    expect(firstRetryPrompt.contextCues).toEqual([
+      {
+        id: 'SRT_0',
+        text: 'Line zero.',
+        translatedText: 'FR Line zero.',
+        position: 'before',
+        spanIndex: 0,
+      },
+      {
+        id: 'SRT_1',
+        text: 'Line one.',
+        translatedText: 'FR Line one.',
+        position: 'before',
+        spanIndex: 0,
+      },
+      {
+        id: 'SRT_4',
+        text: 'Line four.',
+        translatedText: 'FR Line four.',
+        position: 'after',
+        spanIndex: 0,
+      },
+      {
+        id: 'SRT_5',
+        text: 'Line five.',
+        translatedText: 'FR Line five.',
+        position: 'after',
+        spanIndex: 0,
+      },
+    ]);
   });
 });

@@ -8,16 +8,15 @@ use serde::Serialize;
 use tauri::Emitter;
 use tokio::time::{Duration, Instant, interval, timeout};
 
+use crate::shared::ffmpeg_progress::OCR_PREVIEW_PROGRESS_TIMEOUT;
 use crate::shared::hash::stable_hash64;
 use crate::shared::process::force_terminate_process;
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::store::{resolve_ffmpeg_path, resolve_ffprobe_path};
 use crate::shared::validation::validate_media_path;
-use crate::tools::ffprobe::get_media_duration_us;
+use crate::tools::ffprobe::parse_duration_us_from_probe_json;
 use crate::tools::ffprobe::probe::probe_file_with_ffprobe;
 
-const VIDEO_PREVIEW_PROGRESS_STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
-const VIDEO_PREVIEW_PROGRESS_STALL_TIMEOUT: Duration = Duration::from_secs(120);
 const VIDEO_PREVIEW_PROGRESS_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const VIDEO_PREVIEW_NO_PROGRESS_TIMEOUT: Duration = Duration::from_secs(7_200);
 const PREVIEW_CACHE_VERSION: &str = "ocr-preview-v3-480p-progress-timeout";
@@ -103,8 +102,8 @@ impl PreviewProgressTimeout {
 
     fn for_preview() -> Self {
         Self::new(
-            VIDEO_PREVIEW_PROGRESS_STARTUP_TIMEOUT,
-            VIDEO_PREVIEW_PROGRESS_STALL_TIMEOUT,
+            OCR_PREVIEW_PROGRESS_TIMEOUT.startup_timeout,
+            OCR_PREVIEW_PROGRESS_TIMEOUT.stall_timeout,
         )
     }
 
@@ -292,9 +291,11 @@ fn parse_preview_media_info(probe_json: &str) -> Result<PreviewMediaInfo, String
 async fn probe_preview_media_with_ffprobe(
     ffprobe_path: &str,
     input_path: &str,
-) -> Result<PreviewMediaInfo, String> {
+) -> Result<(PreviewMediaInfo, Option<u64>), String> {
     let json = probe_file_with_ffprobe(ffprobe_path, input_path).await?;
-    parse_preview_media_info(&json)
+    let media_info = parse_preview_media_info(&json)?;
+    let duration_us = parse_duration_us_from_probe_json(&json).ok().flatten();
+    Ok((media_info, duration_us))
 }
 
 fn build_preview_transcode_args(
@@ -526,7 +527,8 @@ async fn validate_preview_file_with_ffprobe(
     preview_path: &Path,
 ) -> Result<(), String> {
     let preview_path_str = preview_path.to_string_lossy();
-    let info = probe_preview_media_with_ffprobe(ffprobe_path, &preview_path_str).await?;
+    let (info, _duration_us) =
+        probe_preview_media_with_ffprobe(ffprobe_path, &preview_path_str).await?;
     let Some(video) = info
         .streams
         .iter()
@@ -926,7 +928,8 @@ async fn transcode_for_preview_with_bins_result(
     }
     let _ = std::fs::remove_file(&output_path);
 
-    let media_info = probe_preview_media_with_ffprobe(ffprobe_path, input_path).await?;
+    let (media_info, _duration_us) =
+        probe_preview_media_with_ffprobe(ffprobe_path, input_path).await?;
     let strategy = preview_strategy_for_media(&media_info);
     let downscale_preview_height = preview_needs_downscale(&media_info);
     let attempts = build_preview_attempts(
@@ -1030,7 +1033,8 @@ pub(crate) async fn transcode_for_preview(
 
     let setup_result = async {
         let ffmpeg_path = resolve_ffmpeg_path(&app)?;
-        let media_info = probe_preview_media_with_ffprobe(&ffprobe_path, &input_path).await?;
+        let (media_info, duration_us) =
+            probe_preview_media_with_ffprobe(&ffprobe_path, &input_path).await?;
         let strategy = preview_strategy_for_media(&media_info);
         let downscale_preview_height = preview_needs_downscale(&media_info);
         let attempts = build_preview_attempts(
@@ -1038,7 +1042,7 @@ pub(crate) async fn transcode_for_preview(
             preview_has_audio(&media_info),
             force_full_transcode,
         );
-        let duration_us = get_media_duration_us(&app, &input_path).await.unwrap_or(0);
+        let duration_us = duration_us.unwrap_or(0);
 
         Ok::<_, String>((
             ffmpeg_path,

@@ -43,6 +43,7 @@
     type SubtitleOcrRetryMode,
     type SubtitleOcrSourceItem,
     type SubtitleOcrStatus,
+    type SubtitleOcrMediaInfo,
     type SubtitleOcrTrackMetadata,
     type SubtitleOcrVersion,
     type SubtitleOcrVobSubPair,
@@ -60,7 +61,6 @@
     getSubtitleOcrVersionedItemIds,
     mergeRestoredSubtitleOcrBitmapAssets,
     mergeSubtitleOcrPersistenceForItem,
-    parseSubtitleOcrProbeDurationSeconds,
     resolveSubtitleOcrExpectedBitmapCount,
     resolveSubtitleOcrEffectiveModelForConfig,
     shouldApplySubtitleOcrProgressEvent,
@@ -599,18 +599,10 @@
     return invoke<SubtitleOcrVobSubPair>('resolve_subtitle_ocr_vobsub_pair', { path });
   }
 
-  async function probeContainerDuration(path: string): Promise<number | undefined> {
-    try {
-      const probeJson = await invoke<string>('probe_file', { path });
-      return parseSubtitleOcrProbeDurationSeconds(probeJson);
-    } catch {
-      return undefined;
-    }
-  }
-
   async function probeContainerPath(path: string): Promise<TrackDialogRequest | null> {
     try {
-      const tracks = await invoke<SubtitleOcrTrackMetadata[]>('probe_subtitle_ocr_tracks', { path });
+      const mediaInfo = await invoke<SubtitleOcrMediaInfo>('probe_subtitle_ocr_media', { path });
+      const { tracks } = mediaInfo;
       if (tracks.length === 0) {
         logAndToast.warning({
           source: 'subtitle-ocr',
@@ -624,7 +616,7 @@
 
       return {
         sourcePath: path,
-        sourceDuration: await probeContainerDuration(path),
+        sourceDuration: mediaInfo.durationSeconds,
         tracks,
       };
     } catch (error) {

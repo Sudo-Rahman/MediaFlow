@@ -162,6 +162,7 @@ fn is_right_angle_rotation(rotation: f64) -> bool {
     normalized == 90 || normalized == 270
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) async fn get_primary_video_dimensions_with_ffprobe(
     ffprobe_path: &str,
     path: &str,

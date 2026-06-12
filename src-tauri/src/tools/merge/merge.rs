@@ -1,20 +1,18 @@
-use crate::shared::ffmpeg_progress::FfmpegProgressTracker;
-use crate::shared::process::tokio_command;
+use crate::shared::ffmpeg_progress::{FfmpegProgressTracker, LONG_FFMPEG_PROGRESS_TIMEOUT};
+use crate::shared::process::{tokio_command, wait_with_output_progress_watchdog};
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::store::{resolve_ffmpeg_path, resolve_ffprobe_path};
 use crate::shared::validation::{validate_media_path, validate_output_path};
-use crate::tools::ffprobe::FFPROBE_TIMEOUT;
+use crate::tools::ffprobe::probe::probe_file_with_ffprobe;
 use crate::tools::media_metadata::{
     OutputStreamMetadata, apply_metadata_args, output_stream_metadata_from_config,
 };
 use serde_json::Value;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Emitter;
-use tokio::time::{Duration, timeout};
-
-/// Timeout for FFmpeg merge operations (10 minutes)
-const FFMPEG_MERGE_TIMEOUT: Duration = Duration::from_secs(600);
 
 #[cfg_attr(not(test), allow(dead_code))]
 fn enabled_source_indices(
@@ -283,6 +281,71 @@ fn emit_merge_progress(
     );
 }
 
+fn remove_partial_merge_output(output_path: &str) {
+    let _ = std::fs::remove_file(output_path);
+}
+
+fn merge_neighbor_path(output_path: &Path, role: &str) -> PathBuf {
+    let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = output_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("merge-output");
+    let extension = output_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| format!(".{}", value))
+        .unwrap_or_default();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+
+    parent.join(format!(
+        ".{}.{}.{}.{}{}",
+        stem,
+        std::process::id(),
+        unique,
+        role,
+        extension
+    ))
+}
+
+fn publish_merge_output(temp_output_path: &Path, output_path: &Path) -> Result<(), String> {
+    let backup_path = output_path
+        .exists()
+        .then(|| merge_neighbor_path(output_path, "backup"));
+
+    if let Some(backup_path) = backup_path.as_ref() {
+        std::fs::rename(output_path, backup_path)
+            .map_err(|e| format!("Failed to prepare existing merge output replacement: {}", e))?;
+    }
+
+    match std::fs::rename(temp_output_path, output_path) {
+        Ok(()) => {
+            if let Some(backup_path) = backup_path {
+                let _ = std::fs::remove_file(backup_path);
+            }
+            Ok(())
+        }
+        Err(error) => {
+            if let Some(backup_path) = backup_path.as_ref() {
+                let _ = std::fs::rename(backup_path, output_path);
+            }
+            Err(format!("Failed to publish merge output: {}", error))
+        }
+    }
+}
+
+fn clear_merge_tracking(video_path: &str) {
+    if let Ok(mut guard) = super::state::MERGE_PROCESS_IDS.lock() {
+        guard.remove(video_path);
+    }
+    if let Ok(mut guard) = super::state::MERGE_OUTPUT_PATHS.lock() {
+        guard.remove(video_path);
+    }
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 pub(super) async fn merge_tracks_with_bins(
     ffprobe_path: &str,
@@ -301,72 +364,77 @@ pub(super) async fn merge_tracks_with_bins(
         }
     }
 
-    let probe_future = async move {
-        tokio_command(ffprobe_path)
-            .args([
-                "-v",
-                "quiet",
-                "-print_format",
-                "json",
-                "-show_streams",
-                video_path,
-            ])
-            .output()
-            .await
-    };
-
-    let probe_output = timeout(FFPROBE_TIMEOUT, probe_future)
-        .await
-        .map_err(|_| {
-            format!(
-                "FFprobe timeout after {} seconds",
-                FFPROBE_TIMEOUT.as_secs()
-            )
-        })?
-        .map_err(|e| format!("Failed to probe video: {}", e))?;
-
-    if !probe_output.status.success() {
-        return Err("Failed to probe video file".to_string());
-    }
-
-    let probe_json: Value = serde_json::from_slice(&probe_output.stdout)
+    let probe_json_string = probe_file_with_ffprobe(ffprobe_path, video_path).await?;
+    let probe_json: Value = serde_json::from_str(&probe_json_string)
         .map_err(|e| format!("Failed to parse probe output: {}", e))?;
     let streams = probe_json
         .get("streams")
         .and_then(|s| s.as_array())
         .cloned()
         .unwrap_or_default();
+    let final_output_path = Path::new(output_path);
+    let temp_output_path = merge_neighbor_path(final_output_path, "tmp");
+    let temp_output_str = temp_output_path.to_string_lossy().to_string();
     let args = build_merge_args(
         video_path,
         tracks,
         source_track_configs,
         &streams,
-        output_path,
+        &temp_output_str,
     )?;
 
-    let wait_future = async move {
-        tokio_command(ffmpeg_path)
-            .args(&args)
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .output()
-            .await
-    };
-
-    let output = timeout(FFMPEG_MERGE_TIMEOUT, wait_future)
-        .await
-        .map_err(|_| {
-            format!(
-                "FFmpeg merge timeout after {} seconds",
-                FFMPEG_MERGE_TIMEOUT.as_secs()
-            )
-        })?
+    let mut child = tokio_command(ffmpeg_path)
+        .args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("Failed to execute ffmpeg: {}", e))?;
+
+    let (activity_tx, activity_rx) = tokio::sync::mpsc::unbounded_channel();
+    if let Some(stdout) = child.stdout.take() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let activity_tx_for_progress = activity_tx.clone();
+        tokio::spawn(async move {
+            let mut tracker = FfmpegProgressTracker::new(None);
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+
+            while let Ok(Some(line)) = lines.next_line().await {
+                if tracker
+                    .handle_line(&line)
+                    .is_some_and(|update| update.advanced)
+                {
+                    let _ = activity_tx_for_progress.send(());
+                }
+            }
+        });
+    }
+    drop(activity_tx);
+
+    let output = wait_with_output_progress_watchdog(
+        child,
+        "FFmpeg merge",
+        activity_rx,
+        LONG_FFMPEG_PROGRESS_TIMEOUT,
+    )
+    .await
+    .map_err(|error| {
+        remove_partial_merge_output(&temp_output_str);
+        error
+    })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        remove_partial_merge_output(&temp_output_str);
         return Err(format!("FFmpeg merge failed: {}", stderr));
     }
+
+    if !temp_output_path.exists() {
+        return Err("FFmpeg merge failed: output file not created".to_string());
+    }
+
+    publish_merge_output(&temp_output_path, final_output_path)?;
 
     Ok(())
 }
@@ -397,36 +465,8 @@ pub(crate) async fn merge_tracks(
 
     // First, probe the video to count streams and get their types
     let ffprobe_path = resolve_ffprobe_path(&app)?;
-    let video_path_for_probe = video_path.clone();
-    let probe_future = async move {
-        tokio_command(ffprobe_path)
-            .args([
-                "-v",
-                "quiet",
-                "-print_format",
-                "json",
-                "-show_streams",
-                &video_path_for_probe,
-            ])
-            .output()
-            .await
-    };
-
-    let probe_output = timeout(FFPROBE_TIMEOUT, probe_future)
-        .await
-        .map_err(|_| {
-            format!(
-                "FFprobe timeout after {} seconds",
-                FFPROBE_TIMEOUT.as_secs()
-            )
-        })?
-        .map_err(|e| format!("Failed to probe video: {}", e))?;
-
-    if !probe_output.status.success() {
-        return Err("Failed to probe video file".to_string());
-    }
-
-    let probe_json: Value = serde_json::from_slice(&probe_output.stdout)
+    let probe_json_string = probe_file_with_ffprobe(&ffprobe_path, &video_path).await?;
+    let probe_json: Value = serde_json::from_str(&probe_json_string)
         .map_err(|e| format!("Failed to parse probe output: {}", e))?;
 
     let streams = probe_json
@@ -434,13 +474,16 @@ pub(crate) async fn merge_tracks(
         .and_then(|s| s.as_array())
         .cloned()
         .unwrap_or_default();
+    let final_output_path = Path::new(&output_path);
+    let temp_output_path = merge_neighbor_path(final_output_path, "tmp");
+    let temp_output_str = temp_output_path.to_string_lossy().to_string();
 
     let args = build_merge_args(
         &video_path,
         &tracks,
         source_track_configs.as_deref(),
         &streams,
-        &output_path,
+        &temp_output_str,
     )?;
 
     let ffmpeg_path = resolve_ffmpeg_path(&app)?;
@@ -460,8 +503,10 @@ pub(crate) async fn merge_tracks(
     }
 
     if let Ok(mut guard) = super::state::MERGE_OUTPUT_PATHS.lock() {
-        guard.insert(video_path.clone(), output_path.clone());
+        guard.insert(video_path.clone(), temp_output_str.clone());
     }
+
+    let (activity_tx, activity_rx) = tokio::sync::mpsc::unbounded_channel();
 
     if let Some(stdout) = child.stdout.take() {
         use tokio::io::{AsyncBufReadExt, BufReader};
@@ -469,6 +514,7 @@ pub(crate) async fn merge_tracks(
         let app_for_progress = app.clone();
         let video_path_for_progress = video_path.clone();
         let output_path_for_progress = output_path.clone();
+        let activity_tx_for_progress = activity_tx.clone();
 
         tokio::spawn(async move {
             let mut tracker = FfmpegProgressTracker::new(duration_us);
@@ -478,6 +524,10 @@ pub(crate) async fn merge_tracks(
 
             while let Ok(Some(line)) = lines.next_line().await {
                 if let Some(update) = tracker.handle_line(&line) {
+                    if update.advanced {
+                        let _ = activity_tx_for_progress.send(());
+                    }
+
                     if let Some(progress) = update.progress {
                         last_progress = progress;
                     }
@@ -497,45 +547,34 @@ pub(crate) async fn merge_tracks(
             }
         });
     }
+    drop(activity_tx);
 
-    let wait_future = async { child.wait_with_output().await };
+    let output = wait_with_output_progress_watchdog(
+        child,
+        "FFmpeg merge",
+        activity_rx,
+        LONG_FFMPEG_PROGRESS_TIMEOUT,
+    )
+    .await
+    .map_err(|error| {
+        clear_merge_tracking(&video_path);
+        remove_partial_merge_output(&temp_output_str);
+        error
+    })?;
 
-    // Execute with timeout
-    let output = timeout(FFMPEG_MERGE_TIMEOUT, wait_future)
-        .await
-        .map_err(|_| {
-            if let Ok(mut guard) = super::state::MERGE_PROCESS_IDS.lock() {
-                guard.remove(&video_path);
-            }
-            if let Ok(mut guard) = super::state::MERGE_OUTPUT_PATHS.lock() {
-                guard.remove(&video_path);
-            }
-            format!(
-                "FFmpeg merge timeout after {} seconds",
-                FFMPEG_MERGE_TIMEOUT.as_secs()
-            )
-        })?
-        .map_err(|e| {
-            if let Ok(mut guard) = super::state::MERGE_PROCESS_IDS.lock() {
-                guard.remove(&video_path);
-            }
-            if let Ok(mut guard) = super::state::MERGE_OUTPUT_PATHS.lock() {
-                guard.remove(&video_path);
-            }
-            format!("Failed to execute ffmpeg: {}", e)
-        })?;
-
-    if let Ok(mut guard) = super::state::MERGE_PROCESS_IDS.lock() {
-        guard.remove(&video_path);
-    }
-    if let Ok(mut guard) = super::state::MERGE_OUTPUT_PATHS.lock() {
-        guard.remove(&video_path);
-    }
+    clear_merge_tracking(&video_path);
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        remove_partial_merge_output(&temp_output_str);
         return Err(format!("FFmpeg merge failed: {}", stderr));
     }
+
+    if !temp_output_path.exists() {
+        return Err("FFmpeg merge failed: output file not created".to_string());
+    }
+
+    publish_merge_output(&temp_output_path, final_output_path)?;
 
     emit_merge_progress(&app, &video_path, &output_path, 100, None);
 
@@ -547,7 +586,9 @@ mod tests {
     use serde_json::Value;
     use serde_json::json;
 
-    use super::{build_merge_args, enabled_source_indices, merge_tracks_with_bins};
+    use super::{
+        build_merge_args, enabled_source_indices, merge_tracks_with_bins, publish_merge_output,
+    };
 
     fn has_arg_pair(args: &[String], left: &str, right: &str) -> bool {
         args.windows(2)
@@ -680,6 +721,40 @@ mod tests {
         ];
         let indices = enabled_source_indices(Some(&configs), 3);
         assert_eq!(indices, vec![0, 2]);
+    }
+
+    #[test]
+    fn publish_merge_output_replaces_existing_output_after_success() {
+        let temp = tempfile::tempdir().expect("failed to create tempdir");
+        let output = temp.path().join("merged.mkv");
+        let partial = temp.path().join(".merged.tmp.mkv");
+        std::fs::write(&output, b"old").expect("failed to create existing output");
+        std::fs::write(&partial, b"new").expect("failed to create temp output");
+
+        publish_merge_output(&partial, &output).expect("publish should succeed");
+
+        assert_eq!(
+            std::fs::read(&output).expect("failed to read output"),
+            b"new"
+        );
+        assert!(!partial.exists());
+    }
+
+    #[test]
+    fn publish_merge_output_restores_existing_output_when_publish_fails() {
+        let temp = tempfile::tempdir().expect("failed to create tempdir");
+        let output = temp.path().join("merged.mkv");
+        let missing_partial = temp.path().join(".missing.tmp.mkv");
+        std::fs::write(&output, b"old").expect("failed to create existing output");
+
+        let error = publish_merge_output(&missing_partial, &output)
+            .expect_err("publish should fail without temp output");
+
+        assert!(error.contains("Failed to publish merge output"));
+        assert_eq!(
+            std::fs::read(&output).expect("failed to read restored output"),
+            b"old"
+        );
     }
 
     #[test]

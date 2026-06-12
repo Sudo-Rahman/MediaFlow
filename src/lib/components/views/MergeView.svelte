@@ -378,7 +378,7 @@
 
     if (videoPaths.length > 0) {
       const [scannedFiles, metadataEntries] = await Promise.all([
-        scanFiles(videoPaths, 3),
+        scanFiles(videoPaths, 2),
         Promise.all(videoPaths.map(async (path) => [path, await fetchFileMetadata(path)] as const)),
       ]);
       const metadataByPath = new Map(metadataEntries);

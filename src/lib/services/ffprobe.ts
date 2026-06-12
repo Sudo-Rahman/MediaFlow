@@ -6,7 +6,7 @@ import { log } from '$lib/utils/log-toast';
 /**
  * Default concurrency limit for parallel file scanning
  */
-const DEFAULT_SCAN_CONCURRENCY = 3;
+const DEFAULT_SCAN_CONCURRENCY = 2;
 
 const DEFAULT_VIDEO_BIT_DEPTH = 8;
 

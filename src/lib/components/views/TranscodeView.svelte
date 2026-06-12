@@ -702,7 +702,7 @@
 
     if (scanPaths.length > 0) {
       const [scannedFiles, metadataEntries] = await Promise.all([
-        scanFiles(scanPaths, 3),
+        scanFiles(scanPaths, 2),
         Promise.all(scanPaths.map(async (path) => [path, await fetchFileMetadata(path)] as const)),
       ]);
       const metadataByPath = new Map(metadataEntries);

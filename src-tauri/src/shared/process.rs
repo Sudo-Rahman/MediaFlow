@@ -1,5 +1,7 @@
-use std::process::Output;
+use std::process::{ExitStatus, Output};
 use std::time::Duration;
+
+use crate::shared::ffmpeg_progress::{FfmpegProgressWatchdog, FfmpegProgressWatchdogConfig};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -143,13 +145,113 @@ pub(crate) async fn wait_with_output_timeout(
     })
 }
 
+pub(crate) async fn wait_status_progress_watchdog(
+    mut child: tokio::process::Child,
+    label: &str,
+    activity_rx: tokio::sync::mpsc::UnboundedReceiver<()>,
+    config: FfmpegProgressWatchdogConfig,
+) -> Result<ExitStatus, String> {
+    wait_child_status_progress_watchdog(&mut child, label, activity_rx, config).await
+}
+
+pub(crate) async fn wait_with_output_progress_watchdog(
+    mut child: tokio::process::Child,
+    label: &str,
+    activity_rx: tokio::sync::mpsc::UnboundedReceiver<()>,
+    config: FfmpegProgressWatchdogConfig,
+) -> Result<Output, String> {
+    use tokio::io::AsyncReadExt;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let stdout_task = tokio::spawn(async move {
+        let mut buffer = Vec::new();
+        if let Some(mut stdout) = stdout {
+            stdout.read_to_end(&mut buffer).await?;
+        }
+        Ok::<Vec<u8>, std::io::Error>(buffer)
+    });
+    let stderr_task = tokio::spawn(async move {
+        let mut buffer = Vec::new();
+        if let Some(mut stderr) = stderr {
+            stderr.read_to_end(&mut buffer).await?;
+        }
+        Ok::<Vec<u8>, std::io::Error>(buffer)
+    });
+
+    let status =
+        match wait_child_status_progress_watchdog(&mut child, label, activity_rx, config).await {
+            Ok(status) => status,
+            Err(error) => {
+                stdout_task.abort();
+                stderr_task.abort();
+                return Err(error);
+            }
+        };
+
+    let stdout = stdout_task
+        .await
+        .map_err(|e| format!("Failed to read {} stdout: {}", label, e))?
+        .map_err(|e| format!("Failed to read {} stdout: {}", label, e))?;
+    let stderr = stderr_task
+        .await
+        .map_err(|e| format!("Failed to read {} stderr: {}", label, e))?
+        .map_err(|e| format!("Failed to read {} stderr: {}", label, e))?;
+
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+async fn wait_child_status_progress_watchdog(
+    child: &mut tokio::process::Child,
+    label: &str,
+    mut activity_rx: tokio::sync::mpsc::UnboundedReceiver<()>,
+    config: FfmpegProgressWatchdogConfig,
+) -> Result<ExitStatus, String> {
+    use std::time::Instant;
+    use tokio::time::{interval, timeout};
+
+    let pid = child.id();
+    let started_at = Instant::now();
+    let mut watchdog = FfmpegProgressWatchdog::new(config);
+    let mut progress_check = interval(config.check_interval);
+
+    loop {
+        tokio::select! {
+            status = child.wait() => {
+                return status.map_err(|error| format!("{} error: {}", label, error));
+            }
+            Some(()) = activity_rx.recv() => {
+                watchdog.record_activity(started_at.elapsed());
+            }
+            _ = progress_check.tick() => {
+                if let Some(message) = watchdog.timeout_message(started_at.elapsed()) {
+                    if let Some(pid) = pid {
+                        force_terminate_process(pid);
+                    }
+                    let _ = timeout(config.shutdown_timeout, child.wait()).await;
+                    return Err(format!("{} {}", label, message));
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::process::{Child, ExitStatus, Stdio};
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use super::{force_terminate_process, std_command, tokio_command, wait_with_output_timeout};
+    use super::{
+        force_terminate_process, std_command, tokio_command, wait_with_output_progress_watchdog,
+        wait_with_output_timeout,
+    };
+    use crate::shared::ffmpeg_progress::FfmpegProgressWatchdogConfig;
 
     #[test]
     fn force_terminate_process_ignores_zero_pid() {
@@ -193,6 +295,31 @@ mod tests {
             .expect_err("process should time out");
 
         assert!(error.starts_with("test process timeout after "));
+    }
+
+    #[tokio::test]
+    async fn wait_with_output_progress_watchdog_kills_on_startup_timeout() {
+        let child = spawn_async_sleeping_child();
+        let (_activity_tx, activity_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let error = wait_with_output_progress_watchdog(
+            child,
+            "test process",
+            activity_rx,
+            FfmpegProgressWatchdogConfig {
+                startup_timeout: Duration::from_millis(100),
+                stall_timeout: Duration::from_secs(10),
+                check_interval: Duration::from_millis(10),
+                shutdown_timeout: Duration::from_millis(100),
+            },
+        )
+        .await
+        .expect_err("process should time out without activity");
+
+        assert_eq!(
+            error,
+            "test process did not report progress within 0 seconds"
+        );
     }
 
     #[cfg(unix)]

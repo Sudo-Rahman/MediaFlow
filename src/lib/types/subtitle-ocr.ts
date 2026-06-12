@@ -35,6 +35,11 @@ export interface SubtitleOcrTrackMetadata {
   default?: boolean;
 }
 
+export interface SubtitleOcrMediaInfo {
+  tracks: SubtitleOcrTrackMetadata[];
+  durationSeconds?: number;
+}
+
 export interface SubtitleOcrVobSubPair {
   idxPath: string;
   subPath: string;

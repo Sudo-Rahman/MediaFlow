@@ -151,6 +151,8 @@ export function buildRetryRequest<
     const beforeStartIndex = Math.max(0, span.startIndex - contextRadius);
 
     for (let index = beforeStartIndex; index < span.startIndex; index += 1) {
+      if (unresolvedIdSet.has(options.allCues[index].id)) continue;
+
       contextCues.push(
         buildContextCue(options, options.allCues[index], replacementById, 'before', spanIndex)
       );
@@ -159,6 +161,8 @@ export function buildRetryRequest<
     const afterEndIndex = Math.min(options.allCues.length - 1, span.endIndex + contextRadius);
 
     for (let index = span.endIndex + 1; index <= afterEndIndex; index += 1) {
+      if (unresolvedIdSet.has(options.allCues[index].id)) continue;
+
       contextCues.push(
         buildContextCue(options, options.allCues[index], replacementById, 'after', spanIndex)
       );

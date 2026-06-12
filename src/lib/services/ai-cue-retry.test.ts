@@ -68,6 +68,20 @@ describe('ai-cue-retry', () => {
     ]);
   });
 
+  it('excludes requested cue IDs from nearby context windows', () => {
+    const request = buildRetryRequest<TestCue, TestReplacement>({
+      allCues: cues(5),
+      attempt: 1,
+      unresolvedIds: new Set(['c2', 'c4']),
+      contextRadius: 2,
+    });
+
+    expect(request.requestedCues.map(cue => cue.id)).toEqual(['c2', 'c4']);
+    expect(request.contextCues.map(cue => cue.id)).toEqual(['c1', 'c3', 'c3', 'c5']);
+    expect(request.contextCues.map(cue => cue.id)).not.toContain('c2');
+    expect(request.contextCues.map(cue => cue.id)).not.toContain('c4');
+  });
+
   it('accumulates partial retry success and retries only remaining unresolved cues', async () => {
     const requests: string[][] = [];
     const result = await runAiCueRetries<TestCue, TestReplacement>({

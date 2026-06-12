@@ -2428,9 +2428,12 @@ export async function translateSubtitle(
 
       if (mainResult.failedIds.size > 0) {
         const mainCueIds = new Set(mainPhaseCues.map(cue => cue.id));
-        const retryPromptCues = buildPromptCuesFromParsedCues(
-          parsed.cues.filter(cue => mainCueIds.has(cue.id))
-        );
+        const retryPromptCues = buildPromptCuesFromParsedCues(parsed.cues);
+        const retryContextReplacements = [
+          ...translatedThemeCues,
+          ...translatedVisualCues,
+          ...mainResult.cues,
+        ];
 
         log(
           'warning',
@@ -2442,7 +2445,7 @@ export async function translateSubtitle(
 
         const retryResult = await runAiCueRetries<TranslationCue, TranslatedCue, TranslationRetryContextCue>({
           allCues: retryPromptCues,
-          initialReplacements: mainResult.cues,
+          initialReplacements: retryContextReplacements,
           initialUnresolvedIds: mainResult.failedIds,
           maxRetries: 2,
           buildContextCue: ({ cue, acceptedReplacement, position, spanIndex }) => ({
@@ -2473,7 +2476,7 @@ export async function translateSubtitle(
         }
 
         addUsage(totalUsage, retryResult.usage);
-        translatedMainCues = retryResult.replacements;
+        translatedMainCues = retryResult.replacements.filter(cue => mainCueIds.has(cue.id));
 
         if (retryResult.unresolvedIds.size > 0) {
           unresolvedMainCueWarning = `${retryResult.unresolvedIds.size} cue(s) remained unchanged after retry attempts.`;

@@ -1211,6 +1211,8 @@ describe('AI translation ASS visual text planning', () => {
 
     const firstRetryPrompt = parseUserPromptPayload(callLlmMock.mock.calls[1][0].userPrompt);
     expect(firstRetryPrompt.cues.map(cue => cue.id)).toEqual(['SRT_2', 'SRT_3']);
+    expect(firstRetryPrompt.contextCues?.map(cue => cue.id)).not.toContain('SRT_2');
+    expect(firstRetryPrompt.contextCues?.map(cue => cue.id)).not.toContain('SRT_3');
     expect(firstRetryPrompt.contextCues?.map(cue => cue.id)).toEqual([
       'SRT_0',
       'SRT_1',
@@ -1247,5 +1249,74 @@ describe('AI translation ASS visual text planning', () => {
         spanIndex: 0,
       },
     ]);
+
+    const secondRetryPrompt = parseUserPromptPayload(callLlmMock.mock.calls[2][0].userPrompt);
+    expect(secondRetryPrompt.cues.map(cue => cue.id)).toEqual(['SRT_3']);
+    expect(secondRetryPrompt.contextCues?.map(cue => cue.id)).not.toContain('SRT_3');
+  });
+
+  it('includes resolved visual preflight translations in main retry context', async () => {
+    const { translateSubtitle } = await import('./translation');
+    const content = buildAssWithEvents([
+      'Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Before retry.',
+      'Dialogue: 0,0:00:02.00,0:00:03.00,SignTS,,0,0,0,,{\\pos(100,100)}EXIT',
+      'Dialogue: 0,0:00:03.00,0:00:04.00,Default,,0,0,0,,Missing one.',
+      'Dialogue: 0,0:00:04.00,0:00:05.00,Default,,0,0,0,,Missing two.',
+      'Dialogue: 0,0:00:05.00,0:00:06.00,Default,,0,0,0,,After retry.',
+    ]);
+
+    callLlmMock.mockImplementation(async (request: { userPrompt: string }) => {
+      const prompt = parseUserPromptPayload(request.userPrompt);
+      const callNumber = callLlmMock.mock.calls.length;
+
+      if (callNumber === 1) {
+        return {
+          content: JSON.stringify({
+            cues: prompt.cues.map(cue => ({
+              id: cue.id,
+              translatedText: cue.text.replace('EXIT', 'SORTIE'),
+            })),
+          }),
+          usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+        };
+      }
+
+      if (callNumber === 2) {
+        return {
+          content: JSON.stringify({
+            cues: prompt.cues
+              .filter(cue => !cue.text.includes('Missing one.') && !cue.text.includes('Missing two.'))
+              .map(cue => ({ id: cue.id, translatedText: `FR ${cue.text}` })),
+          }),
+          usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+        };
+      }
+
+      return {
+        content: JSON.stringify({
+          cues: prompt.cues.map(cue => ({ id: cue.id, translatedText: `FR ${cue.text}` })),
+        }),
+        usage: { promptTokens: 8, completionTokens: 4, totalTokens: 12 },
+      };
+    });
+
+    const result = await translateSubtitle(
+      { name: 'visual-context.ass', path: '/subs/visual-context.ass', content, format: 'ass', size: 1 },
+      'openai',
+      'gpt-test',
+      'en',
+      'fr'
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.translatedContent).toContain('SORTIE');
+
+    const retryPrompt = parseUserPromptPayload(callLlmMock.mock.calls[2][0].userPrompt);
+    const retryTargetIds = retryPrompt.cues.map(cue => cue.id);
+    const visualContextCue = retryPrompt.contextCues?.find(cue => cue.text.includes('EXIT'));
+    expect(retryTargetIds).toHaveLength(2);
+    expect(retryPrompt.contextCues?.map(cue => cue.id)).not.toContain(retryTargetIds[0]);
+    expect(retryPrompt.contextCues?.map(cue => cue.id)).not.toContain(retryTargetIds[1]);
+    expect(visualContextCue?.translatedText).toContain('SORTIE');
   });
 });

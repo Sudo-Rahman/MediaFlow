@@ -196,6 +196,14 @@ async function runAiCleanup(
     }
 
     if (cleanupResult.success) {
+      if (cleanupResult.error) {
+        videoOcrStore.addLog(
+          'warning',
+          `AI cleanup partially applied: ${cleanupResult.error}`,
+          fileId,
+        );
+      }
+
       videoOcrStore.addLog(
         'info',
         `AI cleanup completed (${cleanupResult.batchesProcessed}/${cleanupResult.totalBatches} batches, ${subtitles.length} -> ${cleanupResult.subtitles.length} subtitles)`,

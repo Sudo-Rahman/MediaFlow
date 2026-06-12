@@ -2,6 +2,13 @@ import { settingsStore } from '$lib/stores';
 import { LLM_PROVIDERS } from '$lib/types';
 import type { LLMProvider, OcrSubtitle } from '$lib/types';
 import { normalizeOcrSubtitles } from '$lib/utils/ocr-subtitle-adapter';
+import {
+  runAiCueRetries,
+  type AiCueRetryContextCue,
+  type AiCueRetryRequest,
+  type AiCueRetryAttemptResult,
+  type AiCueReplacement,
+} from './ai-cue-retry';
 import { callLlm } from './llm-client';
 import type { LlmUsage } from './llm-client';
 import { withSleepInhibit } from './sleep-inhibit';
@@ -37,6 +44,20 @@ interface OcrCleanupParsedResponse {
     id: string;
     correctedText: string;
   }>;
+}
+
+interface OcrCleanupCorrection extends AiCueReplacement {
+  id: string;
+  correctedText: string;
+}
+
+interface OcrCleanupRetryContextCue extends AiCueRetryContextCue {
+  correctedText?: string;
+}
+
+interface CollectCorrectionsResult {
+  corrections: OcrCleanupCorrection[];
+  unresolvedIds: Set<string>;
 }
 
 export interface OcrAiCleanupOptions {
@@ -78,6 +99,21 @@ function normalizeForMerge(text: string): string {
     .toLowerCase();
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stringField(record: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string') {
+      return value;
+    }
+  }
+
+  return null;
+}
+
 function parseCleanupResponse(responseText: string): OcrCleanupParsedResponse | null {
   if (!responseText || !responseText.trim()) {
     return null;
@@ -94,18 +130,27 @@ function parseCleanupResponse(responseText: string): OcrCleanupParsedResponse | 
   const jsonChunk = raw.slice(startIndex, endIndex + 1);
 
   try {
-    const parsed = JSON.parse(jsonChunk);
-    if (!parsed.cues || !Array.isArray(parsed.cues)) {
+    const parsed: unknown = JSON.parse(jsonChunk);
+    if (!isRecord(parsed) || !Array.isArray(parsed.cues)) {
       return null;
     }
 
-    const cues = parsed.cues.map((cue: any) => ({
-      id: String(cue.id ?? cue.ID ?? ''),
-      correctedText: String(cue.correctedText ?? cue.corrected_text ?? cue.text ?? '').trim(),
-    }));
+    const cues: OcrCleanupParsedResponse['cues'] = [];
+    for (const cue of parsed.cues) {
+      if (!isRecord(cue)) {
+        return null;
+      }
 
-    if (cues.length === 0 || cues.some((cue: any) => !cue.id || cue.correctedText === undefined)) {
-      return null;
+      const id = stringField(cue, ['id', 'ID']);
+      const correctedText = stringField(cue, ['correctedText', 'corrected_text', 'text']);
+      if (!id?.trim() || correctedText === null) {
+        return null;
+      }
+
+      cues.push({
+        id: id.trim(),
+        correctedText: correctedText.trim(),
+      });
     }
 
     return { cues };
@@ -118,31 +163,100 @@ function buildUserPrompt(batch: OcrCleanupCue[], batchIndex: number, totalBatche
   return `Correct OCR errors for this subtitle batch (${batchIndex + 1}/${totalBatches}).\n\n${JSON.stringify({ cues: batch }, null, 2)}`;
 }
 
-function applyBatchCorrections(
-  originals: OcrSubtitle[],
-  parsed: OcrCleanupParsedResponse
-): OcrSubtitle[] | null {
-  const correctedById = new Map(parsed.cues.map((cue) => [cue.id, cue.correctedText]));
+function buildRetryUserPrompt(
+  request: AiCueRetryRequest<OcrCleanupCue, OcrCleanupRetryContextCue>
+): string {
+  return `Retry OCR cleanup for unresolved subtitles (attempt ${request.attempt}).
 
-  const corrected: OcrSubtitle[] = [];
-  for (const cue of originals) {
-    const correctedText = correctedById.get(cue.id);
-    if (correctedText === undefined) {
-      return null;
+Return JSON only. Correct only the cues listed in "cues". Use "contextCues" only as surrounding context and do not return corrections for context-only cues.
+
+${JSON.stringify({
+  cues: request.requestedCues,
+  contextCues: request.contextCues,
+}, null, 2)}`;
+}
+
+function addUsage(current: LlmUsage, next: LlmUsage | undefined): LlmUsage {
+  if (!next) {
+    return current;
+  }
+
+  return {
+    promptTokens: current.promptTokens + next.promptTokens,
+    completionTokens: current.completionTokens + next.completionTokens,
+    totalTokens: current.totalTokens + next.totalTokens,
+  };
+}
+
+function collectValidCorrections(
+  requestedCues: readonly OcrCleanupCue[],
+  parsed: OcrCleanupParsedResponse
+): CollectCorrectionsResult {
+  const requestedIds = new Set(requestedCues.map((cue) => cue.id));
+  const duplicateIds = new Set<string>();
+  const correctionById = new Map<string, OcrCleanupCorrection>();
+
+  for (const cue of parsed.cues) {
+    if (!requestedIds.has(cue.id)) {
+      continue;
     }
 
-    // Skip cues that the AI has explicitly marked for deletion by returning an empty string
+    if (correctionById.has(cue.id)) {
+      correctionById.delete(cue.id);
+      duplicateIds.add(cue.id);
+      continue;
+    }
+
+    if (!duplicateIds.has(cue.id)) {
+      correctionById.set(cue.id, {
+        id: cue.id,
+        correctedText: cue.correctedText,
+      });
+    }
+  }
+
+  const corrections: OcrCleanupCorrection[] = [];
+  const unresolvedIds = new Set<string>();
+
+  for (const cue of requestedCues) {
+    const correction = correctionById.get(cue.id);
+    if (correction) {
+      corrections.push(correction);
+    } else {
+      unresolvedIds.add(cue.id);
+    }
+  }
+
+  return {
+    corrections,
+    unresolvedIds,
+  };
+}
+
+function assembleCorrectedSubtitles(
+  originals: readonly OcrSubtitle[],
+  corrections: readonly OcrCleanupCorrection[]
+): OcrSubtitle[] {
+  const correctedById = new Map(corrections.map((cue) => [cue.id, cue.correctedText]));
+  const assembled: OcrSubtitle[] = [];
+
+  for (const cue of originals) {
+    const correctedText = correctedById.get(cue.id);
     if (correctedText === '') {
       continue;
     }
 
-    corrected.push({
+    assembled.push({
       ...cue,
-      text: collapseWhitespace(correctedText),
+      text: correctedText === undefined ? cue.text : collapseWhitespace(correctedText),
     });
   }
 
-  return corrected;
+  return assembled;
+}
+
+function warningMessage(warnings: readonly string[]): string | undefined {
+  return warnings.length > 0 ? warnings.join(' ') : undefined;
 }
 
 function mergeConsecutiveDuplicates(subtitles: OcrSubtitle[], maxGapMs: number): OcrSubtitle[] {
@@ -248,7 +362,13 @@ export async function cleanupOcrSubtitlesWithAi(
     const batchSize = Math.max(20, options.batchSize ?? DEFAULT_BATCH_SIZE);
     const batches = splitIntoBatches(normalizedInput, batchSize);
 
-    const correctedSubtitles: OcrSubtitle[] = [];
+    const allPromptCues = normalizedInput.map((cue) => ({
+      id: cue.id,
+      text: cue.text,
+    }));
+    const corrections: OcrCleanupCorrection[] = [];
+    const unresolvedIds = new Set<string>();
+    const warnings: string[] = [];
     let processed = 0;
     let totalUsage: LlmUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
@@ -281,6 +401,8 @@ export async function cleanupOcrSubtitlesWithAi(
         signal: options.signal,
       });
 
+      totalUsage = addUsage(totalUsage, response.usage);
+
       if (options.signal?.aborted || response.error === 'Request cancelled') {
         return {
           success: false,
@@ -293,68 +415,150 @@ export async function cleanupOcrSubtitlesWithAi(
       }
 
       if (response.error) {
-        return {
-          success: false,
-          subtitles,
-          error: `Batch ${batchIndex + 1}/${batches.length} failed: ${response.error}`,
-          batchesProcessed: processed,
-          totalBatches: batches.length,
-          usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
-        };
+        warnings.push(`Batch ${batchIndex + 1}/${batches.length} failed: ${response.error}`);
+        for (const cue of batch) unresolvedIds.add(cue.id);
+        processed += 1;
+        continue;
       }
 
       if (response.truncated) {
-        return {
-          success: false,
-          subtitles,
-          error: `Batch ${batchIndex + 1}/${batches.length}: response truncated`,
-          batchesProcessed: processed,
-          totalBatches: batches.length,
-          usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
-        };
+        warnings.push(`Batch ${batchIndex + 1}/${batches.length}: response truncated`);
+        for (const cue of batch) unresolvedIds.add(cue.id);
+        processed += 1;
+        continue;
       }
 
       const parsed = parseCleanupResponse(response.content);
       if (!parsed) {
-        return {
-          success: false,
-          subtitles,
-          error: `Batch ${batchIndex + 1}/${batches.length}: invalid JSON response`,
-          batchesProcessed: processed,
-          totalBatches: batches.length,
-          usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
-        };
+        warnings.push(`Batch ${batchIndex + 1}/${batches.length}: invalid JSON response`);
+        for (const cue of batch) unresolvedIds.add(cue.id);
+        processed += 1;
+        continue;
       }
 
-      const correctedBatch = applyBatchCorrections(batch, parsed);
-      if (!correctedBatch) {
-        return {
-          success: false,
-          subtitles,
-          error: `Batch ${batchIndex + 1}/${batches.length}: missing corrected cues`,
-          batchesProcessed: processed,
-          totalBatches: batches.length,
-          usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
-        };
-      }
-
-      correctedSubtitles.push(...correctedBatch);
+      const collected = collectValidCorrections(promptBatch, parsed);
+      corrections.push(...collected.corrections);
+      for (const id of collected.unresolvedIds) unresolvedIds.add(id);
       processed += 1;
-
-      if (response.usage) {
-        totalUsage = {
-          promptTokens: totalUsage.promptTokens + response.usage.promptTokens,
-          completionTokens: totalUsage.completionTokens + response.usage.completionTokens,
-          totalTokens: totalUsage.totalTokens + response.usage.totalTokens,
-        };
-      }
     }
 
-    const merged = mergeConsecutiveDuplicates(correctedSubtitles, Math.max(0, options.maxGapMs));
+    const retryResult = await runAiCueRetries<
+      OcrCleanupCue,
+      OcrCleanupCorrection,
+      OcrCleanupRetryContextCue
+    >({
+      allCues: allPromptCues,
+      initialReplacements: corrections,
+      initialUnresolvedIds: unresolvedIds,
+      buildContextCue: ({ cue, acceptedReplacement, position, spanIndex }) => ({
+        id: cue.id,
+        text: cue.text,
+        correctedText: acceptedReplacement?.correctedText,
+        position,
+        spanIndex,
+      }),
+      runAttempt: async (request): Promise<AiCueRetryAttemptResult<OcrCleanupCorrection>> => {
+        if (options.signal?.aborted) {
+          return {
+            replacements: [],
+            unresolvedIds: new Set(request.requestedCues.map((cue) => cue.id)),
+            cancelled: true,
+          };
+        }
+
+        const response = await callLlm({
+          provider: options.provider,
+          apiKey,
+          model: options.model,
+          systemPrompt: OCR_CLEANUP_SYSTEM_PROMPT,
+          userPrompt: buildRetryUserPrompt(request),
+          temperature: 0.2,
+          responseMode: 'json',
+          signal: options.signal,
+        });
+
+        if (options.signal?.aborted || response.error === 'Request cancelled') {
+          return {
+            replacements: [],
+            unresolvedIds: new Set(request.requestedCues.map((cue) => cue.id)),
+            usage: response.usage,
+            cancelled: true,
+          };
+        }
+
+        if (response.error) {
+          return {
+            replacements: [],
+            unresolvedIds: new Set(request.requestedCues.map((cue) => cue.id)),
+            usage: response.usage,
+            warning: `Retry attempt ${request.attempt} failed: ${response.error}`,
+          };
+        }
+
+        if (response.truncated) {
+          return {
+            replacements: [],
+            unresolvedIds: new Set(request.requestedCues.map((cue) => cue.id)),
+            usage: response.usage,
+            warning: `Retry attempt ${request.attempt}: response truncated`,
+          };
+        }
+
+        const parsed = parseCleanupResponse(response.content);
+        if (!parsed) {
+          return {
+            replacements: [],
+            unresolvedIds: new Set(request.requestedCues.map((cue) => cue.id)),
+            usage: response.usage,
+            warning: `Retry attempt ${request.attempt}: invalid JSON response`,
+          };
+        }
+
+        const collected = collectValidCorrections(request.requestedCues, parsed);
+        return {
+          replacements: collected.corrections,
+          unresolvedIds: collected.unresolvedIds,
+          usage: response.usage,
+        };
+      },
+    });
+
+    totalUsage = addUsage(totalUsage, retryResult.usage);
+
+    if (retryResult.cancelled || options.signal?.aborted) {
+      return {
+        success: false,
+        cancelled: true,
+        subtitles,
+        error: 'Cleanup cancelled',
+        batchesProcessed: processed,
+        totalBatches: batches.length,
+        usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
+      };
+    }
+
+    if (retryResult.warnings.length > 0) {
+      warnings.push(...retryResult.warnings);
+    }
+
+    if (retryResult.replacements.length === 0) {
+      return {
+        success: false,
+        subtitles,
+        error: warningMessage(warnings) ?? 'AI cleanup produced no valid corrected cues',
+        batchesProcessed: processed,
+        totalBatches: batches.length,
+        usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
+      };
+    }
+
+    const assembled = assembleCorrectedSubtitles(normalizedInput, retryResult.replacements);
+    const merged = mergeConsecutiveDuplicates(assembled, Math.max(0, options.maxGapMs));
 
     return {
       success: true,
       subtitles: merged,
+      error: retryResult.unresolvedIds.size > 0 ? warningMessage(warnings) : undefined,
       batchesProcessed: processed,
       totalBatches: batches.length,
       usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,

@@ -486,28 +486,38 @@ export async function cleanupSubtitleOcrCuesWithAi(
         });
       }
 
-      if (response.error) {
-        return failureResult(originalCues, `AI cleanup failed: ${response.error}`, {
-          usage: response.usage,
-        });
-      }
-
-      if (response.truncated) {
-        return failureResult(originalCues, 'AI cleanup response was truncated', {
-          usage: response.usage,
-        });
-      }
-
-      const parsed = parseSubtitleOcrCleanupResponse(response.content);
-      if (!parsed.success) {
-        return failureResult(originalCues, parsed.error ?? 'Invalid AI cleanup response', {
-          usage: response.usage,
-        });
-      }
-
-      const collected = collectValidCleanupCorrections(promptCues, parsed.corrections);
-      const warnings = [...collected.warnings];
+      const warnings: string[] = [];
       let totalUsage = addUsage(undefined, response.usage);
+      let collected: SubtitleOcrCollectCorrectionsResult;
+
+      if (response.error) {
+        warnings.push(`AI cleanup failed: ${response.error}`);
+        collected = {
+          corrections: [],
+          unresolvedIds: new Set(promptCues.map((cue) => cue.id)),
+          warnings: [],
+        };
+      } else if (response.truncated) {
+        warnings.push('AI cleanup response was truncated');
+        collected = {
+          corrections: [],
+          unresolvedIds: new Set(promptCues.map((cue) => cue.id)),
+          warnings: [],
+        };
+      } else {
+        const parsed = parseSubtitleOcrCleanupResponse(response.content);
+        if (parsed.success) {
+          collected = collectValidCleanupCorrections(promptCues, parsed.corrections);
+          warnings.push(...collected.warnings);
+        } else {
+          warnings.push(parsed.error ?? 'Invalid AI cleanup response');
+          collected = {
+            corrections: [],
+            unresolvedIds: new Set(promptCues.map((cue) => cue.id)),
+            warnings: [],
+          };
+        }
+      }
 
       const retryResult = await runAiCueRetries<
         SubtitleOcrRetryPromptCue,
@@ -619,16 +629,11 @@ export async function cleanupSubtitleOcrCuesWithAi(
       }
 
       const cleanedCues = assembleCorrectedCues(originalCues, promptCues, retryResult.replacements);
-      if (originalCues.length > 0 && cleanedCues.length === 0) {
-        return failureResult(originalCues, 'AI cleanup returned no cues for non-empty input', {
-          usage: totalUsage,
-        });
-      }
 
       return {
         success: true,
         cues: cloneCues(cleanedCues),
-        error: retryResult.unresolvedIds.size > 0 ? warningMessage(warnings) : undefined,
+        error: warningMessage(warnings),
         usage: totalUsage,
       };
     });

@@ -2378,6 +2378,7 @@ export async function translateSubtitle(
     const mainPhaseCues = [...cuePlan.mainTranslatableCues, ...unresolvedThemeCues, ...unresolvedVisualCues];
     let translatedMainCues: TranslatedCue[] = [];
     let unresolvedMainCueWarning: string | undefined;
+    let initialMainErrorWarning: string | undefined;
 
     log(
       'info',
@@ -2413,7 +2414,7 @@ export async function translateSubtitle(
 
       addUsage(totalUsage, mainResult.usage);
 
-      if (mainResult.error) {
+      if (mainResult.error && mainResult.failedIds.size === 0) {
         return {
           originalFile: file,
           translatedContent: '',
@@ -2422,6 +2423,10 @@ export async function translateSubtitle(
           truncated: mainResult.truncated,
           usage: totalUsage.totalTokens > 0 ? totalUsage : undefined
         };
+      }
+
+      if (mainResult.error) {
+        initialMainErrorWarning = mainResult.error;
       }
 
       translatedMainCues = mainResult.cues;
@@ -2482,6 +2487,11 @@ export async function translateSubtitle(
           unresolvedMainCueWarning = `${retryResult.unresolvedIds.size} cue(s) remained unchanged after retry attempts.`;
         }
       }
+
+      unresolvedMainCueWarning = [
+        initialMainErrorWarning,
+        unresolvedMainCueWarning,
+      ].filter((warning): warning is string => Boolean(warning)).join(' ') || undefined;
     } else {
       reportProgress({ progress: 85, currentBatch: 0, totalBatches: 0 });
     }

@@ -1255,6 +1255,64 @@ describe('AI translation ASS visual text planning', () => {
     expect(secondRetryPrompt.contextCues?.map(cue => cue.id)).not.toContain('SRT_3');
   });
 
+  it('retries main translation provider failures and keeps partial fallback output', async () => {
+    const { translateSubtitle } = await import('./translation');
+    const content = [
+      '0',
+      '00:00:01,000 --> 00:00:02,000',
+      'First line.',
+      '',
+      '1',
+      '00:00:02,000 --> 00:00:03,000',
+      'Second line.',
+    ].join('\n');
+
+    callLlmMock.mockImplementation(async (request: { userPrompt: string }) => {
+      const prompt = parseUserPromptPayload(request.userPrompt);
+      const callNumber = callLlmMock.mock.calls.length;
+
+      if (callNumber === 1) {
+        return {
+          content: '',
+          error: 'Provider unavailable',
+          usage: { promptTokens: 10, completionTokens: 0, totalTokens: 10 },
+        };
+      }
+
+      if (callNumber === 2) {
+        return {
+          content: JSON.stringify({
+            cues: [{ id: 'SRT_0', translatedText: 'FR First line.' }],
+          }),
+          usage: { promptTokens: 8, completionTokens: 4, totalTokens: 12 },
+        };
+      }
+
+      return {
+        content: JSON.stringify({ cues: [] }),
+        usage: { promptTokens: 6, completionTokens: 2, totalTokens: 8 },
+      };
+    });
+
+    const result = await translateSubtitle(
+      { name: 'provider-retry.srt', path: '/subs/provider-retry.srt', content, format: 'srt', size: 1 },
+      'openai',
+      'gpt-test',
+      'en',
+      'fr'
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.translatedContent).toContain('FR First line.');
+    expect(result.translatedContent).toContain('Second line.');
+    expect(result.error).toContain('Provider unavailable');
+    expect(result.error).toContain('1 cue(s) remained unchanged');
+    expect(callLlmMock).toHaveBeenCalledTimes(3);
+
+    const firstRetryPrompt = parseUserPromptPayload(callLlmMock.mock.calls[1][0].userPrompt);
+    expect(firstRetryPrompt.cues.map(cue => cue.id)).toEqual(['SRT_0', 'SRT_1']);
+  });
+
   it('includes resolved visual preflight translations in main retry context', async () => {
     const { translateSubtitle } = await import('./translation');
     const content = buildAssWithEvents([

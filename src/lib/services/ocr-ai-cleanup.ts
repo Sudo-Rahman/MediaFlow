@@ -51,9 +51,7 @@ interface OcrCleanupCorrection extends AiCueReplacement {
   correctedText: string;
 }
 
-interface OcrCleanupRetryContextCue extends AiCueRetryContextCue {
-  correctedText?: string;
-}
+type OcrCleanupRetryContextCue = AiCueRetryContextCue;
 
 interface CollectCorrectionsResult {
   corrections: OcrCleanupCorrection[];
@@ -450,10 +448,9 @@ export async function cleanupOcrSubtitlesWithAi(
       allCues: allPromptCues,
       initialReplacements: corrections,
       initialUnresolvedIds: unresolvedIds,
-      buildContextCue: ({ cue, acceptedReplacement, position, spanIndex }) => ({
+      buildContextCue: ({ cue, position, spanIndex }) => ({
         id: cue.id,
         text: cue.text,
-        correctedText: acceptedReplacement?.correctedText,
         position,
         spanIndex,
       }),

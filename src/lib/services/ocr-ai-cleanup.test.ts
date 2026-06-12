@@ -139,6 +139,7 @@ describe('video OCR AI cleanup', () => {
     const secondPrompt = parsePromptPayload(callLlmMock.mock.calls[1][0].userPrompt);
     expect(secondPrompt.cues.map((cue) => cue.id)).toEqual(['sub-2']);
     expect(secondPrompt.contextCues?.map((cue) => cue.id)).not.toContain('sub-2');
+    expect(secondPrompt.contextCues?.some((cue) => 'correctedText' in cue)).toBe(false);
   });
 
   it('keeps original OCR text for cues still unresolved after retries', async () => {

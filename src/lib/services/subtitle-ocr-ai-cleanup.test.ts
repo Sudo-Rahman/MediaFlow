@@ -430,6 +430,7 @@ describe('subtitle OCR AI cleanup', () => {
     expect(retryPrompt.cues.map((promptCue) => promptCue.id)).toEqual(['1']);
     expect(retryPrompt.contextCues?.map((promptCue) => promptCue.id)).not.toContain('1');
     expect(retryPrompt.contextCues?.map((promptCue) => promptCue.id)).toEqual(['0', '2']);
+    expect(retryPrompt.contextCues?.some((promptCue) => 'correctedText' in promptCue)).toBe(false);
   });
 
   it('keeps corrected cues and original text for cues still unresolved after retries', async () => {

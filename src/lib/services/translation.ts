@@ -322,6 +322,18 @@ interface TranslationResponseParseResult {
   warnings: string[];
 }
 
+interface CollectValidTranslationsOptions {
+  requestedCues: readonly TranslationCue[];
+  returnedCues: readonly TranslatedCue[];
+  phaseLabel: string;
+  logContext: Record<string, string>;
+}
+
+interface CollectValidTranslationsResult {
+  cues: TranslatedCue[];
+  unresolvedIds: Set<string>;
+}
+
 function getCanonicalPlaceholderToken(index: number): string {
   return `${CANONICAL_PLACEHOLDER_PREFIX}${index.toString(36)}${CANONICAL_PLACEHOLDER_SUFFIX}`;
 }
@@ -1373,6 +1385,129 @@ export function buildFullPromptForTokenCount(
   return promptParts.join('\n\n');
 }
 
+function extractPromptPlaceholders(text: string): Cue['placeholders'] {
+  const matches = text.match(/⟦[A-Z]+_\d+⟧/g) ?? [];
+
+  return matches.map((token, index) => ({
+    index,
+    token,
+    original: token,
+  }));
+}
+
+function buildValidationCueFromPromptCue(cue: TranslationCue): Cue {
+  return {
+    id: cue.id,
+    startMs: 0,
+    endMs: 0,
+    textOriginal: cue.text,
+    textSkeleton: cue.text,
+    placeholders: extractPromptPlaceholders(cue.text),
+    format: 'ass',
+  };
+}
+
+function collectValidTranslatedCues({
+  requestedCues,
+  returnedCues,
+  phaseLabel,
+  logContext,
+}: CollectValidTranslationsOptions): CollectValidTranslationsResult {
+  const requestedById = new Map(requestedCues.map((cue) => [cue.id, cue]));
+  const unresolvedIds = new Set(requestedCues.map((cue) => cue.id));
+  const returnedCounts = new Map<string, number>();
+  const acceptedCues: TranslatedCue[] = [];
+  const unexpectedIds: string[] = [];
+  const duplicateIds = new Set<string>();
+  const invalidIds = new Set<string>();
+
+  for (const cue of returnedCues) {
+    if (!requestedById.has(cue.id)) {
+      unexpectedIds.push(cue.id);
+      continue;
+    }
+
+    returnedCounts.set(cue.id, (returnedCounts.get(cue.id) ?? 0) + 1);
+  }
+
+  for (const [id, count] of returnedCounts.entries()) {
+    if (count > 1) {
+      duplicateIds.add(id);
+      invalidIds.add(id);
+    }
+  }
+
+  for (const cue of returnedCues) {
+    const requestedCue = requestedById.get(cue.id);
+    if (!requestedCue || duplicateIds.has(cue.id)) {
+      continue;
+    }
+
+    const translatedText = (cue as { translatedText?: unknown }).translatedText;
+    if (typeof translatedText !== 'string' || translatedText.trim().length === 0) {
+      invalidIds.add(cue.id);
+      continue;
+    }
+
+    const validation = validateTranslation(
+      [buildValidationCueFromPromptCue(requestedCue)],
+      [{ id: cue.id, translatedText }]
+    );
+    if (!validation.valid) {
+      invalidIds.add(cue.id);
+      continue;
+    }
+
+    acceptedCues.push({ id: cue.id, translatedText });
+    unresolvedIds.delete(cue.id);
+  }
+
+  if (unexpectedIds.length > 0) {
+    log(
+      'warning',
+      'translation',
+      'Ignored unexpected cue IDs from LLM response',
+      `${phaseLabel}: ignored ${unexpectedIds.length} cue(s) with IDs outside the requested group. IDs: ${unexpectedIds.slice(0, 5).join(', ') || '(none)'}`,
+      logContext
+    );
+  }
+
+  if (duplicateIds.size > 0) {
+    log(
+      'warning',
+      'translation',
+      'Ignored duplicate cue IDs from LLM response',
+      `${phaseLabel}: ${duplicateIds.size} cue ID(s) were returned more than once and will be retried. IDs: ${[...duplicateIds].slice(0, 5).join(', ')}`,
+      logContext
+    );
+  }
+
+  if (invalidIds.size > 0) {
+    log(
+      'warning',
+      'translation',
+      'Ignored invalid translations from LLM response',
+      `${phaseLabel}: ${invalidIds.size} cue(s) had empty text or invalid placeholders and will be retried. IDs: ${[...invalidIds].slice(0, 5).join(', ')}`,
+      logContext
+    );
+  }
+
+  if (unresolvedIds.size > 0) {
+    log(
+      'warning',
+      'translation',
+      'Missing or invalid cue IDs from LLM response',
+      `${phaseLabel}: ${unresolvedIds.size} requested cue(s) were not accepted from the model response.`,
+      logContext
+    );
+  }
+
+  return {
+    cues: acceptedCues,
+    unresolvedIds,
+  };
+}
+
 /**
  * Parse LLM response to extract translated cues
  * @param responseText - Raw response text from the LLM
@@ -1449,7 +1584,6 @@ async function runTranslationRetryAttempt(
     logContext,
     phaseLabel
   } = options;
-  const requestedIds = new Set(request.requestedCues.map(cue => cue.id));
   const unresolvedIds = () => new Set(request.requestedCues.map(cue => cue.id));
 
   if (signal?.aborted) {
@@ -1542,28 +1676,16 @@ async function runTranslationRetryAttempt(
     };
   }
 
-  const sanitizedCues = translationResponse.cues.filter(cue => requestedIds.has(cue.id));
-  const ignoredCueCount = translationResponse.cues.length - sanitizedCues.length;
-  if (ignoredCueCount > 0) {
-    const ignoredIds = translationResponse.cues
-      .filter(cue => !requestedIds.has(cue.id))
-      .map(cue => cue.id)
-      .filter(Boolean);
-
-    log(
-      'warning',
-      'translation',
-      'Ignored unexpected cue IDs from LLM retry response',
-      `${phaseLabel} retry attempt ${request.attempt}: ignored ${ignoredCueCount} cue(s) with IDs outside the requested retry group. IDs: ${ignoredIds.slice(0, 5).join(', ') || '(none)'}`,
-      logContext
-    );
-  }
-
-  const translatedIds = new Set(sanitizedCues.map(cue => cue.id));
+  const collected = collectValidTranslatedCues({
+    requestedCues: request.requestedCues,
+    returnedCues: translationResponse.cues,
+    phaseLabel: `${phaseLabel} retry attempt ${request.attempt}`,
+    logContext,
+  });
 
   return {
-    replacements: sanitizedCues,
-    unresolvedIds: new Set(request.requestedCues.map(cue => cue.id).filter(id => !translatedIds.has(id))),
+    replacements: collected.cues,
+    unresolvedIds: collected.unresolvedIds,
     usage: llmResponse.usage,
   };
 }
@@ -1788,52 +1910,20 @@ async function translatePromptCueBatches(
       };
     }
 
-    const batchIdSet = new Set(batch.map(cue => cue.id));
-    const sanitizedCues = translationResponse.cues.filter(cue => batchIdSet.has(cue.id));
-    const ignoredCueCount = translationResponse.cues.length - sanitizedCues.length;
-
-    if (ignoredCueCount > 0) {
-      const ignoredIds = translationResponse.cues
-        .filter(cue => !batchIdSet.has(cue.id))
-        .map(cue => cue.id)
-        .filter(Boolean);
-
-      log(
-        'warning',
-        'translation',
-        'Ignored unexpected cue IDs from LLM response',
-        `${phaseLabel} batch ${batchIndex + 1}/${totalBatches}: ignored ${ignoredCueCount} cue(s) with IDs outside the requested batch. IDs: ${ignoredIds.slice(0, 5).join(', ') || '(none)'}`,
-        {
-          ...logContext,
-          batchIndex: String(batchIndex + 1)
-        }
-      );
-    }
-
-    const translatedIds = new Set(sanitizedCues.map(cue => cue.id));
-    const failedIds = new Set(
-      batch
-        .map(cue => cue.id)
-        .filter(id => !translatedIds.has(id))
-    );
-
-    if (failedIds.size > 0) {
-      log(
-        'warning',
-        'translation',
-        'Missing cue IDs from LLM response',
-        `${phaseLabel} batch ${batchIndex + 1}/${totalBatches}: ${failedIds.size} requested cue(s) were not returned by the model.`,
-        {
-          ...logContext,
-          batchIndex: String(batchIndex + 1)
-        }
-      );
-    }
+    const collected = collectValidTranslatedCues({
+      requestedCues: batch,
+      returnedCues: translationResponse.cues,
+      phaseLabel: `${phaseLabel} batch ${batchIndex + 1}/${totalBatches}`,
+      logContext: {
+        ...logContext,
+        batchIndex: String(batchIndex + 1)
+      },
+    });
 
     return {
       batchIndex,
-      cues: sanitizedCues,
-      failedIds,
+      cues: collected.cues,
+      failedIds: collected.unresolvedIds,
       usage: llmResponse.usage
     };
   };

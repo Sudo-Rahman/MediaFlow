@@ -1313,6 +1313,99 @@ describe('AI translation ASS visual text planning', () => {
     expect(firstRetryPrompt.cues.map(cue => cue.id)).toEqual(['SRT_0', 'SRT_1']);
   });
 
+  it('retries empty initial translations instead of accepting them', async () => {
+    const { translateSubtitle } = await import('./translation');
+    const content = [
+      '0',
+      '00:00:01,000 --> 00:00:02,000',
+      'First line.',
+      '',
+      '1',
+      '00:00:02,000 --> 00:00:03,000',
+      'Second line.',
+    ].join('\n');
+
+    callLlmMock.mockImplementation(async (request: { userPrompt: string }) => {
+      const prompt = parseUserPromptPayload(request.userPrompt);
+      const callNumber = callLlmMock.mock.calls.length;
+
+      if (callNumber === 1) {
+        return {
+          content: JSON.stringify({
+            cues: [
+              { id: 'SRT_0', translatedText: '' },
+              { id: 'SRT_1', translatedText: 'FR Second line.' },
+            ],
+          }),
+        };
+      }
+
+      return {
+        content: JSON.stringify({
+          cues: prompt.cues.map(cue => ({ id: cue.id, translatedText: `FR retry ${cue.text}` })),
+        }),
+      };
+    });
+
+    const result = await translateSubtitle(
+      { name: 'empty-translation-retry.srt', path: '/subs/empty-translation-retry.srt', content, format: 'srt', size: 1 },
+      'openai',
+      'gpt-test',
+      'en',
+      'fr'
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.translatedContent).toContain('FR retry First line.');
+    expect(result.translatedContent).toContain('FR Second line.');
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
+
+    const retryPrompt = parseUserPromptPayload(callLlmMock.mock.calls[1][0].userPrompt);
+    expect(retryPrompt.cues.map(cue => cue.id)).toEqual(['SRT_0']);
+  });
+
+  it('leaves invalid retry translations unresolved instead of replacing the cue', async () => {
+    const { translateSubtitle } = await import('./translation');
+    const content = [
+      '0',
+      '00:00:01,000 --> 00:00:02,000',
+      '<i>Hello there.</i>',
+    ].join('\n');
+
+    callLlmMock.mockImplementation(async (request: { userPrompt: string }) => {
+      const prompt = parseUserPromptPayload(request.userPrompt);
+      const callNumber = callLlmMock.mock.calls.length;
+
+      if (callNumber === 1) {
+        return { content: JSON.stringify({ cues: [] }) };
+      }
+
+      if (callNumber === 2) {
+        return {
+          content: JSON.stringify({
+            cues: [{ id: prompt.cues[0].id, translatedText: 'Bonjour.' }],
+          }),
+        };
+      }
+
+      return { content: JSON.stringify({ cues: [] }) };
+    });
+
+    const result = await translateSubtitle(
+      { name: 'invalid-retry.srt', path: '/subs/invalid-retry.srt', content, format: 'srt', size: 1 },
+      'openai',
+      'gpt-test',
+      'en',
+      'fr'
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.translatedContent).toContain('<i>Hello there.</i>');
+    expect(result.translatedContent).not.toContain('Bonjour.');
+    expect(result.error).toContain('1 cue(s) remained unchanged');
+    expect(callLlmMock).toHaveBeenCalledTimes(3);
+  });
+
   it('includes resolved visual preflight translations in main retry context', async () => {
     const { translateSubtitle } = await import('./translation');
     const content = buildAssWithEvents([

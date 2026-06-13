@@ -1,17 +1,18 @@
 use std::fs;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::time::Duration;
 
-use crate::shared::process::tokio_command;
+use crate::shared::process::{tokio_command, wait_with_output_timeout};
 use serde_json::Value;
-use tokio::time::timeout;
 
 use crate::shared::hash::stable_hash64;
 use crate::shared::store::{resolve_ffmpeg_path, resolve_ffprobe_path};
 use crate::shared::validation::validate_media_path;
+use crate::tools::ffprobe::parse_duration_us_from_probe_json;
 use crate::tools::ffprobe::probe::probe_file_with_ffprobe;
 
-const ANALYSIS_FRAME_TIMEOUT: Duration = Duration::from_secs(60);
+const ANALYSIS_FRAME_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub(crate) fn select_analysis_timestamps(duration_us: u64, frame_count: usize) -> Vec<f64> {
     if duration_us == 0 || frame_count == 0 {
@@ -76,10 +77,10 @@ pub(crate) async fn extract_transcode_analysis_frames_with_bins(
         return Ok(Vec::new());
     }
 
-    let duration_us =
-        crate::tools::ffprobe::get_media_duration_us_with_ffprobe(ffprobe_path, input_path)
-            .await
-            .unwrap_or(0);
+    let duration_us = parse_duration_us_from_probe_json(&probe_json)
+        .ok()
+        .flatten()
+        .unwrap_or(0);
     let timestamps = select_analysis_timestamps(duration_us, frame_count);
     if timestamps.is_empty() {
         return Ok(Vec::new());
@@ -94,26 +95,31 @@ pub(crate) async fn extract_transcode_analysis_frames_with_bins(
         let output_path = output_dir.join(format!("frame-{}.png", index + 1));
         let timestamp_arg = format!("{:.3}", timestamp);
 
-        let output = timeout(
+        let child = tokio_command(ffmpeg_path)
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-ss",
+                &timestamp_arg,
+                "-i",
+                input_path,
+                "-frames:v",
+                "1",
+                output_path.to_string_lossy().as_ref(),
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("Failed to run ffmpeg for analysis frames: {}", error))?;
+
+        let output = wait_with_output_timeout(
+            child,
+            "FFmpeg analysis frame extraction",
             ANALYSIS_FRAME_TIMEOUT,
-            tokio_command(ffmpeg_path)
-                .args([
-                    "-hide_banner",
-                    "-loglevel",
-                    "error",
-                    "-y",
-                    "-ss",
-                    &timestamp_arg,
-                    "-i",
-                    input_path,
-                    "-frames:v",
-                    "1",
-                    output_path.to_string_lossy().as_ref(),
-                ])
-                .output(),
         )
         .await
-        .map_err(|_| "Timed out while extracting analysis frame".to_string())?
         .map_err(|error| format!("Failed to run ffmpeg for analysis frames: {}", error))?;
 
         if !output.status.success() {

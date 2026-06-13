@@ -1,6 +1,22 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const DEFAULT_EMA_ALPHA: f64 = 0.25;
+
+pub(crate) const LONG_FFMPEG_PROGRESS_TIMEOUT: FfmpegProgressWatchdogConfig =
+    FfmpegProgressWatchdogConfig {
+        startup_timeout: Duration::from_secs(300),
+        stall_timeout: Duration::from_secs(120),
+        check_interval: Duration::from_secs(1),
+        shutdown_timeout: Duration::from_secs(5),
+    };
+
+pub(crate) const OCR_PREVIEW_PROGRESS_TIMEOUT: FfmpegProgressWatchdogConfig =
+    FfmpegProgressWatchdogConfig {
+        startup_timeout: Duration::from_secs(90),
+        stall_timeout: Duration::from_secs(120),
+        check_interval: Duration::from_secs(1),
+        shutdown_timeout: Duration::from_secs(5),
+    };
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct FfmpegProgressUpdate {
@@ -9,7 +25,54 @@ pub(crate) struct FfmpegProgressUpdate {
     pub(crate) current_frame: Option<u64>,
     pub(crate) total_frames: Option<u64>,
     pub(crate) frames_per_second: Option<f64>,
+    pub(crate) advanced: bool,
     pub(crate) is_end: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FfmpegProgressWatchdogConfig {
+    pub(crate) startup_timeout: Duration,
+    pub(crate) stall_timeout: Duration,
+    pub(crate) check_interval: Duration,
+    pub(crate) shutdown_timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct FfmpegProgressWatchdog {
+    config: FfmpegProgressWatchdogConfig,
+    last_activity_at: Option<Duration>,
+}
+
+impl FfmpegProgressWatchdog {
+    pub(crate) fn new(config: FfmpegProgressWatchdogConfig) -> Self {
+        Self {
+            config,
+            last_activity_at: None,
+        }
+    }
+
+    pub(crate) fn record_activity(&mut self, elapsed: Duration) {
+        self.last_activity_at = Some(elapsed);
+    }
+
+    pub(crate) fn timeout_message(&self, elapsed: Duration) -> Option<String> {
+        match self.last_activity_at {
+            Some(last_activity_at)
+                if elapsed.saturating_sub(last_activity_at) > self.config.stall_timeout =>
+            {
+                Some(format!(
+                    "stalled for {} seconds",
+                    self.config.stall_timeout.as_secs()
+                ))
+            }
+            Some(_) => None,
+            None if elapsed > self.config.startup_timeout => Some(format!(
+                "did not report progress within {} seconds",
+                self.config.startup_timeout.as_secs()
+            )),
+            None => None,
+        }
+    }
 }
 
 pub(crate) struct FfmpegProgressTracker {
@@ -51,38 +114,54 @@ impl FfmpegProgressTracker {
         match key {
             "out_time_us" => {
                 let out_time_us = value.parse::<u64>().ok()?;
+                let advanced = self
+                    .last_out_time_us
+                    .map_or(out_time_us > 0, |last| out_time_us > last);
                 self.last_out_time_us = Some(out_time_us);
-                Some(self.build_update(self.compute_running_progress(), false))
+                Some(self.build_update(self.compute_running_progress(), advanced, false))
             }
             "frame" => {
-                self.current_frame = value.parse::<u64>().ok();
-                Some(self.build_update(self.compute_running_progress(), false))
+                let current_frame = value.parse::<u64>().ok()?;
+                let advanced = self
+                    .current_frame
+                    .map_or(current_frame > 0, |last| current_frame > last);
+                self.current_frame = Some(current_frame);
+                Some(self.build_update(self.compute_running_progress(), advanced, false))
             }
             "fps" => {
                 let frames_per_second = value.parse::<f64>().ok()?;
                 if frames_per_second.is_finite() && frames_per_second >= 0.0 {
                     self.frames_per_second = Some(frames_per_second);
                 }
-                Some(self.build_update(self.compute_running_progress(), false))
+                Some(self.build_update(self.compute_running_progress(), false, false))
             }
             "total_size" => {
                 let total_size_bytes = value.parse::<u64>().ok()?;
+                let advanced = self
+                    .last_total_size_bytes
+                    .map_or(total_size_bytes > 0, |last| total_size_bytes > last);
                 self.update_speed(total_size_bytes, self.start_instant.elapsed().as_secs_f64());
-                self.smoothed_speed_bytes_per_sec
-                    .map(|_| self.build_update(self.compute_running_progress(), false))
+                (advanced || self.smoothed_speed_bytes_per_sec.is_some())
+                    .then(|| self.build_update(self.compute_running_progress(), advanced, false))
             }
-            "progress" if value == "end" => Some(self.build_update(Some(100), true)),
+            "progress" if value == "end" => Some(self.build_update(Some(100), true, true)),
             _ => None,
         }
     }
 
-    fn build_update(&self, progress: Option<i32>, is_end: bool) -> FfmpegProgressUpdate {
+    fn build_update(
+        &self,
+        progress: Option<i32>,
+        advanced: bool,
+        is_end: bool,
+    ) -> FfmpegProgressUpdate {
         FfmpegProgressUpdate {
             progress,
             speed_bytes_per_sec: self.smoothed_speed_bytes_per_sec,
             current_frame: self.current_frame,
             total_frames: self.total_frames,
             frames_per_second: self.frames_per_second,
+            advanced,
             is_end,
         }
     }
@@ -145,7 +224,12 @@ fn parse_progress_kv(line: &str) -> Option<(&str, &str)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FfmpegProgressTracker, parse_progress_kv};
+    use std::time::Duration;
+
+    use super::{
+        FfmpegProgressTracker, FfmpegProgressWatchdog, FfmpegProgressWatchdogConfig,
+        parse_progress_kv,
+    };
 
     fn approx_eq(left: f64, right: f64, epsilon: f64) {
         assert!((left - right).abs() <= epsilon);
@@ -171,7 +255,43 @@ mod tests {
             .handle_line("out_time_us=500000")
             .expect("progress update should exist");
         assert_eq!(update.progress, Some(50));
+        assert!(update.advanced);
         assert!(!update.is_end);
+    }
+
+    #[test]
+    fn tracker_marks_only_advancing_lines_as_activity() {
+        let mut tracker = FfmpegProgressTracker::with_total_frames(Some(1_000_000), Some(100));
+
+        let zero = tracker
+            .handle_line("out_time_us=0")
+            .expect("zero timestamp should still emit an update");
+        assert!(!zero.advanced);
+
+        let timestamp = tracker
+            .handle_line("out_time_us=500000")
+            .expect("advancing timestamp should emit an update");
+        assert!(timestamp.advanced);
+
+        let repeated_timestamp = tracker
+            .handle_line("out_time_us=500000")
+            .expect("repeated timestamp should emit an update");
+        assert!(!repeated_timestamp.advanced);
+
+        let frame = tracker
+            .handle_line("frame=10")
+            .expect("advancing frame should emit an update");
+        assert!(frame.advanced);
+
+        let repeated_frame = tracker
+            .handle_line("frame=10")
+            .expect("repeated frame should emit an update");
+        assert!(!repeated_frame.advanced);
+
+        let total_size = tracker
+            .handle_line("total_size=2048")
+            .expect("advancing size should emit an update");
+        assert!(total_size.advanced);
     }
 
     #[test]
@@ -186,6 +306,7 @@ mod tests {
             .handle_line("progress=end")
             .expect("end progress should exist");
         assert_eq!(finished.progress, Some(100));
+        assert!(finished.advanced);
         assert!(finished.is_end);
     }
 
@@ -222,12 +343,15 @@ mod tests {
         let mut tracker = FfmpegProgressTracker::new(None);
 
         let first = tracker.handle_line("total_size=1000000");
-        assert!(first.is_none());
+        let first = first.expect("first advancing size should emit activity");
+        assert!(first.advanced);
+        assert!(first.speed_bytes_per_sec.is_none());
 
         let second = tracker
             .handle_line("total_size=2000000")
             .expect("speed update should be emitted");
         assert_eq!(second.progress, None);
+        assert!(second.advanced);
         assert!(second.speed_bytes_per_sec.is_some());
         assert!(!second.is_end);
     }
@@ -257,5 +381,40 @@ mod tests {
             .handle_line("fps=123.45")
             .expect("fps metric should emit an update");
         assert_eq!(update.frames_per_second, Some(123.45));
+        assert!(!update.advanced);
+    }
+
+    #[test]
+    fn watchdog_times_out_without_startup_activity() {
+        let watchdog = FfmpegProgressWatchdog::new(test_watchdog_config());
+
+        let message = watchdog
+            .timeout_message(Duration::from_secs(6))
+            .expect("startup timeout expected");
+
+        assert_eq!(message, "did not report progress within 5 seconds");
+    }
+
+    #[test]
+    fn watchdog_tracks_activity_and_stall_timeout() {
+        let mut watchdog = FfmpegProgressWatchdog::new(test_watchdog_config());
+
+        watchdog.record_activity(Duration::from_secs(4));
+
+        assert!(watchdog.timeout_message(Duration::from_secs(6)).is_none());
+        assert!(watchdog.timeout_message(Duration::from_secs(13)).is_none());
+        assert_eq!(
+            watchdog.timeout_message(Duration::from_secs(15)),
+            Some("stalled for 10 seconds".to_string())
+        );
+    }
+
+    fn test_watchdog_config() -> FfmpegProgressWatchdogConfig {
+        FfmpegProgressWatchdogConfig {
+            startup_timeout: Duration::from_secs(5),
+            stall_timeout: Duration::from_secs(10),
+            check_interval: Duration::from_millis(10),
+            shutdown_timeout: Duration::from_millis(50),
+        }
     }
 }

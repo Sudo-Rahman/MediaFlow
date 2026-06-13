@@ -2,16 +2,13 @@ use std::path::Path;
 use std::process::Stdio;
 
 use tauri::Emitter;
-use tokio::time::{Duration, timeout};
 
-use crate::shared::process::tokio_command;
+use crate::shared::ffmpeg_progress::{FfmpegProgressTracker, LONG_FFMPEG_PROGRESS_TIMEOUT};
+use crate::shared::process::{tokio_command, wait_with_output_progress_watchdog};
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::validation::{validate_media_path, validate_output_path};
 use crate::tools::ffprobe::{get_media_duration_us, get_media_duration_us_with_ffprobe};
-
-/// Timeout for audio transcoding (5 minutes)
-const AUDIO_TRANSCODE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Transcode audio/video to OPUS format (mono 96kbps)
 /// If track_index is provided, extract that specific audio track
@@ -27,7 +24,7 @@ pub(super) async fn transcode_to_opus_with_bins(
     validate_media_path(input_path)?;
     validate_output_path(output_path)?;
 
-    let _duration_us = get_media_duration_us_with_ffprobe(ffprobe_path, input_path)
+    let duration_us = get_media_duration_us_with_ffprobe(ffprobe_path, input_path)
         .await
         .unwrap_or(0);
 
@@ -36,7 +33,7 @@ pub(super) async fn transcode_to_opus_with_bins(
         None => "0:a:0".to_string(),
     };
 
-    let child = tokio_command(ffmpeg_path)
+    let mut child = tokio_command(ffmpeg_path)
         .args([
             "-y",
             "-i",
@@ -58,17 +55,35 @@ pub(super) async fn transcode_to_opus_with_bins(
         .spawn()
         .map_err(|e| format!("Failed to start ffmpeg: {}", e))?;
 
-    let wait_future = async { child.wait_with_output().await };
+    let (activity_tx, activity_rx) = tokio::sync::mpsc::unbounded_channel();
+    if let Some(stdout) = child.stdout.take() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
 
-    let output = timeout(AUDIO_TRANSCODE_TIMEOUT, wait_future)
-        .await
-        .map_err(|_| {
-            format!(
-                "Transcode timeout after {} seconds",
-                AUDIO_TRANSCODE_TIMEOUT.as_secs()
-            )
-        })?
-        .map_err(|e| format!("FFmpeg error: {}", e))?;
+        let activity_tx_for_progress = activity_tx.clone();
+        tokio::spawn(async move {
+            let mut tracker = FfmpegProgressTracker::new((duration_us > 0).then_some(duration_us));
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+
+            while let Ok(Some(line)) = lines.next_line().await {
+                if tracker
+                    .handle_line(&line)
+                    .is_some_and(|update| update.advanced)
+                {
+                    let _ = activity_tx_for_progress.send(());
+                }
+            }
+        });
+    }
+    drop(activity_tx);
+
+    let output = wait_with_output_progress_watchdog(
+        child,
+        "Audio transcode",
+        activity_rx,
+        LONG_FFMPEG_PROGRESS_TIMEOUT,
+    )
+    .await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -147,56 +162,54 @@ pub(crate) async fn transcode_to_opus(
     let app_clone = app.clone();
     let input_path_clone = input_path.clone();
 
+    let (activity_tx, activity_rx) = tokio::sync::mpsc::unbounded_channel();
+
     if let Some(mut stdout) = stdout {
         use tokio::io::AsyncBufReadExt;
         use tokio::io::BufReader;
 
+        let activity_tx_for_progress = activity_tx.clone();
         tokio::spawn(async move {
+            let mut tracker = FfmpegProgressTracker::new((duration_us > 0).then_some(duration_us));
             let reader = BufReader::new(&mut stdout);
             let mut lines = reader.lines();
 
             while let Ok(Some(line)) = lines.next_line().await {
-                // Parse progress from FFmpeg's -progress output
-                if line.starts_with("out_time_us=") {
-                    if let Ok(time_us) = line.trim_start_matches("out_time_us=").parse::<u64>() {
-                        if duration_us > 0 {
-                            let progress =
-                                ((time_us as f64 / duration_us as f64) * 100.0).min(99.0) as i32;
-                            let _ = app_clone.emit(
-                                "transcode-progress",
-                                serde_json::json!({
-                                    "progress": progress,
-                                    "inputPath": input_path_clone
-                                }),
-                            );
-                        }
+                if let Some(update) = tracker.handle_line(&line) {
+                    if update.advanced {
+                        let _ = activity_tx_for_progress.send(());
+                    }
+
+                    if let Some(progress) = update.progress {
+                        let _ = app_clone.emit(
+                            "transcode-progress",
+                            serde_json::json!({
+                                "progress": progress,
+                                "inputPath": input_path_clone
+                            }),
+                        );
                     }
                 }
             }
         });
     }
 
-    // Wait for completion with timeout
-    let wait_future = async { child.wait_with_output().await };
+    drop(activity_tx);
 
     let input_path_for_cleanup = input_path.clone();
-    let output = timeout(AUDIO_TRANSCODE_TIMEOUT, wait_future)
-        .await
-        .map_err(|_| {
-            if let Ok(mut guard) = super::TRANSCODE_PROCESS_IDS.lock() {
-                guard.remove(&input_path_for_cleanup);
-            }
-            format!(
-                "Transcode timeout after {} seconds",
-                AUDIO_TRANSCODE_TIMEOUT.as_secs()
-            )
-        })?
-        .map_err(|e| {
-            if let Ok(mut guard) = super::TRANSCODE_PROCESS_IDS.lock() {
-                guard.remove(&input_path_for_cleanup);
-            }
-            format!("FFmpeg error: {}", e)
-        })?;
+    let output = wait_with_output_progress_watchdog(
+        child,
+        "Audio transcode",
+        activity_rx,
+        LONG_FFMPEG_PROGRESS_TIMEOUT,
+    )
+    .await
+    .map_err(|error| {
+        if let Ok(mut guard) = super::TRANSCODE_PROCESS_IDS.lock() {
+            guard.remove(&input_path_for_cleanup);
+        }
+        error
+    })?;
 
     // Clear process ID for this file
     if let Ok(mut guard) = super::TRANSCODE_PROCESS_IDS.lock() {

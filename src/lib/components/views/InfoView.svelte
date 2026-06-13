@@ -84,7 +84,7 @@
     }
 
     if (fileInfoMap.size > 0) {
-      const scannedFiles = await scanFiles([...fileInfoMap.keys()], 3);
+      const scannedFiles = await scanFiles([...fileInfoMap.keys()], 2);
 
       for (const scanned of scannedFiles) {
         const fileInfo = fileInfoMap.get(scanned.path);

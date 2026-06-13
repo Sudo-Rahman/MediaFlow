@@ -1,16 +1,17 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
 
 use tauri::Emitter;
 
-use crate::shared::process::{terminate_process, tokio_command, wait_with_output_timeout};
+use crate::shared::ffmpeg_progress::{FfmpegProgressTracker, LONG_FFMPEG_PROGRESS_TIMEOUT};
+use crate::shared::process::{
+    terminate_process, tokio_command, wait_with_output_progress_watchdog,
+};
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::validation::{validate_media_path, validate_output_path};
 use crate::tools::subtitle_ocr::progress::SubtitleOcrProgressEvent;
 
-const SUBTITLE_OCR_EXTRACT_TIMEOUT: Duration = Duration::from_secs(300);
 const SUBTITLE_OCR_CANCELLED: &str = "Subtitle OCR operation cancelled";
 const VOBSUB_CONTAINER_EXTRACTION_UNSUPPORTED: &str = "Container VobSub extraction is not supported by the bundled FFmpeg path. Import the .idx/.sub pair directly.";
 
@@ -99,7 +100,7 @@ async fn run_prepare_subtitle_ocr_ffmpeg(
 
     emit_extract_progress(app, item_id, run_id, 0);
 
-    let child = tokio_command(ffmpeg_path)
+    let mut child = tokio_command(ffmpeg_path)
         .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -122,10 +123,33 @@ async fn run_prepare_subtitle_ocr_ffmpeg(
         return Err(SUBTITLE_OCR_CANCELLED.to_string());
     }
 
-    let output = match wait_with_output_timeout(
+    let (activity_tx, activity_rx) = tokio::sync::mpsc::unbounded_channel();
+    if let Some(stdout) = child.stdout.take() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let activity_tx_for_progress = activity_tx.clone();
+        tokio::spawn(async move {
+            let mut tracker = FfmpegProgressTracker::new(None);
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+
+            while let Ok(Some(line)) = lines.next_line().await {
+                if tracker
+                    .handle_line(&line)
+                    .is_some_and(|update| update.advanced)
+                {
+                    let _ = activity_tx_for_progress.send(());
+                }
+            }
+        });
+    }
+    drop(activity_tx);
+
+    let output = match wait_with_output_progress_watchdog(
         child,
         "Subtitle OCR FFmpeg extraction",
-        SUBTITLE_OCR_EXTRACT_TIMEOUT,
+        activity_rx,
+        LONG_FFMPEG_PROGRESS_TIMEOUT,
     )
     .await
     {
@@ -193,6 +217,8 @@ pub(super) fn build_prepare_subtitle_ocr_args(
         format!("0:{}", stream_index),
         "-c:s".to_string(),
         "copy".to_string(),
+        "-progress".to_string(),
+        "pipe:1".to_string(),
     ];
 
     args.push(output_path.to_string());
@@ -304,6 +330,8 @@ mod tests {
                 "0:2",
                 "-c:s",
                 "copy",
+                "-progress",
+                "pipe:1",
                 "/tmp/item-stream-2.sup"
             ]
         );

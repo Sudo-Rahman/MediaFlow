@@ -144,7 +144,7 @@ async function probeImportedTracks(tracks: ImportedTrack[]): Promise<Map<string,
 
   const scannedFiles = await scanFiles(
     tracks.map(track => track.path),
-    3,
+    2,
   );
 
   return new Map(scannedFiles.map(scanned => [scanned.path, scanned]));

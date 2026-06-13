@@ -4,20 +4,21 @@ use std::path::Path;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use image::{DynamicImage, RgbImage, imageops::FilterType};
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
-use tokio::time::timeout;
+use tokio::sync::mpsc::UnboundedSender;
 
-use crate::shared::ffmpeg_progress::FfmpegProgressTracker;
-use crate::shared::process::{terminate_process, tokio_command};
+use crate::shared::ffmpeg_progress::{FfmpegProgressTracker, LONG_FFMPEG_PROGRESS_TIMEOUT};
+use crate::shared::process::{terminate_process, tokio_command, wait_status_progress_watchdog};
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::store::{resolve_ffmpeg_path, resolve_ffprobe_path};
 use crate::shared::validation::validate_media_path;
 use crate::tools::ffprobe::{
-    get_media_duration_us, probe::get_primary_video_dimensions_with_ffprobe,
+    parse_duration_us_from_probe_json,
+    probe::{parse_primary_video_dimensions, probe_file_with_ffprobe},
 };
 use crate::tools::ocr::engine::{
     create_ocr_engine, get_ocr_models_dir, resolve_ocr_engine_threads,
@@ -31,7 +32,6 @@ use crate::tools::ocr::{
     validate_ocr_selection,
 };
 
-const OCR_PIPELINE_TIMEOUT: Duration = Duration::from_secs(1800);
 const FRAME_CHANNEL_CAPACITY: usize = 8;
 const WORKER_DISPATCH_CHUNK_SIZE: usize = 4;
 const WORKER_QUEUE_CAPACITY: usize = WORKER_DISPATCH_CHUNK_SIZE;
@@ -884,6 +884,7 @@ async fn read_ffmpeg_progress(
     estimated_frames: u32,
     frame_offset: u32,
     progress: Option<PipelineProgressContext>,
+    activity_tx: Option<UnboundedSender<()>>,
 ) -> Result<String, String> {
     let mut tracker = FfmpegProgressTracker::new(duration_us);
     let stderr_reader = BufReader::new(stderr);
@@ -901,6 +902,12 @@ async fn read_ffmpeg_progress(
         }
 
         if let Some(update) = tracker.handle_line(trimmed) {
+            if update.advanced {
+                if let Some(activity_tx) = activity_tx.as_ref() {
+                    let _ = activity_tx.send(());
+                }
+            }
+
             if let (Some(progress_ctx), Some(percent)) = (progress.as_ref(), update.progress) {
                 let current = if estimated_frames > 0 {
                     frame_offset.saturating_add(
@@ -977,13 +984,16 @@ async fn extract_selected_intervals_with_ffmpeg(
         let interval_duration_ms = interval.end_time_ms.saturating_sub(interval.start_time_ms);
         let interval_frame_estimate =
             (((interval_duration_ms as f64 / 1000.0) * fps).ceil() as u32).saturating_add(1);
+        let (activity_tx, activity_rx) = tokio::sync::mpsc::unbounded_channel();
         let stderr_task = tokio::spawn(read_ffmpeg_progress(
             stderr,
             Some(interval_duration_ms.saturating_mul(1000)),
             interval_frame_estimate,
             total_frame_count,
             progress.clone(),
+            Some(activity_tx.clone()),
         ));
+        drop(activity_tx);
         let stream_reader_task = tokio::spawn(read_ffmpeg_rgb_stream(
             stdout,
             fps,
@@ -994,16 +1004,25 @@ async fn extract_selected_intervals_with_ffmpeg(
             frame_tx.clone(),
         ));
 
-        let wait_status = timeout(OCR_PIPELINE_TIMEOUT, child.wait())
-            .await
-            .map_err(|_| {
-                terminate_process(child_pid);
-                format!(
-                    "OCR pipeline timeout after {} seconds",
-                    OCR_PIPELINE_TIMEOUT.as_secs()
-                )
-            })?
-            .map_err(|error| format!("Failed to wait for ffmpeg: {}", error))?;
+        let wait_status = wait_status_progress_watchdog(
+            child,
+            "OCR pipeline FFmpeg",
+            activity_rx,
+            LONG_FFMPEG_PROGRESS_TIMEOUT,
+        )
+        .await;
+
+        let wait_status = match wait_status {
+            Ok(status) => status,
+            Err(error) => {
+                let _ = update_operation_pid_if_active(file_id, 0);
+                stderr_task.abort();
+                stream_reader_task.abort();
+                let _ = stderr_task.await;
+                let _ = stream_reader_task.await;
+                return Err(format!("Failed to wait for ffmpeg: {}", error));
+            }
+        };
 
         let was_cancelled = !update_operation_pid_if_active(file_id, 0);
         let stderr_output = match stderr_task.await {
@@ -1476,14 +1495,16 @@ pub(crate) async fn run_ocr_pipeline(
     let ffmpeg_path = resolve_ffmpeg_path(&app)?;
     let ffprobe_path = resolve_ffprobe_path(&app)?;
     let models_dir = get_ocr_models_dir(&app)?;
-    let source_dimensions = get_primary_video_dimensions_with_ffprobe(&ffprobe_path, &video_path)
-        .await
+    let probe_json = probe_file_with_ffprobe(&ffprobe_path, &video_path).await?;
+    let source_dimensions = parse_primary_video_dimensions(&probe_json)
         .map(|dimensions| SourceVideoDimensions {
             width: dimensions.width,
             height: dimensions.height,
         })
         .map_err(|error| format!("Failed to get source video dimensions for OCR: {}", error))?;
-    let duration_us = get_media_duration_us(&app, &video_path).await.ok();
+    let duration_us = parse_duration_us_from_probe_json(&probe_json)
+        .ok()
+        .flatten();
     let duration_ms = duration_us
         .map(|duration_us| duration_us / 1000)
         .unwrap_or_else(|| {
@@ -1542,10 +1563,10 @@ mod tests {
     use super::{
         SourceVideoDimensions, build_ocr_filter_string, can_clone_previous_frame_result,
         can_clone_previous_zone_result, clone_frame_result_for_frame, create_frame_fingerprint,
-        empty_frame_result, full_frame_output_spec, get_primary_video_dimensions_with_ffprobe,
-        is_low_detail_no_text, is_visually_unchanged, run_ocr_pipeline_with_bins,
-        take_next_raw_frame,
+        empty_frame_result, full_frame_output_spec, is_low_detail_no_text, is_visually_unchanged,
+        run_ocr_pipeline_with_bins, take_next_raw_frame,
     };
+    use crate::tools::ffprobe::probe::get_primary_video_dimensions_with_ffprobe;
 
     async fn ensure_models_dir() -> Result<std::path::PathBuf, String> {
         let models_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ocr-models");

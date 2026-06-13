@@ -179,7 +179,7 @@
     }
 
     // Scan files in parallel with progress callback
-    const scannedFiles = await scanFiles(videoPaths, 3, (completed, total) => {
+    const scannedFiles = await scanFiles(videoPaths, 2, (completed, total) => {
       // Progress callback - could be used for UI feedback in the future
     });
 

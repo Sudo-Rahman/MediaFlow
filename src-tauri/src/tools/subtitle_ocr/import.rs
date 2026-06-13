@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use crate::shared::store::resolve_ffprobe_path;
 use crate::shared::validation::validate_media_path;
+use crate::tools::ffprobe::parse_duration_us_from_probe_json;
 use crate::tools::ffprobe::probe::probe_file_with_ffprobe;
 use crate::tools::subtitle_ocr::SubtitleOcrTrackInfo;
 
@@ -16,6 +17,14 @@ pub(crate) struct SubtitleOcrVobSubPairInfo {
     pub(crate) sub_path: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SubtitleOcrMediaInfo {
+    pub(crate) tracks: Vec<SubtitleOcrTrackInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) duration_seconds: Option<f64>,
+}
+
 #[tauri::command]
 pub(crate) async fn probe_subtitle_ocr_tracks(
     app: tauri::AppHandle,
@@ -23,8 +32,42 @@ pub(crate) async fn probe_subtitle_ocr_tracks(
 ) -> Result<Vec<SubtitleOcrTrackInfo>, String> {
     validate_media_path(&path)?;
     let ffprobe_path = resolve_ffprobe_path(&app)?;
-    let probe_json = probe_file_with_ffprobe(&ffprobe_path, &path).await?;
-    parse_tracks_from_probe_json(&probe_json)
+    Ok(probe_subtitle_ocr_media_with_ffprobe(&ffprobe_path, &path)
+        .await?
+        .tracks)
+}
+
+#[tauri::command]
+pub(crate) async fn probe_subtitle_ocr_media(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<SubtitleOcrMediaInfo, String> {
+    validate_media_path(&path)?;
+    let ffprobe_path = resolve_ffprobe_path(&app)?;
+    probe_subtitle_ocr_media_with_ffprobe(&ffprobe_path, &path).await
+}
+
+async fn probe_subtitle_ocr_media_with_ffprobe(
+    ffprobe_path: &str,
+    path: &str,
+) -> Result<SubtitleOcrMediaInfo, String> {
+    let probe_json = probe_file_with_ffprobe(ffprobe_path, path).await?;
+    parse_subtitle_ocr_media_from_probe_json(&probe_json)
+}
+
+fn parse_subtitle_ocr_media_from_probe_json(
+    probe_json: &str,
+) -> Result<SubtitleOcrMediaInfo, String> {
+    let tracks = parse_tracks_from_probe_json(probe_json)?;
+    let duration_seconds = parse_duration_us_from_probe_json(probe_json)
+        .ok()
+        .flatten()
+        .map(|duration_us| duration_us as f64 / 1_000_000.0);
+
+    Ok(SubtitleOcrMediaInfo {
+        tracks,
+        duration_seconds,
+    })
 }
 
 #[tauri::command]
@@ -230,7 +273,10 @@ fn find_sibling_with_extension(path: &Path, extension: &str) -> Option<PathBuf> 
 
 #[cfg(test)]
 mod tests {
-    use super::{codec_label, parse_tracks_from_probe_json, resolve_vobsub_pair};
+    use super::{
+        codec_label, parse_subtitle_ocr_media_from_probe_json, parse_tracks_from_probe_json,
+        resolve_vobsub_pair,
+    };
 
     #[test]
     fn codec_label_accepts_bitmap_subtitle_codecs() {
@@ -248,6 +294,7 @@ mod tests {
     #[test]
     fn parse_tracks_from_probe_json_filters_supported_bitmap_subtitle_streams() {
         let json = r#"{
+            "format": { "duration": "7200.500" },
             "streams": [
                 { "index": 0, "codec_type": "video", "codec_name": "h264" },
                 {
@@ -282,6 +329,29 @@ mod tests {
         assert_eq!(tracks[0].title.as_deref(), Some("Signs"));
         assert!(tracks[0].forced);
         assert!(!tracks[0].r#default);
+    }
+
+    #[test]
+    fn parse_subtitle_ocr_media_from_probe_json_combines_tracks_and_duration() {
+        let json = r#"{
+            "format": { "duration": "12.250" },
+            "streams": [
+                {
+                    "index": 2,
+                    "codec_type": "subtitle",
+                    "codec_name": "hdmv_pgs_subtitle",
+                    "tags": { "language": "eng" },
+                    "disposition": { "forced": 0, "default": 1 }
+                }
+            ]
+        }"#;
+
+        let media = parse_subtitle_ocr_media_from_probe_json(json)
+            .expect("subtitle OCR media should parse");
+
+        assert_eq!(media.tracks.len(), 1);
+        assert_eq!(media.tracks[0].stream_index, 2);
+        assert_eq!(media.duration_seconds, Some(12.25));
     }
 
     #[test]

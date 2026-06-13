@@ -1,15 +1,10 @@
-use crate::shared::ffmpeg_progress::FfmpegProgressTracker;
-use crate::shared::process::terminate_process;
-use crate::shared::process::tokio_command;
+use crate::shared::ffmpeg_progress::{FfmpegProgressTracker, LONG_FFMPEG_PROGRESS_TIMEOUT};
+use crate::shared::process::{tokio_command, wait_with_output_progress_watchdog};
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::store::resolve_ffmpeg_path;
 use crate::shared::validation::{validate_media_path, validate_output_path};
 use std::process::Stdio;
 use tauri::Emitter;
-use tokio::time::{Duration, timeout};
-
-/// Timeout for FFmpeg extraction operations (5 minutes)
-const FFMPEG_EXTRACT_TIMEOUT: Duration = Duration::from_secs(300);
 
 fn remove_partial_output(path: &str) {
     let _ = std::fs::remove_file(path);
@@ -211,12 +206,15 @@ async fn extract_track_with_ffmpeg_and_progress(
         emit_extract_progress(app_handle, input_path, output_path, track_index, 0, None);
     }
 
+    let (activity_tx, activity_rx) = tokio::sync::mpsc::unbounded_channel();
+
     if let Some(stdout) = child.stdout.take() {
         use tokio::io::{AsyncBufReadExt, BufReader};
 
         let app_for_progress = app.cloned();
         let input_path_for_progress = input_path.to_string();
         let output_path_for_progress = output_path.to_string();
+        let activity_tx_for_progress = activity_tx.clone();
 
         tokio::spawn(async move {
             let mut tracker = FfmpegProgressTracker::new(duration_us);
@@ -226,6 +224,10 @@ async fn extract_track_with_ffmpeg_and_progress(
 
             while let Ok(Some(line)) = lines.next_line().await {
                 if let Some(update) = tracker.handle_line(&line) {
+                    if update.advanced {
+                        let _ = activity_tx_for_progress.send(());
+                    }
+
                     if let Some(progress) = update.progress {
                         last_progress = progress;
                     }
@@ -248,32 +250,22 @@ async fn extract_track_with_ffmpeg_and_progress(
             }
         });
     }
+    drop(activity_tx);
 
-    let extract_future = async { child.wait_with_output().await };
-
-    let output = timeout(FFMPEG_EXTRACT_TIMEOUT, extract_future)
-        .await
-        .map_err(|_| {
-            let (pid, registered_output) = clear_extract_registration(input_path);
-            if let Some(pid) = pid {
-                terminate_process(pid);
-            }
-            if let Some(path) = registered_output {
-                remove_partial_output(&path);
-            }
-
-            format!(
-                "FFmpeg extraction timeout after {} seconds",
-                FFMPEG_EXTRACT_TIMEOUT.as_secs()
-            )
-        })?
-        .map_err(|e| {
-            let (_pid, registered_output) = clear_extract_registration(input_path);
-            if let Some(path) = registered_output {
-                remove_partial_output(&path);
-            }
-            format!("Failed to execute ffmpeg: {}", e)
-        })?;
+    let output = wait_with_output_progress_watchdog(
+        child,
+        "FFmpeg extraction",
+        activity_rx,
+        LONG_FFMPEG_PROGRESS_TIMEOUT,
+    )
+    .await
+    .map_err(|error| {
+        let (_pid, registered_output) = clear_extract_registration(input_path);
+        if let Some(path) = registered_output {
+            remove_partial_output(&path);
+        }
+        error
+    })?;
 
     clear_extract_registration(input_path);
 

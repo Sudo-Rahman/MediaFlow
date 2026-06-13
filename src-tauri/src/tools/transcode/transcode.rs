@@ -1,26 +1,21 @@
 use std::path::Path;
 use std::process::Stdio;
-use std::time::Duration;
 
-use crate::shared::process::tokio_command;
+use crate::shared::process::{tokio_command, wait_with_output_progress_watchdog};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::Emitter;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::time::timeout;
 
-use crate::shared::ffmpeg_progress::FfmpegProgressTracker;
-use crate::shared::process::terminate_process;
+use crate::shared::ffmpeg_progress::{FfmpegProgressTracker, LONG_FFMPEG_PROGRESS_TIMEOUT};
 use crate::shared::sleep_inhibit::SleepInhibitGuard;
 use crate::shared::store::{resolve_ffmpeg_path, resolve_ffprobe_path};
 use crate::shared::validation::{validate_media_path, validate_output_path};
-use crate::tools::ffprobe::{get_media_duration_us_with_ffprobe, probe::probe_file_with_ffprobe};
+use crate::tools::ffprobe::{parse_duration_us_from_probe_json, probe::probe_file_with_ffprobe};
 use crate::tools::media_metadata::{
     MediaMetadataRequest, OutputStreamMetadata, apply_metadata_args,
     output_stream_metadata_from_request,
 };
-
-const TRANSCODE_TIMEOUT: Duration = Duration::from_secs(7200);
 
 #[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -881,24 +876,46 @@ pub(crate) async fn transcode_media_with_bins(
         .and_then(|value| value.as_array())
         .cloned()
         .unwrap_or_default();
-    let duration_us = get_media_duration_us_with_ffprobe(ffprobe_path, &request.input_path)
-        .await
-        .ok();
+    let duration_us = parse_duration_us_from_probe_json(&probe_json)
+        .ok()
+        .flatten();
 
     let args = build_transcode_args(request, &streams, duration_us)?;
 
-    let output = timeout(
-        TRANSCODE_TIMEOUT,
-        tokio_command(ffmpeg_path).args(&args).output(),
+    let mut child = tokio_command(ffmpeg_path)
+        .args(&args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Failed to execute ffmpeg: {}", error))?;
+
+    let (activity_tx, activity_rx) = tokio::sync::mpsc::unbounded_channel();
+    if let Some(stdout) = child.stdout.take() {
+        let activity_tx_for_progress = activity_tx.clone();
+        tokio::spawn(async move {
+            let mut tracker = FfmpegProgressTracker::new(duration_us);
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+
+            while let Ok(Some(line)) = lines.next_line().await {
+                if tracker
+                    .handle_line(&line)
+                    .is_some_and(|update| update.advanced)
+                {
+                    let _ = activity_tx_for_progress.send(());
+                }
+            }
+        });
+    }
+    drop(activity_tx);
+
+    let output = wait_with_output_progress_watchdog(
+        child,
+        "Transcode",
+        activity_rx,
+        LONG_FFMPEG_PROGRESS_TIMEOUT,
     )
-    .await
-    .map_err(|_| {
-        format!(
-            "Transcode timeout after {} seconds",
-            TRANSCODE_TIMEOUT.as_secs()
-        )
-    })?
-    .map_err(|error| format!("Failed to execute ffmpeg: {}", error))?;
+    .await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -933,9 +950,9 @@ pub(crate) async fn transcode_media(
         .and_then(|value| value.as_array())
         .cloned()
         .unwrap_or_default();
-    let duration_us = get_media_duration_us_with_ffprobe(&ffprobe_path, &request.input_path)
-        .await
-        .ok();
+    let duration_us = parse_duration_us_from_probe_json(&probe_json)
+        .ok()
+        .flatten();
     let total_frames = (request.video.mode != "disable")
         .then(|| resolve_primary_video_total_frames(&streams, duration_us))
         .flatten();
@@ -969,10 +986,13 @@ pub(crate) async fn transcode_media(
         guard.insert(request.input_path.clone(), request.output_path.clone());
     }
 
+    let (activity_tx, activity_rx) = tokio::sync::mpsc::unbounded_channel();
+
     if let Some(stdout) = child.stdout.take() {
         let app_for_progress = app.clone();
         let input_path_for_progress = request.input_path.clone();
         let output_path_for_progress = request.output_path.clone();
+        let activity_tx_for_progress = activity_tx.clone();
 
         tokio::spawn(async move {
             let mut tracker = FfmpegProgressTracker::with_total_frames(duration_us, total_frames);
@@ -982,6 +1002,10 @@ pub(crate) async fn transcode_media(
 
             while let Ok(Some(line)) = lines.next_line().await {
                 if let Some(update) = tracker.handle_line(&line) {
+                    if update.advanced {
+                        let _ = activity_tx_for_progress.send(());
+                    }
+
                     if let Some(progress) = update.progress {
                         last_progress = progress;
                     }
@@ -1001,39 +1025,27 @@ pub(crate) async fn transcode_media(
         });
     }
 
+    drop(activity_tx);
+
     let input_path_for_cleanup = request.input_path.clone();
     let output_path_for_cleanup = request.output_path.clone();
-    let child_pid = child.id();
-    let output = match timeout(TRANSCODE_TIMEOUT, child.wait_with_output()).await {
-        Ok(result) => result.map_err(|error| {
-            if let Ok(mut guard) = super::state::TRANSCODE_PROCESS_IDS.lock() {
-                guard.remove(&input_path_for_cleanup);
-            }
-            if let Ok(mut guard) = super::state::TRANSCODE_OUTPUT_PATHS.lock() {
-                guard.remove(&input_path_for_cleanup);
-            }
-            let _ = std::fs::remove_file(&output_path_for_cleanup);
-            format!("Failed to execute ffmpeg: {}", error)
-        })?,
-        Err(_) => {
-            if let Some(pid) = child_pid {
-                terminate_process(pid);
-                tokio::time::sleep(Duration::from_millis(200)).await;
-            }
-
-            if let Ok(mut guard) = super::state::TRANSCODE_PROCESS_IDS.lock() {
-                guard.remove(&input_path_for_cleanup);
-            }
-            if let Ok(mut guard) = super::state::TRANSCODE_OUTPUT_PATHS.lock() {
-                guard.remove(&input_path_for_cleanup);
-            }
-            let _ = std::fs::remove_file(&output_path_for_cleanup);
-            return Err(format!(
-                "Transcode timeout after {} seconds",
-                TRANSCODE_TIMEOUT.as_secs()
-            ));
+    let output = wait_with_output_progress_watchdog(
+        child,
+        "Transcode",
+        activity_rx,
+        LONG_FFMPEG_PROGRESS_TIMEOUT,
+    )
+    .await
+    .map_err(|error| {
+        if let Ok(mut guard) = super::state::TRANSCODE_PROCESS_IDS.lock() {
+            guard.remove(&input_path_for_cleanup);
         }
-    };
+        if let Ok(mut guard) = super::state::TRANSCODE_OUTPUT_PATHS.lock() {
+            guard.remove(&input_path_for_cleanup);
+        }
+        let _ = std::fs::remove_file(&output_path_for_cleanup);
+        error
+    })?;
 
     if let Ok(mut guard) = super::state::TRANSCODE_PROCESS_IDS.lock() {
         guard.remove(&request.input_path);

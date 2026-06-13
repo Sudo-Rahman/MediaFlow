@@ -1364,6 +1364,42 @@ describe('AI translation ASS visual text planning', () => {
     expect(retryPrompt.cues.map(cue => cue.id)).toEqual(['SRT_0']);
   });
 
+  it('accepts reordered SRT inline placeholders when every placeholder is preserved', async () => {
+    const { translateSubtitle } = await import('./translation');
+    const content = [
+      '0',
+      '00:00:01,000 --> 00:00:02,000',
+      '<i>Hello</i> and <b>goodbye</b>',
+    ].join('\n');
+
+    callLlmMock.mockResolvedValue({
+      content: JSON.stringify({
+        cues: [
+          {
+            id: 'SRT_0',
+            translatedText: '⟦HTML_2⟧au revoir⟦HTML_3⟧ et ⟦HTML_0⟧bonjour⟦HTML_1⟧',
+          },
+        ],
+      }),
+    });
+
+    const result = await translateSubtitle(
+      { name: 'reordered-inline-tags.srt', path: '/subs/reordered-inline-tags.srt', content, format: 'srt', size: 1 },
+      'openai',
+      'gpt-test',
+      'en',
+      'fr'
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.translatedContent).toContain('<b>au revoir</b> et <i>bonjour</i>');
+    expect(result.error).toBeUndefined();
+    expect(callLlmMock).toHaveBeenCalledTimes(1);
+
+    const prompt = parseUserPromptPayload(callLlmMock.mock.calls[0][0].userPrompt);
+    expect(prompt.cues[0]).not.toHaveProperty('sourceFormat');
+  });
+
   it('leaves invalid retry translations unresolved instead of replacing the cue', async () => {
     const { translateSubtitle } = await import('./translation');
     const content = [

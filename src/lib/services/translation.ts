@@ -264,6 +264,10 @@ interface VisualSignatureGroup {
   occurrences: VisualCueOccurrence[];
 }
 
+interface TranslationPromptCue extends TranslationCue {
+  sourceFormat: Cue['format'];
+}
+
 interface TranslationCuePlan {
   passthroughCues: TranslatedCue[];
   themeCueOccurrences: ThemeCueOccurrence[];
@@ -273,12 +277,12 @@ interface TranslationCuePlan {
 }
 
 interface ThemePromptPlan {
-  promptCues: TranslationCue[];
+  promptCues: TranslationPromptCue[];
   groupByPromptId: Map<string, ThemeSignatureGroup>;
 }
 
 interface VisualPromptPlan {
-  promptCues: TranslationCue[];
+  promptCues: TranslationPromptCue[];
   groupByPromptId: Map<string, VisualSignatureGroup>;
 }
 
@@ -303,7 +307,7 @@ interface TranslationRetryRequest extends TranslationRequest {
 }
 
 interface RetryTranslationAttemptOptions {
-  request: AiCueRetryRequest<TranslationCue, TranslationRetryContextCue>;
+  request: AiCueRetryRequest<TranslationPromptCue, TranslationRetryContextCue>;
   provider: LLMProvider;
   apiKey: string;
   model: string;
@@ -323,7 +327,7 @@ interface TranslationResponseParseResult {
 }
 
 interface CollectValidTranslationsOptions {
-  requestedCues: readonly TranslationCue[];
+  requestedCues: readonly TranslationPromptCue[];
   returnedCues: readonly TranslatedCue[];
   phaseLabel: string;
   logContext: Record<string, string>;
@@ -1221,7 +1225,7 @@ function splitIntoNBatches<T>(array: T[], batchCount: number): T[][] {
  * Build translation request from parsed subtitle
  */
 function buildTranslationRequest(
-  cues: TranslationCue[],
+  cues: readonly TranslationCue[],
   sourceLang: LanguageCode,
   targetLang: LanguageCode
 ): TranslationRequest {
@@ -1234,12 +1238,12 @@ function buildTranslationRequest(
       noMerging: true,
       noSplitting: true
     },
-    cues
+    cues: cues.map(cue => ({ id: cue.id, text: cue.text }))
   };
 }
 
 function buildTranslationRetryRequest(
-  request: AiCueRetryRequest<TranslationCue, TranslationRetryContextCue>,
+  request: AiCueRetryRequest<TranslationPromptCue, TranslationRetryContextCue>,
   sourceLang: LanguageCode,
   targetLang: LanguageCode
 ): TranslationRetryRequest {
@@ -1251,22 +1255,24 @@ function buildTranslationRetryRequest(
   };
 }
 
-function buildPromptCuesFromParsedCues(cues: Cue[]): TranslationCue[] {
+function buildPromptCuesFromParsedCues(cues: Cue[]): TranslationPromptCue[] {
   return cues.map(cue => ({
     id: cue.id,
-    text: cue.textSkeleton
+    text: cue.textSkeleton,
+    sourceFormat: cue.format
   }));
 }
 
 function buildThemePromptPlan(groups: ThemeSignatureGroup[]): ThemePromptPlan {
-  const promptCues: TranslationCue[] = [];
+  const promptCues: TranslationPromptCue[] = [];
   const groupByPromptId = new Map<string, ThemeSignatureGroup>();
 
   groups.forEach((group, index) => {
     const promptId = `THEME_${index.toString(36)}`;
     promptCues.push({
       id: promptId,
-      text: group.canonicalSkeleton
+      text: group.canonicalSkeleton,
+      sourceFormat: group.occurrences[0]?.cue.format ?? 'ass'
     });
     groupByPromptId.set(promptId, group);
   });
@@ -1275,14 +1281,15 @@ function buildThemePromptPlan(groups: ThemeSignatureGroup[]): ThemePromptPlan {
 }
 
 function buildVisualPromptPlan(groups: VisualSignatureGroup[]): VisualPromptPlan {
-  const promptCues: TranslationCue[] = [];
+  const promptCues: TranslationPromptCue[] = [];
   const groupByPromptId = new Map<string, VisualSignatureGroup>();
 
   groups.forEach((group, index) => {
     const promptId = `VISUAL_${index.toString(36)}`;
     promptCues.push({
       id: promptId,
-      text: group.promptText
+      text: group.promptText,
+      sourceFormat: group.occurrences[0]?.cue.format ?? 'ass'
     });
     groupByPromptId.set(promptId, group);
   });
@@ -1395,7 +1402,7 @@ function extractPromptPlaceholders(text: string): Cue['placeholders'] {
   }));
 }
 
-function buildValidationCueFromPromptCue(cue: TranslationCue): Cue {
+function buildValidationCueFromPromptCue(cue: TranslationPromptCue): Cue {
   return {
     id: cue.id,
     startMs: 0,
@@ -1403,7 +1410,7 @@ function buildValidationCueFromPromptCue(cue: TranslationCue): Cue {
     textOriginal: cue.text,
     textSkeleton: cue.text,
     placeholders: extractPromptPlaceholders(cue.text),
-    format: 'ass',
+    format: cue.sourceFormat,
   };
 }
 
@@ -1743,7 +1750,7 @@ function buildCancelledResult(file: SubtitleFile): TranslationResult {
 }
 
 interface TranslatePromptCueBatchesOptions {
-  promptCues: TranslationCue[];
+  promptCues: TranslationPromptCue[];
   provider: LLMProvider;
   apiKey: string;
   model: string;
@@ -1803,7 +1810,7 @@ async function translatePromptCueBatches(
   }
 
   const translateBatch = async (
-    batch: TranslationCue[],
+    batch: TranslationPromptCue[],
     batchIndex: number
   ): Promise<BatchResult> => {
     if (signal?.aborted) {
@@ -2538,7 +2545,7 @@ export async function translateSubtitle(
           logContext
         );
 
-        const retryResult = await runAiCueRetries<TranslationCue, TranslatedCue, TranslationRetryContextCue>({
+        const retryResult = await runAiCueRetries<TranslationPromptCue, TranslatedCue, TranslationRetryContextCue>({
           allCues: retryPromptCues,
           initialReplacements: retryContextReplacements,
           initialUnresolvedIds: mainResult.failedIds,

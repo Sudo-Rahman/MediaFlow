@@ -238,4 +238,35 @@ describe('video OCR AI cleanup', () => {
     expect(result.error).toContain('response truncated');
     expect(callLlmMock).toHaveBeenCalledTimes(2);
   });
+
+  it('keeps accepted Video OCR cleanup corrections when a retry response is truncated', async () => {
+    const originalSubtitles = [
+      subtitle({ id: 'sub-1', text: 'HeIIo', startTime: 1000, endTime: 2000 }),
+      subtitle({ id: 'sub-2', text: 'wor1d', startTime: 2200, endTime: 3200 }),
+    ];
+    callLlmMock
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          cues: [responseCue('sub-1', 'Hello')],
+        }),
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+      .mockResolvedValueOnce({
+        content: '{"cues":[]}',
+        truncated: true,
+        usage: { promptTokens: 6, completionTokens: 2, totalTokens: 8 },
+      });
+    const { cleanupOcrSubtitlesWithAi } = await import('./ocr-ai-cleanup');
+
+    const result = await cleanupOcrSubtitlesWithAi(originalSubtitles, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      maxGapMs: 250,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.subtitles.map((cue) => cue.text)).toEqual(['Hello', 'wor1d']);
+    expect(result.error).toContain('response truncated');
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
+  });
 });

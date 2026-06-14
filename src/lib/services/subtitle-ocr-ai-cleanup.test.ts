@@ -462,6 +462,65 @@ describe('subtitle OCR AI cleanup', () => {
     expect(callLlmMock).toHaveBeenCalledTimes(3);
   });
 
+  it('keeps valid initial Subtitle OCR corrections when another cue is malformed', async () => {
+    const originalCues = [
+      cue({ id: 'cue-1', text: 'HeIIo' }),
+      cue({ id: 'cue-2', text: 'wor1d' }),
+    ];
+    callLlmMock
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          cues: [
+            responseCue('0', 'Hello'),
+            { id: '1' },
+          ],
+        }),
+        usage: { promptTokens: 8, completionTokens: 2, totalTokens: 10 },
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ cues: [responseCue('1', 'world')] }),
+        usage: { promptTokens: 4, completionTokens: 2, totalTokens: 6 },
+      });
+    const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.cues.map((resultCue) => resultCue.text)).toEqual(['Hello', 'world']);
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
+
+    const retryPrompt = parsePromptPayload(callLlmMock.mock.calls[1][0].userPrompt);
+    expect(retryPrompt.cues.map((promptCue) => promptCue.id)).toEqual(['1']);
+  });
+
+  it('stops retrying Subtitle OCR cleanup cues after a truncated retry response', async () => {
+    const originalCues = [cue({ id: 'cue-1', text: 'HeIIo' })];
+    callLlmMock
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ cues: [] }),
+        usage: { promptTokens: 8, completionTokens: 1, totalTokens: 9 },
+      })
+      .mockResolvedValueOnce({
+        content: '{"cues":[]}',
+        truncated: true,
+        usage: { promptTokens: 6, completionTokens: 2, totalTokens: 8 },
+      });
+    const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.cues.map((resultCue) => resultCue.text)).toEqual(['HeIIo']);
+    expect(result.error).toContain('response truncated');
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
+  });
+
   it('recovers an initial provider error with retry corrections', async () => {
     const originalCues = [
       cue({ id: 'cue-1', sourceCueIds: ['raw-1'], text: 'HeIIo' }),

@@ -175,4 +175,67 @@ describe('video OCR AI cleanup', () => {
     expect(result.error).toContain('1 cue(s) remained unchanged');
     expect(callLlmMock).toHaveBeenCalledTimes(3);
   });
+
+  it('keeps valid initial corrections when another OCR cleanup cue is malformed', async () => {
+    const originalSubtitles = [
+      subtitle({ id: 'sub-1', text: 'HeIIo', startTime: 1000, endTime: 2000 }),
+      subtitle({ id: 'sub-2', text: 'wor1d', startTime: 2200, endTime: 3200 }),
+    ];
+    callLlmMock
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          cues: [
+            responseCue('sub-1', 'Hello'),
+            { id: 'sub-2' },
+          ],
+        }),
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          cues: [responseCue('sub-2', 'world')],
+        }),
+        usage: { promptTokens: 7, completionTokens: 3, totalTokens: 10 },
+      });
+    const { cleanupOcrSubtitlesWithAi } = await import('./ocr-ai-cleanup');
+
+    const result = await cleanupOcrSubtitlesWithAi(originalSubtitles, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      maxGapMs: 250,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.subtitles.map((cue) => cue.text)).toEqual(['Hello', 'world']);
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
+
+    const retryPrompt = parsePromptPayload(callLlmMock.mock.calls[1][0].userPrompt);
+    expect(retryPrompt.cues.map((cue) => cue.id)).toEqual(['sub-2']);
+  });
+
+  it('stops retrying Video OCR cleanup cues after a truncated retry response', async () => {
+    const originalSubtitles = [subtitle({ id: 'sub-1', text: 'HeIIo' })];
+    callLlmMock
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ cues: [] }),
+        usage: { promptTokens: 8, completionTokens: 1, totalTokens: 9 },
+      })
+      .mockResolvedValueOnce({
+        content: '{"cues":[]}',
+        truncated: true,
+        usage: { promptTokens: 6, completionTokens: 2, totalTokens: 8 },
+      });
+    const { cleanupOcrSubtitlesWithAi } = await import('./ocr-ai-cleanup');
+
+    const result = await cleanupOcrSubtitlesWithAi(originalSubtitles, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      maxGapMs: 250,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.subtitles.map((cue) => cue.text)).toEqual(['HeIIo']);
+    expect(result.error).toContain('response truncated');
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
+  });
 });

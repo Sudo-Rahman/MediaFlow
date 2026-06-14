@@ -134,21 +134,28 @@ function parseCleanupResponse(responseText: string): OcrCleanupParsedResponse | 
     }
 
     const cues: OcrCleanupParsedResponse['cues'] = [];
+    let malformedCueCount = 0;
     for (const cue of parsed.cues) {
       if (!isRecord(cue)) {
-        return null;
+        malformedCueCount += 1;
+        continue;
       }
 
       const id = stringField(cue, ['id', 'ID']);
       const correctedText = stringField(cue, ['correctedText', 'corrected_text', 'text']);
       if (!id?.trim() || correctedText === null) {
-        return null;
+        malformedCueCount += 1;
+        continue;
       }
 
       cues.push({
         id: id.trim(),
         correctedText: correctedText.trim(),
       });
+    }
+
+    if (cues.length === 0 && malformedCueCount > 0) {
+      return null;
     }
 
     return { cues };
@@ -498,6 +505,7 @@ export async function cleanupOcrSubtitlesWithAi(
             unresolvedIds: new Set(request.requestedCues.map((cue) => cue.id)),
             usage: response.usage,
             warning: `Retry attempt ${request.attempt}: response truncated`,
+            terminal: true,
           };
         }
 

@@ -1313,6 +1313,37 @@ describe('AI translation ASS visual text planning', () => {
     expect(firstRetryPrompt.cues.map(cue => cue.id)).toEqual(['SRT_0', 'SRT_1']);
   });
 
+  it('fails when no main translation cue is accepted after retries', async () => {
+    const { translateSubtitle } = await import('./translation');
+    const content = [
+      '0',
+      '00:00:01,000 --> 00:00:02,000',
+      'First line.',
+      '',
+      '1',
+      '00:00:02,000 --> 00:00:03,000',
+      'Second line.',
+    ].join('\n');
+
+    callLlmMock.mockResolvedValue({
+      content: JSON.stringify({ cues: [] }),
+      usage: { promptTokens: 5, completionTokens: 1, totalTokens: 6 },
+    });
+
+    const result = await translateSubtitle(
+      { name: 'all-unresolved.srt', path: '/subs/all-unresolved.srt', content, format: 'srt', size: 1 },
+      'openai',
+      'gpt-test',
+      'en',
+      'fr'
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.translatedContent).toBe('');
+    expect(result.error).toContain('No main translation cues were accepted');
+    expect(callLlmMock).toHaveBeenCalledTimes(3);
+  });
+
   it('retries empty initial translations instead of accepting them', async () => {
     const { translateSubtitle } = await import('./translation');
     const content = [
@@ -1435,10 +1466,10 @@ describe('AI translation ASS visual text planning', () => {
       'fr'
     );
 
-    expect(result.success).toBe(true);
-    expect(result.translatedContent).toContain('<i>Hello there.</i>');
+    expect(result.success).toBe(false);
+    expect(result.translatedContent).toBe('');
     expect(result.translatedContent).not.toContain('Bonjour.');
-    expect(result.error).toContain('1 cue(s) remained unchanged');
+    expect(result.error).toContain('No main translation cues were accepted');
     expect(callLlmMock).toHaveBeenCalledTimes(3);
   });
 

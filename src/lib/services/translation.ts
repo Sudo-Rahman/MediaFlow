@@ -2585,6 +2585,20 @@ export async function translateSubtitle(
         }
       }
 
+      if (translatedMainCues.length === 0) {
+        return {
+          originalFile: file,
+          translatedContent: '',
+          success: false,
+          error: [
+            initialMainErrorWarning,
+            'No main translation cues were accepted after retry attempts.',
+          ].filter((warning): warning is string => Boolean(warning)).join(' '),
+          truncated: mainResult.truncated,
+          usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
+        };
+      }
+
       unresolvedMainCueWarning = [
         initialMainErrorWarning,
         unresolvedMainCueWarning,

@@ -160,17 +160,23 @@ export function parseSubtitleOcrCleanupResponse(content: string): SubtitleOcrCle
   }
 
   const corrections: SubtitleOcrCleanupCorrection[] = [];
+  let malformedCueCount = 0;
   for (const cue of parsed.cues) {
     const correction = parseCleanupCorrection(cue);
     if (!correction) {
-      return {
-        success: false,
-        corrections: [],
-        error: 'Invalid AI cleanup response',
-      };
+      malformedCueCount += 1;
+      continue;
     }
 
     corrections.push(correction);
+  }
+
+  if (corrections.length === 0 && malformedCueCount > 0) {
+    return {
+      success: false,
+      corrections: [],
+      error: 'Invalid AI cleanup response',
+    };
   }
 
   return {
@@ -583,6 +589,7 @@ export async function cleanupSubtitleOcrCuesWithAi(
               unresolvedIds,
               usage: retryResponse.usage,
               warning: `Retry attempt ${request.attempt}: response truncated`,
+              terminal: true,
             };
           }
 

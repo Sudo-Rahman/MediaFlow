@@ -28,6 +28,7 @@ import {
   upsertThemeMemoryEntries
 } from './translation-memory';
 import {
+  isTokenOrContextLimitError,
   runAiCueRetries,
   type AiCueRetryAttemptResult,
   type AiCueRetryContextCue,
@@ -1314,30 +1315,6 @@ Return ONLY the translated cues requested in "cues"; never return contextCues.
 ${JSON.stringify(request)}`;
 }
 
-function isTokenOrContextLimitError(error: string | undefined): boolean {
-  if (!error) {
-    return false;
-  }
-
-  const normalized = error.toLowerCase();
-  return [
-    'context_length',
-    'context length',
-    'context window',
-    'maximum context',
-    'max context',
-    'too many tokens',
-    'token limit',
-    'tokens limit',
-    'maximum token',
-    'max token',
-    'input is too long',
-    'input length',
-    'prompt is too long',
-    'request too large',
-  ].some(marker => normalized.includes(marker));
-}
-
 /**
  * Build the full prompt (system + user) for token counting
  * This represents the actual text that will be sent to the LLM
@@ -2585,7 +2562,13 @@ export async function translateSubtitle(
         }
       }
 
-      if (translatedMainCues.length === 0) {
+      const acceptedAiTranslationCount = (
+        translatedThemeCues.length
+        + translatedVisualCues.length
+        + translatedMainCues.length
+      );
+
+      if (acceptedAiTranslationCount === 0) {
         return {
           originalFile: file,
           translatedContent: '',

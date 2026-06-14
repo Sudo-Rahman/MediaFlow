@@ -1537,4 +1537,47 @@ describe('AI translation ASS visual text planning', () => {
     expect(retryPrompt.contextCues?.map(cue => cue.id)).not.toContain(retryTargetIds[1]);
     expect(visualContextCue?.translatedText).toContain('SORTIE');
   });
+
+  it('keeps accepted visual preflight translations when fallback retry remains unresolved', async () => {
+    const { translateSubtitle } = await import('./translation');
+    const content = buildAssWithEvents([
+      'Dialogue: 0,0:00:01.00,0:00:02.00,SignTS,,0,0,0,,EXIT',
+      'Dialogue: 0,0:00:02.00,0:00:03.00,SignTS,,0,0,0,,WARNING',
+    ]);
+
+    callLlmMock.mockImplementation(async (request: { userPrompt: string }) => {
+      const prompt = parseUserPromptPayload(request.userPrompt);
+      const callNumber = callLlmMock.mock.calls.length;
+
+      if (callNumber === 1) {
+        return {
+          content: JSON.stringify({
+            cues: prompt.cues
+              .filter(cue => cue.text === 'EXIT')
+              .map(cue => ({ id: cue.id, translatedText: 'SORTIE' })),
+          }),
+          usage: { promptTokens: 8, completionTokens: 2, totalTokens: 10 },
+        };
+      }
+
+      return {
+        content: JSON.stringify({ cues: [] }),
+        usage: { promptTokens: 6, completionTokens: 1, totalTokens: 7 },
+      };
+    });
+
+    const result = await translateSubtitle(
+      { name: 'visual-preflight-partial.ass', path: '/subs/visual-preflight-partial.ass', content, format: 'ass', size: 1 },
+      'openai',
+      'gpt-test',
+      'en',
+      'fr'
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.translatedContent).toContain('SORTIE');
+    expect(result.translatedContent).toContain('WARNING');
+    expect(result.error).toContain('1 cue(s) remained unchanged');
+    expect(callLlmMock).toHaveBeenCalledTimes(4);
+  });
 });

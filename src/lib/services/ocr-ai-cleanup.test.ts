@@ -269,4 +269,30 @@ describe('video OCR AI cleanup', () => {
     expect(result.error).toContain('response truncated');
     expect(callLlmMock).toHaveBeenCalledTimes(2);
   });
+
+  it('stops retrying Video OCR cleanup cues after a context-limit retry error', async () => {
+    const originalSubtitles = [subtitle({ id: 'sub-1', text: 'HeIIo' })];
+    callLlmMock
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ cues: [] }),
+        usage: { promptTokens: 8, completionTokens: 1, totalTokens: 9 },
+      })
+      .mockResolvedValueOnce({
+        content: '',
+        error: 'context_length exceeded',
+        usage: { promptTokens: 6, completionTokens: 0, totalTokens: 6 },
+      });
+    const { cleanupOcrSubtitlesWithAi } = await import('./ocr-ai-cleanup');
+
+    const result = await cleanupOcrSubtitlesWithAi(originalSubtitles, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      maxGapMs: 250,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.subtitles.map((cue) => cue.text)).toEqual(['HeIIo']);
+    expect(result.error).toContain('context_length exceeded');
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
+  });
 });

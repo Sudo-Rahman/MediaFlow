@@ -3,6 +3,30 @@ import type { LlmUsage } from './llm-client';
 export const AI_CUE_RETRY_LIMIT = 2;
 export const AI_CUE_CONTEXT_RADIUS = 2;
 
+export function isTokenOrContextLimitError(error: string | undefined): boolean {
+  if (!error) {
+    return false;
+  }
+
+  const normalized = error.toLowerCase();
+  return [
+    'context_length',
+    'context length',
+    'context window',
+    'maximum context',
+    'max context',
+    'too many tokens',
+    'token limit',
+    'tokens limit',
+    'maximum token',
+    'max token',
+    'input is too long',
+    'input length',
+    'prompt is too long',
+    'request too large',
+  ].some(marker => normalized.includes(marker));
+}
+
 export interface AiCueRetryCue {
   id: string;
   text: string;

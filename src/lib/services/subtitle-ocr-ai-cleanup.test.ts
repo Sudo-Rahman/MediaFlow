@@ -549,6 +549,31 @@ describe('subtitle OCR AI cleanup', () => {
     expect(callLlmMock).toHaveBeenCalledTimes(2);
   });
 
+  it('stops retrying Subtitle OCR cleanup cues after a context-limit retry error', async () => {
+    const originalCues = [cue({ id: 'cue-1', text: 'HeIIo' })];
+    callLlmMock
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ cues: [] }),
+        usage: { promptTokens: 8, completionTokens: 1, totalTokens: 9 },
+      })
+      .mockResolvedValueOnce({
+        content: '',
+        error: 'context_length exceeded',
+        usage: { promptTokens: 6, completionTokens: 0, totalTokens: 6 },
+      });
+    const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.cues.map((resultCue) => resultCue.text)).toEqual(['HeIIo']);
+    expect(result.error).toContain('context_length exceeded');
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
+  });
+
   it('recovers an initial provider error with retry corrections', async () => {
     const originalCues = [
       cue({ id: 'cue-1', sourceCueIds: ['raw-1'], text: 'HeIIo' }),

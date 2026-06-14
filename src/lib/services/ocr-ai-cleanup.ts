@@ -3,6 +3,7 @@ import { LLM_PROVIDERS } from '$lib/types';
 import type { LLMProvider, OcrSubtitle } from '$lib/types';
 import { normalizeOcrSubtitles } from '$lib/utils/ocr-subtitle-adapter';
 import {
+  isTokenOrContextLimitError,
   runAiCueRetries,
   type AiCueRetryContextCue,
   type AiCueRetryRequest,
@@ -491,11 +492,13 @@ export async function cleanupOcrSubtitlesWithAi(
         }
 
         if (response.error) {
+          const terminal = isTokenOrContextLimitError(response.error);
           return {
             replacements: [],
             unresolvedIds: new Set(request.requestedCues.map((cue) => cue.id)),
             usage: response.usage,
             warning: `Retry attempt ${request.attempt} failed: ${response.error}`,
+            terminal,
           };
         }
 

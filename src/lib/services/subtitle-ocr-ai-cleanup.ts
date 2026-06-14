@@ -2,6 +2,7 @@ import { settingsStore } from '$lib/stores';
 import { LLM_PROVIDERS } from '$lib/types';
 import type { LLMProvider, SubtitleOcrCue } from '$lib/types';
 import {
+  isTokenOrContextLimitError,
   runAiCueRetries,
   type AiCueRetryContextCue,
   type AiCueRetryRequest,
@@ -575,11 +576,13 @@ export async function cleanupSubtitleOcrCuesWithAi(
           }
 
           if (retryResponse.error) {
+            const terminal = isTokenOrContextLimitError(retryResponse.error);
             return {
               replacements: [],
               unresolvedIds,
               usage: retryResponse.usage,
               warning: `Retry attempt ${request.attempt} failed: ${retryResponse.error}`,
+              terminal,
             };
           }
 

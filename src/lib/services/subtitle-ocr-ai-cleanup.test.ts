@@ -46,6 +46,63 @@ function lastLlmUserPrompt(): string {
   return request.userPrompt;
 }
 
+interface PromptCue {
+  id: string;
+  text: string;
+}
+
+interface PromptContextCue extends PromptCue {
+  correctedText?: string;
+  position: 'before' | 'after';
+  spanIndex: number;
+}
+
+interface PromptPayload {
+  cues: PromptCue[];
+  contextCues?: PromptContextCue[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isPromptCue(value: unknown): value is PromptCue {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && typeof value.text === 'string';
+}
+
+function isPromptContextCue(value: unknown): value is PromptContextCue {
+  return isRecord(value)
+    && isPromptCue(value)
+    && (value.position === 'before' || value.position === 'after')
+    && typeof value.spanIndex === 'number';
+}
+
+function isPromptPayload(value: unknown): value is PromptPayload {
+  if (!isRecord(value) || !Array.isArray(value.cues) || !value.cues.every(isPromptCue)) {
+    return false;
+  }
+
+  return value.contextCues === undefined
+    || (Array.isArray(value.contextCues) && value.contextCues.every(isPromptContextCue));
+}
+
+function parsePromptPayload(prompt: string): PromptPayload {
+  const startIndex = prompt.lastIndexOf('\n{');
+  const endIndex = prompt.lastIndexOf('}');
+  if (startIndex === -1 || endIndex === -1 || endIndex <= startIndex + 1) {
+    throw new Error('Expected prompt to contain JSON payload');
+  }
+
+  const parsed: unknown = JSON.parse(prompt.slice(startIndex + 1, endIndex + 1));
+  if (!isPromptPayload(parsed)) {
+    throw new Error('Expected prompt payload with cues');
+  }
+
+  return parsed;
+}
+
 describe('subtitle OCR AI cleanup', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -335,13 +392,122 @@ describe('subtitle OCR AI cleanup', () => {
     });
   });
 
-  it('returns original cues when AI omits corrected cues', async () => {
-    const originalCues = [cue({ id: 'cue-1' }), cue({ id: 'cue-2' })];
-    const usage = { promptTokens: 8, completionTokens: 2, totalTokens: 10 };
-    callLlmMock.mockResolvedValue({
-      content: JSON.stringify({ cues: [responseCue('0', 'Hello world.')] }),
-      usage,
+  it('keeps valid initial corrections and retries only omitted short cue IDs', async () => {
+    const originalCues = [
+      cue({ id: 'cue-1', sourceCueIds: ['raw-1'], text: 'HeIIo' }),
+      cue({ id: 'cue-2', sourceCueIds: ['raw-2'], text: 'wor1d' }),
+      cue({ id: 'cue-3', sourceCueIds: ['raw-3'], text: 'aga1n' }),
+    ];
+    callLlmMock
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          cues: [
+            responseCue('0', 'Hello'),
+            responseCue('2', 'again'),
+          ],
+        }),
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          cues: [responseCue('1', 'world')],
+        }),
+        usage: { promptTokens: 7, completionTokens: 3, totalTokens: 10 },
+      });
+    const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
     });
+
+    expect(result.success).toBe(true);
+    expect(result.cues.map((resultCue) => resultCue.text)).toEqual(['Hello', 'world', 'again']);
+    expect(result.usage).toEqual({ promptTokens: 17, completionTokens: 8, totalTokens: 25 });
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
+
+    const retryPrompt = parsePromptPayload(callLlmMock.mock.calls[1][0].userPrompt);
+    expect(retryPrompt.cues.map((promptCue) => promptCue.id)).toEqual(['1']);
+    expect(retryPrompt.contextCues?.map((promptCue) => promptCue.id)).not.toContain('1');
+    expect(retryPrompt.contextCues?.map((promptCue) => promptCue.id)).toEqual(['0', '2']);
+    expect(retryPrompt.contextCues?.some((promptCue) => 'correctedText' in promptCue)).toBe(false);
+  });
+
+  it('keeps corrected cues and original text for cues still unresolved after retries', async () => {
+    const originalCues = [cue({ id: 'cue-1' }), cue({ id: 'cue-2' })];
+    callLlmMock
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ cues: [responseCue('0', 'Hello world.')] }),
+        usage: { promptTokens: 8, completionTokens: 2, totalTokens: 10 },
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ cues: [] }),
+        usage: { promptTokens: 4, completionTokens: 1, totalTokens: 5 },
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ cues: [] }),
+        usage: { promptTokens: 3, completionTokens: 1, totalTokens: 4 },
+      });
+    const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.cues.map((resultCue) => resultCue.text)).toEqual(['Hello world.', 'HeIIo wor1d']);
+    expect(result.error).toContain('1 cue(s) remained unchanged');
+    expect(result.usage).toEqual({ promptTokens: 15, completionTokens: 4, totalTokens: 19 });
+    expect(callLlmMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps valid initial Subtitle OCR corrections when another cue is malformed', async () => {
+    const originalCues = [
+      cue({ id: 'cue-1', text: 'HeIIo' }),
+      cue({ id: 'cue-2', text: 'wor1d' }),
+    ];
+    callLlmMock
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          cues: [
+            responseCue('0', 'Hello'),
+            { id: '1' },
+          ],
+        }),
+        usage: { promptTokens: 8, completionTokens: 2, totalTokens: 10 },
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ cues: [responseCue('1', 'world')] }),
+        usage: { promptTokens: 4, completionTokens: 2, totalTokens: 6 },
+      });
+    const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.cues.map((resultCue) => resultCue.text)).toEqual(['Hello', 'world']);
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
+
+    const retryPrompt = parsePromptPayload(callLlmMock.mock.calls[1][0].userPrompt);
+    expect(retryPrompt.cues.map((promptCue) => promptCue.id)).toEqual(['1']);
+  });
+
+  it('stops retrying Subtitle OCR cleanup cues after a truncated retry response', async () => {
+    const originalCues = [cue({ id: 'cue-1', text: 'HeIIo' })];
+    callLlmMock
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ cues: [] }),
+        usage: { promptTokens: 8, completionTokens: 1, totalTokens: 9 },
+      })
+      .mockResolvedValueOnce({
+        content: '{"cues":[]}',
+        truncated: true,
+        usage: { promptTokens: 6, completionTokens: 2, totalTokens: 8 },
+      });
     const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
 
     const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
@@ -350,9 +516,124 @@ describe('subtitle OCR AI cleanup', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.cues).toEqual(originalCues);
-    expect(result.error).toContain('missing corrected cues');
-    expect(result.usage).toEqual(usage);
+    expect(result.cues.map((resultCue) => resultCue.text)).toEqual(['HeIIo']);
+    expect(result.error).toContain('response truncated');
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps accepted Subtitle OCR cleanup corrections when a retry response is truncated', async () => {
+    const originalCues = [
+      cue({ id: 'cue-1', text: 'HeIIo' }),
+      cue({ id: 'cue-2', text: 'wor1d' }),
+    ];
+    callLlmMock
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ cues: [responseCue('0', 'Hello')] }),
+        usage: { promptTokens: 8, completionTokens: 2, totalTokens: 10 },
+      })
+      .mockResolvedValueOnce({
+        content: '{"cues":[]}',
+        truncated: true,
+        usage: { promptTokens: 6, completionTokens: 2, totalTokens: 8 },
+      });
+    const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.cues.map((resultCue) => resultCue.text)).toEqual(['Hello', 'wor1d']);
+    expect(result.error).toContain('response truncated');
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops retrying Subtitle OCR cleanup cues after a context-limit retry error', async () => {
+    const originalCues = [cue({ id: 'cue-1', text: 'HeIIo' })];
+    callLlmMock
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ cues: [] }),
+        usage: { promptTokens: 8, completionTokens: 1, totalTokens: 9 },
+      })
+      .mockResolvedValueOnce({
+        content: '',
+        error: 'context_length exceeded',
+        usage: { promptTokens: 6, completionTokens: 0, totalTokens: 6 },
+      });
+    const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.cues.map((resultCue) => resultCue.text)).toEqual(['HeIIo']);
+    expect(result.error).toContain('context_length exceeded');
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('recovers an initial provider error with retry corrections', async () => {
+    const originalCues = [
+      cue({ id: 'cue-1', sourceCueIds: ['raw-1'], text: 'HeIIo' }),
+      cue({ id: 'cue-2', sourceCueIds: ['raw-2'], text: 'wor1d' }),
+    ];
+    callLlmMock
+      .mockResolvedValueOnce({
+        content: '',
+        error: 'Provider unavailable',
+        usage: { promptTokens: 6, completionTokens: 0, totalTokens: 6 },
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          cues: [
+            responseCue('0', 'Hello'),
+            responseCue('1', 'world'),
+          ],
+        }),
+        usage: { promptTokens: 7, completionTokens: 3, totalTokens: 10 },
+      });
+    const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.cues.map((resultCue) => resultCue.text)).toEqual(['Hello', 'world']);
+    expect(result.error).toContain('Provider unavailable');
+    expect(result.usage).toEqual({ promptTokens: 13, completionTokens: 3, totalTokens: 16 });
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
+
+    const retryPrompt = parsePromptPayload(callLlmMock.mock.calls[1][0].userPrompt);
+    expect(retryPrompt.cues.map((promptCue) => promptCue.id)).toEqual(['0', '1']);
+  });
+
+  it('recovers an initial invalid JSON response with retry corrections', async () => {
+    const originalCues = [cue({ id: 'cue-1', text: 'HeIIo' })];
+    callLlmMock
+      .mockResolvedValueOnce({
+        content: '{"cues":[{"id":"0","correctedText":"bad"}]',
+        usage: { promptTokens: 5, completionTokens: 2, totalTokens: 7 },
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({ cues: [responseCue('0', 'Hello')] }),
+        usage: { promptTokens: 4, completionTokens: 2, totalTokens: 6 },
+      });
+    const { cleanupSubtitleOcrCuesWithAi } = await import('./subtitle-ocr-ai-cleanup');
+
+    const result = await cleanupSubtitleOcrCuesWithAi(originalCues, {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.cues.map((resultCue) => resultCue.text)).toEqual(['Hello']);
+    expect(result.error).toContain('Invalid AI cleanup response');
+    expect(result.usage).toEqual({ promptTokens: 9, completionTokens: 4, totalTokens: 13 });
+    expect(callLlmMock).toHaveBeenCalledTimes(2);
   });
 
   it('returns original cues when AI invents a short cue ID', async () => {
@@ -411,7 +692,7 @@ describe('subtitle OCR AI cleanup', () => {
     expect(result.error).toContain('Invalid AI cleanup response');
   });
 
-  it('returns original cues when AI deletes every cue from non-empty input', async () => {
+  it('returns an empty successful result when AI deletes every cue from non-empty input', async () => {
     const originalCues = [cue()];
     callLlmMock.mockResolvedValue({
       content: JSON.stringify({ cues: [responseCue('0', '')] }),
@@ -423,9 +704,9 @@ describe('subtitle OCR AI cleanup', () => {
       model: 'gpt-4o-mini',
     });
 
-    expect(result.success).toBe(false);
-    expect(result.cues).toEqual(originalCues);
-    expect(result.error).toContain('returned no cues');
+    expect(result.success).toBe(true);
+    expect(result.cues).toEqual([]);
+    expect(result.error).toBeUndefined();
   });
 
   it('does not require an API key for the MediaFlow provider', async () => {

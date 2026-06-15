@@ -27,6 +27,13 @@ import {
   touchThemeMemoryEntries,
   upsertThemeMemoryEntries
 } from './translation-memory';
+import {
+  isTokenOrContextLimitError,
+  runAiCueRetries,
+  type AiCueRetryAttemptResult,
+  type AiCueRetryContextCue,
+  type AiCueRetryRequest
+} from './ai-cue-retry';
 
 function getMissingCredentialMessage(provider: LLMProvider): string {
   return provider === 'mediaflow'
@@ -258,6 +265,10 @@ interface VisualSignatureGroup {
   occurrences: VisualCueOccurrence[];
 }
 
+interface TranslationPromptCue extends TranslationCue {
+  sourceFormat: Cue['format'];
+}
+
 interface TranslationCuePlan {
   passthroughCues: TranslatedCue[];
   themeCueOccurrences: ThemeCueOccurrence[];
@@ -267,12 +278,12 @@ interface TranslationCuePlan {
 }
 
 interface ThemePromptPlan {
-  promptCues: TranslationCue[];
+  promptCues: TranslationPromptCue[];
   groupByPromptId: Map<string, ThemeSignatureGroup>;
 }
 
 interface VisualPromptPlan {
-  promptCues: TranslationCue[];
+  promptCues: TranslationPromptCue[];
   groupByPromptId: Map<string, VisualSignatureGroup>;
 }
 
@@ -286,12 +297,46 @@ interface BatchedTranslationResult {
   totalBatches: number;
 }
 
+interface TranslationRetryContextCue extends AiCueRetryContextCue {
+  translatedText?: string;
+}
+
+interface TranslationRetryRequest extends TranslationRequest {
+  retryAttempt: number;
+  contextCues: TranslationRetryContextCue[];
+  instructions: string;
+}
+
+interface RetryTranslationAttemptOptions {
+  request: AiCueRetryRequest<TranslationPromptCue, TranslationRetryContextCue>;
+  provider: LLMProvider;
+  apiKey: string;
+  model: string;
+  sourceLang: LanguageCode;
+  targetLang: LanguageCode;
+  signal?: AbortSignal;
+  logContext: Record<string, string>;
+  phaseLabel: string;
+}
+
 interface TranslationResponseParseResult {
   success: boolean;
   cues: TranslatedCue[];
   error?: string;
   preview?: string;
   warnings: string[];
+}
+
+interface CollectValidTranslationsOptions {
+  requestedCues: readonly TranslationPromptCue[];
+  returnedCues: readonly TranslatedCue[];
+  phaseLabel: string;
+  logContext: Record<string, string>;
+}
+
+interface CollectValidTranslationsResult {
+  cues: TranslatedCue[];
+  unresolvedIds: Set<string>;
 }
 
 function getCanonicalPlaceholderToken(index: number): string {
@@ -1181,7 +1226,7 @@ function splitIntoNBatches<T>(array: T[], batchCount: number): T[][] {
  * Build translation request from parsed subtitle
  */
 function buildTranslationRequest(
-  cues: TranslationCue[],
+  cues: readonly TranslationCue[],
   sourceLang: LanguageCode,
   targetLang: LanguageCode
 ): TranslationRequest {
@@ -1194,26 +1239,41 @@ function buildTranslationRequest(
       noMerging: true,
       noSplitting: true
     },
-    cues
+    cues: cues.map(cue => ({ id: cue.id, text: cue.text }))
   };
 }
 
-function buildPromptCuesFromParsedCues(cues: Cue[]): TranslationCue[] {
+function buildTranslationRetryRequest(
+  request: AiCueRetryRequest<TranslationPromptCue, TranslationRetryContextCue>,
+  sourceLang: LanguageCode,
+  targetLang: LanguageCode
+): TranslationRetryRequest {
+  return {
+    ...buildTranslationRequest(request.requestedCues, sourceLang, targetLang),
+    retryAttempt: request.attempt,
+    contextCues: request.contextCues,
+    instructions: 'Translate every cue in "cues". Use "contextCues" only for continuity and terminology. Do not translate contextCues or include them in the response.'
+  };
+}
+
+function buildPromptCuesFromParsedCues(cues: Cue[]): TranslationPromptCue[] {
   return cues.map(cue => ({
     id: cue.id,
-    text: cue.textSkeleton
+    text: cue.textSkeleton,
+    sourceFormat: cue.format
   }));
 }
 
 function buildThemePromptPlan(groups: ThemeSignatureGroup[]): ThemePromptPlan {
-  const promptCues: TranslationCue[] = [];
+  const promptCues: TranslationPromptCue[] = [];
   const groupByPromptId = new Map<string, ThemeSignatureGroup>();
 
   groups.forEach((group, index) => {
     const promptId = `THEME_${index.toString(36)}`;
     promptCues.push({
       id: promptId,
-      text: group.canonicalSkeleton
+      text: group.canonicalSkeleton,
+      sourceFormat: group.occurrences[0]?.cue.format ?? 'ass'
     });
     groupByPromptId.set(promptId, group);
   });
@@ -1222,14 +1282,15 @@ function buildThemePromptPlan(groups: ThemeSignatureGroup[]): ThemePromptPlan {
 }
 
 function buildVisualPromptPlan(groups: VisualSignatureGroup[]): VisualPromptPlan {
-  const promptCues: TranslationCue[] = [];
+  const promptCues: TranslationPromptCue[] = [];
   const groupByPromptId = new Map<string, VisualSignatureGroup>();
 
   groups.forEach((group, index) => {
     const promptId = `VISUAL_${index.toString(36)}`;
     promptCues.push({
       id: promptId,
-      text: group.promptText
+      text: group.promptText,
+      sourceFormat: group.occurrences[0]?.cue.format ?? 'ass'
     });
     groupByPromptId.set(promptId, group);
   });
@@ -1242,6 +1303,14 @@ function buildVisualPromptPlan(groups: VisualSignatureGroup[]): VisualPromptPlan
  */
 function buildUserPrompt(request: TranslationRequest): string {
   return `Translate the following subtitle cues from ${request.sourceLang} to ${request.targetLang}.
+
+${JSON.stringify(request)}`;
+}
+
+function buildRetryUserPrompt(request: TranslationRetryRequest): string {
+  return `Retry translating unresolved subtitle cues from ${request.sourceLang} to ${request.targetLang}.
+Use nearby context cues for continuity, terminology, speaker voice, and tone.
+Return ONLY the translated cues requested in "cues"; never return contextCues.
 
 ${JSON.stringify(request)}`;
 }
@@ -1298,6 +1367,129 @@ export function buildFullPromptForTokenCount(
   }
 
   return promptParts.join('\n\n');
+}
+
+function extractPromptPlaceholders(text: string): Cue['placeholders'] {
+  const matches = text.match(/⟦[A-Z]+_\d+⟧/g) ?? [];
+
+  return matches.map((token, index) => ({
+    index,
+    token,
+    original: token,
+  }));
+}
+
+function buildValidationCueFromPromptCue(cue: TranslationPromptCue): Cue {
+  return {
+    id: cue.id,
+    startMs: 0,
+    endMs: 0,
+    textOriginal: cue.text,
+    textSkeleton: cue.text,
+    placeholders: extractPromptPlaceholders(cue.text),
+    format: cue.sourceFormat,
+  };
+}
+
+function collectValidTranslatedCues({
+  requestedCues,
+  returnedCues,
+  phaseLabel,
+  logContext,
+}: CollectValidTranslationsOptions): CollectValidTranslationsResult {
+  const requestedById = new Map(requestedCues.map((cue) => [cue.id, cue]));
+  const unresolvedIds = new Set(requestedCues.map((cue) => cue.id));
+  const returnedCounts = new Map<string, number>();
+  const acceptedCues: TranslatedCue[] = [];
+  const unexpectedIds: string[] = [];
+  const duplicateIds = new Set<string>();
+  const invalidIds = new Set<string>();
+
+  for (const cue of returnedCues) {
+    if (!requestedById.has(cue.id)) {
+      unexpectedIds.push(cue.id);
+      continue;
+    }
+
+    returnedCounts.set(cue.id, (returnedCounts.get(cue.id) ?? 0) + 1);
+  }
+
+  for (const [id, count] of returnedCounts.entries()) {
+    if (count > 1) {
+      duplicateIds.add(id);
+      invalidIds.add(id);
+    }
+  }
+
+  for (const cue of returnedCues) {
+    const requestedCue = requestedById.get(cue.id);
+    if (!requestedCue || duplicateIds.has(cue.id)) {
+      continue;
+    }
+
+    const translatedText = (cue as { translatedText?: unknown }).translatedText;
+    if (typeof translatedText !== 'string' || translatedText.trim().length === 0) {
+      invalidIds.add(cue.id);
+      continue;
+    }
+
+    const validation = validateTranslation(
+      [buildValidationCueFromPromptCue(requestedCue)],
+      [{ id: cue.id, translatedText }]
+    );
+    if (!validation.valid) {
+      invalidIds.add(cue.id);
+      continue;
+    }
+
+    acceptedCues.push({ id: cue.id, translatedText });
+    unresolvedIds.delete(cue.id);
+  }
+
+  if (unexpectedIds.length > 0) {
+    log(
+      'warning',
+      'translation',
+      'Ignored unexpected cue IDs from LLM response',
+      `${phaseLabel}: ignored ${unexpectedIds.length} cue(s) with IDs outside the requested group. IDs: ${unexpectedIds.slice(0, 5).join(', ') || '(none)'}`,
+      logContext
+    );
+  }
+
+  if (duplicateIds.size > 0) {
+    log(
+      'warning',
+      'translation',
+      'Ignored duplicate cue IDs from LLM response',
+      `${phaseLabel}: ${duplicateIds.size} cue ID(s) were returned more than once and will be retried. IDs: ${[...duplicateIds].slice(0, 5).join(', ')}`,
+      logContext
+    );
+  }
+
+  if (invalidIds.size > 0) {
+    log(
+      'warning',
+      'translation',
+      'Ignored invalid translations from LLM response',
+      `${phaseLabel}: ${invalidIds.size} cue(s) had empty text or invalid placeholders and will be retried. IDs: ${[...invalidIds].slice(0, 5).join(', ')}`,
+      logContext
+    );
+  }
+
+  if (unresolvedIds.size > 0) {
+    log(
+      'warning',
+      'translation',
+      'Missing or invalid cue IDs from LLM response',
+      `${phaseLabel}: ${unresolvedIds.size} requested cue(s) were not accepted from the model response.`,
+      logContext
+    );
+  }
+
+  return {
+    cues: acceptedCues,
+    unresolvedIds,
+  };
 }
 
 /**
@@ -1362,6 +1554,126 @@ async function parseTranslationResponse(responseText: string, provider: string =
   }
 }
 
+async function runTranslationRetryAttempt(
+  options: RetryTranslationAttemptOptions
+): Promise<AiCueRetryAttemptResult<TranslatedCue>> {
+  const {
+    request,
+    provider,
+    apiKey,
+    model,
+    sourceLang,
+    targetLang,
+    signal,
+    logContext,
+    phaseLabel
+  } = options;
+  const unresolvedIds = () => new Set(request.requestedCues.map(cue => cue.id));
+
+  if (signal?.aborted) {
+    return {
+      replacements: [],
+      unresolvedIds: unresolvedIds(),
+      cancelled: true,
+    };
+  }
+
+  const retryRequest = buildTranslationRetryRequest(request, sourceLang, targetLang);
+  const llmResponse = await callLlm({
+    provider,
+    apiKey,
+    model,
+    systemPrompt: TRANSLATION_SYSTEM_PROMPT,
+    userPrompt: buildRetryUserPrompt(retryRequest),
+    signal,
+    responseMode: 'json',
+    temperature: 0.3,
+    logSource: 'translation',
+  });
+
+  if (signal?.aborted || llmResponse.cancelled || isCancelledError(llmResponse.error)) {
+    return {
+      replacements: [],
+      unresolvedIds: unresolvedIds(),
+      cancelled: true,
+    };
+  }
+
+  if (llmResponse.error) {
+    const terminal = isTokenOrContextLimitError(llmResponse.error);
+    const warning = `${phaseLabel} retry attempt ${request.attempt} failed: ${llmResponse.error}`;
+
+    if (terminal) {
+      log(
+        'warning',
+        'translation',
+        `${phaseLabel} retry stopped`,
+        `Retry attempt ${request.attempt} stopped because the provider reported a token or context limit error.\n\nError: ${llmResponse.error}`,
+        logContext
+      );
+    }
+
+    return {
+      replacements: [],
+      unresolvedIds: unresolvedIds(),
+      usage: llmResponse.usage,
+      warning,
+      terminal,
+    };
+  }
+
+  if (llmResponse.truncated) {
+    const warning = `${phaseLabel} retry attempt ${request.attempt}: Response truncated`;
+    log(
+      'warning',
+      'translation',
+      `${phaseLabel} retry response truncated`,
+      `Retry attempt ${request.attempt} was truncated (finish_reason: ${llmResponse.finishReason}). Remaining unresolved cues will be left unchanged.`,
+      logContext
+    );
+
+    return {
+      replacements: [],
+      unresolvedIds: unresolvedIds(),
+      usage: llmResponse.usage,
+      warning,
+      terminal: true,
+    };
+  }
+
+  if (!llmResponse.content || !llmResponse.content.trim()) {
+    return {
+      replacements: [],
+      unresolvedIds: unresolvedIds(),
+      usage: llmResponse.usage,
+      warning: `${phaseLabel} retry attempt ${request.attempt}: ${provider} returned empty content`,
+    };
+  }
+
+  const translationResponse = await parseTranslationResponse(llmResponse.content, provider);
+  if (!translationResponse) {
+    return {
+      replacements: [],
+      unresolvedIds: unresolvedIds(),
+      usage: llmResponse.usage,
+      warning: `${phaseLabel} retry attempt ${request.attempt}: Failed to parse ${provider} response (check Logs for details)`,
+    };
+  }
+
+  const collected = collectValidTranslatedCues({
+    requestedCues: request.requestedCues,
+    returnedCues: translationResponse.cues,
+    phaseLabel: `${phaseLabel} retry attempt ${request.attempt}`,
+    logContext,
+  });
+
+  return {
+    replacements: collected.cues,
+    unresolvedIds: collected.unresolvedIds,
+    usage: llmResponse.usage,
+  };
+}
+
 // ============================================================================
 // BATCH PROGRESS CALLBACK TYPE
 // ============================================================================
@@ -1415,7 +1727,7 @@ function buildCancelledResult(file: SubtitleFile): TranslationResult {
 }
 
 interface TranslatePromptCueBatchesOptions {
-  promptCues: TranslationCue[];
+  promptCues: TranslationPromptCue[];
   provider: LLMProvider;
   apiKey: string;
   model: string;
@@ -1475,7 +1787,7 @@ async function translatePromptCueBatches(
   }
 
   const translateBatch = async (
-    batch: TranslationCue[],
+    batch: TranslationPromptCue[],
     batchIndex: number
   ): Promise<BatchResult> => {
     if (signal?.aborted) {
@@ -1582,52 +1894,20 @@ async function translatePromptCueBatches(
       };
     }
 
-    const batchIdSet = new Set(batch.map(cue => cue.id));
-    const sanitizedCues = translationResponse.cues.filter(cue => batchIdSet.has(cue.id));
-    const ignoredCueCount = translationResponse.cues.length - sanitizedCues.length;
-
-    if (ignoredCueCount > 0) {
-      const ignoredIds = translationResponse.cues
-        .filter(cue => !batchIdSet.has(cue.id))
-        .map(cue => cue.id)
-        .filter(Boolean);
-
-      log(
-        'warning',
-        'translation',
-        'Ignored unexpected cue IDs from LLM response',
-        `${phaseLabel} batch ${batchIndex + 1}/${totalBatches}: ignored ${ignoredCueCount} cue(s) with IDs outside the requested batch. IDs: ${ignoredIds.slice(0, 5).join(', ') || '(none)'}`,
-        {
-          ...logContext,
-          batchIndex: String(batchIndex + 1)
-        }
-      );
-    }
-
-    const translatedIds = new Set(sanitizedCues.map(cue => cue.id));
-    const failedIds = new Set(
-      batch
-        .map(cue => cue.id)
-        .filter(id => !translatedIds.has(id))
-    );
-
-    if (failedIds.size > 0) {
-      log(
-        'warning',
-        'translation',
-        'Missing cue IDs from LLM response',
-        `${phaseLabel} batch ${batchIndex + 1}/${totalBatches}: ${failedIds.size} requested cue(s) were not returned by the model.`,
-        {
-          ...logContext,
-          batchIndex: String(batchIndex + 1)
-        }
-      );
-    }
+    const collected = collectValidTranslatedCues({
+      requestedCues: batch,
+      returnedCues: translationResponse.cues,
+      phaseLabel: `${phaseLabel} batch ${batchIndex + 1}/${totalBatches}`,
+      logContext: {
+        ...logContext,
+        batchIndex: String(batchIndex + 1)
+      },
+    });
 
     return {
       batchIndex,
-      cues: sanitizedCues,
-      failedIds,
+      cues: collected.cues,
+      failedIds: collected.unresolvedIds,
       usage: llmResponse.usage
     };
   };
@@ -2171,6 +2451,8 @@ export async function translateSubtitle(
 
     const mainPhaseCues = [...cuePlan.mainTranslatableCues, ...unresolvedThemeCues, ...unresolvedVisualCues];
     let translatedMainCues: TranslatedCue[] = [];
+    let unresolvedMainCueWarning: string | undefined;
+    let initialMainErrorWarning: string | undefined;
 
     log(
       'info',
@@ -2181,8 +2463,9 @@ export async function translateSubtitle(
     );
 
     if (mainPhaseCues.length > 0) {
+      const mainPromptCues = buildPromptCuesFromParsedCues(mainPhaseCues);
       const mainResult = await translatePromptCueBatches({
-        promptCues: buildPromptCuesFromParsedCues(mainPhaseCues),
+        promptCues: mainPromptCues,
         provider,
         apiKey,
         model,
@@ -2205,7 +2488,7 @@ export async function translateSubtitle(
 
       addUsage(totalUsage, mainResult.usage);
 
-      if (mainResult.error) {
+      if (mainResult.error && mainResult.failedIds.size === 0) {
         return {
           originalFile: file,
           translatedContent: '',
@@ -2216,7 +2499,93 @@ export async function translateSubtitle(
         };
       }
 
+      if (mainResult.error) {
+        initialMainErrorWarning = mainResult.error;
+      }
+
       translatedMainCues = mainResult.cues;
+
+      if (mainResult.failedIds.size > 0) {
+        const mainCueIds = new Set(mainPhaseCues.map(cue => cue.id));
+        const retryPromptCues = buildPromptCuesFromParsedCues(parsed.cues);
+        const retryContextReplacements = [
+          ...translatedThemeCues,
+          ...translatedVisualCues,
+          ...mainResult.cues,
+        ];
+
+        log(
+          'warning',
+          'translation',
+          'Main translation retry started',
+          `Retrying ${mainResult.failedIds.size} unresolved main translation cue(s) across up to 2 grouped attempt(s).`,
+          logContext
+        );
+
+        const retryResult = await runAiCueRetries<TranslationPromptCue, TranslatedCue, TranslationRetryContextCue>({
+          allCues: retryPromptCues,
+          initialReplacements: retryContextReplacements,
+          initialUnresolvedIds: mainResult.failedIds,
+          maxRetries: 2,
+          buildContextCue: ({ cue, acceptedReplacement, position, spanIndex }) => ({
+            id: cue.id,
+            text: cue.text,
+            ...(acceptedReplacement ? { translatedText: acceptedReplacement.translatedText } : {}),
+            position,
+            spanIndex,
+          }),
+          runAttempt: request => runTranslationRetryAttempt({
+            request,
+            provider,
+            apiKey,
+            model,
+            sourceLang,
+            targetLang,
+            signal,
+            logContext,
+            phaseLabel: 'Main translation',
+          }),
+          log: event => {
+            log(event.level, 'translation', event.title, event.details, logContext);
+          },
+        });
+
+        if (retryResult.cancelled) {
+          return buildCancelledResult(file);
+        }
+
+        addUsage(totalUsage, retryResult.usage);
+        translatedMainCues = retryResult.replacements.filter(cue => mainCueIds.has(cue.id));
+
+        if (retryResult.unresolvedIds.size > 0) {
+          unresolvedMainCueWarning = `${retryResult.unresolvedIds.size} cue(s) remained unchanged after retry attempts.`;
+        }
+      }
+
+      const acceptedAiTranslationCount = (
+        translatedThemeCues.length
+        + translatedVisualCues.length
+        + translatedMainCues.length
+      );
+
+      if (acceptedAiTranslationCount === 0) {
+        return {
+          originalFile: file,
+          translatedContent: '',
+          success: false,
+          error: [
+            initialMainErrorWarning,
+            'No main translation cues were accepted after retry attempts.',
+          ].filter((warning): warning is string => Boolean(warning)).join(' '),
+          truncated: mainResult.truncated,
+          usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
+        };
+      }
+
+      unresolvedMainCueWarning = [
+        initialMainErrorWarning,
+        unresolvedMainCueWarning,
+      ].filter((warning): warning is string => Boolean(warning)).join(' ') || undefined;
     } else {
       reportProgress({ progress: 85, currentBatch: 0, totalBatches: 0 });
     }
@@ -2255,7 +2624,10 @@ export async function translateSubtitle(
       originalFile: file,
       translatedContent,
       success: true,
-      error: validation.valid ? undefined : `Warning: ${validation.errors.length} validation issue(s) detected`,
+      error: [
+        unresolvedMainCueWarning,
+        validation.valid ? undefined : `Warning: ${validation.errors.length} validation issue(s) detected`,
+      ].filter((warning): warning is string => Boolean(warning)).join(' ') || undefined,
       usage: totalUsage.totalTokens > 0 ? totalUsage : undefined
     };
   });

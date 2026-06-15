@@ -20,3 +20,4 @@ vite.config.ts.timestamp-*
 /src-tauri/binaries
 .codex
 /.worktrees
+CONTEXT.md

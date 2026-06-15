@@ -964,6 +964,14 @@
         return { cues, applied: false, cancelled: false };
       }
 
+      if (result.error) {
+        subtitleOcrStore.addLog(
+          'warning',
+          `AI cleanup partially applied: ${sanitizeProcessingMessage(result.error)}`,
+          itemId,
+        );
+      }
+
       subtitleOcrStore.addLog(
         'success',
         `AI cleanup completed (${cues.length} -> ${result.cues.length} cues)`,

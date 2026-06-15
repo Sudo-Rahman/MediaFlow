@@ -1,6 +1,15 @@
 import { settingsStore } from '$lib/stores';
 import { LLM_PROVIDERS } from '$lib/types';
 import type { LLMProvider, SubtitleOcrCue } from '$lib/types';
+import {
+  isTokenOrContextLimitError,
+  runAiCueRetries,
+  type AiCueRetryContextCue,
+  type AiCueRetryRequest,
+  type AiCueRetryAttemptResult,
+  type AiCueRetryCue,
+  type AiCueReplacement,
+} from './ai-cue-retry';
 import { callLlm } from './llm-client';
 import type { LlmUsage } from './llm-client';
 import { withSleepInhibit } from './sleep-inhibit';
@@ -29,10 +38,16 @@ interface SubtitleOcrCleanupPromptCue {
   text: string;
 }
 
-interface SubtitleOcrCleanupCorrection {
+interface SubtitleOcrRetryPromptCue extends AiCueRetryCue {
+  originalIndex: number;
+}
+
+interface SubtitleOcrCleanupCorrection extends AiCueReplacement {
   id: string;
   correctedText: string;
 }
+
+type SubtitleOcrRetryContextCue = AiCueRetryContextCue;
 
 interface SubtitleOcrCleanupParseResult {
   success: boolean;
@@ -40,10 +55,10 @@ interface SubtitleOcrCleanupParseResult {
   error?: string;
 }
 
-interface SubtitleOcrCleanupApplyResult {
-  success: boolean;
-  cues: SubtitleOcrCue[];
-  error?: string;
+interface SubtitleOcrCollectCorrectionsResult {
+  corrections: SubtitleOcrCleanupCorrection[];
+  unresolvedIds: Set<string>;
+  warnings: string[];
 }
 
 function cloneCue(cue: SubtitleOcrCue): SubtitleOcrCue {
@@ -101,14 +116,25 @@ function providerDisplayName(provider: LLMProvider): string {
 }
 
 function buildPromptCues(cues: SubtitleOcrCue[]): SubtitleOcrCleanupPromptCue[] {
-  return cues.map((cue, index) => ({
-    id: String(index),
+  return buildRetryPromptCues(cues).map((cue) => ({
+    id: cue.id,
     text: cue.text,
   }));
 }
 
-function buildCueMap(cues: SubtitleOcrCue[]): Map<string, SubtitleOcrCue> {
-  return new Map(cues.map((cue, index) => [String(index), cue]));
+function buildRetryPromptCues(cues: SubtitleOcrCue[]): SubtitleOcrRetryPromptCue[] {
+  return cues.map((cue, index) => ({
+    id: String(index),
+    text: cue.text,
+    originalIndex: index,
+  }));
+}
+
+function toCleanupPromptCue(cue: AiCueRetryCue): SubtitleOcrCleanupPromptCue {
+  return {
+    id: cue.id,
+    text: cue.text,
+  };
 }
 
 function parseCleanupCorrection(value: unknown): SubtitleOcrCleanupCorrection | null {
@@ -135,17 +161,23 @@ export function parseSubtitleOcrCleanupResponse(content: string): SubtitleOcrCle
   }
 
   const corrections: SubtitleOcrCleanupCorrection[] = [];
+  let malformedCueCount = 0;
   for (const cue of parsed.cues) {
     const correction = parseCleanupCorrection(cue);
     if (!correction) {
-      return {
-        success: false,
-        corrections: [],
-        error: 'Invalid AI cleanup response',
-      };
+      malformedCueCount += 1;
+      continue;
     }
 
     corrections.push(correction);
+  }
+
+  if (corrections.length === 0 && malformedCueCount > 0) {
+    return {
+      success: false,
+      corrections: [],
+      error: 'Invalid AI cleanup response',
+    };
   }
 
   return {
@@ -176,6 +208,48 @@ Return JSON only with this exact shape:
 
 Input cues:
 ${JSON.stringify({ cues: buildPromptCues(cues) })}`;
+}
+
+function buildSubtitleOcrCleanupRetryPrompt(
+  requestedCues: readonly SubtitleOcrRetryPromptCue[],
+  contextCues: readonly SubtitleOcrRetryContextCue[],
+  attempt: number
+): string {
+  return `Retry OCR cleanup for unresolved bitmap subtitle cues (attempt ${attempt}).
+
+Return JSON only. Correct only the cues listed in "cues". Use "contextCues" only for continuity. Do not return, modify, or include contextCues in the response.
+
+Return JSON only with this exact shape:
+{
+  "cues": [
+    { "id": "0", "correctedText": "cleaned subtitle text" }
+  ]
+}
+
+${JSON.stringify({
+  cues: requestedCues.map(toCleanupPromptCue),
+  contextCues,
+})}`;
+}
+
+function addUsage(current: LlmUsage | undefined, next: LlmUsage | undefined): LlmUsage | undefined {
+  if (!next) {
+    return current;
+  }
+
+  if (!current) {
+    return { ...next };
+  }
+
+  return {
+    promptTokens: current.promptTokens + next.promptTokens,
+    completionTokens: current.completionTokens + next.completionTokens,
+    totalTokens: current.totalTokens + next.totalTokens,
+  };
+}
+
+function warningMessage(warnings: readonly string[]): string | undefined {
+  return warnings.length > 0 ? warnings.join(' ') : undefined;
 }
 
 function collapseWhitespace(text: string): string {
@@ -291,60 +365,74 @@ function mergeConsecutiveDuplicateCues(cues: SubtitleOcrCue[]): SubtitleOcrCue[]
   return merged;
 }
 
-function applyCleanupCorrections(
-  originalCues: SubtitleOcrCue[],
-  corrections: SubtitleOcrCleanupCorrection[]
-): SubtitleOcrCleanupApplyResult {
-  const cueMap = buildCueMap(originalCues);
-  const correctionById = new Map<string, string>();
+function collectValidCleanupCorrections(
+  requestedCues: readonly SubtitleOcrRetryPromptCue[],
+  corrections: readonly SubtitleOcrCleanupCorrection[]
+): SubtitleOcrCollectCorrectionsResult {
+  const requestedIds = new Set(requestedCues.map((cue) => cue.id));
+  const duplicateIds = new Set<string>();
+  const correctionById = new Map<string, SubtitleOcrCleanupCorrection>();
+  const warnings: string[] = [];
 
   for (const correction of corrections) {
-    if (!cueMap.has(correction.id)) {
-      return {
-        success: false,
-        cues: [],
-        error: `AI cleanup returned unknown cue ID "${correction.id}"`,
-      };
+    if (!requestedIds.has(correction.id)) {
+      warnings.push(`AI cleanup returned unknown cue ID "${correction.id}".`);
+      continue;
     }
 
     if (correctionById.has(correction.id)) {
-      return {
-        success: false,
-        cues: [],
-        error: `AI cleanup returned duplicate cue ID "${correction.id}"`,
-      };
+      correctionById.delete(correction.id);
+      duplicateIds.add(correction.id);
+      warnings.push(`AI cleanup returned duplicate cue ID "${correction.id}".`);
+      continue;
     }
 
-    correctionById.set(correction.id, correction.correctedText);
+    if (!duplicateIds.has(correction.id)) {
+      correctionById.set(correction.id, correction);
+    }
   }
 
-  const missingIds = [...cueMap.keys()].filter((id) => !correctionById.has(id));
-  if (missingIds.length > 0) {
-    return {
-      success: false,
-      cues: [],
-      error: `AI cleanup response is missing corrected cues: ${missingIds.slice(0, 5).join(', ')}`,
-    };
-  }
+  const acceptedCorrections: SubtitleOcrCleanupCorrection[] = [];
+  const unresolvedIds = new Set<string>();
 
-  const correctedCues = originalCues.map((cue, index) => ({
-    ...cloneCue(cue),
-    text: correctionById.get(String(index))?.trim() ?? cue.text,
-  }));
-
-  const cleanedCues = mergeConsecutiveDuplicateCues(correctedCues);
-  if (originalCues.length > 0 && cleanedCues.length === 0) {
-    return {
-      success: false,
-      cues: [],
-      error: 'AI cleanup returned no cues for non-empty input',
-    };
+  for (const cue of requestedCues) {
+    const correction = correctionById.get(cue.id);
+    if (correction) {
+      acceptedCorrections.push(correction);
+    } else {
+      unresolvedIds.add(cue.id);
+    }
   }
 
   return {
-    success: true,
-    cues: cleanedCues,
+    corrections: acceptedCorrections,
+    unresolvedIds,
+    warnings,
   };
+}
+
+function assembleCorrectedCues(
+  originalCues: readonly SubtitleOcrCue[],
+  promptCues: readonly SubtitleOcrRetryPromptCue[],
+  corrections: readonly SubtitleOcrCleanupCorrection[]
+): SubtitleOcrCue[] {
+  const correctedById = new Map(corrections.map((correction) => [correction.id, correction.correctedText]));
+  const assembled: SubtitleOcrCue[] = [];
+
+  for (const promptCue of promptCues) {
+    const originalCue = originalCues[promptCue.originalIndex];
+    const correctedText = correctedById.get(promptCue.id);
+    if (correctedText === '') {
+      continue;
+    }
+
+    assembled.push({
+      ...cloneCue(originalCue),
+      text: correctedText === undefined ? originalCue.text : correctedText.trim(),
+    });
+  }
+
+  return mergeConsecutiveDuplicateCues(assembled);
 }
 
 export async function cleanupSubtitleOcrCuesWithAi(
@@ -383,6 +471,7 @@ export async function cleanupSubtitleOcrCuesWithAi(
 
   try {
     return await withSleepInhibit('MediaFlow: Subtitle OCR cleanup', async () => {
+      const promptCues = buildRetryPromptCues(originalCues);
       const response = await callLlm({
         provider: options.provider,
         apiKey,
@@ -402,36 +491,157 @@ export async function cleanupSubtitleOcrCuesWithAi(
         });
       }
 
+      const warnings: string[] = [];
+      let totalUsage = addUsage(undefined, response.usage);
+      let collected: SubtitleOcrCollectCorrectionsResult;
+
       if (response.error) {
-        return failureResult(originalCues, `AI cleanup failed: ${response.error}`, {
-          usage: response.usage,
+        warnings.push(`AI cleanup failed: ${response.error}`);
+        collected = {
+          corrections: [],
+          unresolvedIds: new Set(promptCues.map((cue) => cue.id)),
+          warnings: [],
+        };
+      } else if (response.truncated) {
+        warnings.push('AI cleanup response was truncated');
+        collected = {
+          corrections: [],
+          unresolvedIds: new Set(promptCues.map((cue) => cue.id)),
+          warnings: [],
+        };
+      } else {
+        const parsed = parseSubtitleOcrCleanupResponse(response.content);
+        if (parsed.success) {
+          collected = collectValidCleanupCorrections(promptCues, parsed.corrections);
+          warnings.push(...collected.warnings);
+        } else {
+          warnings.push(parsed.error ?? 'Invalid AI cleanup response');
+          collected = {
+            corrections: [],
+            unresolvedIds: new Set(promptCues.map((cue) => cue.id)),
+            warnings: [],
+          };
+        }
+      }
+
+      const retryResult = await runAiCueRetries<
+        SubtitleOcrRetryPromptCue,
+        SubtitleOcrCleanupCorrection,
+        SubtitleOcrRetryContextCue
+      >({
+        allCues: promptCues,
+        initialReplacements: collected.corrections,
+        initialUnresolvedIds: collected.unresolvedIds,
+        buildContextCue: ({ cue, position, spanIndex }) => ({
+          id: cue.id,
+          text: cue.text,
+          position,
+          spanIndex,
+        }),
+        runAttempt: async (
+          request: AiCueRetryRequest<SubtitleOcrRetryPromptCue, SubtitleOcrRetryContextCue>
+        ): Promise<AiCueRetryAttemptResult<SubtitleOcrCleanupCorrection>> => {
+          const unresolvedIds = new Set(request.requestedCues.map((cue) => cue.id));
+          if (options.signal?.aborted) {
+            return {
+              replacements: [],
+              unresolvedIds,
+              cancelled: true,
+            };
+          }
+
+          const retryResponse = await callLlm({
+            provider: options.provider,
+            apiKey,
+            model: options.model,
+            systemPrompt: SUBTITLE_OCR_CLEANUP_SYSTEM_PROMPT,
+            userPrompt: buildSubtitleOcrCleanupRetryPrompt(
+              request.requestedCues,
+              request.contextCues,
+              request.attempt,
+            ),
+            temperature: 0.2,
+            responseMode: 'json',
+            signal: options.signal,
+            logSource: 'system',
+          });
+
+          if (options.signal?.aborted || retryResponse.cancelled || retryResponse.error === 'Request cancelled') {
+            return {
+              replacements: [],
+              unresolvedIds,
+              usage: retryResponse.usage,
+              cancelled: true,
+            };
+          }
+
+          if (retryResponse.error) {
+            const terminal = isTokenOrContextLimitError(retryResponse.error);
+            return {
+              replacements: [],
+              unresolvedIds,
+              usage: retryResponse.usage,
+              warning: `Retry attempt ${request.attempt} failed: ${retryResponse.error}`,
+              terminal,
+            };
+          }
+
+          if (retryResponse.truncated) {
+            return {
+              replacements: [],
+              unresolvedIds,
+              usage: retryResponse.usage,
+              warning: `Retry attempt ${request.attempt}: response truncated`,
+              terminal: true,
+            };
+          }
+
+          const retryParsed = parseSubtitleOcrCleanupResponse(retryResponse.content);
+          if (!retryParsed.success) {
+            return {
+              replacements: [],
+              unresolvedIds,
+              usage: retryResponse.usage,
+              warning: `Retry attempt ${request.attempt}: ${retryParsed.error ?? 'Invalid AI cleanup response'}`,
+            };
+          }
+
+          const retryCollected = collectValidCleanupCorrections(request.requestedCues, retryParsed.corrections);
+          return {
+            replacements: retryCollected.corrections,
+            unresolvedIds: retryCollected.unresolvedIds,
+            usage: retryResponse.usage,
+            warning: warningMessage(retryCollected.warnings),
+          };
+        },
+      });
+
+      totalUsage = addUsage(totalUsage, retryResult.usage);
+
+      if (retryResult.cancelled || options.signal?.aborted) {
+        return failureResult(originalCues, 'AI cleanup cancelled', {
+          cancelled: true,
+          usage: totalUsage,
         });
       }
 
-      if (response.truncated) {
-        return failureResult(originalCues, 'AI cleanup response was truncated', {
-          usage: response.usage,
-        });
+      warnings.push(...retryResult.warnings);
+
+      if (retryResult.replacements.length === 0) {
+        return failureResult(
+          originalCues,
+          warningMessage(warnings) ?? 'AI cleanup produced no valid corrected cues',
+          { usage: totalUsage },
+        );
       }
 
-      const parsed = parseSubtitleOcrCleanupResponse(response.content);
-      if (!parsed.success) {
-        return failureResult(originalCues, parsed.error ?? 'Invalid AI cleanup response', {
-          usage: response.usage,
-        });
-      }
-
-      const applied = applyCleanupCorrections(originalCues, parsed.corrections);
-      if (!applied.success) {
-        return failureResult(originalCues, applied.error ?? 'Invalid AI cleanup response', {
-          usage: response.usage,
-        });
-      }
+      const cleanedCues = assembleCorrectedCues(originalCues, promptCues, retryResult.replacements);
 
       return {
         success: true,
-        cues: cloneCues(applied.cues),
-        usage: response.usage,
+        cues: cloneCues(cleanedCues),
+        error: warningMessage(warnings),
+        usage: totalUsage,
       };
     });
   } catch (error) {

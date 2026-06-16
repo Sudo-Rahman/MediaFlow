@@ -40,6 +40,29 @@ pub(crate) struct TranscodeAdditionalArg {
     pub(crate) enabled: bool,
 }
 
+fn default_video_resolution_mode() -> String {
+    "source".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TranscodeVideoResolutionSettings {
+    #[serde(default = "default_video_resolution_mode")]
+    pub(crate) mode: String,
+    pub(crate) max_width: Option<u32>,
+    pub(crate) max_height: Option<u32>,
+}
+
+impl Default for TranscodeVideoResolutionSettings {
+    fn default() -> Self {
+        Self {
+            mode: default_video_resolution_mode(),
+            max_width: None,
+            max_height: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TranscodeVideoSettings {
@@ -53,6 +76,8 @@ pub(crate) struct TranscodeVideoSettings {
     pub(crate) qp: Option<i32>,
     pub(crate) bitrate_kbps: Option<u32>,
     pub(crate) preset: Option<String>,
+    #[serde(default)]
+    pub(crate) resolution: TranscodeVideoResolutionSettings,
     #[serde(default)]
     pub(crate) additional_args: Vec<TranscodeAdditionalArg>,
 }
@@ -543,6 +568,51 @@ fn apply_video_preset_arg(
     Ok(())
 }
 
+fn validate_video_resolution_bound(name: &str, value: Option<u32>) -> Result<Option<u32>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    if value < 2 || value % 2 != 0 {
+        return Err(format!(
+            "Video resolution {} must be an even integer of at least 2",
+            name
+        ));
+    }
+
+    Ok(Some(value))
+}
+
+fn build_video_scale_filter(
+    settings: &TranscodeVideoSettings,
+    _source_stream: &StreamInfo,
+) -> Result<Option<String>, String> {
+    match settings.resolution.mode.as_str() {
+        "source" | "" => Ok(None),
+        "fit" => {
+            let max_width =
+                validate_video_resolution_bound("max width", settings.resolution.max_width)?;
+            let max_height =
+                validate_video_resolution_bound("max height", settings.resolution.max_height)?;
+
+            if max_width.is_none() && max_height.is_none() {
+                return Err("Video resolution fit requires max width or max height".to_string());
+            }
+
+            Ok(Some(match (max_width, max_height) {
+                (Some(width), Some(height)) => format!(
+                    "scale={}:{}:force_original_aspect_ratio=decrease:force_divisible_by=2",
+                    width, height
+                ),
+                (Some(width), None) => format!("scale={}:-2", width),
+                (None, Some(height)) => format!("scale=-2:{}", height),
+                (None, None) => unreachable!("empty fit resolution is rejected above"),
+            }))
+        }
+        other => Err(format!("Unsupported video resolution mode: {}", other)),
+    }
+}
+
 fn build_transcode_args(
     request: &TranscodeRequest,
     streams: &[Value],
@@ -643,6 +713,13 @@ fn build_transcode_args(
 
                 args.push("-c:v".to_string());
                 args.push(encoder_id.to_string());
+
+                if let Some(scale_filter) =
+                    build_video_scale_filter(&request.video, &video_streams[0])?
+                {
+                    args.push("-vf".to_string());
+                    args.push(scale_filter);
+                }
 
                 if let Some(profile) = request.video.profile.as_deref() {
                     if !profile.trim().is_empty() {
@@ -1106,8 +1183,9 @@ mod tests {
 
     use super::{
         TranscodeAdditionalArg, TranscodeAudioSettings, TranscodeAudioTrackOverride,
-        TranscodeRequest, TranscodeSubtitleSettings, TranscodeVideoSettings, build_transcode_args,
-        cpu_used_preset_max, resolve_primary_video_total_frames, transcode_media_with_bins,
+        TranscodeRequest, TranscodeSubtitleSettings, TranscodeVideoResolutionSettings,
+        TranscodeVideoSettings, build_transcode_args, cpu_used_preset_max,
+        resolve_primary_video_total_frames, transcode_media_with_bins,
     };
 
     const AUDIO_LAYOUT_CASES: &[(&str, u64)] = &[
@@ -1138,6 +1216,7 @@ mod tests {
                 qp: None,
                 bitrate_kbps: None,
                 preset: Some("medium".to_string()),
+                resolution: TranscodeVideoResolutionSettings::default(),
                 additional_args: Vec::new(),
             },
             audio: TranscodeAudioSettings {
@@ -2260,6 +2339,71 @@ mod tests {
     }
 
     #[test]
+    fn build_transcode_args_adds_fit_scale_filter() {
+        let mut request = build_request("/tmp/output.mp4");
+        request.video.resolution.mode = "fit".to_string();
+        request.video.resolution.max_width = Some(1280);
+        request.video.resolution.max_height = Some(720);
+        let streams = vec![json!({
+            "codec_type": "video",
+            "codec_name": "h264",
+            "width": 1920,
+            "height": 1080
+        })];
+
+        let args = build_transcode_args(&request, &streams, None).expect("args should build");
+
+        assert!(args.windows(2).any(|window| {
+            window
+                == [
+                    "-vf",
+                    "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2",
+                ]
+        }));
+    }
+
+    #[test]
+    fn build_transcode_args_allows_fit_scale_filter_when_target_is_larger_than_source() {
+        let mut request = build_request("/tmp/output.mp4");
+        request.video.resolution.mode = "fit".to_string();
+        request.video.resolution.max_width = Some(3840);
+        request.video.resolution.max_height = Some(2160);
+        let streams = vec![json!({
+            "codec_type": "video",
+            "codec_name": "h264",
+            "width": 1920,
+            "height": 1080
+        })];
+
+        let args = build_transcode_args(&request, &streams, None).expect("args should build");
+
+        assert!(args.windows(2).any(|window| {
+            window
+                == [
+                    "-vf",
+                    "scale=3840:2160:force_original_aspect_ratio=decrease:force_divisible_by=2",
+                ]
+        }));
+    }
+
+    #[test]
+    fn build_transcode_args_rejects_empty_fit_resolution() {
+        let mut request = build_request("/tmp/output.mp4");
+        request.video.resolution.mode = "fit".to_string();
+        let streams = vec![json!({
+            "codec_type": "video",
+            "codec_name": "h264",
+            "width": 1920,
+            "height": 1080
+        })];
+
+        let error = build_transcode_args(&request, &streams, None)
+            .expect_err("empty fit resolution should fail");
+
+        assert!(error.contains("requires max width or max height"));
+    }
+
+    #[test]
     fn build_transcode_args_rejects_copying_subrip_subtitles_into_mp4() {
         let mut request = build_request("/tmp/output.mp4");
         request.subtitles.mode = "copy".to_string();
@@ -2737,6 +2881,34 @@ mod tests {
 
         assert_eq!(result_path, output.to_string_lossy().to_string());
         assert!(output.exists());
+    }
+
+    #[tokio::test]
+    async fn transcode_media_with_bins_scales_fit_output_to_even_dimensions() {
+        let input = generate_test_pattern_video(320, 180)
+            .await
+            .expect("failed to generate video fixture");
+        let temp = tempfile::tempdir().expect("failed to create tempdir");
+        let output = temp.path().join("sample-transcoded.mp4");
+
+        let mut request = build_request(output.to_string_lossy().as_ref());
+        request.input_path = input.path.to_string_lossy().to_string();
+        request.video.resolution.mode = "fit".to_string();
+        request.video.resolution.max_width = Some(128);
+        request.video.resolution.max_height = Some(72);
+        request.audio.mode = "disable".to_string();
+        request.subtitles.mode = "disable".to_string();
+
+        transcode_media_with_bins(ffmpeg_path(), ffprobe_path(), &request)
+            .await
+            .expect("transcode should succeed");
+
+        let output_video = probe_primary_video_stream(ffprobe_path(), &output)
+            .await
+            .expect("scaled output should probe");
+
+        assert_eq!(output_video.width, 128);
+        assert_eq!(output_video.height, 72);
     }
 
     #[tokio::test]

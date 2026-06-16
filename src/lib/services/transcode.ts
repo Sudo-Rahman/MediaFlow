@@ -21,6 +21,8 @@ import type {
   TranscodeTrackMetadataEdit,
   TranscodeVideoEncoderCapability,
   TranscodeVideoMode,
+  TranscodeVideoResolutionSelection,
+  TranscodeVideoResolutionSettings,
   TranscodeVideoSettings,
 } from '$lib/types';
 
@@ -29,6 +31,22 @@ let transcodeIdCounter = 0;
 export interface TranscodePresetOption {
   value: string;
   label: string;
+}
+
+export interface TranscodeVideoResolutionPresetOption {
+  value: TranscodeVideoResolutionSelection;
+  label: string;
+  resolution?: TranscodeVideoResolutionSettings;
+}
+
+export type TranscodeVideoResolutionDimension = 'width' | 'height';
+
+interface NormalizeVideoResolutionSettingsOptions {
+  enforceBackendBounds?: boolean;
+}
+
+interface CloneVideoSettingsOptions {
+  enforceResolutionBounds?: boolean;
 }
 
 export interface TranscodeModeOption<TMode extends string> {
@@ -142,6 +160,20 @@ const VIDEO_PRESET_OPTIONS_BY_ENCODER: Record<string, TranscodePresetOption[]> =
   libvpx: LIBVPX_VP8_PRESET_OPTIONS,
   'libvpx-vp9': LIBVPX_VP9_PRESET_OPTIONS,
 };
+
+const VIDEO_RESOLUTION_PRESET_OPTIONS: TranscodeVideoResolutionPresetOption[] = [
+  { value: 'source', label: 'Original', resolution: { mode: 'source' } },
+  { value: 'fit-2160p', label: 'Fit 4K', resolution: { mode: 'fit', maxWidth: 3840, maxHeight: 2160 } },
+  { value: 'fit-1440p', label: 'Fit 1440p', resolution: { mode: 'fit', maxWidth: 2560, maxHeight: 1440 } },
+  { value: 'fit-1080p', label: 'Fit 1080p', resolution: { mode: 'fit', maxWidth: 1920, maxHeight: 1080 } },
+  { value: 'fit-720p', label: 'Fit 720p', resolution: { mode: 'fit', maxWidth: 1280, maxHeight: 720 } },
+  { value: 'fit-480p', label: 'Fit 480p', resolution: { mode: 'fit', maxWidth: 854, maxHeight: 480 } },
+  { value: 'custom', label: 'Custom fit' },
+];
+
+const VIDEO_RESOLUTION_SELECTION_VALUES = new Set<TranscodeVideoResolutionSelection>(
+  VIDEO_RESOLUTION_PRESET_OPTIONS.map((option) => option.value),
+);
 
 const TEXT_SUBTITLE_CODECS = new Set([
   'ass',
@@ -272,9 +304,15 @@ export function getSuggestedTranscodeOverrideFlags(
     .map(({ flag }) => flag);
 }
 
-export function cloneVideoSettings(settings: TranscodeVideoSettings): TranscodeVideoSettings {
+export function cloneVideoSettings(
+  settings: TranscodeVideoSettings,
+  options: CloneVideoSettingsOptions = {},
+): TranscodeVideoSettings {
   return {
     ...settings,
+    resolution: normalizeVideoResolutionSettings(settings.resolution, {
+      enforceBackendBounds: options.enforceResolutionBounds,
+    }),
     additionalArgs: cloneAdditionalArgs(settings.additionalArgs),
   };
 }
@@ -924,6 +962,180 @@ export function getDefaultVideoPresetValue(encoderId?: string): string | undefin
   return getVideoPresetOptions(encoderId)[0]?.value;
 }
 
+export function getVideoResolutionPresetOptions(): TranscodeVideoResolutionPresetOption[] {
+  return VIDEO_RESOLUTION_PRESET_OPTIONS.map((option) => ({
+    ...option,
+    resolution: option.resolution ? { ...option.resolution } : undefined,
+  }));
+}
+
+function normalizePositiveInt(value?: number): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+
+  const integer = Math.floor(value);
+  return integer >= 1 ? integer : undefined;
+}
+
+function normalizePositiveIntDimension(value?: number): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+
+  const integer = Math.floor(value);
+  return integer >= 1 ? integer : undefined;
+}
+
+function normalizeVideoResolutionSelection(selection?: unknown): TranscodeVideoResolutionSelection | undefined {
+  return typeof selection === 'string' && VIDEO_RESOLUTION_SELECTION_VALUES.has(selection as TranscodeVideoResolutionSelection)
+    ? selection as TranscodeVideoResolutionSelection
+    : undefined;
+}
+
+function presetSelectionMatchesFitBounds(
+  selection: TranscodeVideoResolutionSelection | undefined,
+  maxWidth: number | undefined,
+  maxHeight: number | undefined,
+): boolean {
+  if (!selection || selection === 'source' || selection === 'custom') {
+    return false;
+  }
+
+  const option = VIDEO_RESOLUTION_PRESET_OPTIONS.find((preset) => preset.value === selection);
+  return option?.resolution?.mode === 'fit'
+    && option.resolution.maxWidth === maxWidth
+    && option.resolution.maxHeight === maxHeight;
+}
+
+function evenOutputDimension(value: number): number {
+  const rounded = Math.max(2, Math.round(value));
+  return rounded % 2 === 0 ? rounded : rounded - 1;
+}
+
+function normalizeVideoResolutionBackendBound(value?: number): number | undefined {
+  const normalized = normalizePositiveInt(value);
+  return normalized === undefined ? undefined : evenOutputDimension(normalized);
+}
+
+function getVideoResolutionBoundCompatibilityIssue(label: string, value?: number): string | undefined {
+  const normalized = normalizePositiveInt(value);
+  if (normalized === undefined || (normalized >= 2 && normalized % 2 === 0)) {
+    return undefined;
+  }
+
+  return `Video resolution ${label} must be an even integer of at least 2.`;
+}
+
+export function getVideoResolutionPairedDimension(
+  changedDimension: TranscodeVideoResolutionDimension,
+  value: number | undefined,
+  sourceTrack?: Pick<Track, 'width' | 'height'> | null,
+): number | undefined {
+  const normalizedValue = normalizePositiveInt(value);
+  const sourceWidth = normalizePositiveIntDimension(sourceTrack?.width);
+  const sourceHeight = normalizePositiveIntDimension(sourceTrack?.height);
+  if (!normalizedValue || !sourceWidth || !sourceHeight) {
+    return undefined;
+  }
+
+  const pairedValue = changedDimension === 'width'
+    ? normalizedValue * sourceHeight / sourceWidth
+    : normalizedValue * sourceWidth / sourceHeight;
+
+  return evenOutputDimension(pairedValue);
+}
+
+export function normalizeVideoResolutionSettings(
+  resolution?: Partial<TranscodeVideoResolutionSettings> | null,
+  options: NormalizeVideoResolutionSettingsOptions = {},
+): TranscodeVideoResolutionSettings {
+  const selection = normalizeVideoResolutionSelection(resolution?.selection);
+  const keepRatio = typeof resolution?.keepRatio === 'boolean' ? resolution.keepRatio : undefined;
+  if (!resolution || resolution.mode !== 'fit') {
+    return selection === 'source' ? { mode: 'source', selection } : { mode: 'source' };
+  }
+
+  const maxWidth = options.enforceBackendBounds
+    ? normalizeVideoResolutionBackendBound(resolution.maxWidth)
+    : normalizePositiveInt(resolution.maxWidth);
+  const maxHeight = options.enforceBackendBounds
+    ? normalizeVideoResolutionBackendBound(resolution.maxHeight)
+    : normalizePositiveInt(resolution.maxHeight);
+  if (!maxWidth && !maxHeight) {
+    return { mode: 'source' };
+  }
+
+  const normalized: TranscodeVideoResolutionSettings = {
+    mode: 'fit',
+    maxWidth,
+    maxHeight,
+  };
+
+  if (selection === 'custom' || presetSelectionMatchesFitBounds(selection, maxWidth, maxHeight)) {
+    normalized.selection = selection;
+  }
+
+  if (keepRatio !== undefined) {
+    normalized.keepRatio = keepRatio;
+  }
+
+  return normalized;
+}
+
+export function getVideoResolutionPresetValue(
+  resolution?: Partial<TranscodeVideoResolutionSettings> | null,
+): TranscodeVideoResolutionPresetOption['value'] {
+  const normalized = normalizeVideoResolutionSettings(resolution);
+  if (normalized.selection) {
+    return normalized.selection;
+  }
+
+  if (normalized.mode === 'source') {
+    return 'source';
+  }
+
+  const matchingPreset = VIDEO_RESOLUTION_PRESET_OPTIONS.find((option) =>
+    option.resolution?.mode === 'fit'
+    && option.resolution.maxWidth === normalized.maxWidth
+    && option.resolution.maxHeight === normalized.maxHeight,
+  );
+
+  return matchingPreset?.value ?? 'custom';
+}
+
+export function getEffectiveVideoResolution(
+  resolution: Partial<TranscodeVideoResolutionSettings> | null | undefined,
+  sourceTrack?: Pick<Track, 'width' | 'height'> | null,
+): { width: number; height: number } | null {
+  const sourceWidth = normalizePositiveIntDimension(sourceTrack?.width);
+  const sourceHeight = normalizePositiveIntDimension(sourceTrack?.height);
+  if (!sourceWidth || !sourceHeight) {
+    return null;
+  }
+
+  const normalized = normalizeVideoResolutionSettings(resolution);
+  if (normalized.mode === 'source') {
+    return { width: sourceWidth, height: sourceHeight };
+  }
+
+  let scale: number;
+  if (normalized.maxWidth !== undefined && normalized.maxHeight !== undefined) {
+    scale = Math.min(normalized.maxWidth / sourceWidth, normalized.maxHeight / sourceHeight);
+  } else if (normalized.maxWidth !== undefined) {
+    scale = normalized.maxWidth / sourceWidth;
+  } else if (normalized.maxHeight !== undefined) {
+    scale = normalized.maxHeight / sourceHeight;
+  } else {
+    return { width: sourceWidth, height: sourceHeight };
+  }
+
+  return {
+    width: evenOutputDimension(sourceWidth * scale),
+    height: evenOutputDimension(sourceHeight * scale),
+  };
+}
+
 function clampVideoPresetValue(encoderId?: string, preset?: string): string | undefined {
   const presetOptions = getVideoPresetOptions(encoderId);
   if (presetOptions.length === 0) {
@@ -1023,6 +1235,7 @@ export function buildDefaultVideoSettings(
     preset: getVideoPresetOptions(encoderId).length > 0
       ? getDefaultVideoPresetValue(encoderId) ?? (encoder?.isHardware ? 'fast' : 'medium')
       : undefined,
+    resolution: { mode: 'source' },
     additionalArgs: [],
   };
 
@@ -1313,6 +1526,9 @@ export function clampTranscodeProfile(
 
   const next = cloneTranscodeProfile(profile);
   next.containerId = containerId;
+  next.video.resolution = normalizeVideoResolutionSettings(next.video.resolution, {
+    enforceBackendBounds: true,
+  });
 
   if (!file.hasVideo) {
     next.video = buildDefaultVideoSettings(capabilities, containerId, false);
@@ -1583,6 +1799,17 @@ export function getTranscodeCompatibilityIssues(
     issues.push(`No compatible video encoder is available for container ${container.label} on this machine.`);
   }
 
+  if (file.hasVideo && file.profile.video.mode === 'transcode' && file.profile.video.resolution.mode === 'fit') {
+    const widthIssue = getVideoResolutionBoundCompatibilityIssue('width', file.profile.video.resolution.maxWidth);
+    const heightIssue = getVideoResolutionBoundCompatibilityIssue('height', file.profile.video.resolution.maxHeight);
+    if (widthIssue) {
+      issues.push(widthIssue);
+    }
+    if (heightIssue) {
+      issues.push(heightIssue);
+    }
+  }
+
   if (file.hasVideo && file.profile.video.mode === 'copy' && !canCopyPrimaryVideoTrackToContainer(file, container.id)) {
     issues.push(`Container ${container.label} cannot copy the primary video track from this file.`);
   }
@@ -1656,7 +1883,7 @@ export function createTranscodeRequest(file: TranscodeFile, outputPath: string):
     inputPath: file.path,
     outputPath,
     containerId: file.profile.containerId,
-    video: cloneVideoSettings(file.profile.video),
+    video: cloneVideoSettings(file.profile.video, { enforceResolutionBounds: true }),
     audio: cloneAudioSettings(file.profile.audio),
     subtitles: cloneSubtitleSettings(file.profile.subtitles),
     metadata: cloneTranscodeMetadata(file.metadata),

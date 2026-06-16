@@ -137,6 +137,7 @@ function profile(overrides: Partial<TranscodeProfile> = {}): TranscodeProfile {
       qp: undefined,
       bitrateKbps: undefined,
       preset: 'medium',
+      resolution: { mode: 'source' },
       additionalArgs: [],
     },
     audio: {
@@ -206,6 +207,9 @@ describe('transcode AI profile helpers', () => {
   it('builds a compact payload with presets, encoder options, and all audio tracks', () => {
     const payload = buildTranscodeAiCapabilityPayload(file(), capabilities());
 
+    expect(payload.videoResolution.supportsFit).toBe(true);
+    expect(payload.videoResolution.allowsUpscale).toBe(true);
+    expect(payload.videoResolution.presets.map((preset) => preset.value)).toContain('fit-1080p');
     expect(payload.overridePolicy.overrideFlagsAreRuntimeDiscoveredFromEncoderOptions).toBe(true);
     expect('commonOverrideFlags' in payload.overridePolicy).toBe(false);
     expect(payload.videoEncoders[0]?.presetControl?.values).toContain('medium');
@@ -294,6 +298,42 @@ describe('transcode AI profile helpers', () => {
       expect.stringContaining('not exposed by the selected encoder'),
       expect.stringContaining('unknown trackId'),
     ]));
+  });
+
+  it('accepts sanitized AI video resolution recommendations', () => {
+    const result = sanitizeTranscodeAiProfileResponse(response({
+      video: {
+        mode: 'transcode',
+        encoderId: 'libx264',
+        qualityMode: 'crf',
+        crf: 19,
+        resolution: { mode: 'fit', maxWidth: 1280, maxHeight: 720 },
+      },
+    }), file(), capabilities());
+
+    expect(result.profile.video.resolution).toEqual({
+      mode: 'fit',
+      maxWidth: 1280,
+      maxHeight: 720,
+    });
+  });
+
+  it('normalizes AI video resolution bounds to backend-compatible values', () => {
+    const result = sanitizeTranscodeAiProfileResponse(response({
+      video: {
+        mode: 'transcode',
+        encoderId: 'libx264',
+        qualityMode: 'crf',
+        crf: 19,
+        resolution: { mode: 'fit', maxWidth: 1001, maxHeight: 1 },
+      },
+    }), file(), capabilities());
+
+    expect(result.profile.video.resolution).toEqual({
+      mode: 'fit',
+      maxWidth: 1000,
+      maxHeight: 2,
+    });
   });
 
   it('clamps lossy audio per track and rejects lossless upgrades', () => {

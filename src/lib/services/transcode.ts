@@ -1016,7 +1016,7 @@ export function getVideoResolutionPairedDimension(
     ? normalizedValue * sourceHeight / sourceWidth
     : normalizedValue * sourceWidth / sourceHeight;
 
-  return normalizePositiveInt(Math.round(pairedValue));
+  return evenOutputDimension(pairedValue);
 }
 
 export function normalizeVideoResolutionSettings(
@@ -1087,9 +1087,16 @@ export function getEffectiveVideoResolution(
     return { width: sourceWidth, height: sourceHeight };
   }
 
-  const maxWidth = normalized.maxWidth ?? sourceWidth;
-  const maxHeight = normalized.maxHeight ?? sourceHeight;
-  const scale = Math.min(maxWidth / sourceWidth, maxHeight / sourceHeight);
+  let scale: number;
+  if (normalized.maxWidth !== undefined && normalized.maxHeight !== undefined) {
+    scale = Math.min(normalized.maxWidth / sourceWidth, normalized.maxHeight / sourceHeight);
+  } else if (normalized.maxWidth !== undefined) {
+    scale = normalized.maxWidth / sourceWidth;
+  } else if (normalized.maxHeight !== undefined) {
+    scale = normalized.maxHeight / sourceHeight;
+  } else {
+    return { width: sourceWidth, height: sourceHeight };
+  }
 
   return {
     width: evenOutputDimension(sourceWidth * scale),

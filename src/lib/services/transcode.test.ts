@@ -98,6 +98,11 @@ describe('transcode video resolution helpers', () => {
     expect(getVideoResolutionPairedDimension('width', 1280, videoTrack(1920, 804))).toBe(536);
   });
 
+  it('keeps paired custom dimensions compatible with even backend bounds', () => {
+    expect(getVideoResolutionPairedDimension('width', 1000, videoTrack(1920, 1080))).toBe(562);
+    expect(getVideoResolutionPairedDimension('height', 1000, videoTrack(1920, 1080))).toBe(1778);
+  });
+
   it('preserves aspect ratio and allows upscaling when resolving fit output', () => {
     expect(getEffectiveVideoResolution(
       { mode: 'fit', maxWidth: 1280, maxHeight: 720 },
@@ -113,5 +118,22 @@ describe('transcode video resolution helpers', () => {
       { mode: 'fit', maxWidth: 3840, maxHeight: 2160 },
       videoTrack(1920, 1080),
     )).toEqual({ width: 3840, height: 2160 });
+  });
+
+  it('previews single-bound fit output with the same scale the backend will use', () => {
+    expect(getEffectiveVideoResolution(
+      { mode: 'fit', maxWidth: 3840 },
+      videoTrack(1920, 1080),
+    )).toEqual({ width: 3840, height: 2160 });
+
+    expect(getEffectiveVideoResolution(
+      { mode: 'fit', maxHeight: 2160 },
+      videoTrack(1920, 1080),
+    )).toEqual({ width: 3840, height: 2160 });
+
+    expect(getEffectiveVideoResolution(
+      { mode: 'fit', maxWidth: 1280 },
+      videoTrack(1920, 1080),
+    )).toEqual({ width: 1280, height: 720 });
   });
 });

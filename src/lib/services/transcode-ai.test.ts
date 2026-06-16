@@ -318,6 +318,24 @@ describe('transcode AI profile helpers', () => {
     });
   });
 
+  it('normalizes AI video resolution bounds to backend-compatible values', () => {
+    const result = sanitizeTranscodeAiProfileResponse(response({
+      video: {
+        mode: 'transcode',
+        encoderId: 'libx264',
+        qualityMode: 'crf',
+        crf: 19,
+        resolution: { mode: 'fit', maxWidth: 1001, maxHeight: 1 },
+      },
+    }), file(), capabilities());
+
+    expect(result.profile.video.resolution).toEqual({
+      mode: 'fit',
+      maxWidth: 1000,
+      maxHeight: 2,
+    });
+  });
+
   it('clamps lossy audio per track and rejects lossless upgrades', () => {
     const capped = sanitizeTranscodeAiProfileResponse(response({
       audio: {

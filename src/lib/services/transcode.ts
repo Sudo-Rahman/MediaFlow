@@ -41,6 +41,14 @@ export interface TranscodeVideoResolutionPresetOption {
 
 export type TranscodeVideoResolutionDimension = 'width' | 'height';
 
+interface NormalizeVideoResolutionSettingsOptions {
+  enforceBackendBounds?: boolean;
+}
+
+interface CloneVideoSettingsOptions {
+  enforceResolutionBounds?: boolean;
+}
+
 export interface TranscodeModeOption<TMode extends string> {
   value: TMode;
   label: string;
@@ -296,10 +304,15 @@ export function getSuggestedTranscodeOverrideFlags(
     .map(({ flag }) => flag);
 }
 
-export function cloneVideoSettings(settings: TranscodeVideoSettings): TranscodeVideoSettings {
+export function cloneVideoSettings(
+  settings: TranscodeVideoSettings,
+  options: CloneVideoSettingsOptions = {},
+): TranscodeVideoSettings {
   return {
     ...settings,
-    resolution: normalizeVideoResolutionSettings(settings.resolution),
+    resolution: normalizeVideoResolutionSettings(settings.resolution, {
+      enforceBackendBounds: options.enforceResolutionBounds,
+    }),
     additionalArgs: cloneAdditionalArgs(settings.additionalArgs),
   };
 }
@@ -1000,6 +1013,20 @@ function evenOutputDimension(value: number): number {
   return rounded % 2 === 0 ? rounded : rounded - 1;
 }
 
+function normalizeVideoResolutionBackendBound(value?: number): number | undefined {
+  const normalized = normalizePositiveInt(value);
+  return normalized === undefined ? undefined : evenOutputDimension(normalized);
+}
+
+function getVideoResolutionBoundCompatibilityIssue(label: string, value?: number): string | undefined {
+  const normalized = normalizePositiveInt(value);
+  if (normalized === undefined || (normalized >= 2 && normalized % 2 === 0)) {
+    return undefined;
+  }
+
+  return `Video resolution ${label} must be an even integer of at least 2.`;
+}
+
 export function getVideoResolutionPairedDimension(
   changedDimension: TranscodeVideoResolutionDimension,
   value: number | undefined,
@@ -1021,6 +1048,7 @@ export function getVideoResolutionPairedDimension(
 
 export function normalizeVideoResolutionSettings(
   resolution?: Partial<TranscodeVideoResolutionSettings> | null,
+  options: NormalizeVideoResolutionSettingsOptions = {},
 ): TranscodeVideoResolutionSettings {
   const selection = normalizeVideoResolutionSelection(resolution?.selection);
   const keepRatio = typeof resolution?.keepRatio === 'boolean' ? resolution.keepRatio : undefined;
@@ -1028,8 +1056,12 @@ export function normalizeVideoResolutionSettings(
     return selection === 'source' ? { mode: 'source', selection } : { mode: 'source' };
   }
 
-  const maxWidth = normalizePositiveInt(resolution.maxWidth);
-  const maxHeight = normalizePositiveInt(resolution.maxHeight);
+  const maxWidth = options.enforceBackendBounds
+    ? normalizeVideoResolutionBackendBound(resolution.maxWidth)
+    : normalizePositiveInt(resolution.maxWidth);
+  const maxHeight = options.enforceBackendBounds
+    ? normalizeVideoResolutionBackendBound(resolution.maxHeight)
+    : normalizePositiveInt(resolution.maxHeight);
   if (!maxWidth && !maxHeight) {
     return { mode: 'source' };
   }
@@ -1494,7 +1526,9 @@ export function clampTranscodeProfile(
 
   const next = cloneTranscodeProfile(profile);
   next.containerId = containerId;
-  next.video.resolution = normalizeVideoResolutionSettings(next.video.resolution);
+  next.video.resolution = normalizeVideoResolutionSettings(next.video.resolution, {
+    enforceBackendBounds: true,
+  });
 
   if (!file.hasVideo) {
     next.video = buildDefaultVideoSettings(capabilities, containerId, false);
@@ -1765,6 +1799,17 @@ export function getTranscodeCompatibilityIssues(
     issues.push(`No compatible video encoder is available for container ${container.label} on this machine.`);
   }
 
+  if (file.hasVideo && file.profile.video.mode === 'transcode' && file.profile.video.resolution.mode === 'fit') {
+    const widthIssue = getVideoResolutionBoundCompatibilityIssue('width', file.profile.video.resolution.maxWidth);
+    const heightIssue = getVideoResolutionBoundCompatibilityIssue('height', file.profile.video.resolution.maxHeight);
+    if (widthIssue) {
+      issues.push(widthIssue);
+    }
+    if (heightIssue) {
+      issues.push(heightIssue);
+    }
+  }
+
   if (file.hasVideo && file.profile.video.mode === 'copy' && !canCopyPrimaryVideoTrackToContainer(file, container.id)) {
     issues.push(`Container ${container.label} cannot copy the primary video track from this file.`);
   }
@@ -1838,7 +1883,7 @@ export function createTranscodeRequest(file: TranscodeFile, outputPath: string):
     inputPath: file.path,
     outputPath,
     containerId: file.profile.containerId,
-    video: cloneVideoSettings(file.profile.video),
+    video: cloneVideoSettings(file.profile.video, { enforceResolutionBounds: true }),
     audio: cloneAudioSettings(file.profile.audio),
     subtitles: cloneSubtitleSettings(file.profile.subtitles),
     metadata: cloneTranscodeMetadata(file.metadata),

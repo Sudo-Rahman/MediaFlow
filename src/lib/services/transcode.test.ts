@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Track, TranscodeProfile } from '$lib/types';
+import type { Track, TranscodeCapabilities, TranscodeFile, TranscodeProfile } from '$lib/types';
 import {
   buildDefaultVideoSettings,
+  createTranscodeRequest,
   getEffectiveVideoResolution,
+  getTranscodeCompatibilityIssues,
   getVideoResolutionPairedDimension,
   getVideoResolutionPresetOptions,
   getVideoResolutionPresetValue,
@@ -18,6 +20,93 @@ function videoTrack(width: number, height: number): Track {
     codec: 'h264',
     width,
     height,
+  };
+}
+
+const metadataSchema = {
+  supportsContainerTitle: true,
+  supportsTrackTitle: true,
+  supportsLanguage: true,
+  supportsDefault: true,
+  supportsForced: true,
+  clearsMatroskaStatistics: true,
+};
+
+function capabilities(): TranscodeCapabilities {
+  return {
+    ffmpegVersion: 'test-ffmpeg',
+    hwaccels: [],
+    containers: [
+      {
+        id: 'mkv',
+        label: 'MKV',
+        extension: '.mkv',
+        kind: 'video',
+        muxerName: 'matroska',
+        supportedVideoEncoderIds: ['libx264'],
+        supportedAudioEncoderIds: ['aac'],
+        supportedSubtitleEncoderIds: ['srt'],
+        supportedSubtitleModes: ['disable', 'copy', 'convert_text'],
+        defaultVideoEncoderId: 'libx264',
+        defaultAudioEncoderId: 'aac',
+        defaultSubtitleEncoderId: 'srt',
+        metadataSchema,
+      },
+    ],
+    videoEncoders: [],
+    audioEncoders: [],
+    subtitleEncoders: [],
+    defaultAnalysisFrameCount: 6,
+  };
+}
+
+function transcodeFile(profile: TranscodeProfile): TranscodeFile {
+  return {
+    id: 'file-1',
+    path: '/tmp/source.mkv',
+    name: 'source.mkv',
+    size: 1024,
+    duration: 60,
+    bitrate: 1_000_000,
+    format: 'matroska',
+    tracks: [videoTrack(1920, 1080)],
+    status: 'ready',
+    error: undefined,
+    rawData: undefined,
+    createdAt: undefined,
+    modifiedAt: undefined,
+    hasVideo: true,
+    hasAudio: false,
+    profile,
+    metadata: { trackEdits: [] },
+    analysisFrames: [],
+    aiStatus: 'idle',
+    aiError: undefined,
+    aiRecommendation: undefined,
+    lastOutputPath: undefined,
+  };
+}
+
+function profileWithResolution(resolution: TranscodeProfile['video']['resolution']): TranscodeProfile {
+  return {
+    containerId: 'mkv',
+    video: {
+      mode: 'transcode',
+      encoderId: 'libx264',
+      qualityMode: 'crf',
+      crf: 20,
+      resolution,
+      additionalArgs: [],
+    },
+    audio: {
+      mode: 'disable',
+      additionalArgs: [],
+      trackOverrides: [],
+    },
+    subtitles: {
+      mode: 'disable',
+      additionalArgs: [],
+    },
   };
 }
 
@@ -89,6 +178,36 @@ describe('transcode video resolution helpers', () => {
       maxHeight: 1,
       selection: 'custom',
       keepRatio: true,
+    });
+  });
+
+  it('reports custom fit bounds that the backend would reject before launch', () => {
+    const issues = getTranscodeCompatibilityIssues(transcodeFile(profileWithResolution({
+      mode: 'fit',
+      maxWidth: 1001,
+      maxHeight: 1,
+      selection: 'custom',
+    })), capabilities());
+
+    expect(issues).toEqual(expect.arrayContaining([
+      'Video resolution width must be an even integer of at least 2.',
+      'Video resolution height must be an even integer of at least 2.',
+    ]));
+  });
+
+  it('normalizes request resolution bounds to backend-compatible even values', () => {
+    const request = createTranscodeRequest(transcodeFile(profileWithResolution({
+      mode: 'fit',
+      maxWidth: 1001,
+      maxHeight: 1,
+      selection: 'custom',
+    })), '/tmp/output.mkv');
+
+    expect(request.video.resolution).toEqual({
+      mode: 'fit',
+      maxWidth: 1000,
+      maxHeight: 2,
+      selection: 'custom',
     });
   });
 

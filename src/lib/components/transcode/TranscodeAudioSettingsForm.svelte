@@ -15,7 +15,6 @@
   import { Switch } from '$lib/components/ui/switch';
   import * as Select from '$lib/components/ui/select';
   import { formatChannels } from '$lib/utils/format';
-  import {ScrollArea} from '$lib/components/ui/scroll-area';
 
   interface Props {
     settings: Pick<TranscodeAudioSettings, 'mode' | 'encoderId' | 'bitrateKbps' | 'channels' | 'sampleRate'>
@@ -72,8 +71,8 @@
   const sampleRateDefaultLabel = $derived(
     showSourceTrackDetails ? `Default: As source (${formatSampleRate(sourceTrack?.sampleRate)})` : 'Default: As source',
   );
-  const streamOverrideGridClass = $derived(
-    streamOverrideLayout === 'stacked' ? 'grid gap-4' : 'grid gap-4 2xl:grid-cols-2',
+  const formGridClass = $derived(
+    streamOverrideLayout === 'stacked' ? 'grid gap-4' : 'grid gap-4 lg:grid-cols-2 lg:items-start',
   );
   const controlId = $props.id();
   const audioModeId = `${controlId}-audio-mode`;
@@ -87,15 +86,15 @@
   const sampleRateInputId = `${controlId}-sample-rate`;
 </script>
 
-<div class="grid gap-4 lg:grid-cols-2">
-  <div class="space-y-4">
+<div class="space-y-4">
+  <div class={formGridClass}>
     <Field.Field class="gap-2">
       <Field.Label for={audioModeId}>Audio mode</Field.Label>
       <Select.Root
         type="single"
         value={settings.mode}
         onValueChange={(value) => onModeChange(value as TranscodeAudioMode)}
-        >
+      >
         <Select.Trigger id={audioModeId} class="w-full">{settings.mode}</Select.Trigger>
         <Select.Content>
           <Select.Group>
@@ -108,6 +107,17 @@
     </Field.Field>
 
     {#if settings.mode === 'transcode'}
+      <Field.Field class="gap-2">
+        <Field.Label for={bitrateId}>Bitrate (kbps)</Field.Label>
+        <Input
+          id={bitrateId}
+          type="number"
+          value={settings.bitrateKbps?.toString() ?? ''}
+          oninput={(event) => onBitrateChange(parseOptionalInt(event.currentTarget.value))}
+          disabled={isBitrateDisabled}
+        />
+      </Field.Field>
+
       <Field.Field class="gap-2">
         <Field.Label for={audioEncoderId}>Audio encoder</Field.Label>
         <Select.Root
@@ -125,130 +135,111 @@
           </Select.Content>
         </Select.Root>
       </Field.Field>
+
+      {#if selectedEncoder?.supportsChannels}
+        <Field.Field class="gap-0 rounded-2xl border border-border px-3.5 py-3">
+          <div class="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
+            <Field.Content class="min-w-0">
+              <Field.Label id={channelsLabelId} for={channelsSwitchId}>Channels</Field.Label>
+              <Field.Description class="break-words text-xs">
+                {channelsDefaultLabel}
+              </Field.Description>
+            </Field.Content>
+            <div class="flex shrink-0 items-center gap-2">
+              <span class="text-xs text-muted-foreground">Override</span>
+              <Switch
+                id={channelsSwitchId}
+                checked={settings.channels !== undefined}
+                onCheckedChange={(checked) => onChannelsChange(
+                  checked ? (settings.channels ?? (showSourceTrackDetails ? sourceTrack?.channels : undefined) ?? 2) : undefined,
+                )}
+              />
+            </div>
+          </div>
+
+          {#if settings.channels !== undefined}
+            <div class="overflow-hidden pt-3" transition:slide={{ duration: 140 }}>
+              <Input
+                id={channelsInputId}
+                type="number"
+                aria-labelledby={channelsLabelId}
+                value={settings.channels?.toString() ?? ''}
+                oninput={(event) => onChannelsChange(parseOptionalInt(event.currentTarget.value))}
+              />
+            </div>
+          {/if}
+        </Field.Field>
+      {/if}
+
+      {#if selectedEncoder?.supportsSampleRate}
+        <Field.Field class="gap-0 rounded-2xl border border-border px-3.5 py-3">
+          <div class="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
+            <Field.Content class="min-w-0">
+              <Field.Label id={sampleRateLabelId} for={sampleRateSwitchId}>Sample rate</Field.Label>
+              <Field.Description class="break-words text-xs">
+                {sampleRateDefaultLabel}
+              </Field.Description>
+            </Field.Content>
+            <div class="flex shrink-0 items-center gap-2">
+              <span class="text-xs text-muted-foreground">Override</span>
+              <Switch
+                id={sampleRateSwitchId}
+                checked={settings.sampleRate !== undefined}
+                onCheckedChange={(checked) => onSampleRateChange(
+                  checked ? (settings.sampleRate ?? (showSourceTrackDetails ? sourceTrack?.sampleRate : undefined) ?? 48000) : undefined,
+                )}
+              />
+            </div>
+          </div>
+
+          {#if settings.sampleRate !== undefined}
+            <div class="overflow-hidden pt-3" transition:slide={{ duration: 140 }}>
+              <Input
+                id={sampleRateInputId}
+                type="number"
+                aria-labelledby={sampleRateLabelId}
+                value={settings.sampleRate?.toString() ?? ''}
+                oninput={(event) => onSampleRateChange(parseOptionalInt(event.currentTarget.value))}
+              />
+            </div>
+          {/if}
+        </Field.Field>
+      {/if}
     {:else}
       <Item.Root variant="outline" size="sm">
         <Item.Description>{settings.mode === 'copy' ? copyMessage : disableMessage}</Item.Description>
       </Item.Root>
-    {/if}
-  </div>
 
-  <div class="space-y-4">
-    {#if settings.mode === 'transcode'}
-      <Field.Field class="gap-2">
-        <Field.Label for={bitrateId}>Bitrate (kbps)</Field.Label>
-        <Input
-          id={bitrateId}
-          type="number"
-          value={settings.bitrateKbps?.toString() ?? ''}
-          oninput={(event) => onBitrateChange(parseOptionalInt(event.currentTarget.value))}
-          disabled={isBitrateDisabled}
-        />
-      </Field.Field>
-
-      <div class={streamOverrideGridClass}>
-        {#if selectedEncoder?.supportsChannels}
-          <Field.Field class="gap-0 rounded-2xl border border-border px-3.5 py-3">
-            <div class="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
-              <Field.Content class="min-w-0">
-                <Field.Label id={channelsLabelId} for={channelsSwitchId}>Channels</Field.Label>
-                <Field.Description class="break-words text-xs">
-                  {channelsDefaultLabel}
-                </Field.Description>
-              </Field.Content>
-              <div class="flex shrink-0 items-center gap-2">
-                <span class="text-xs text-muted-foreground">Override</span>
-                <Switch
-                  id={channelsSwitchId}
-                  checked={settings.channels !== undefined}
-                  onCheckedChange={(checked) => onChannelsChange(
-                    checked ? (settings.channels ?? (showSourceTrackDetails ? sourceTrack?.channels : undefined) ?? 2) : undefined,
-                  )}
-                />
-              </div>
-            </div>
-
-            {#if settings.channels !== undefined}
-              <div class="overflow-hidden pt-3" transition:slide={{ duration: 140 }}>
-                <Input
-                  id={channelsInputId}
-                  type="number"
-                  aria-labelledby={channelsLabelId}
-                  value={settings.channels?.toString() ?? ''}
-                  oninput={(event) => onChannelsChange(parseOptionalInt(event.currentTarget.value))}
-                />
-              </div>
-            {/if}
-          </Field.Field>
-        {/if}
-
-        {#if selectedEncoder?.supportsSampleRate}
-          <Field.Field class="gap-0 rounded-2xl border border-border px-3.5 py-3">
-            <div class="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
-              <Field.Content class="min-w-0">
-                <Field.Label id={sampleRateLabelId} for={sampleRateSwitchId}>Sample rate</Field.Label>
-                <Field.Description class="break-words text-xs">
-                  {sampleRateDefaultLabel}
-                </Field.Description>
-              </Field.Content>
-              <div class="flex shrink-0 items-center gap-2">
-                <span class="text-xs text-muted-foreground">Override</span>
-                <Switch
-                  id={sampleRateSwitchId}
-                  checked={settings.sampleRate !== undefined}
-                  onCheckedChange={(checked) => onSampleRateChange(
-                    checked ? (settings.sampleRate ?? (showSourceTrackDetails ? sourceTrack?.sampleRate : undefined) ?? 48000) : undefined,
-                  )}
-                />
-              </div>
-            </div>
-
-            {#if settings.sampleRate !== undefined}
-              <div class="overflow-hidden pt-3" transition:slide={{ duration: 140 }}>
-                <Input
-                  id={sampleRateInputId}
-                  type="number"
-                  aria-labelledby={sampleRateLabelId}
-                  value={settings.sampleRate?.toString() ?? ''}
-                  oninput={(event) => onSampleRateChange(parseOptionalInt(event.currentTarget.value))}
-                />
-              </div>
-            {/if}
-          </Field.Field>
-        {/if}
-      </div>
-    {:else}
       <Item.Root variant="outline" size="sm">
         <Item.Description>{inactiveMessage}</Item.Description>
       </Item.Root>
     {/if}
-
-    {#if showSourceTrackDetails}
-      <Item.Group class="gap-2">
-        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
-          <Item.Title>Source codec</Item.Title>
-          <Item.Description>{sourceTrack?.codec.toUpperCase() ?? 'N/A'}</Item.Description>
-        </Item.Root>
-        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
-          <Item.Title>Channels</Item.Title>
-          <Item.Description>{formatChannels(sourceTrack?.channels)}</Item.Description>
-        </Item.Root>
-        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
-          <Item.Title>Sample rate</Item.Title>
-          <Item.Description>{formatSampleRate(sourceTrack?.sampleRate)}</Item.Description>
-        </Item.Root>
-        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
-          <Item.Title>Layout</Item.Title>
-          <Item.Description>{sourceTrack?.channelLayout ?? 'N/A'}</Item.Description>
-        </Item.Root>
-      </Item.Group>
-    {:else}
-      <Item.Root variant="outline" size="sm">
-          <Item.Description>
-              <ScrollArea>
-                  Source codec, channels, sample rate, and layout vary across the detected audio tracks. Open Track Overrides to inspect per-track details.                  
-              </ScrollArea>
-        </Item.Description>
-      </Item.Root>
-    {/if}
   </div>
+
+  {#if showSourceTrackDetails}
+    <Item.Group class="gap-2 sm:grid sm:grid-cols-2">
+      <Item.Root variant="outline" size="xs" class="min-w-0 justify-between" role="listitem">
+        <Item.Title>Source codec</Item.Title>
+        <Item.Description>{sourceTrack?.codec.toUpperCase() ?? 'N/A'}</Item.Description>
+      </Item.Root>
+      <Item.Root variant="outline" size="xs" class="min-w-0 justify-between" role="listitem">
+        <Item.Title>Channels</Item.Title>
+        <Item.Description>{formatChannels(sourceTrack?.channels)}</Item.Description>
+      </Item.Root>
+      <Item.Root variant="outline" size="xs" class="min-w-0 justify-between" role="listitem">
+        <Item.Title>Sample rate</Item.Title>
+        <Item.Description>{formatSampleRate(sourceTrack?.sampleRate)}</Item.Description>
+      </Item.Root>
+      <Item.Root variant="outline" size="xs" class="min-w-0 justify-between" role="listitem">
+        <Item.Title>Layout</Item.Title>
+        <Item.Description>{sourceTrack?.channelLayout ?? 'N/A'}</Item.Description>
+      </Item.Root>
+    </Item.Group>
+  {:else}
+    <Item.Root variant="outline" size="sm">
+      <Item.Description>
+        Source codec, channels, sample rate, and layout vary across the detected audio tracks. Open Track Overrides to inspect per-track details.
+      </Item.Description>
+    </Item.Root>
+  {/if}
 </div>

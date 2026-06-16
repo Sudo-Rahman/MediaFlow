@@ -41,8 +41,8 @@
     <Empty.Description>No subtitle tracks were detected in this file.</Empty.Description>
   </Empty.Root>
 {:else}
-  <div class="grid gap-4 lg:grid-cols-2">
-    <div class="space-y-4">
+  <div class="space-y-4">
+    <div class="grid gap-4 lg:grid-cols-2 lg:items-start">
       <div class="space-y-2">
         <Label for={subtitleModeId}>Subtitle mode</Label>
         <Select.Root
@@ -88,7 +88,7 @@
           </Select.Root>
         </div>
       {:else}
-        <Item.Root variant="outline" size="sm">
+        <Item.Root variant="outline" size="sm" class="lg:self-end">
           <Item.Description>
             {file.profile.subtitles.mode === 'copy'
               ? 'Subtitle tracks will be copied without conversion.'
@@ -98,7 +98,7 @@
       {/if}
     </div>
 
-    <Card.Root class="max-h-48 min-h-0 overflow-hidden">
+    <Card.Root class="flex max-h-[clamp(18rem,calc(100dvh-21rem),44rem)] flex-col overflow-hidden">
       <Card.Header class="shrink-0 pb-3">
         <Card.Title>Detected subtitle tracks</Card.Title>
       </Card.Header>

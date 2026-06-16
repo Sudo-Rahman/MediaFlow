@@ -189,8 +189,8 @@
     <Empty.Description>This file is audio-only, so video transcoding is disabled.</Empty.Description>
   </Empty.Root>
 {:else}
-  <div class="grid gap-4 lg:grid-cols-2">
-    <div class="space-y-4">
+  <div class="space-y-4">
+    <div class="grid gap-4 lg:grid-cols-2 lg:items-start">
       <div class="space-y-2">
         <Label for={videoModeId}>Video mode</Label>
         <Select.Root
@@ -213,353 +213,348 @@
         </Select.Root>
       </div>
 
-      {#if file.profile.video.mode === 'transcode'}
-        <Field.Group class="gap-3 @container/resolution">
-          <Item.Root
-            variant="outline"
-            size="sm"
-            class="flex-col items-stretch gap-4"
-          >
-            <div class="flex min-w-0 flex-col gap-3 @lg/resolution:flex-row @lg/resolution:items-start">
-              <Item.Content class="min-w-0">
-                <Item.Title>Output resolution</Item.Title>
-                <Item.Description>
-                  {effectiveVideoResolution
-                    ? formatResolution(effectiveVideoResolution.width, effectiveVideoResolution.height)
-                    : 'N/A'}
-                </Item.Description>
-              </Item.Content>
-
-              <Item.Actions class="w-full @lg/resolution:w-64">
-                <Field.Field class="gap-2">
-                  <Field.Label for={videoResolutionId}>Resolution</Field.Label>
-                  <Select.Root
-                    type="single"
-                    value={selectedResolutionPresetValue}
-                    onValueChange={(value) => selectVideoResolution(value as TranscodeVideoResolutionSelection)}
-                  >
-                    <Select.Trigger id={videoResolutionId} class="w-full">
-                      {getVideoResolutionTriggerLabel(selectedResolutionPresetValue)}
-                    </Select.Trigger>
-                    <Select.Content>
-                      <Select.Group>
-                        {#each videoResolutionPresetOptions as option (option.value)}
-                          <Select.Item value={option.value}>{option.label}</Select.Item>
-                        {/each}
-                      </Select.Group>
-                    </Select.Content>
-                  </Select.Root>
-                </Field.Field>
-              </Item.Actions>
-            </div>
-
-            {#if selectedResolutionPresetValue === 'custom' && file.profile.video.resolution.mode === 'fit'}
-              <Field.Group class="gap-3">
-                <Field.Field orientation="horizontal" class="items-center">
-                  <Field.Content>
-                    <Field.Label for={videoKeepRatioId}>Keep ratio</Field.Label>
-                  </Field.Content>
-                  <Switch
-                    id={videoKeepRatioId}
-                    size="sm"
-                    checked={customVideoKeepRatioEnabled}
-                    onCheckedChange={(checked) => updateCustomVideoKeepRatio(checked)}
-                  />
-                </Field.Field>
-
-                <div class="grid gap-4 md:grid-cols-2">
-                  <Field.Field>
-                    <Field.Label for={videoMaxWidthId}>Width</Field.Label>
-                    <InputGroup.Root>
-                      <InputGroup.Input
-                        id={videoMaxWidthId}
-                        type="number"
-                        min="1"
-                        step="1"
-                        value={file.profile.video.resolution.maxWidth?.toString() ?? ''}
-                        oninput={(event) => {
-                          const value = parseOptionalInt(event.currentTarget.value);
-                          updateCustomVideoResolution('width', value);
-                        }}
-                      />
-                      <InputGroup.Addon align="inline-end">px</InputGroup.Addon>
-                    </InputGroup.Root>
-                  </Field.Field>
-
-                  <Field.Field>
-                    <Field.Label for={videoMaxHeightId}>Height</Field.Label>
-                    <InputGroup.Root>
-                      <InputGroup.Input
-                        id={videoMaxHeightId}
-                        type="number"
-                        min="1"
-                        step="1"
-                        value={file.profile.video.resolution.maxHeight?.toString() ?? ''}
-                        oninput={(event) => {
-                          const value = parseOptionalInt(event.currentTarget.value);
-                          updateCustomVideoResolution('height', value);
-                        }}
-                      />
-                      <InputGroup.Addon align="inline-end">px</InputGroup.Addon>
-                    </InputGroup.Root>
-                  </Field.Field>
-                </div>
-              </Field.Group>
-            {/if}
-          </Item.Root>
-        </Field.Group>
-
+    {#if file.profile.video.mode === 'transcode'}
+      {#if hasManualQualityControls}
         <div class="space-y-2">
-          <Label for={videoEncoderId}>Video encoder</Label>
+          <Label for={qualityModeId}>Quality mode</Label>
           <Select.Root
             type="single"
-            value={file.profile.video.encoderId}
+            value={file.profile.video.qualityMode}
             onValueChange={(value) => {
               updateProfile((profile) => {
-                profile.video.encoderId = value;
-                profile.video.preset = getDefaultVideoPresetValue(value);
+                profile.video.qualityMode = value as TranscodeQualityMode;
               });
             }}
           >
-            <Select.Trigger id={videoEncoderId} class="w-full">{selectedVideoEncoder?.label ?? 'Select encoder'}</Select.Trigger>
+            <Select.Trigger id={qualityModeId} class="w-full">{file.profile.video.qualityMode}</Select.Trigger>
             <Select.Content>
               <Select.Group>
-                {#each availableVideoEncoders as encoder (encoder.id)}
-                  <Select.Item value={encoder.id}>{encoder.label}</Select.Item>
+                {#if selectedVideoEncoder?.supportsCrf}
+                  <Select.Item value="crf">crf</Select.Item>
+                {/if}
+                {#if selectedVideoEncoder?.supportsQp}
+                  <Select.Item value="qp">qp</Select.Item>
+                {/if}
+                {#if selectedVideoEncoder?.supportsBitrate}
+                  <Select.Item value="bitrate">bitrate</Select.Item>
+                {/if}
+              </Select.Group>
+            </Select.Content>
+          </Select.Root>
+        </div>
+      {:else}
+        <Item.Root variant="outline" size="sm">
+          <Item.Description>This encoder manages quality automatically.</Item.Description>
+        </Item.Root>
+      {/if}
+
+      <Field.Group class="gap-3 @container/resolution">
+        <Item.Root
+          variant="outline"
+          size="sm"
+          class="flex-col items-stretch gap-4"
+        >
+          <div class="flex min-w-0 flex-col gap-3 @lg/resolution:flex-row @lg/resolution:items-start">
+            <Item.Content class="min-w-0">
+              <Item.Title>Output resolution</Item.Title>
+              <Item.Description>
+                {effectiveVideoResolution
+                  ? formatResolution(effectiveVideoResolution.width, effectiveVideoResolution.height)
+                  : 'N/A'}
+              </Item.Description>
+            </Item.Content>
+
+            <Item.Actions class="w-full @lg/resolution:w-64">
+              <Field.Field class="gap-2">
+                <Field.Label for={videoResolutionId}>Resolution</Field.Label>
+                <Select.Root
+                  type="single"
+                  value={selectedResolutionPresetValue}
+                  onValueChange={(value) => selectVideoResolution(value as TranscodeVideoResolutionSelection)}
+                >
+                  <Select.Trigger id={videoResolutionId} class="w-full">
+                    {getVideoResolutionTriggerLabel(selectedResolutionPresetValue)}
+                  </Select.Trigger>
+                  <Select.Content>
+                    <Select.Group>
+                      {#each videoResolutionPresetOptions as option (option.value)}
+                        <Select.Item value={option.value}>{option.label}</Select.Item>
+                      {/each}
+                    </Select.Group>
+                  </Select.Content>
+                </Select.Root>
+              </Field.Field>
+            </Item.Actions>
+          </div>
+
+          {#if selectedResolutionPresetValue === 'custom' && file.profile.video.resolution.mode === 'fit'}
+            <Field.Group class="gap-3">
+              <Field.Field orientation="horizontal" class="items-center">
+                <Field.Content>
+                  <Field.Label for={videoKeepRatioId}>Keep ratio</Field.Label>
+                </Field.Content>
+                <Switch
+                  id={videoKeepRatioId}
+                  size="sm"
+                  checked={customVideoKeepRatioEnabled}
+                  onCheckedChange={(checked) => updateCustomVideoKeepRatio(checked)}
+                />
+              </Field.Field>
+
+              <div class="grid gap-4 md:grid-cols-2">
+                <Field.Field>
+                  <Field.Label for={videoMaxWidthId}>Width</Field.Label>
+                  <InputGroup.Root>
+                    <InputGroup.Input
+                      id={videoMaxWidthId}
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={file.profile.video.resolution.maxWidth?.toString() ?? ''}
+                      oninput={(event) => {
+                        const value = parseOptionalInt(event.currentTarget.value);
+                        updateCustomVideoResolution('width', value);
+                      }}
+                    />
+                    <InputGroup.Addon align="inline-end">px</InputGroup.Addon>
+                  </InputGroup.Root>
+                </Field.Field>
+
+                <Field.Field>
+                  <Field.Label for={videoMaxHeightId}>Height</Field.Label>
+                  <InputGroup.Root>
+                    <InputGroup.Input
+                      id={videoMaxHeightId}
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={file.profile.video.resolution.maxHeight?.toString() ?? ''}
+                      oninput={(event) => {
+                        const value = parseOptionalInt(event.currentTarget.value);
+                        updateCustomVideoResolution('height', value);
+                      }}
+                    />
+                    <InputGroup.Addon align="inline-end">px</InputGroup.Addon>
+                  </InputGroup.Root>
+                </Field.Field>
+              </div>
+            </Field.Group>
+          {/if}
+        </Item.Root>
+      </Field.Group>
+
+      {#if hasManualQualityControls}
+        {#if file.profile.video.qualityMode === 'crf'}
+          <div class="space-y-2">
+            <Label for={crfId}>CRF</Label>
+            <Input
+              id={crfId}
+              type="number"
+              value={file.profile.video.crf?.toString() ?? ''}
+              oninput={(event) => {
+                const value = parseOptionalFloat(event.currentTarget.value);
+                updateProfile((profile) => {
+                  profile.video.crf = value;
+                });
+              }}
+            />
+          </div>
+        {:else if file.profile.video.qualityMode === 'qp'}
+          <div class="space-y-2">
+            <Label for={qpId}>QP</Label>
+            <Input
+              id={qpId}
+              type="number"
+              value={file.profile.video.qp?.toString() ?? ''}
+              oninput={(event) => {
+                const value = parseOptionalInt(event.currentTarget.value);
+                updateProfile((profile) => {
+                  profile.video.qp = value;
+                });
+              }}
+            />
+          </div>
+        {:else}
+          <div class="space-y-2">
+            <Label for={videoBitrateId}>Bitrate (kbps)</Label>
+            <Input
+              id={videoBitrateId}
+              type="number"
+              value={file.profile.video.bitrateKbps?.toString() ?? ''}
+              oninput={(event) => {
+                const value = parseOptionalInt(event.currentTarget.value);
+                updateProfile((profile) => {
+                  profile.video.bitrateKbps = value;
+                });
+              }}
+            />
+          </div>
+        {/if}
+      {/if}
+
+      <div class="space-y-2">
+        <Label for={videoEncoderId}>Video encoder</Label>
+        <Select.Root
+          type="single"
+          value={file.profile.video.encoderId}
+          onValueChange={(value) => {
+            updateProfile((profile) => {
+              profile.video.encoderId = value;
+              profile.video.preset = getDefaultVideoPresetValue(value);
+            });
+          }}
+        >
+          <Select.Trigger id={videoEncoderId} class="w-full">{selectedVideoEncoder?.label ?? 'Select encoder'}</Select.Trigger>
+          <Select.Content>
+            <Select.Group>
+              {#each availableVideoEncoders as encoder (encoder.id)}
+                <Select.Item value={encoder.id}>{encoder.label}</Select.Item>
+              {/each}
+            </Select.Group>
+          </Select.Content>
+        </Select.Root>
+      </div>
+
+      {#if videoPresetOptions.length > 0}
+        <div class="space-y-2">
+          <Label for={videoPresetId}>Preset</Label>
+          <Select.Root
+            type="single"
+            value={selectedPresetValue}
+            onValueChange={(value) => {
+              updateProfile((profile) => {
+                profile.video.preset = value || undefined;
+              });
+            }}
+          >
+            <Select.Trigger id={videoPresetId} class="w-full">
+              {videoPresetOptions.find((option) => option.value === selectedPresetValue)?.label ?? 'Select preset'}
+            </Select.Trigger>
+            <Select.Content>
+              <Select.Group>
+                {#each videoPresetOptions as option (option.value)}
+                  <Select.Item value={option.value}>{option.label}</Select.Item>
                 {/each}
               </Select.Group>
             </Select.Content>
           </Select.Root>
         </div>
-
-        {#if videoProfileOptions.length > 0 || videoLevelOptions.length > 0}
-          <div class="grid gap-4 md:grid-cols-2">
-            {#if videoProfileOptions.length > 0}
-              <div class="space-y-2">
-                <Label for={videoProfileId}>Profile</Label>
-                <Select.Root
-                  type="single"
-                  value={file.profile.video.profile}
-                  onValueChange={(value) => {
-                    updateProfile((profile) => {
-                      profile.video.profile = value;
-                    });
-                  }}
-                >
-                  <Select.Trigger id={videoProfileId} class="w-full">{file.profile.video.profile ?? 'Auto'}</Select.Trigger>
-                  <Select.Content>
-                    <Select.Group>
-                      {#each videoProfileOptions as profile (profile)}
-                        <Select.Item value={profile}>{profile}</Select.Item>
-                      {/each}
-                    </Select.Group>
-                  </Select.Content>
-                </Select.Root>
-              </div>
-            {/if}
-
-            {#if videoLevelOptions.length > 0}
-              <div class="space-y-2">
-                <Label for={videoLevelId}>Level</Label>
-                <Select.Root
-                  type="single"
-                  value={file.profile.video.level}
-                  onValueChange={(value) => {
-                    updateProfile((profile) => {
-                      profile.video.level = value;
-                    });
-                  }}
-                >
-                  <Select.Trigger id={videoLevelId} class="w-full">{file.profile.video.level ?? 'Auto'}</Select.Trigger>
-                  <Select.Content>
-                    <Select.Group>
-                      {#each videoLevelOptions as level (level)}
-                        <Select.Item value={level}>{level}</Select.Item>
-                      {/each}
-                    </Select.Group>
-                  </Select.Content>
-                </Select.Root>
-              </div>
-            {/if}
-          </div>
-        {/if}
-
-        {#if videoPixelFormatOptions.length > 0}
-          <div class="space-y-2">
-            <Label for={videoPixelFormatId}>Pixel format</Label>
-            <Select.Root
-              type="single"
-              value={file.profile.video.pixelFormat}
-              onValueChange={(value) => {
-                updateProfile((profile) => {
-                  profile.video.pixelFormat = value;
-                });
-              }}
-            >
-              <Select.Trigger id={videoPixelFormatId} class="w-full">{file.profile.video.pixelFormat ?? 'Auto'}</Select.Trigger>
-              <Select.Content>
-                <Select.Group>
-                  {#each videoPixelFormatOptions as pixelFormat (pixelFormat)}
-                    <Select.Item value={pixelFormat}>{pixelFormat}</Select.Item>
-                  {/each}
-                </Select.Group>
-              </Select.Content>
-            </Select.Root>
-            {#if selectedVideoEncoder?.supportedBitDepths?.length}
-              <p class="text-xs text-muted-foreground">
-                Supported bit depths: {selectedVideoEncoder.supportedBitDepths.join(', ')}-bit
-              </p>
-            {/if}
-          </div>
-        {/if}
-      {:else}
-        <Item.Root variant="outline" size="sm">
-          <Item.Description>
-            {file.profile.video.mode === 'copy'
-              ? 'Video streams will be copied without re-encoding.'
-              : 'Video streams are disabled for this output.'}
-          </Item.Description>
-        </Item.Root>
       {/if}
-    </div>
 
-    <div class="space-y-4">
-      {#if file.profile.video.mode === 'transcode'}
-        {#if hasManualQualityControls}
-          <div class="space-y-2">
-            <Label for={qualityModeId}>Quality mode</Label>
-            <Select.Root
-              type="single"
-              value={file.profile.video.qualityMode}
-              onValueChange={(value) => {
-                updateProfile((profile) => {
-                  profile.video.qualityMode = value as TranscodeQualityMode;
-                });
-              }}
-            >
-              <Select.Trigger id={qualityModeId} class="w-full">{file.profile.video.qualityMode}</Select.Trigger>
-              <Select.Content>
-                <Select.Group>
-                  {#if selectedVideoEncoder?.supportsCrf}
-                    <Select.Item value="crf">crf</Select.Item>
-                  {/if}
-                  {#if selectedVideoEncoder?.supportsQp}
-                    <Select.Item value="qp">qp</Select.Item>
-                  {/if}
-                  {#if selectedVideoEncoder?.supportsBitrate}
-                    <Select.Item value="bitrate">bitrate</Select.Item>
-                  {/if}
-                </Select.Group>
-              </Select.Content>
-            </Select.Root>
-          </div>
+      {#if videoProfileOptions.length > 0}
+        <div class="space-y-2">
+          <Label for={videoProfileId}>Profile</Label>
+          <Select.Root
+            type="single"
+            value={file.profile.video.profile}
+            onValueChange={(value) => {
+              updateProfile((profile) => {
+                profile.video.profile = value;
+              });
+            }}
+          >
+            <Select.Trigger id={videoProfileId} class="w-full">{file.profile.video.profile ?? 'Auto'}</Select.Trigger>
+            <Select.Content>
+              <Select.Group>
+                {#each videoProfileOptions as profile (profile)}
+                  <Select.Item value={profile}>{profile}</Select.Item>
+                {/each}
+              </Select.Group>
+            </Select.Content>
+          </Select.Root>
+        </div>
+      {/if}
 
-          {#if file.profile.video.qualityMode === 'crf'}
-            <div class="space-y-2">
-              <Label for={crfId}>CRF</Label>
-              <Input
-                id={crfId}
-                type="number"
-                value={file.profile.video.crf?.toString() ?? ''}
-                oninput={(event) => {
-                  const value = parseOptionalFloat(event.currentTarget.value);
-                  updateProfile((profile) => {
-                    profile.video.crf = value;
-                  });
-                }}
-              />
-            </div>
-          {:else if file.profile.video.qualityMode === 'qp'}
-            <div class="space-y-2">
-              <Label for={qpId}>QP</Label>
-              <Input
-                id={qpId}
-                type="number"
-                value={file.profile.video.qp?.toString() ?? ''}
-                oninput={(event) => {
-                  const value = parseOptionalInt(event.currentTarget.value);
-                  updateProfile((profile) => {
-                    profile.video.qp = value;
-                  });
-                }}
-              />
-            </div>
-          {:else}
-            <div class="space-y-2">
-              <Label for={videoBitrateId}>Bitrate (kbps)</Label>
-              <Input
-                id={videoBitrateId}
-                type="number"
-                value={file.profile.video.bitrateKbps?.toString() ?? ''}
-                oninput={(event) => {
-                  const value = parseOptionalInt(event.currentTarget.value);
-                  updateProfile((profile) => {
-                    profile.video.bitrateKbps = value;
-                  });
-                }}
-              />
-            </div>
+      {#if videoLevelOptions.length > 0}
+        <div class="space-y-2">
+          <Label for={videoLevelId}>Level</Label>
+          <Select.Root
+            type="single"
+            value={file.profile.video.level}
+            onValueChange={(value) => {
+              updateProfile((profile) => {
+                profile.video.level = value;
+              });
+            }}
+          >
+            <Select.Trigger id={videoLevelId} class="w-full">{file.profile.video.level ?? 'Auto'}</Select.Trigger>
+            <Select.Content>
+              <Select.Group>
+                {#each videoLevelOptions as level (level)}
+                  <Select.Item value={level}>{level}</Select.Item>
+                {/each}
+              </Select.Group>
+            </Select.Content>
+          </Select.Root>
+        </div>
+      {/if}
+
+      {#if videoPixelFormatOptions.length > 0}
+        <div class="space-y-2">
+          <Label for={videoPixelFormatId}>Pixel format</Label>
+          <Select.Root
+            type="single"
+            value={file.profile.video.pixelFormat}
+            onValueChange={(value) => {
+              updateProfile((profile) => {
+                profile.video.pixelFormat = value;
+              });
+            }}
+          >
+            <Select.Trigger id={videoPixelFormatId} class="w-full">{file.profile.video.pixelFormat ?? 'Auto'}</Select.Trigger>
+            <Select.Content>
+              <Select.Group>
+                {#each videoPixelFormatOptions as pixelFormat (pixelFormat)}
+                  <Select.Item value={pixelFormat}>{pixelFormat}</Select.Item>
+                {/each}
+              </Select.Group>
+            </Select.Content>
+          </Select.Root>
+          {#if selectedVideoEncoder?.supportedBitDepths?.length}
+            <p class="text-xs text-muted-foreground">
+              Supported bit depths: {selectedVideoEncoder.supportedBitDepths.join(', ')}-bit
+            </p>
           {/if}
-        {:else}
-          <Item.Root variant="outline" size="sm">
-            <Item.Description>This encoder manages quality automatically.</Item.Description>
-          </Item.Root>
-        {/if}
-
-        {#if videoPresetOptions.length > 0}
-          <div class="space-y-2">
-            <Label for={videoPresetId}>Preset</Label>
-            <Select.Root
-              type="single"
-              value={selectedPresetValue}
-              onValueChange={(value) => {
-                updateProfile((profile) => {
-                  profile.video.preset = value || undefined;
-                });
-              }}
-            >
-              <Select.Trigger id={videoPresetId} class="w-full">
-                {videoPresetOptions.find((option) => option.value === selectedPresetValue)?.label ?? 'Select preset'}
-              </Select.Trigger>
-              <Select.Content>
-                <Select.Group>
-                  {#each videoPresetOptions as option (option.value)}
-                    <Select.Item value={option.value}>{option.label}</Select.Item>
-                  {/each}
-                </Select.Group>
-              </Select.Content>
-            </Select.Root>
-          </div>
-        {/if}
-      {:else}
-        <Item.Root variant="outline" size="sm">
-          <Item.Description>
-            Encoder quality settings are not used while video mode is {file.profile.video.mode}.
-          </Item.Description>
-        </Item.Root>
+        </div>
       {/if}
+    {:else}
+      <Item.Root variant="outline" size="sm">
+        <Item.Description>
+          {file.profile.video.mode === 'copy'
+            ? 'Video streams will be copied without re-encoding.'
+            : 'Video streams are disabled for this output.'}
+        </Item.Description>
+      </Item.Root>
 
-      <Item.Group class="gap-2">
-        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
-          <Item.Title>Source codec</Item.Title>
-          <Item.Description>{selectedVideoTrack?.codec.toUpperCase() ?? 'N/A'}</Item.Description>
-        </Item.Root>
-        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
-          <Item.Title>Source resolution</Item.Title>
-          <Item.Description>{formatResolution(selectedVideoTrack?.width, selectedVideoTrack?.height)}</Item.Description>
-        </Item.Root>
-        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
-          <Item.Title>Source bit depth</Item.Title>
-          <Item.Description>{formatBitDepth(selectedVideoTrack)}</Item.Description>
-        </Item.Root>
-        <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
-          <Item.Title>Source color</Item.Title>
-          <Item.Description>
-            {selectedVideoTrack?.colorSpace ?? 'N/A'} / {selectedVideoTrack?.colorTransfer ?? 'N/A'} / {selectedVideoTrack?.colorPrimaries ?? 'N/A'}
-          </Item.Description>
-        </Item.Root>
-      </Item.Group>
+      <Item.Root variant="outline" size="sm">
+        <Item.Description>
+          Encoder quality settings are not used while video mode is {file.profile.video.mode}.
+        </Item.Description>
+      </Item.Root>
+
+      {/if}
     </div>
+
+    <Item.Group class="gap-2 sm:grid sm:grid-cols-2">
+      <Item.Root variant="outline" size="xs" class="min-w-0 justify-between" role="listitem">
+        <Item.Title>Source codec</Item.Title>
+        <Item.Description>{selectedVideoTrack?.codec.toUpperCase() ?? 'N/A'}</Item.Description>
+      </Item.Root>
+      <Item.Root variant="outline" size="xs" class="min-w-0 justify-between" role="listitem">
+        <Item.Title>Source resolution</Item.Title>
+        <Item.Description>{formatResolution(selectedVideoTrack?.width, selectedVideoTrack?.height)}</Item.Description>
+      </Item.Root>
+      <Item.Root variant="outline" size="xs" class="min-w-0 justify-between" role="listitem">
+        <Item.Title>Source bit depth</Item.Title>
+        <Item.Description>{formatBitDepth(selectedVideoTrack)}</Item.Description>
+      </Item.Root>
+      <Item.Root variant="outline" size="xs" class="min-w-0 justify-between" role="listitem">
+        <Item.Title>Source color</Item.Title>
+        <Item.Description class="text-right">
+          {selectedVideoTrack?.colorSpace ?? 'N/A'} / {selectedVideoTrack?.colorTransfer ?? 'N/A'} / {selectedVideoTrack?.colorPrimaries ?? 'N/A'}
+        </Item.Description>
+      </Item.Root>
+    </Item.Group>
   </div>
 {/if}
 

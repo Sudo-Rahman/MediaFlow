@@ -11,6 +11,15 @@ export type TranscodeVideoMode = 'copy' | 'transcode' | 'disable';
 export type TranscodeAudioMode = 'copy' | 'transcode' | 'disable';
 export type TranscodeSubtitleMode = 'copy' | 'convert_text' | 'disable';
 export type TranscodeQualityMode = 'crf' | 'bitrate' | 'qp';
+export type TranscodeVideoResolutionMode = 'source' | 'fit';
+export type TranscodeVideoResolutionSelection =
+  | 'source'
+  | 'fit-2160p'
+  | 'fit-1440p'
+  | 'fit-1080p'
+  | 'fit-720p'
+  | 'fit-480p'
+  | 'custom';
 export type TranscodeContainerKind = 'video' | 'audio';
 export type TranscodePresetTab = 'video' | 'audio' | 'subtitles';
 export type TranscodeOutputTrackMode = 'copy' | 'transcode' | 'convert_text';
@@ -35,6 +44,14 @@ export interface TranscodeAdditionalArg {
   reason?: string;
 }
 
+export interface TranscodeVideoResolutionSettings {
+  mode: TranscodeVideoResolutionMode;
+  maxWidth?: number;
+  maxHeight?: number;
+  selection?: TranscodeVideoResolutionSelection;
+  keepRatio?: boolean;
+}
+
 export interface TranscodeVideoSettings {
   mode: TranscodeVideoMode;
   encoderId?: string;
@@ -46,6 +63,7 @@ export interface TranscodeVideoSettings {
   qp?: number;
   bitrateKbps?: number;
   preset?: string;
+  resolution: TranscodeVideoResolutionSettings;
   additionalArgs: TranscodeAdditionalArg[];
 }
 

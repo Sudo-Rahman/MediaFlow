@@ -31,6 +31,7 @@ import {
   getTracksByType,
   getVideoEncoderCapability,
   getVideoPresetOptions,
+  getVideoResolutionPresetOptions,
   scoreTranscodeEncoderOption,
 } from './transcode';
 
@@ -132,6 +133,17 @@ interface CompactTrackPayload {
 export interface TranscodeAiCapabilityPayload {
   ffmpegVersion: string;
   hwaccels: string[];
+  videoResolution: {
+    supportsFit: true;
+    allowsUpscale: true;
+    behavior: 'fit_with_aspect_ratio_no_crop_no_pad';
+    presets: Array<{
+      value: string;
+      label: string;
+      maxWidth?: number;
+      maxHeight?: number;
+    }>;
+  };
   overridePolicy: {
     allowedFlagsMustExistInSelectedEncoderOptions: true;
     overrideFlagsAreRuntimeDiscoveredFromEncoderOptions: true;
@@ -363,6 +375,19 @@ export function buildTranscodeAiCapabilityPayload(
   return {
     ffmpegVersion: capabilities.ffmpegVersion,
     hwaccels: capabilities.hwaccels,
+    videoResolution: {
+      supportsFit: true,
+      allowsUpscale: true,
+      behavior: 'fit_with_aspect_ratio_no_crop_no_pad',
+      presets: getVideoResolutionPresetOptions()
+        .filter((option) => option.value !== 'custom')
+        .map((option) => ({
+          value: option.value,
+          label: option.label,
+          maxWidth: option.resolution?.maxWidth,
+          maxHeight: option.resolution?.maxHeight,
+        })),
+    },
     overridePolicy: {
       allowedFlagsMustExistInSelectedEncoderOptions: true,
       overrideFlagsAreRuntimeDiscoveredFromEncoderOptions: true,
@@ -459,6 +484,8 @@ function buildAiSystemPrompt(capabilityPayload: TranscodeAiCapabilityPayload): s
     '- balanced: reduce size when there is a clear efficiency win, but avoid aggressive settings that create visible/audible compromises or disproportionate encode time.',
     '- no_compromise: do not optimize primarily for smaller files; prioritize source fidelity, compatibility, durability, and the optimization target over output size.',
     'Do not hard-code codec preferences. Decide from the actual containers, encoders, hardware support, encoder options, source properties, and selected target/size combination.',
+    'For video resolution, use video.resolution.mode="source" to keep the original source size, or mode="fit" with maxWidth and/or maxHeight to scale inside a target size.',
+    'Video resolution fit always preserves aspect ratio, never crops, and never pads. Upscaling is allowed only when the user explicitly requests a larger output resolution.',
     '',
     'Choose only containers, encoders, presets, modes, pixel formats, profiles, levels, and override flags present in the capability payload.',
     'Override flags in the payload are runtime-discovered from this machine FFmpeg encoder metadata; do not assume a flag exists if it is absent.',
@@ -474,7 +501,7 @@ function buildAiSystemPrompt(capabilityPayload: TranscodeAiCapabilityPayload): s
     JSON.stringify(capabilityPayload, null, 2),
     '',
     'JSON schema:',
-    '{"status":"ok","containerId":string,"video":{"mode":"copy|transcode|disable","encoderId"?:string,"profile"?:string,"level"?:string,"pixelFormat"?:string,"qualityMode":"crf|bitrate|qp","crf"?:number,"qp"?:number,"bitrateKbps"?:number,"preset"?:string,"additionalArgs"?:Array<{"flag":string,"value"?:string|number|boolean,"enabled"?:boolean,"reason"?:string}>},"audio":{"mode":"copy|transcode|disable","encoderId"?:string,"bitrateKbps"?:number,"channels"?:number,"sampleRate"?:number,"additionalArgs"?:Array<{"flag":string,"value"?:string|number|boolean,"enabled"?:boolean,"reason"?:string}>,"trackOverrides"?:Array<{"trackId":number,"mode":"copy|transcode|disable","encoderId"?:string,"bitrateKbps"?:number,"channels"?:number,"sampleRate"?:number,"additionalArgs"?:Array<{"flag":string,"value"?:string|number|boolean,"enabled"?:boolean,"reason"?:string}>,"reason"?:string}>},"subtitles":{"mode":"copy|convert_text|disable","encoderId"?:string,"additionalArgs"?:Array<{"flag":string,"value"?:string|number|boolean,"enabled"?:boolean,"reason"?:string}>},"rationale":string,"warnings"?:string[]}',
+    '{"status":"ok","containerId":string,"video":{"mode":"copy|transcode|disable","encoderId"?:string,"profile"?:string,"level"?:string,"pixelFormat"?:string,"qualityMode":"crf|bitrate|qp","crf"?:number,"qp"?:number,"bitrateKbps"?:number,"preset"?:string,"resolution"?:{"mode":"source|fit","maxWidth"?:number,"maxHeight"?:number},"additionalArgs"?:Array<{"flag":string,"value"?:string|number|boolean,"enabled"?:boolean,"reason"?:string}>},"audio":{"mode":"copy|transcode|disable","encoderId"?:string,"bitrateKbps"?:number,"channels"?:number,"sampleRate"?:number,"additionalArgs"?:Array<{"flag":string,"value"?:string|number|boolean,"enabled"?:boolean,"reason"?:string}>,"trackOverrides"?:Array<{"trackId":number,"mode":"copy|transcode|disable","encoderId"?:string,"bitrateKbps"?:number,"channels"?:number,"sampleRate"?:number,"additionalArgs"?:Array<{"flag":string,"value"?:string|number|boolean,"enabled"?:boolean,"reason"?:string}>,"reason"?:string}>},"subtitles":{"mode":"copy|convert_text|disable","encoderId"?:string,"additionalArgs"?:Array<{"flag":string,"value"?:string|number|boolean,"enabled"?:boolean,"reason"?:string}>},"rationale":string,"warnings"?:string[]}',
     '{"status":"error","errorCode":"out_of_scope","errorMessage":string}',
   ].join('\n');
 }
@@ -505,6 +532,7 @@ function buildAiTextPrompt(
     'Instructions:',
     '- Recommend one complete practical profile for this source file.',
     '- Treat optimization target and size preference as separate requirements; explain the tradeoff briefly in the rationale.',
+    '- Keep video.resolution.mode as "source" unless resizing is useful for the target; if resizing, use "fit" with maxWidth and/or maxHeight.',
     '- Keep user/manual overrides conceptually separate from AI overrides; the app will preserve manual overrides automatically.',
     '- For additionalArgs, return only flag/value/enabled/reason. Do not invent ids or source fields.',
     '- Use audio.trackOverrides only for specific audio tracks that should differ from the global audio setting.',

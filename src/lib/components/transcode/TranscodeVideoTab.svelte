@@ -5,19 +5,29 @@
     TranscodeQualityMode,
     TranscodeVideoEncoderCapability,
     TranscodeVideoMode,
+    TranscodeVideoResolutionSelection,
   } from '$lib/types';
   import {
     getDefaultVideoPresetValue,
+    getEffectiveVideoResolution,
+    getVideoResolutionPairedDimension,
+    getVideoResolutionPresetOptions,
+    getVideoResolutionPresetValue,
     hasManualVideoQualityControls,
+    normalizeVideoResolutionSettings,
+    type TranscodeVideoResolutionDimension,
     type TranscodeModeOption,
     type TranscodePresetOption,
   } from '$lib/services/transcode';
   import { formatResolution } from '$lib/utils/format';
   import * as Empty from '$lib/components/ui/empty';
+  import * as Field from '$lib/components/ui/field';
   import { Input } from '$lib/components/ui/input';
+  import * as InputGroup from '$lib/components/ui/input-group';
   import * as Item from '$lib/components/ui/item';
   import { Label } from '$lib/components/ui/label';
   import * as Select from '$lib/components/ui/select';
+  import { Switch } from '$lib/components/ui/switch';
 
   import TranscodeAdditionalOverrides from './TranscodeAdditionalOverrides.svelte';
   import type { TranscodeProfileUpdater } from './types';
@@ -67,9 +77,95 @@
     return `${track.derivedBitDepth}-bit`;
   }
 
+  function getSourceVideoDimensions(currentFile: TranscodeFile): { width: number; height: number } {
+    const sourceTrack = selectedVideoTrack ?? currentFile.tracks.find((track) => track.type === 'video');
+    return {
+      width: sourceTrack?.width ?? 1920,
+      height: sourceTrack?.height ?? 1080,
+    };
+  }
+
+  function selectVideoResolution(value: TranscodeVideoResolutionSelection): void {
+    const selectedOption = videoResolutionPresetOptions.find((option) => option.value === value);
+    if (!selectedOption) return;
+
+    updateProfile((profile, currentFile) => {
+      if (selectedOption.resolution) {
+        profile.video.resolution = normalizeVideoResolutionSettings({
+          ...selectedOption.resolution,
+          selection: selectedOption.value,
+        });
+        return;
+      }
+
+      const { width, height } = getSourceVideoDimensions(currentFile);
+      profile.video.resolution = normalizeVideoResolutionSettings({
+        mode: 'fit',
+        maxWidth: width,
+        maxHeight: height,
+        selection: 'custom',
+        keepRatio: true,
+      });
+    });
+  }
+
+  function updateCustomVideoResolution(
+    changedDimension: TranscodeVideoResolutionDimension,
+    value: number | undefined,
+  ): void {
+    updateProfile((profile, currentFile) => {
+      const keepRatio = profile.video.resolution.keepRatio !== false;
+      const sourceDimensions = getSourceVideoDimensions(currentFile);
+      const pairedDimension = keepRatio
+        ? getVideoResolutionPairedDimension(changedDimension, value, sourceDimensions)
+        : undefined;
+      profile.video.resolution = normalizeVideoResolutionSettings({
+        ...profile.video.resolution,
+        mode: 'fit',
+        selection: 'custom',
+        keepRatio,
+        maxWidth: changedDimension === 'width'
+          ? value
+          : pairedDimension ?? profile.video.resolution.maxWidth,
+        maxHeight: changedDimension === 'height'
+          ? value
+          : pairedDimension ?? profile.video.resolution.maxHeight,
+      });
+    });
+  }
+
+  function updateCustomVideoKeepRatio(keepRatio: boolean): void {
+    updateProfile((profile, currentFile) => {
+      const sourceDimensions = getSourceVideoDimensions(currentFile);
+      const pairedHeight = keepRatio
+        ? getVideoResolutionPairedDimension('width', profile.video.resolution.maxWidth, sourceDimensions)
+        : undefined;
+      const pairedWidth = keepRatio && !pairedHeight
+        ? getVideoResolutionPairedDimension('height', profile.video.resolution.maxHeight, sourceDimensions)
+        : undefined;
+
+      profile.video.resolution = normalizeVideoResolutionSettings({
+        ...profile.video.resolution,
+        mode: 'fit',
+        selection: 'custom',
+        keepRatio,
+        maxWidth: pairedWidth ?? profile.video.resolution.maxWidth,
+        maxHeight: pairedHeight ?? profile.video.resolution.maxHeight,
+      });
+    });
+  }
+
+  function getVideoResolutionTriggerLabel(value: TranscodeVideoResolutionSelection): string {
+    return videoResolutionPresetOptions.find((option) => option.value === value)?.label ?? 'Custom fit';
+  }
+
   const selectedPresetValue = $derived(
     file.profile.video.preset ?? getDefaultVideoPresetValue(selectedVideoEncoder?.id) ?? '',
   );
+  const videoResolutionPresetOptions = getVideoResolutionPresetOptions();
+  const selectedResolutionPresetValue = $derived(getVideoResolutionPresetValue(file.profile.video.resolution));
+  const effectiveVideoResolution = $derived(getEffectiveVideoResolution(file.profile.video.resolution, selectedVideoTrack));
+  const customVideoKeepRatioEnabled = $derived(file.profile.video.resolution.keepRatio !== false);
   const hasManualQualityControls = $derived(hasManualVideoQualityControls(selectedVideoEncoder));
   const controlId = $props.id();
   const videoModeId = `${controlId}-video-mode`;
@@ -82,6 +178,10 @@
   const qpId = `${controlId}-qp`;
   const videoBitrateId = `${controlId}-video-bitrate`;
   const videoPresetId = `${controlId}-video-preset`;
+  const videoResolutionId = `${controlId}-video-resolution`;
+  const videoMaxWidthId = `${controlId}-video-max-width`;
+  const videoMaxHeightId = `${controlId}-video-max-height`;
+  const videoKeepRatioId = `${controlId}-video-keep-ratio`;
 </script>
 
 {#if !file.hasVideo}
@@ -114,6 +214,101 @@
       </div>
 
       {#if file.profile.video.mode === 'transcode'}
+        <Field.Group class="gap-3 @container/resolution">
+          <Item.Root
+            variant="outline"
+            size="sm"
+            class="flex-col items-stretch gap-4"
+          >
+            <div class="flex min-w-0 flex-col gap-3 @lg/resolution:flex-row @lg/resolution:items-start">
+              <Item.Content class="min-w-0">
+                <Item.Title>Output resolution</Item.Title>
+                <Item.Description>
+                  {effectiveVideoResolution
+                    ? formatResolution(effectiveVideoResolution.width, effectiveVideoResolution.height)
+                    : 'N/A'}
+                </Item.Description>
+              </Item.Content>
+
+              <Item.Actions class="w-full @lg/resolution:w-64">
+                <Field.Field class="gap-2">
+                  <Field.Label for={videoResolutionId}>Resolution</Field.Label>
+                  <Select.Root
+                    type="single"
+                    value={selectedResolutionPresetValue}
+                    onValueChange={(value) => selectVideoResolution(value as TranscodeVideoResolutionSelection)}
+                  >
+                    <Select.Trigger id={videoResolutionId} class="w-full">
+                      {getVideoResolutionTriggerLabel(selectedResolutionPresetValue)}
+                    </Select.Trigger>
+                    <Select.Content>
+                      <Select.Group>
+                        {#each videoResolutionPresetOptions as option (option.value)}
+                          <Select.Item value={option.value}>{option.label}</Select.Item>
+                        {/each}
+                      </Select.Group>
+                    </Select.Content>
+                  </Select.Root>
+                </Field.Field>
+              </Item.Actions>
+            </div>
+
+            {#if selectedResolutionPresetValue === 'custom' && file.profile.video.resolution.mode === 'fit'}
+              <Field.Group class="gap-3">
+                <Field.Field orientation="horizontal" class="items-center">
+                  <Field.Content>
+                    <Field.Label for={videoKeepRatioId}>Keep ratio</Field.Label>
+                  </Field.Content>
+                  <Switch
+                    id={videoKeepRatioId}
+                    size="sm"
+                    checked={customVideoKeepRatioEnabled}
+                    onCheckedChange={(checked) => updateCustomVideoKeepRatio(checked)}
+                  />
+                </Field.Field>
+
+                <div class="grid gap-4 md:grid-cols-2">
+                  <Field.Field>
+                    <Field.Label for={videoMaxWidthId}>Width</Field.Label>
+                    <InputGroup.Root>
+                      <InputGroup.Input
+                        id={videoMaxWidthId}
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={file.profile.video.resolution.maxWidth?.toString() ?? ''}
+                        oninput={(event) => {
+                          const value = parseOptionalInt(event.currentTarget.value);
+                          updateCustomVideoResolution('width', value);
+                        }}
+                      />
+                      <InputGroup.Addon align="inline-end">px</InputGroup.Addon>
+                    </InputGroup.Root>
+                  </Field.Field>
+
+                  <Field.Field>
+                    <Field.Label for={videoMaxHeightId}>Height</Field.Label>
+                    <InputGroup.Root>
+                      <InputGroup.Input
+                        id={videoMaxHeightId}
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={file.profile.video.resolution.maxHeight?.toString() ?? ''}
+                        oninput={(event) => {
+                          const value = parseOptionalInt(event.currentTarget.value);
+                          updateCustomVideoResolution('height', value);
+                        }}
+                      />
+                      <InputGroup.Addon align="inline-end">px</InputGroup.Addon>
+                    </InputGroup.Root>
+                  </Field.Field>
+                </div>
+              </Field.Group>
+            {/if}
+          </Item.Root>
+        </Field.Group>
+
         <div class="space-y-2">
           <Label for={videoEncoderId}>Video encoder</Label>
           <Select.Root

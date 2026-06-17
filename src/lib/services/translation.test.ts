@@ -265,6 +265,14 @@ describe('AI translation ASS visual text planning', () => {
     });
   });
 
+  it('instructs the model to use punctuated target-language subtitle style by default', async () => {
+    const { TRANSLATION_SYSTEM_PROMPT } = await import('./translation');
+
+    expect(TRANSLATION_SYSTEM_PROMPT).toContain('Use a punctuated subtitle style by default.');
+    expect(TRANSLATION_SYSTEM_PROMPT).toContain('When unsure whether a cue is complete or continuing, prefer complete target-language punctuation');
+    expect(TRANSLATION_SYSTEM_PROMPT).toContain('Complete target-language sentences have terminal punctuation?');
+  });
+
   it('deduplicates simple repeated ASS typesetting and sends dense visual text as readable text', async () => {
     const { buildFullPromptForTokenCount } = await import('./translation');
 

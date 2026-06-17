@@ -61,7 +61,7 @@ pub(crate) fn audio_transcriptions_url() -> String {
 }
 
 pub(crate) fn mediaflow_models_url() -> String {
-    mediaflow_url("/api/v1/models")
+    mediaflow_url("/api/v1.1/models")
 }
 
 fn account_usage_url() -> String {
@@ -128,6 +128,16 @@ async fn response_text(response: reqwest::Response) -> Result<MediaFlowHttpRespo
         .await
         .map_err(|e| format!("Failed to read MediaFlow response: {e}"))?;
     Ok(MediaFlowHttpResponse { status, body })
+}
+
+fn mediaflow_model_catalog_request(
+    access_token: Option<&str>,
+) -> Result<reqwest::RequestBuilder, String> {
+    let mut request = http_client()?.get(mediaflow_models_url());
+    if let Some(token) = access_token.map(str::trim).filter(|token| !token.is_empty()) {
+        request = request.bearer_auth(token);
+    }
+    Ok(request)
 }
 
 fn string_claim(body: &Value, key: &str) -> Option<String> {
@@ -262,9 +272,10 @@ pub(crate) async fn fetch_mediaflow_account_usage(
 }
 
 #[tauri::command]
-pub(crate) async fn fetch_mediaflow_model_catalog() -> Result<MediaFlowHttpResponse, String> {
-    let response = http_client()?
-        .get(mediaflow_models_url())
+pub(crate) async fn fetch_mediaflow_model_catalog(
+    access_token: Option<String>,
+) -> Result<MediaFlowHttpResponse, String> {
+    let response = mediaflow_model_catalog_request(access_token.as_deref())?
         .send()
         .await
         .map_err(|e| format!("MediaFlow model catalog request failed: {e}"))?;
@@ -276,14 +287,22 @@ pub(crate) async fn fetch_mediaflow_model_catalog() -> Result<MediaFlowHttpRespo
 mod tests {
     use super::{
         MEDIAFLOW_BASE_URL, audio_transcriptions_url, auth_form_post, authorize_redirect_to,
-        chat_completions_url, login_url, mediaflow_models_url, parse_mediaflow_user_info_response,
-        public_base_url,
+        chat_completions_url, login_url, mediaflow_model_catalog_request, mediaflow_models_url,
+        parse_mediaflow_user_info_response, public_base_url,
     };
+    use reqwest::header::AUTHORIZATION;
     use serde_json::json;
 
+    #[cfg(debug_assertions)]
     #[test]
     fn mediaflow_base_url_uses_debug_url_for_debug_builds() {
         assert_eq!(MEDIAFLOW_BASE_URL, "http://localhost:5173");
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn mediaflow_base_url_uses_production_url_for_release_builds() {
+        assert_eq!(MEDIAFLOW_BASE_URL, "https://mediaflowtools.com");
     }
 
     #[test]
@@ -311,7 +330,30 @@ mod tests {
     fn mediaflow_models_url_uses_selected_base_url() {
         assert_eq!(
             mediaflow_models_url(),
-            format!("{MEDIAFLOW_BASE_URL}/api/v1/models")
+            format!("{MEDIAFLOW_BASE_URL}/api/v1.1/models")
+        );
+    }
+
+    #[test]
+    fn model_catalog_request_omits_authorization_header_without_token() {
+        let request = mediaflow_model_catalog_request(None)
+            .expect("request builder should be created")
+            .build()
+            .expect("request should build");
+
+        assert!(request.headers().get(AUTHORIZATION).is_none());
+    }
+
+    #[test]
+    fn model_catalog_request_sets_authorization_header_with_token() {
+        let request = mediaflow_model_catalog_request(Some(" access-token "))
+            .expect("request builder should be created")
+            .build()
+            .expect("request should build");
+
+        assert_eq!(
+            request.headers().get(AUTHORIZATION).unwrap(),
+            "Bearer access-token"
         );
     }
 

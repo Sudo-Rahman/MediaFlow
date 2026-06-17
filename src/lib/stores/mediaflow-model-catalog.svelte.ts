@@ -12,6 +12,7 @@ let error = $state<string | null>(null);
 let models = $state.raw<MediaFlowPublicModel[]>([]);
 let hasLoaded = false;
 let loadPromise: Promise<void> | null = null;
+let reloadAfterCurrentLoad = false;
 
 function errorToMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
@@ -23,6 +24,9 @@ async function loadCatalog(force: boolean): Promise<void> {
   }
 
   if (loadPromise) {
+    if (force) {
+      reloadAfterCurrentLoad = true;
+    }
     return loadPromise;
   }
 
@@ -41,6 +45,11 @@ async function loadCatalog(force: boolean): Promise<void> {
     } finally {
       hasLoaded = true;
       loadPromise = null;
+      if (reloadAfterCurrentLoad) {
+        reloadAfterCurrentLoad = false;
+        hasLoaded = false;
+        await loadCatalog(true);
+      }
     }
   })();
 

@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 
+import { settingsStore } from '$lib/stores/settings.svelte';
 import type { ProviderModel } from '$lib/types';
+import { getMediaFlowAccessToken, refreshMediaFlowSession } from './mediaflow-auth';
 
 export type MediaFlowPublicModelType = 'chat' | 'transcription';
 export type MediaFlowPublicModelCapability = 'text' | 'image' | 'audio' | 'video';
@@ -118,8 +120,34 @@ export function splitMediaFlowModelCatalog(catalog: MediaFlowModelCatalog): Spli
   };
 }
 
+async function fetchCatalogResponse(accessToken: string | null): Promise<MediaFlowHttpResponse> {
+  return invoke<MediaFlowHttpResponse>('fetch_mediaflow_model_catalog', { accessToken });
+}
+
+async function fetchAuthenticatedCatalogResponse(): Promise<MediaFlowHttpResponse> {
+  let accessToken: string;
+  try {
+    accessToken = await getMediaFlowAccessToken();
+  } catch {
+    return fetchCatalogResponse(null);
+  }
+
+  const response = await fetchCatalogResponse(accessToken);
+  if (response.status !== 401) {
+    return response;
+  }
+
+  try {
+    return await fetchCatalogResponse(await refreshMediaFlowSession());
+  } catch {
+    return fetchCatalogResponse(null);
+  }
+}
+
 export async function fetchMediaFlowModelCatalog(): Promise<MediaFlowModelCatalog> {
   return parseMediaFlowModelCatalogResponse(
-    await invoke<MediaFlowHttpResponse>('fetch_mediaflow_model_catalog')
+    settingsStore.settings.mediaflowUser
+      ? await fetchAuthenticatedCatalogResponse()
+      : await fetchCatalogResponse(null)
   );
 }

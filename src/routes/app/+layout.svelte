@@ -9,12 +9,29 @@
   let { children } = $props();
 
   onMount(() => {
+    let isMounted = true;
+    let unsubscribeMediaFlowUserChange: (() => void) | null = null;
+
     void (async () => {
       await settingsStore.load();
       setMode(settingsStore.settings.theme);
-      void mediaflowModelCatalogStore.loadOnce();
-      await restoreMediaFlowSession();
+      try {
+        await restoreMediaFlowSession();
+      } catch (error) {
+        console.warn('MediaFlow session restore failed during startup:', error);
+      }
+      await mediaflowModelCatalogStore.loadOnce();
+
+      if (!isMounted) return;
+      unsubscribeMediaFlowUserChange = settingsStore.onMediaFlowUserChange(() => {
+        void mediaflowModelCatalogStore.reload();
+      });
     })();
+
+    return () => {
+      isMounted = false;
+      unsubscribeMediaFlowUserChange?.();
+    };
   });
 </script>
 

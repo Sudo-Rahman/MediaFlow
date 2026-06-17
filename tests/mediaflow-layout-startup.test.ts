@@ -11,4 +11,17 @@ describe('MediaFlow layout startup', () => {
     expect(initialLoadIndex).toBeGreaterThanOrEqual(0);
     expect(listenerIndex).toBeLessThan(initialLoadIndex);
   });
+
+  it('reconciles models after account changes only when the catalog reload succeeds', () => {
+    const listenerIndex = layoutSource.indexOf('settingsStore.onMediaFlowUserChange');
+    const restoreIndex = layoutSource.indexOf('await restoreMediaFlowSession');
+    const listenerBlock = layoutSource.slice(listenerIndex, restoreIndex);
+    const reloadResultMatch = listenerBlock.match(
+      /const\s+(\w+)\s*=\s*await\s+mediaflowModelCatalogStore\.reload\(\);/
+    );
+
+    expect(reloadResultMatch).not.toBeNull();
+    expect(listenerBlock).toContain(`if (!isMounted || !${reloadResultMatch?.[1]}) return;`);
+    expect(listenerBlock).toContain('translationStore.reconcileAvailableModels();');
+  });
 });

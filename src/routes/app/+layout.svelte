@@ -18,8 +18,8 @@
       setMode(settingsStore.settings.theme);
       unsubscribeMediaFlowUserChange = settingsStore.onMediaFlowUserChange(() => {
         void (async () => {
-          await mediaflowModelCatalogStore.reload();
-          if (!isMounted) return;
+          const didReloadCatalog = await mediaflowModelCatalogStore.reload();
+          if (!isMounted || !didReloadCatalog) return;
           translationStore.reconcileAvailableModels();
         })();
       });
@@ -29,9 +29,9 @@
       } catch (error) {
         console.warn('MediaFlow session restore failed during startup:', error);
       }
-      await mediaflowModelCatalogStore.loadOnce();
+      const didLoadCatalog = await mediaflowModelCatalogStore.loadOnce();
 
-      if (!isMounted) return;
+      if (!isMounted || !didLoadCatalog) return;
       translationStore.reconcileAvailableModels();
     })();
 

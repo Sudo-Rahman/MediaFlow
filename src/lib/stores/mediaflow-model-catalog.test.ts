@@ -72,4 +72,20 @@ describe('mediaflowModelCatalogStore', () => {
 
     expect(mediaflowModelCatalogStore.chatModels).toEqual([{ id: 'Medium', name: 'Medium' }]);
   });
+
+  it('reports failed reloads without discarding the last successful catalog', async () => {
+    fetchMediaFlowModelCatalogMock
+      .mockReset()
+      .mockResolvedValueOnce(catalog('High'))
+      .mockRejectedValueOnce(new Error('offline'));
+
+    await expect(mediaflowModelCatalogStore.reload()).resolves.toBe(true);
+    expect(mediaflowModelCatalogStore.chatModels).toEqual([{ id: 'High', name: 'High' }]);
+
+    await expect(mediaflowModelCatalogStore.reload()).resolves.toBe(false);
+
+    expect(mediaflowModelCatalogStore.status).toBe('ready');
+    expect(mediaflowModelCatalogStore.error).toBe('offline');
+    expect(mediaflowModelCatalogStore.chatModels).toEqual([{ id: 'High', name: 'High' }]);
+  });
 });

@@ -1,9 +1,32 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  fetchMediaFlowModelCatalog,
   parseMediaFlowModelCatalogResponse,
   splitMediaFlowModelCatalog,
 } from './mediaflow-model-catalog';
+
+const invokeMock = vi.hoisted(() => vi.fn());
+const getMediaFlowAccessTokenMock = vi.hoisted(() => vi.fn());
+const refreshMediaFlowSessionMock = vi.hoisted(() => vi.fn());
+const settingsStoreMock = vi.hoisted(() => ({
+  settings: {
+    mediaflowUser: null as { email: string } | null,
+  },
+}));
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: invokeMock,
+}));
+
+vi.mock('./mediaflow-auth', () => ({
+  getMediaFlowAccessToken: getMediaFlowAccessTokenMock,
+  refreshMediaFlowSession: refreshMediaFlowSessionMock,
+}));
+
+vi.mock('$lib/stores/settings.svelte', () => ({
+  settingsStore: settingsStoreMock,
+}));
 
 const validCatalog = {
   object: 'list',
@@ -17,6 +40,16 @@ const validCatalog = {
 };
 
 describe('MediaFlow model catalog parsing', () => {
+  beforeEach(() => {
+    invokeMock.mockReset().mockResolvedValue({
+      status: 200,
+      body: JSON.stringify(validCatalog),
+    });
+    getMediaFlowAccessTokenMock.mockReset().mockResolvedValue('access-token');
+    refreshMediaFlowSessionMock.mockReset().mockResolvedValue('refreshed-token');
+    settingsStoreMock.settings.mediaflowUser = null;
+  });
+
   it('accepts the public MediaFlow model catalog shape', () => {
     const parsed = parseMediaFlowModelCatalogResponse({
       status: 200,
@@ -135,5 +168,74 @@ describe('MediaFlow model catalog parsing', () => {
         data: [{ id: 'Lite', label: 'Lite', type: 'chat', capabilities: ['realtime'] }],
       }),
     })).toThrow('Invalid MediaFlow model capability');
+  });
+
+  it('fetches the v1.1 catalog without a bearer token when no MediaFlow session exists', async () => {
+    await expect(fetchMediaFlowModelCatalog()).resolves.toEqual(validCatalog);
+
+    expect(getMediaFlowAccessTokenMock).not.toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith('fetch_mediaflow_model_catalog', { accessToken: null });
+  });
+
+  it('fetches the v1.1 catalog with a bearer token when a MediaFlow session exists', async () => {
+    settingsStoreMock.settings.mediaflowUser = { email: 'starter@example.com' };
+
+    await expect(fetchMediaFlowModelCatalog()).resolves.toEqual(validCatalog);
+
+    expect(getMediaFlowAccessTokenMock).toHaveBeenCalledOnce();
+    expect(invokeMock).toHaveBeenCalledWith('fetch_mediaflow_model_catalog', { accessToken: 'access-token' });
+  });
+
+  it('refreshes the MediaFlow session once when an authenticated catalog request returns 401', async () => {
+    settingsStoreMock.settings.mediaflowUser = { email: 'starter@example.com' };
+    invokeMock
+      .mockResolvedValueOnce({
+        status: 401,
+        body: JSON.stringify({ error: { code: 'invalid_token', message: 'Invalid or expired token.' } }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        body: JSON.stringify(validCatalog),
+      });
+
+    await expect(fetchMediaFlowModelCatalog()).resolves.toEqual(validCatalog);
+
+    expect(refreshMediaFlowSessionMock).toHaveBeenCalledOnce();
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'fetch_mediaflow_model_catalog', { accessToken: 'access-token' });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'fetch_mediaflow_model_catalog', { accessToken: 'refreshed-token' });
+  });
+
+  it('falls back to the unauthenticated catalog when session refresh fails after a 401', async () => {
+    settingsStoreMock.settings.mediaflowUser = { email: 'starter@example.com' };
+    refreshMediaFlowSessionMock.mockRejectedValueOnce(new Error('No MediaFlow refresh token is available.'));
+    invokeMock
+      .mockResolvedValueOnce({
+        status: 401,
+        body: JSON.stringify({ error: { code: 'invalid_token', message: 'Invalid or expired token.' } }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        body: JSON.stringify(validCatalog),
+      });
+
+    await expect(fetchMediaFlowModelCatalog()).resolves.toEqual(validCatalog);
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'fetch_mediaflow_model_catalog', { accessToken: 'access-token' });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'fetch_mediaflow_model_catalog', { accessToken: null });
+  });
+
+  it('accepts the Starter-filtered catalog without the High chat model', () => {
+    const parsed = parseMediaFlowModelCatalogResponse({
+      status: 200,
+      body: JSON.stringify({
+        ...validCatalog,
+        data: validCatalog.data.filter((model) => model.id !== 'High'),
+      }),
+    });
+
+    expect(splitMediaFlowModelCatalog(parsed).chatModels).toEqual([
+      { id: 'Lite', name: 'Lite' },
+      { id: 'Medium', name: 'Medium' },
+    ]);
   });
 });

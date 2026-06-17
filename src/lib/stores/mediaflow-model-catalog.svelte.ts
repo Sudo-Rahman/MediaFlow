@@ -11,18 +11,22 @@ let status = $state<MediaFlowModelCatalogStatus>('idle');
 let error = $state<string | null>(null);
 let models = $state.raw<MediaFlowPublicModel[]>([]);
 let hasLoaded = false;
-let loadPromise: Promise<void> | null = null;
+let loadPromise: Promise<boolean> | null = null;
+let reloadAfterCurrentLoad = false;
 
 function errorToMessage(value: unknown): string {
   return value instanceof Error ? value.message : String(value);
 }
 
-async function loadCatalog(force: boolean): Promise<void> {
+async function loadCatalog(force: boolean): Promise<boolean> {
   if (!force && hasLoaded) {
-    return;
+    return error === null;
   }
 
   if (loadPromise) {
+    if (force) {
+      reloadAfterCurrentLoad = true;
+    }
     return loadPromise;
   }
 
@@ -30,18 +34,26 @@ async function loadCatalog(force: boolean): Promise<void> {
   error = null;
 
   loadPromise = (async () => {
+    let didLoadCatalog = false;
     try {
       const catalog = await fetchMediaFlowModelCatalog();
       models = catalog.data;
       status = catalog.data.length > 0 ? 'ready' : 'unavailable';
+      didLoadCatalog = true;
     } catch (loadError) {
-      models = [];
       error = errorToMessage(loadError);
-      status = 'unavailable';
-    } finally {
-      hasLoaded = true;
-      loadPromise = null;
+      status = models.length > 0 ? 'ready' : 'unavailable';
     }
+
+    hasLoaded = true;
+    loadPromise = null;
+    if (reloadAfterCurrentLoad) {
+      reloadAfterCurrentLoad = false;
+      hasLoaded = false;
+      return loadCatalog(true);
+    }
+
+    return didLoadCatalog;
   })();
 
   return loadPromise;
@@ -80,11 +92,11 @@ export const mediaflowModelCatalogStore = {
     return this.transcriptionModels.length > 0;
   },
 
-  loadOnce(): Promise<void> {
+  loadOnce(): Promise<boolean> {
     return loadCatalog(false);
   },
 
-  reload(): Promise<void> {
+  reload(): Promise<boolean> {
     hasLoaded = false;
     return loadCatalog(true);
   },

@@ -8,6 +8,8 @@ export interface MediaFlowUser {
   avatarUrl?: string;
 }
 
+type MediaFlowUserListener = (user: MediaFlowUser | null) => void;
+
 export type ThemePreference = 'system' | 'light' | 'dark';
 
 // Settings interface
@@ -49,12 +51,19 @@ const DEFAULT_SETTINGS: AppSettings = {
 let store: Store | null = null;
 let settings = $state<AppSettings>({ ...DEFAULT_SETTINGS });
 let isLoaded = $state(false);
+let mediaFlowUserListeners: MediaFlowUserListener[] = [];
 
 async function getStore(): Promise<Store> {
   if (!store) {
     store = await Store.load('settings.json');
   }
   return store;
+}
+
+function notifyMediaFlowUserChange(user: MediaFlowUser | null): void {
+  for (const listener of mediaFlowUserListeners) {
+    listener(user);
+  }
 }
 
 export const settingsStore = {
@@ -188,6 +197,13 @@ export const settingsStore = {
     return Boolean(settings.mediaflowUser);
   },
 
+  onMediaFlowUserChange(listener: MediaFlowUserListener): () => void {
+    mediaFlowUserListeners = [...mediaFlowUserListeners, listener];
+    return () => {
+      mediaFlowUserListeners = mediaFlowUserListeners.filter((candidate) => candidate !== listener);
+    };
+  },
+
   async setMediaFlowUser(user: MediaFlowUser | null) {
     settings = { ...settings, mediaflowUser: user };
     const s = await getStore();
@@ -196,6 +212,7 @@ export const settingsStore = {
     } else {
       await s.delete('mediaflowUser');
     }
+    notifyMediaFlowUserChange(user);
   },
 
   async setVideoOcrGlobalRegion(region: OcrRegion) {

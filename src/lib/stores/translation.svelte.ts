@@ -13,6 +13,7 @@ import type {
 import {
   getDefaultLLMModel,
   getDefaultLLMProvider,
+  isLLMSelectionAvailable,
   normalizeLLMSelection,
 } from '$lib/types';
 import { mediaflowModelCatalogStore } from './mediaflow-model-catalog.svelte';
@@ -42,6 +43,15 @@ function normalizeModelSelection(entry: TranslationModelSelection): TranslationM
     provider: selection.provider,
     model: selection.model,
   };
+}
+
+function isModelSelectionAvailable(entry: TranslationModelSelection): boolean {
+  return isLLMSelectionAvailable(
+    entry.provider,
+    entry.model,
+    import.meta.env.DEV,
+    mediaflowModelCatalogStore.chatModels
+  );
 }
 
 function getVersionDrivenJobState(versions: TranslationVersion[]): Pick<
@@ -416,6 +426,21 @@ export const translationStore = {
 
   removeModel(modelSelectionId: string) {
     config = { ...config, models: config.models.filter(m => m.id !== modelSelectionId) };
+  },
+
+  reconcileAvailableModels() {
+    const selection = normalizeLLMSelection(
+      config.provider,
+      config.model,
+      import.meta.env.DEV,
+      mediaflowModelCatalogStore.chatModels
+    );
+    config = {
+      ...config,
+      provider: selection.provider,
+      model: selection.model,
+      models: config.models.filter(isModelSelectionAvailable),
+    };
   },
 
   updateProgress(updates: Partial<TranslationProgress>) {

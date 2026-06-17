@@ -4,7 +4,7 @@
 
   import { Toaster } from '$lib/components/ui/sonner';
   import { restoreMediaFlowSession } from '$lib/services/mediaflow-auth';
-  import { mediaflowModelCatalogStore, settingsStore } from '$lib/stores';
+  import { mediaflowModelCatalogStore, settingsStore, translationStore } from '$lib/stores';
 
   let { children } = $props();
 
@@ -14,7 +14,16 @@
 
     void (async () => {
       await settingsStore.load();
+      if (!isMounted) return;
       setMode(settingsStore.settings.theme);
+      unsubscribeMediaFlowUserChange = settingsStore.onMediaFlowUserChange(() => {
+        void (async () => {
+          await mediaflowModelCatalogStore.reload();
+          if (!isMounted) return;
+          translationStore.reconcileAvailableModels();
+        })();
+      });
+
       try {
         await restoreMediaFlowSession();
       } catch (error) {
@@ -23,9 +32,7 @@
       await mediaflowModelCatalogStore.loadOnce();
 
       if (!isMounted) return;
-      unsubscribeMediaFlowUserChange = settingsStore.onMediaFlowUserChange(() => {
-        void mediaflowModelCatalogStore.reload();
-      });
+      translationStore.reconcileAvailableModels();
     })();
 
     return () => {

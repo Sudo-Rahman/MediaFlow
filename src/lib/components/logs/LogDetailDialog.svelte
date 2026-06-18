@@ -41,6 +41,37 @@
     });
   }
 
+  function isMediaFlowApiLog(entry: LogEntry): boolean {
+    const isMediaFlow = entry.source === 'mediaflow' || entry.context?.provider === 'mediaflow';
+    const hasApiContext = Boolean(
+      entry.context?.apiStatus ||
+      entry.context?.apiCode ||
+      entry.context?.requestId ||
+      entry.context?.apiError
+    );
+    return isMediaFlow && hasApiContext;
+  }
+
+  function firstDetailLine(details: string): string {
+    return details
+      .split('\n')
+      .map(line => line.trim())
+      .find(Boolean) ?? details;
+  }
+
+  function technicalContextLines(entry: LogEntry): string[] {
+    const context = entry.context;
+    if (!context) return [];
+
+    return [
+      context.apiStatus ? `Status: ${context.apiStatus}` : undefined,
+      context.apiCode ? `Code: ${context.apiCode}` : undefined,
+      context.requestId ? `Request ID: ${context.requestId}` : undefined,
+      context.retryAfter ? `Retry after: ${Math.ceil(Number(context.retryAfter) / 1000)}s` : undefined,
+      context.technicalDetails ? `Backend message: ${context.technicalDetails}` : undefined,
+    ].filter((line): line is string => Boolean(line));
+  }
+
   async function copyToClipboard(text: string, field: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -85,6 +116,24 @@
     if (log.context?.provider) {
       parts.push('', `Provider: ${log.context.provider}`);
     }
+    if (log.context?.apiStatus) {
+      parts.push('', `API Status: ${log.context.apiStatus}`);
+    }
+    if (log.context?.apiCode) {
+      parts.push('', `API Code: ${log.context.apiCode}`);
+    }
+    if (log.context?.requestId) {
+      parts.push('', `Request ID: ${log.context.requestId}`);
+    }
+    if (log.context?.retryAfter) {
+      parts.push('', `Retry After: ${log.context.retryAfter}ms`);
+    }
+    if (log.context?.userAction) {
+      parts.push('', `What to do: ${log.context.userAction}`);
+    }
+    if (log.context?.technicalDetails) {
+      parts.push('', `Technical Details: ${log.context.technicalDetails}`);
+    }
     if (log.context?.apiError) {
       parts.push('', 'API Error:', log.context.apiError);
     }
@@ -118,6 +167,40 @@
       </Dialog.Header>
 
       <div class="dialog-scroll-body space-y-4 py-4">
+        {#if isMediaFlowApiLog(log)}
+          {@const technicalLines = technicalContextLines(log)}
+          <div class="space-y-3">
+            <div class="space-y-1">
+              <span class="text-sm font-medium">What happened</span>
+              <p class="text-sm text-muted-foreground">
+                {firstDetailLine(log.details)}
+              </p>
+            </div>
+
+            {#if log.context?.userAction}
+              <div class="space-y-1">
+                <span class="text-sm font-medium">What to do</span>
+                <p class="text-sm text-muted-foreground">
+                  {log.context.userAction}
+                </p>
+              </div>
+            {/if}
+
+            {#if technicalLines.length > 0}
+              <div class="space-y-2">
+                <span class="text-sm font-medium">Technical details</span>
+                <div class="flex flex-wrap gap-2">
+                  {#each technicalLines as line (line)}
+                    <Badge variant="outline" class="font-mono text-xs">
+                      {line}
+                    </Badge>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          </div>
+        {/if}
+
         <!-- Details -->
         <div class="space-y-2">
           <div class="flex items-center justify-between">

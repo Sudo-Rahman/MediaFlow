@@ -130,6 +130,14 @@ pub(crate) struct LlmResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    error_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    technical_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     truncated: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     finish_reason: Option<String>,
@@ -152,6 +160,14 @@ struct ParsedApiError {
     retry_after: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MediaFlowApiError {
+    message: String,
+    code: Option<String>,
+    request_id: Option<String>,
+    raw_body: String,
+}
+
 fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .user_agent(USER_AGENT)
@@ -164,6 +180,10 @@ fn empty_success(content: String) -> LlmResponse {
     LlmResponse {
         content,
         error: None,
+        error_code: None,
+        error_message: None,
+        request_id: None,
+        technical_error: None,
         truncated: None,
         finish_reason: None,
         cancelled: None,
@@ -183,6 +203,10 @@ fn error_response(
     LlmResponse {
         content: String::new(),
         error: Some(error.into()),
+        error_code: None,
+        error_message: None,
+        request_id: None,
+        technical_error: None,
         truncated: None,
         finish_reason: None,
         cancelled: None,
@@ -197,6 +221,10 @@ fn cancelled_response() -> LlmResponse {
     LlmResponse {
         content: String::new(),
         error: Some("Request cancelled".to_string()),
+        error_code: None,
+        error_message: None,
+        request_id: None,
+        technical_error: None,
         truncated: None,
         finish_reason: None,
         cancelled: Some(true),
@@ -205,6 +233,24 @@ fn cancelled_response() -> LlmResponse {
         retry_after: None,
         status: None,
     }
+}
+
+fn mediaflow_error_response(
+    error: impl Into<String>,
+    retryable: bool,
+    retry_after: Option<u64>,
+    status: Option<u16>,
+    error_code: Option<String>,
+    error_message: Option<String>,
+    request_id: Option<String>,
+    technical_error: Option<String>,
+) -> LlmResponse {
+    let mut response = error_response(error, retryable, retry_after, status);
+    response.error_code = error_code;
+    response.error_message = error_message;
+    response.request_id = request_id;
+    response.technical_error = technical_error;
+    response
 }
 
 fn timeout_response(provider_label: &str) -> LlmResponse {
@@ -495,25 +541,88 @@ fn parse_api_error(
     }
 }
 
-fn mediaflow_api_error_message(error_body: &str) -> String {
+fn mediaflow_api_error_summary(error: &MediaFlowApiError) -> String {
+    match error.code.as_deref() {
+        Some(code) => format!("{} ({})", error.message, code),
+        None => error.message.clone(),
+    }
+}
+
+fn parse_mediaflow_api_error_body(error_body: &str) -> MediaFlowApiError {
     let Ok(parsed) = serde_json::from_str::<Value>(error_body) else {
-        return error_body.to_string();
+        return MediaFlowApiError {
+            message: error_body.to_string(),
+            code: None,
+            request_id: None,
+            raw_body: error_body.to_string(),
+        };
     };
 
-    let message = parsed
-        .get("error")
+    let error = parsed.get("error");
+    let message = error
         .and_then(|error| error.get("message"))
-        .and_then(Value::as_str);
-    let code = parsed
-        .get("error")
+        .or_else(|| parsed.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or(error_body)
+        .to_string();
+    let code = error
         .and_then(|error| error.get("code"))
-        .and_then(Value::as_str);
+        .or_else(|| parsed.get("code"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let request_id = error
+        .and_then(|error| error.get("request_id"))
+        .or_else(|| parsed.get("request_id"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
 
-    match (message, code) {
-        (Some(message), Some(code)) => format!("{} ({})", message, code),
-        (Some(message), None) => message.to_string(),
-        _ => error_body.to_string(),
+    MediaFlowApiError {
+        message,
+        code,
+        request_id,
+        raw_body: error_body.to_string(),
     }
+}
+
+fn parse_mediaflow_api_error(
+    status: u16,
+    error: &MediaFlowApiError,
+    retry_after: Option<u64>,
+) -> ParsedApiError {
+    let retryable = match error.code.as_deref() {
+        Some("rate_limit_exceeded" | "free_daily_request_in_progress") => true,
+        Some("provider_error" | "service_unavailable") => true,
+        Some(
+            "free_daily_limit_exceeded"
+            | "free_daily_model_not_allowed"
+            | "insufficient_credits"
+            | "invalid_request"
+            | "invalid_token"
+            | "starter_access_expired"
+            | "starter_model_not_allowed"
+            | "subscription_required",
+        ) => false,
+        _ => status == 429 || status >= 500,
+    };
+    let retry_after = if retryable {
+        match status {
+            429 => retry_after.or(Some(60_000)),
+            500 | 502 | 503 | 504 => retry_after.or(Some(30_000)),
+            _ => retry_after,
+        }
+    } else {
+        None
+    };
+
+    ParsedApiError {
+        message: format!("MediaFlow: {}", mediaflow_api_error_summary(error)),
+        retryable,
+        retry_after,
+    }
+}
+
+fn mediaflow_api_error_message(error_body: &str) -> String {
+    mediaflow_api_error_summary(&parse_mediaflow_api_error_body(error_body))
 }
 
 fn request_body(value: Value) -> Result<String, LlmResponse> {
@@ -593,6 +702,21 @@ async fn send_json_request(
     })?;
 
     if !(200..300).contains(&status) {
+        if provider == LlmProvider::Mediaflow {
+            let api_error = parse_mediaflow_api_error_body(&body);
+            let parsed = parse_mediaflow_api_error(status, &api_error, retry_after);
+            return Err(mediaflow_error_response(
+                parsed.message,
+                parsed.retryable,
+                parsed.retry_after,
+                Some(status),
+                api_error.code,
+                Some(api_error.message),
+                api_error.request_id,
+                Some(api_error.raw_body),
+            ));
+        }
+
         let error_body = if provider == LlmProvider::Mediaflow {
             mediaflow_api_error_message(&body)
         } else {
@@ -784,11 +908,15 @@ async fn call_mediaflow(
     request: &LlmRequest,
 ) -> LlmResponse {
     if request.mediaflow_access_token.trim().is_empty() {
-        return error_response(
+        return mediaflow_error_response(
             "MediaFlow: Invalid API key or authentication failed",
             false,
             None,
             Some(401),
+            Some("invalid_token".to_string()),
+            Some("Invalid or expired token.".to_string()),
+            None,
+            None,
         );
     }
 
@@ -902,7 +1030,8 @@ mod tests {
     use super::{
         LlmContentPart, LlmProvider, LlmRequest, LlmResponseMode, build_google_parts,
         build_openai_chat_body, build_openai_content, google_generate_content_url,
-        mediaflow_api_error_message, parse_api_error,
+        mediaflow_api_error_message, mediaflow_error_response, parse_api_error,
+        parse_mediaflow_api_error, parse_mediaflow_api_error_body,
     };
 
     fn request(provider: LlmProvider) -> LlmRequest {
@@ -991,6 +1120,70 @@ mod tests {
         assert_eq!(
             mediaflow_api_error_message(body),
             "No credits (billing_required)"
+        );
+    }
+
+    #[test]
+    fn mediaflow_api_error_body_extracts_structured_fields() {
+        let body = r#"{"error":{"message":"Rate limit exceeded.","code":"rate_limit_exceeded","request_id":"req_123"}}"#;
+
+        let error = parse_mediaflow_api_error_body(body);
+
+        assert_eq!(error.message, "Rate limit exceeded.");
+        assert_eq!(error.code.as_deref(), Some("rate_limit_exceeded"));
+        assert_eq!(error.request_id.as_deref(), Some("req_123"));
+        assert_eq!(error.raw_body, body);
+    }
+
+    #[test]
+    fn mediaflow_api_error_marks_rate_limits_retryable() {
+        let api_error = parse_mediaflow_api_error_body(
+            r#"{"error":{"message":"Rate limit exceeded.","code":"rate_limit_exceeded"}}"#,
+        );
+
+        let parsed = parse_mediaflow_api_error(429, &api_error, None);
+
+        assert!(parsed.retryable);
+        assert_eq!(parsed.retry_after, Some(60_000));
+        assert_eq!(
+            parsed.message,
+            "MediaFlow: Rate limit exceeded. (rate_limit_exceeded)"
+        );
+    }
+
+    #[test]
+    fn mediaflow_api_error_marks_usage_limits_not_retryable() {
+        let api_error = parse_mediaflow_api_error_body(
+            r#"{"error":{"message":"Free daily usage limit exceeded.","code":"free_daily_limit_exceeded"}}"#,
+        );
+
+        let parsed = parse_mediaflow_api_error(429, &api_error, None);
+
+        assert!(!parsed.retryable);
+        assert_eq!(parsed.retry_after, None);
+    }
+
+    #[test]
+    fn mediaflow_api_error_response_serializes_structured_fields() {
+        let response = mediaflow_error_response(
+            "MediaFlow: Rate limit exceeded. (rate_limit_exceeded)",
+            true,
+            Some(60_000),
+            Some(429),
+            Some("rate_limit_exceeded".to_string()),
+            Some("Rate limit exceeded.".to_string()),
+            Some("req_123".to_string()),
+            Some(r#"{"error":{"code":"rate_limit_exceeded"}}"#.to_string()),
+        );
+
+        let serialized = serde_json::to_value(response).expect("serialize response");
+
+        assert_eq!(serialized["errorCode"], "rate_limit_exceeded");
+        assert_eq!(serialized["errorMessage"], "Rate limit exceeded.");
+        assert_eq!(serialized["requestId"], "req_123");
+        assert_eq!(
+            serialized["technicalError"],
+            r#"{"error":{"code":"rate_limit_exceeded"}}"#
         );
     }
 

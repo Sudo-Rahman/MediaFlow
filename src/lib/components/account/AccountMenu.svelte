@@ -81,9 +81,8 @@
     return 'Account';
   });
   const accountInitials = $derived(getAccountInitials(mediaflowUser));
-  const monthlyRemaining = $derived(usage?.monthlyBalance ?? 0);
-  const monthlyAllocation = $derived(usage?.monthlyAllocation ?? 0);
-  const monthlyUsagePercent = $derived(usage?.monthlyUsagePercent ?? 0);
+  const usagePercent = $derived(usage?.meter.remainingPercent ?? 0);
+  const usagePercentLabel = $derived(`${usagePercent}%`);
 
   $effect(() => {
     const user = mediaflowUser;
@@ -148,11 +147,11 @@
       <DropdownMenu.Separator />
       <div class="space-y-2 px-2 py-2">
         <div class="flex items-center justify-between gap-3 text-xs">
-          <span class="font-medium text-foreground">Monthly credits</span>
+          <span class="font-medium text-foreground">Usage remaining</span>
           {#if usageStatus === 'loading'}
             <span class="text-muted-foreground">Loading...</span>
           {:else if usageStatus === 'ready'}
-            <span class="text-muted-foreground">{Math.round(monthlyUsagePercent)}% used</span>
+            <span class="text-muted-foreground">{usagePercentLabel}</span>
           {:else}
             <button
               type="button"
@@ -164,17 +163,7 @@
             </button>
           {/if}
         </div>
-        <Progress value={monthlyUsagePercent} max={100} class="h-2" />
-        <div class="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-          {#if usageStatus === 'ready'}
-            <span>{monthlyRemaining.toLocaleString()} of {monthlyAllocation.toLocaleString()} left</span>
-            <span>{usage?.purchasedBalance.toLocaleString() ?? '0'} extra</span>
-          {:else if usageStatus === 'loading'}
-            <span>Checking your monthly usage</span>
-          {:else}
-            <span>Usage unavailable</span>
-          {/if}
-        </div>
+        <Progress value={usagePercent} max={100} class="h-2" aria-label="Usage remaining" />
       </div>
     {/if}
 

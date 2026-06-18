@@ -99,6 +99,12 @@
                     {/if}
                   </div>
 
+                  {#if log.details}
+                    <p class="text-xs text-muted-foreground line-clamp-2 break-words">
+                      {log.details}
+                    </p>
+                  {/if}
+
                   <div class="flex items-center gap-2 flex-wrap">
                     <Badge variant="outline" class="text-xs capitalize {getSourceColor(log.source)}">
                       {log.source}

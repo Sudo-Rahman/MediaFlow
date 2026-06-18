@@ -7,7 +7,7 @@ const USER_AGENT: &str = "MediaFlow/1.0";
 #[cfg(debug_assertions)]
 const MEDIAFLOW_BASE_URL: &str = "http://localhost:5173";
 #[cfg(not(debug_assertions))]
-const MEDIAFLOW_BASE_URL: &str = "https://mediaflowtools.com";
+const MEDIAFLOW_BASE_URL: &str = "https://dev.mediaflowtools.com";
 const CLIENT_ID: &str = "mediaflow-desktop";
 const AUTH_SCOPE: &str = "openid profile email offline_access";
 const WEB_OAUTH_CALLBACK_PATH: &str = "/desktop/oauth/callback";
@@ -65,7 +65,7 @@ pub(crate) fn mediaflow_models_url() -> String {
 }
 
 fn account_usage_url() -> String {
-    mediaflow_url("/api/v1/account/usage")
+    mediaflow_url("/api/v1.1/account/usage")
 }
 
 fn auth_url(path: &str) -> String {
@@ -286,9 +286,9 @@ pub(crate) async fn fetch_mediaflow_model_catalog(
 #[cfg(test)]
 mod tests {
     use super::{
-        MEDIAFLOW_BASE_URL, audio_transcriptions_url, auth_form_post, authorize_redirect_to,
-        chat_completions_url, login_url, mediaflow_model_catalog_request, mediaflow_models_url,
-        parse_mediaflow_user_info_response, public_base_url,
+        MEDIAFLOW_BASE_URL, account_usage_url, audio_transcriptions_url, auth_form_post,
+        authorize_redirect_to, chat_completions_url, login_url, mediaflow_model_catalog_request,
+        mediaflow_models_url, parse_mediaflow_user_info_response, public_base_url,
     };
     use reqwest::header::AUTHORIZATION;
     use serde_json::json;
@@ -331,6 +331,14 @@ mod tests {
         assert_eq!(
             mediaflow_models_url(),
             format!("{MEDIAFLOW_BASE_URL}/api/v1.1/models")
+        );
+    }
+
+    #[test]
+    fn account_usage_url_uses_v1_1_endpoint() {
+        assert_eq!(
+            account_usage_url(),
+            format!("{MEDIAFLOW_BASE_URL}/api/v1.1/account/usage")
         );
     }
 

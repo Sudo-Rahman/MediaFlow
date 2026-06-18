@@ -1,19 +1,22 @@
 import { fetchMediaFlowAccountUsage, type MediaFlowHttpResponse } from '$lib/services/mediaflow-auth';
 
 export type MediaFlowUsageStatus = 'idle' | 'loading' | 'ready' | 'error';
+export type MediaFlowUsageAccessKind = 'none' | 'subscription' | 'starter' | 'free_daily';
+export type MediaFlowUsageMeterSource = 'none' | 'subscription' | 'starter' | 'free_daily';
+
+export interface MediaFlowUsageMeter {
+  source: MediaFlowUsageMeterSource;
+  remainingPercent: number;
+  blocked: boolean;
+  requestInProgress: boolean;
+  resetAt: number | null;
+}
 
 export interface MediaFlowUsage {
   plan: 'free' | 'plus' | 'pro';
   hasApiAccess: boolean;
-  monthlyBalance: number;
-  monthlyAllocation: number;
-  monthlyUsed: number;
-  monthlyUsagePercent: number;
-  monthlyRemainingPercent: number;
-  purchasedBalance: number;
-  totalBalance: number;
-  availableBalance: number;
-  lastResetDate: number;
+  accessKind: MediaFlowUsageAccessKind;
+  meter: MediaFlowUsageMeter;
 }
 
 export interface MediaFlowUsageRefreshOptions {
@@ -42,6 +45,16 @@ function toFiniteNumber(value: unknown): number {
   return Number.isFinite(number) ? number : 0;
 }
 
+function toNullableFiniteNumber(value: unknown): number | null {
+  if (value === null) return null;
+  const number = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
+  return Number.isFinite(number) ? number : null;
+}
+
+function clampPercent(value: number): number {
+  return Math.min(100, Math.max(0, value));
+}
+
 function objectValue(value: unknown, key: string): unknown {
   return value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined;
 }
@@ -50,19 +63,32 @@ function normalizePlan(value: unknown): MediaFlowUsage['plan'] {
   return value === 'plus' || value === 'pro' ? value : 'free';
 }
 
+function normalizeAccessKind(value: unknown): MediaFlowUsageAccessKind {
+  if (value === 'subscription' || value === 'starter' || value === 'free_daily') return value;
+  return 'none';
+}
+
+function normalizeMeterSource(value: unknown): MediaFlowUsageMeterSource {
+  if (value === 'subscription' || value === 'starter' || value === 'free_daily') return value;
+  return 'none';
+}
+
+function normalizeUsageMeter(payload: unknown): MediaFlowUsageMeter {
+  return {
+    source: normalizeMeterSource(objectValue(payload, 'source')),
+    remainingPercent: clampPercent(toFiniteNumber(objectValue(payload, 'remainingPercent'))),
+    blocked: Boolean(objectValue(payload, 'blocked')),
+    requestInProgress: Boolean(objectValue(payload, 'requestInProgress')),
+    resetAt: toNullableFiniteNumber(objectValue(payload, 'resetAt')),
+  };
+}
+
 function normalizeUsage(payload: unknown): MediaFlowUsage {
   return {
     plan: normalizePlan(objectValue(payload, 'plan')),
     hasApiAccess: Boolean(objectValue(payload, 'hasApiAccess')),
-    monthlyBalance: toFiniteNumber(objectValue(payload, 'monthlyBalance')),
-    monthlyAllocation: toFiniteNumber(objectValue(payload, 'monthlyAllocation')),
-    monthlyUsed: toFiniteNumber(objectValue(payload, 'monthlyUsed')),
-    monthlyUsagePercent: toFiniteNumber(objectValue(payload, 'monthlyUsagePercent')),
-    monthlyRemainingPercent: toFiniteNumber(objectValue(payload, 'monthlyRemainingPercent')),
-    purchasedBalance: toFiniteNumber(objectValue(payload, 'purchasedBalance')),
-    totalBalance: toFiniteNumber(objectValue(payload, 'totalBalance')),
-    availableBalance: toFiniteNumber(objectValue(payload, 'availableBalance')),
-    lastResetDate: toFiniteNumber(objectValue(payload, 'lastResetDate')),
+    accessKind: normalizeAccessKind(objectValue(payload, 'accessKind')),
+    meter: normalizeUsageMeter(objectValue(payload, 'meter')),
   };
 }
 

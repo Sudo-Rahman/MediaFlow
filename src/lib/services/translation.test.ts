@@ -1588,4 +1588,40 @@ describe('AI translation ASS visual text planning', () => {
     expect(result.error).toContain('1 cue(s) remained unchanged');
     expect(callLlmMock).toHaveBeenCalledTimes(4);
   });
+
+  it('surfaces MediaFlow API errors without cue retry wording', async () => {
+    const { translateSubtitle } = await import('./translation');
+
+    callLlmMock.mockResolvedValue({
+      content: '',
+      error: 'MediaFlow rate limit reached. Wait a moment, then retry.',
+      errorCode: 'rate_limit_exceeded',
+      errorMessage: 'Rate limit exceeded.',
+      requestId: 'req_rate',
+      technicalError: '{"error":{"code":"rate_limit_exceeded"}}',
+      status: 429,
+      retryable: true,
+      retryAfter: 60_000,
+    });
+
+    const result = await translateSubtitle(
+      {
+        name: 'simple.srt',
+        path: '/subs/simple.srt',
+        content: '1\n00:00:01,000 --> 00:00:02,000\nHello there.\n',
+        format: 'srt',
+        size: 1,
+      },
+      'mediaflow',
+      'Lite',
+      'en',
+      'fr'
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('MediaFlow rate limit reached. Wait a moment, then retry.');
+    expect(result.error).not.toContain('batch');
+    expect(result.error).not.toContain('No main translation cues were accepted');
+    expect(callLlmMock).toHaveBeenCalledTimes(1);
+  });
 });

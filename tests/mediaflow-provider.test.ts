@@ -132,6 +132,63 @@ describe('MediaFlow provider adapters', () => {
     expect(scheduleUsageRefreshMock).toHaveBeenCalled();
   });
 
+  it('normalizes MediaFlow LLM API errors for users and logs structured context', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'llm_complete') {
+        return Promise.resolve({
+          content: '',
+          error: 'MediaFlow: Rate limit exceeded. (rate_limit_exceeded)',
+          errorCode: 'rate_limit_exceeded',
+          errorMessage: 'Rate limit exceeded.',
+          requestId: 'req_rate',
+          technicalError: JSON.stringify({
+            error: {
+              code: 'rate_limit_exceeded',
+              message: 'Rate limit exceeded.',
+              request_id: 'req_rate',
+            },
+          }),
+          retryable: true,
+          retryAfter: 60_000,
+          status: 429,
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    const { callLlm } = await import('../src/lib/services/llm-client');
+    const result = await callLlm({
+      provider: 'mediaflow',
+      apiKey: '',
+      model: 'Lite',
+      systemPrompt: 'Return JSON.',
+      userPrompt: 'Ping',
+      responseMode: 'json',
+      logSource: 'translation',
+    });
+
+    expect(result.error).toBe('MediaFlow rate limit reached. Wait a moment, then retry.');
+    expect(result.errorCode).toBe('rate_limit_exceeded');
+    expect(result.requestId).toBe('req_rate');
+    expect(result.technicalError).toContain('rate_limit_exceeded');
+    expect(addLogMock).toHaveBeenCalledWith(expect.objectContaining({
+      level: 'warning',
+      source: 'translation',
+      title: 'MediaFlow rate limit reached',
+      details: expect.stringContaining('What to do: Wait a moment, then retry.'),
+      context: expect.objectContaining({
+        provider: 'mediaflow',
+        apiStatus: '429',
+        apiCode: 'rate_limit_exceeded',
+        requestId: 'req_rate',
+        retryAfter: '60000',
+        userAction: 'Wait a moment, then retry.',
+        technicalDetails: 'Rate limit exceeded.',
+      }),
+    }));
+    expect(scheduleUsageRefreshMock).not.toHaveBeenCalled();
+  });
+
   it('maps a MediaFlow transcription response to the internal transcription result', async () => {
     const config = {
       model: 'nova-3' as const,
@@ -221,6 +278,62 @@ describe('MediaFlow provider adapters', () => {
       level: 'error',
       source: 'mediaflow',
       title: 'MediaFlow transcription returned no text',
+    }));
+  });
+
+  it('normalizes MediaFlow transcription API errors', async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === 'acquire_sleep_inhibit') {
+        return Promise.resolve(1);
+      }
+      if (command === 'transcribe_mediaflow_audio_file') {
+        return Promise.resolve({
+          status: 429,
+          body: JSON.stringify({
+            error: {
+              code: 'free_daily_limit_exceeded',
+              message: 'Free daily usage limit exceeded.',
+              request_id: 'req_daily',
+            },
+          }),
+        });
+      }
+      return Promise.resolve(null);
+    });
+
+    const { transcribeWithMediaFlow } = await import('../src/lib/services/mediaflow-transcription');
+    const result = await transcribeWithMediaFlow({
+      audioPath: '/tmp/audio.opus',
+      config: {
+        model: 'nova-3',
+        language: 'multi',
+        punctuate: true,
+        paragraphs: true,
+        smartFormat: true,
+        utterances: true,
+        uttSplit: 0.8,
+        diarize: false,
+      },
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Free daily MediaFlow usage is exhausted. Try again after the daily reset or upgrade.',
+    });
+    expect(addLogMock).toHaveBeenCalledWith(expect.objectContaining({
+      level: 'error',
+      source: 'mediaflow',
+      title: 'Free daily usage exhausted',
+      details: expect.stringContaining('What to do: Try again after the daily reset or upgrade.'),
+      context: expect.objectContaining({
+        filePath: '/tmp/audio.opus',
+        provider: 'mediaflow',
+        apiStatus: '429',
+        apiCode: 'free_daily_limit_exceeded',
+        requestId: 'req_daily',
+        userAction: 'Try again after the daily reset or upgrade.',
+        technicalDetails: 'Free daily usage limit exceeded.',
+      }),
     }));
   });
 });

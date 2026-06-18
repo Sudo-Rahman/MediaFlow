@@ -4,6 +4,7 @@ import { mediaflowUsageStore } from '$lib/stores/mediaflow-usage.svelte';
 import type { LLMProvider } from '$lib/types';
 import { log } from '$lib/utils/log-toast';
 import { getMediaFlowAccessToken, refreshMediaFlowSession } from './mediaflow-auth';
+import { hasStructuredMediaFlowError, normalizeMediaFlowError } from './mediaflow-errors';
 
 export type LlmResponseMode = 'json' | 'text';
 
@@ -29,6 +30,10 @@ export interface LlmUsage {
 export interface LlmResponse {
   content: string;
   error?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  requestId?: string;
+  technicalError?: string;
   truncated?: boolean;
   finishReason?: string;
   cancelled?: boolean;
@@ -36,6 +41,25 @@ export interface LlmResponse {
   retryable?: boolean;
   retryAfter?: number;
   status?: number;
+}
+
+function normalizeMediaFlowLlmResponse(response: LlmResponse): LlmResponse {
+  if (!response.error || response.cancelled || !hasStructuredMediaFlowError(response)) {
+    return response;
+  }
+
+  const normalized = normalizeMediaFlowError(response);
+
+  return {
+    ...response,
+    error: normalized.message,
+    errorCode: normalized.code ?? response.errorCode,
+    errorMessage: normalized.backendMessage ?? response.errorMessage,
+    requestId: normalized.requestId ?? response.requestId,
+    technicalError: normalized.technicalError ?? response.technicalError ?? response.error,
+    retryable: normalized.retryable,
+    retryAfter: normalized.retryAfter ?? response.retryAfter,
+  };
 }
 
 export interface LlmRequest {
@@ -95,6 +119,27 @@ function providerLabel(provider: LLMProvider): string {
 
 function logResponseError(request: LlmRequest, response: LlmResponse): void {
   if (!request.logSource || !response.error || response.cancelled) return;
+
+  if (request.provider === 'mediaflow' && hasStructuredMediaFlowError(response)) {
+    const normalized = normalizeMediaFlowError(response);
+    log(
+      normalized.severity,
+      request.logSource,
+      normalized.title,
+      normalized.details,
+      {
+        provider: request.provider,
+        ...(normalized.status ? { apiStatus: String(normalized.status) } : {}),
+        ...(normalized.code ? { apiCode: normalized.code } : {}),
+        ...(normalized.requestId ? { requestId: normalized.requestId } : {}),
+        ...(normalized.retryAfter ? { retryAfter: String(normalized.retryAfter) } : {}),
+        ...(normalized.action ? { userAction: normalized.action } : {}),
+        ...(normalized.backendMessage ? { technicalDetails: normalized.backendMessage } : {}),
+        apiError: normalized.technicalError ?? response.technicalError ?? response.error,
+      }
+    );
+    return;
+  }
 
   log(
     response.retryable ? 'warning' : 'error',
@@ -188,7 +233,7 @@ export async function callLlm(request: LlmRequest): Promise<LlmResponse> {
 
   try {
     const response = request.provider === 'mediaflow'
-      ? await callLlmWithMediaFlowAuth(requestId, invokeRequest, request.signal)
+      ? normalizeMediaFlowLlmResponse(await callLlmWithMediaFlowAuth(requestId, invokeRequest, request.signal))
       : await invokeLlmComplete(requestId, invokeRequest);
 
     if (request.signal?.aborted || response.cancelled) {

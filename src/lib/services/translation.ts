@@ -19,6 +19,7 @@ import { parseSubtitle, detectFormat } from './subtitle-parser';
 import { reconstructSubtitle, validateTranslation } from './subtitle-reconstructor';
 import { callLlm } from './llm-client';
 import type { LlmUsage } from './llm-client';
+import { isTerminalMediaFlowApiError } from './mediaflow-errors';
 import { withSleepInhibit } from './sleep-inhibit';
 import type { TranslationMemoryEntry } from './translation-memory';
 import {
@@ -336,6 +337,7 @@ interface BatchedTranslationResult {
   error?: string;
   truncated?: boolean;
   cancelled?: boolean;
+  terminal?: boolean;
   failedIds: Set<string>;
   totalBatches: number;
 }
@@ -1643,10 +1645,13 @@ async function runTranslationRetryAttempt(
   }
 
   if (llmResponse.error) {
-    const terminal = isTokenOrContextLimitError(llmResponse.error);
-    const warning = `${phaseLabel} retry attempt ${request.attempt} failed: ${llmResponse.error}`;
+    const mediaFlowApiError = provider === 'mediaflow' && isTerminalMediaFlowApiError(llmResponse);
+    const terminal = mediaFlowApiError || isTokenOrContextLimitError(llmResponse.error);
+    const warning = mediaFlowApiError
+      ? llmResponse.error
+      : `${phaseLabel} retry attempt ${request.attempt} failed: ${llmResponse.error}`;
 
-    if (terminal) {
+    if (terminal && !mediaFlowApiError) {
       log(
         'warning',
         'translation',
@@ -1827,6 +1832,7 @@ async function translatePromptCueBatches(
     truncated?: boolean;
     usage?: LlmUsage;
     cancelled?: boolean;
+    terminal?: boolean;
   }
 
   const translateBatch = async (
@@ -1879,11 +1885,15 @@ async function translatePromptCueBatches(
     }
 
     if (llmResponse.error) {
+      const mediaFlowApiError = provider === 'mediaflow' && isTerminalMediaFlowApiError(llmResponse);
       return {
         batchIndex,
         cues: [],
         failedIds: new Set(batch.map(cue => cue.id)),
-        error: `${phaseLabel} batch ${batchIndex + 1}/${totalBatches} failed: ${llmResponse.error}`
+        error: mediaFlowApiError
+          ? llmResponse.error
+          : `${phaseLabel} batch ${batchIndex + 1}/${totalBatches} failed: ${llmResponse.error}`,
+        terminal: mediaFlowApiError
       };
     }
 
@@ -2058,6 +2068,7 @@ async function translatePromptCueBatches(
       usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
       error: firstError,
       truncated,
+      terminal: batchResults.some(result => result.terminal),
       failedIds,
       totalBatches
     };
@@ -2068,6 +2079,7 @@ async function translatePromptCueBatches(
     usage: totalUsage.totalTokens > 0 ? totalUsage : undefined,
     error: allowPartial ? firstError : undefined,
     truncated,
+    terminal: batchResults.some(result => result.terminal),
     failedIds,
     totalBatches
   };
@@ -2325,6 +2337,17 @@ export async function translateSubtitle(
 
         addUsage(totalUsage, themeResult.usage);
 
+        if (themeResult.terminal && themeResult.error) {
+          return {
+            originalFile: file,
+            translatedContent: '',
+            success: false,
+            error: themeResult.error,
+            truncated: themeResult.truncated,
+            usage: totalUsage.totalTokens > 0 ? totalUsage : undefined
+          };
+        }
+
         const groupsResolvedByLlm = new Set<string>();
         const memoryUpserts = new Map<
           string,
@@ -2446,6 +2469,17 @@ export async function translateSubtitle(
 
       addUsage(totalUsage, visualResult.usage);
 
+      if (visualResult.terminal && visualResult.error) {
+        return {
+          originalFile: file,
+          translatedContent: '',
+          success: false,
+          error: visualResult.error,
+          truncated: visualResult.truncated,
+          usage: totalUsage.totalTokens > 0 ? totalUsage : undefined
+        };
+      }
+
       const resolvedVisualPromptIds = new Set<string>();
       let invalidVisualCueCount = 0;
       let invalidVisualGroupCount = 0;
@@ -2531,7 +2565,7 @@ export async function translateSubtitle(
 
       addUsage(totalUsage, mainResult.usage);
 
-      if (mainResult.error && mainResult.failedIds.size === 0) {
+      if (mainResult.error && (mainResult.failedIds.size === 0 || mainResult.terminal)) {
         return {
           originalFile: file,
           translatedContent: '',

@@ -12,6 +12,7 @@ import {
   type TranscribeResult,
   type TranscriptionUploadResponse,
 } from './deepgram';
+import { normalizeMediaFlowError } from './mediaflow-errors';
 import { withSleepInhibit } from './sleep-inhibit';
 
 export interface MediaFlowTranscribeOptions {
@@ -113,14 +114,29 @@ export async function transcribeWithMediaFlow(options: MediaFlowTranscribeOption
       onProgress?.(50, 'processing');
 
       if (response.status < 200 || response.status >= 300) {
-        logStore.addLog({
-          level: 'error',
-          source: 'mediaflow',
-          title: 'MediaFlow transcription error',
-          details: `Status: ${response.status} - ${response.body}`,
-          context: { filePath: audioPath, apiError: response.body },
+        const normalizedError = normalizeMediaFlowError({
+          status: response.status,
+          error: response.body,
+          technicalError: response.body,
         });
-        return { success: false, error: `API Error: ${response.status} - ${response.body}` };
+        logStore.addLog({
+          level: normalizedError.severity,
+          source: 'mediaflow',
+          title: normalizedError.title,
+          details: normalizedError.details,
+          context: {
+            filePath: audioPath,
+            provider: 'mediaflow',
+            apiError: response.body,
+            ...(normalizedError.status ? { apiStatus: String(normalizedError.status) } : {}),
+            ...(normalizedError.code ? { apiCode: normalizedError.code } : {}),
+            ...(normalizedError.requestId ? { requestId: normalizedError.requestId } : {}),
+            ...(normalizedError.retryAfter ? { retryAfter: String(normalizedError.retryAfter) } : {}),
+            userAction: normalizedError.action,
+            ...(normalizedError.backendMessage ? { technicalDetails: normalizedError.backendMessage } : {}),
+          },
+        });
+        return { success: false, error: normalizedError.message };
       }
 
       mediaflowUsageStore.scheduleRefresh();

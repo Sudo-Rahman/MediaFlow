@@ -18,6 +18,7 @@
     { value: 'ffmpeg', label: 'FFmpeg' },
     { value: 'ffprobe', label: 'FFprobe' },
     { value: 'translation', label: 'Translation' },
+    { value: 'mediaflow', label: 'MediaFlow' },
     { value: 'merge', label: 'Merge' },
     { value: 'extraction', label: 'Extraction' },
     { value: 'rename', label: 'Rename' },

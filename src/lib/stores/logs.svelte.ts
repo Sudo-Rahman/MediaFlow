@@ -16,6 +16,12 @@ export interface LogContext {
   modelJobId?: string;
   batchIndex?: string;
   apiError?: string;
+  apiStatus?: string;
+  apiCode?: string;
+  requestId?: string;
+  retryAfter?: string;
+  userAction?: string;
+  technicalDetails?: string;
   outputPath?: string;
 }
 
@@ -71,7 +77,9 @@ export const logStore = {
         log.title.toLowerCase().includes(query) ||
         log.details.toLowerCase().includes(query) ||
         log.source.toLowerCase().includes(query) ||
-        log.context?.filePath?.toLowerCase().includes(query)
+        log.context?.filePath?.toLowerCase().includes(query) ||
+        log.context?.apiCode?.toLowerCase().includes(query) ||
+        log.context?.requestId?.toLowerCase().includes(query)
       );
     }
 

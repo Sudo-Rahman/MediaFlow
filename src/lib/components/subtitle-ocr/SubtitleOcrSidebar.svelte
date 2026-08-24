@@ -11,8 +11,9 @@
     X,
   } from '@lucide/svelte';
 
-  import type { SubtitleOcrSourceItem, SubtitleOcrStatus } from '$lib/types';
-  import { buildSubtitleOcrSourceLabel, hasActiveSubtitleOcrVersion } from '$lib/types';
+  import type { SubtitleOcrStatus } from '$lib/types';
+  import { buildSubtitleOcrSourceLabel } from '$lib/types';
+  import type { SubtitleOcrItemSummary } from '$lib/stores';
   import { OCR_LANGUAGES } from '$lib/types/video-ocr';
   import { FileItemCard } from '$lib/components/shared';
   import { Badge } from '$lib/components/ui/badge';
@@ -33,7 +34,7 @@
   import { shouldShowSubtitleOcrItemCancelAction } from './subtitle-ocr-sidebar-state';
 
   interface SubtitleOcrSidebarProps {
-    items: SubtitleOcrSourceItem[];
+    items: SubtitleOcrItemSummary[];
     selectedItemId: string | null;
     isProcessing: boolean;
     processingScopeItemIds: ReadonlySet<string>;
@@ -105,7 +106,7 @@
     return 'outline';
   }
 
-  function getProgressLabel(item: SubtitleOcrSourceItem): string {
+  function getProgressLabel(item: SubtitleOcrItemSummary): string {
     const progress = item.progress;
     switch (progress?.phase) {
       case 'extracting':
@@ -133,14 +134,14 @@
     }
   }
 
-  function getProgressPercentage(item: SubtitleOcrSourceItem): number {
+  function getProgressPercentage(item: SubtitleOcrItemSummary): number {
     return Math.max(
       0,
       Math.min(100, Math.round(item.progress?.overallPercentage ?? item.progress?.percentage ?? 0)),
     );
   }
 
-  function getModelOverrideLabel(item: SubtitleOcrSourceItem): string {
+  function getModelOverrideLabel(item: SubtitleOcrItemSummary): string {
     if (item.ocrModelOverride === 'default') {
       return 'Default';
     }
@@ -188,8 +189,8 @@
         {#each items as item (item.id)}
           {@const isSelected = item.id === selectedItemId}
           {@const processing = isItemProcessing(item.status)}
-          {@const versionCount = item.versions.length}
-          {@const hasActiveVersion = hasActiveSubtitleOcrVersion(item)}
+          {@const versionCount = item.versionCount}
+          {@const hasActiveVersion = item.hasActiveVersion}
           {@const showCancelAction = shouldShowSubtitleOcrItemCancelAction(
             item.status,
             isProcessing,

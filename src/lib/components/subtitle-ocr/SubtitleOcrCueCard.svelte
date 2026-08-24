@@ -55,8 +55,8 @@
   interface SubtitleOcrCueCardProps {
     cue: SubtitleOcrCue | null;
     bitmap: SubtitleOcrCueBitmap | null;
-    previewBitmaps?: SubtitleOcrCueBitmap[];
-    previewCues?: SubtitleOcrCue[];
+    previewBitmaps?: readonly SubtitleOcrCueBitmap[];
+    previewCues?: readonly SubtitleOcrCue[];
     selected?: boolean;
     mode: 'compact' | 'wide';
     disabled?: boolean;

@@ -31,7 +31,7 @@
   type TimelineViewportChangeSource = 'timeline-window' | 'timeline-zone' | 'timeline-zoom';
 
   interface SubtitleOcrTimelineProps {
-    cues: SubtitleOcrCue[];
+    cues: readonly SubtitleOcrCue[];
     durationMs: number;
     scopeKey?: string;
     viewportStartMs: number;

@@ -6,11 +6,13 @@
   import type {
     SubtitleOcrCue,
     SubtitleOcrCueBitmap,
-    SubtitleOcrProcessingDraft,
-    SubtitleOcrSourceItem,
-    SubtitleOcrVersion,
   } from '$lib/types';
   import { buildSubtitleOcrSourceLabel } from '$lib/types';
+  import type {
+    SubtitleOcrProcessingDraftSummary,
+    SubtitleOcrVersionSummary,
+    SubtitleOcrWorkspaceItemSummary,
+  } from '$lib/stores';
   import { cn } from '$lib/utils';
   import {
     buildSubtitleOcrReviewStats,
@@ -30,13 +32,13 @@
   import SubtitleOcrVersionSelector from './SubtitleOcrVersionSelector.svelte';
 
   interface SubtitleOcrWorkspaceProps {
-    item: SubtitleOcrSourceItem | null;
-    reviewVersion: SubtitleOcrVersion | null;
-    reviewBitmaps: SubtitleOcrCueBitmap[];
-    renderedCues: SubtitleOcrCue[];
+    item: SubtitleOcrWorkspaceItemSummary | null;
+    reviewVersion: SubtitleOcrVersionSummary | null;
+    reviewBitmaps: readonly SubtitleOcrCueBitmap[];
+    renderedCues: readonly SubtitleOcrCue[];
     selectedCueId: string | null;
     activeReviewTargetId: string | null;
-    processingDraft?: SubtitleOcrProcessingDraft;
+    processingDraft?: SubtitleOcrProcessingDraftSummary;
     isReadOnly: boolean;
     onSelectCue: (cueId: string) => void;
     onSelectVersion: (itemId: string, versionId: string) => void;
@@ -219,11 +221,11 @@
     return `${item?.id ?? 'none'}:${activeVersionId ?? 'none'}:${cueId}`;
   }
 
-  function getVersionModeLabel(version: SubtitleOcrVersion): string {
+  function getVersionModeLabel(version: SubtitleOcrVersionSummary): string {
     return version.mode === 'ai_cleanup_only' ? 'AI cleanup' : 'Full OCR';
   }
 
-  function getReviewModeLabel(version: SubtitleOcrVersion | null): string {
+  function getReviewModeLabel(version: SubtitleOcrVersionSummary | null): string {
     return version ? getVersionModeLabel(version) : 'OCR draft';
   }
 

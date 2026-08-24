@@ -1,5 +1,17 @@
 import type { SubtitleOcrProgress } from '$lib/types';
 
+export interface SubtitleOcrBatchProgressItem {
+  id: string;
+  status: string;
+  progress?: SubtitleOcrProgress;
+}
+
+export interface SubtitleOcrBatchProgressMetric {
+  doneUnits: number;
+  totalUnits: number;
+  settledCount: number;
+}
+
 const SUBTITLE_OCR_PHASE_ORDER: Record<SubtitleOcrProgress['phase'], number> = {
   extracting: 0,
   decoding: 1,
@@ -25,6 +37,45 @@ function clampPercentage(value: number): number {
   }
 
   return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+export function calculateSubtitleOcrBatchProgress(
+  items: readonly SubtitleOcrBatchProgressItem[],
+  batchItemIds: ReadonlySet<string>,
+  processingScopeItemIds: ReadonlySet<string>,
+  processingStartedItemIds: ReadonlySet<string>,
+  cancelledItemIds: ReadonlySet<string>,
+  _isProcessing: boolean,
+): SubtitleOcrBatchProgressMetric {
+  const itemsById = new Map(items.map((item) => [item.id, item]));
+  let doneUnits = 0;
+  let settledCount = 0;
+
+  for (const itemId of batchItemIds) {
+    const item = itemsById.get(itemId);
+    if (cancelledItemIds.has(itemId) || !processingScopeItemIds.has(itemId)) {
+      doneUnits += 1;
+      settledCount += 1;
+    } else if (!processingStartedItemIds.has(itemId)) {
+      // A retry can target an item whose previous run ended in a terminal
+      // status. Until this run enters the item, that stale status is not
+      // evidence that the current run has settled.
+      continue;
+    } else if (item?.status === 'completed' || item?.status === 'error') {
+      doneUnits += 1;
+      settledCount += 1;
+    } else {
+      doneUnits += clampPercentage(
+        item?.progress?.overallPercentage ?? item?.progress?.percentage ?? 0,
+      ) / 100;
+    }
+  }
+
+  return {
+    doneUnits,
+    totalUnits: batchItemIds.size,
+    settledCount,
+  };
 }
 
 function normalizeProgress(progress: SubtitleOcrProgress): SubtitleOcrProgress {

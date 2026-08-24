@@ -10,6 +10,13 @@ export { infoStore } from './info.svelte';
 export { audioToSubsStore } from './audio-to-subs.svelte';
 export { videoOcrStore } from './video-ocr.svelte';
 export { subtitleOcrStore } from './subtitle-ocr.svelte';
+export type {
+  SubtitleOcrExportItemSummary,
+  SubtitleOcrItemSummary,
+  SubtitleOcrProcessingDraftSummary,
+  SubtitleOcrVersionSummary,
+  SubtitleOcrWorkspaceItemSummary,
+} from './subtitle-ocr-summaries';
 export { renameStore } from './rename.svelte';
 export { createRenameWorkspaceStore } from './rename.svelte';
 export { toolImportStore } from './tool-import.svelte';

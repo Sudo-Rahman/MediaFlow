@@ -10,6 +10,7 @@ import type {
   SubtitleOcrVersion,
 } from '$lib/types';
 import {
+  cloneSubtitleOcrSourceSnapshot,
   getSubtitleOcrEffectiveModel,
   hasActiveSubtitleOcrVersion,
   hasSubtitleOcrVersions,
@@ -43,6 +44,37 @@ export type SubtitleOcrProgressEventInput = Pick<
 export type SubtitleOcrMissingBitmapCollector = (
   bitmaps: SubtitleOcrCueBitmap[],
 ) => Promise<SubtitleOcrCueBitmap[]>;
+
+export type SubtitleOcrMissingBitmapCollectionResult =
+  | { ok: true; bitmaps: SubtitleOcrCueBitmap[] }
+  | { ok: false; error: unknown };
+
+export const SUBTITLE_OCR_PREVIEW_RESTORE_MAX_RETRIES = 3;
+
+export function getSubtitleOcrPreviewRestoreRetry(
+  attempt: number,
+  tokenValid: boolean,
+): { shouldRetry: boolean; nextAttempt: number } {
+  if (!tokenValid || attempt >= SUBTITLE_OCR_PREVIEW_RESTORE_MAX_RETRIES) {
+    return { shouldRetry: false, nextAttempt: attempt };
+  }
+
+  return { shouldRetry: true, nextAttempt: attempt + 1 };
+}
+
+export async function collectMissingSubtitleOcrBitmapAssetsSafely(
+  versions: readonly Pick<SubtitleOcrVersion, 'bitmaps'>[],
+  collectMissingBitmaps: SubtitleOcrMissingBitmapCollector,
+): Promise<SubtitleOcrMissingBitmapCollectionResult> {
+  try {
+    return {
+      ok: true,
+      bitmaps: await collectMissingSubtitleOcrBitmapAssets(versions, collectMissingBitmaps),
+    };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
 
 export function parseSubtitleOcrProbeDurationSeconds(probeJson: string): number | undefined {
   let parsed: unknown;
@@ -120,6 +152,13 @@ export function shouldApplySubtitleOcrProgressEvent(
   return activeRunId !== undefined && runId === activeRunId;
 }
 
+export function shouldApplySubtitleOcrRestoreResult(
+  cancelRequested: boolean,
+  itemCancelled: boolean,
+): boolean {
+  return !cancelRequested && !itemCancelled;
+}
+
 export function buildSubtitleOcrProgressFromEvent(
   payload: SubtitleOcrProgressEventInput,
   useDirectOverallPercentage = false,
@@ -150,28 +189,7 @@ export function getSubtitleOcrBackendCancelTargets(
 export function buildSubtitleOcrSourceSnapshot(
   item: SubtitleOcrSourceItem,
 ): SubtitleOcrSourceSnapshot {
-  switch (item.sourceKind) {
-    case 'container_track':
-      return {
-        sourceKind: 'container_track',
-        sourcePath: item.sourcePath,
-        ocrModelOverride: item.ocrModelOverride,
-        track: { ...item.track },
-      };
-    case 'standalone_sup':
-      return {
-        sourceKind: 'standalone_sup',
-        sourcePath: item.sourcePath,
-        ocrModelOverride: item.ocrModelOverride,
-      };
-    case 'standalone_vobsub':
-      return {
-        sourceKind: 'standalone_vobsub',
-        sourcePath: item.sourcePath,
-        ocrModelOverride: item.ocrModelOverride,
-        pair: { ...item.pair },
-      };
-  }
+  return cloneSubtitleOcrSourceSnapshot(item);
 }
 
 export function resolveSubtitleOcrEffectiveModelForConfig(

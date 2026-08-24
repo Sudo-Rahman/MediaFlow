@@ -19,8 +19,8 @@
   type ViewportSource = 'rail' | 'timeline-window' | 'timeline-zone' | 'timeline-zoom' | 'selection' | null;
 
   interface SubtitleOcrCueRailProps {
-    cues: SubtitleOcrCue[];
-    bitmaps: SubtitleOcrCueBitmap[];
+    cues: readonly SubtitleOcrCue[];
+    bitmaps: readonly SubtitleOcrCueBitmap[];
     durationMs?: number;
     selectedCueId: string | null;
     viewportStartMs?: number;

@@ -10,9 +10,11 @@ import {
   buildSubtitleOcrProgressFromEvent,
   buildSubtitleOcrSourceSnapshot,
   collectMissingSubtitleOcrBitmapAssets,
+  collectMissingSubtitleOcrBitmapAssetsSafely,
   filterSubtitleOcrPersistenceForItem,
   getSubtitleOcrActiveVersionItemIds,
   getSubtitleOcrBackendCancelTargets,
+  getSubtitleOcrPreviewRestoreRetry,
   getSubtitleOcrVersionedItemIds,
   mergeRestoredSubtitleOcrBitmapAssets,
   mergeSubtitleOcrPersistenceForItem,
@@ -20,6 +22,7 @@ import {
   resolveSubtitleOcrExpectedBitmapCount,
   resolveSubtitleOcrEffectiveModelForConfig,
   shouldApplySubtitleOcrProgressEvent,
+  shouldApplySubtitleOcrRestoreResult,
   summarizeSubtitleOcrItems,
 } from './subtitle-ocr-view-state';
 
@@ -81,6 +84,69 @@ describe('summarizeSubtitleOcrItems', () => {
       { status: 'scanning' },
     ])).toEqual({ readyCount: 1, scanningCount: 1 });
   });
+});
+
+describe('shouldApplySubtitleOcrRestoreResult', () => {
+  it('rejects restore results when cancellation wins after the backend await', () => {
+    expect(shouldApplySubtitleOcrRestoreResult(true, false)).toBe(false);
+    expect(shouldApplySubtitleOcrRestoreResult(false, true)).toBe(false);
+    expect(shouldApplySubtitleOcrRestoreResult(false, false)).toBe(true);
+  });
+});
+
+describe('collectMissingSubtitleOcrBitmapAssetsSafely', () => {
+  it('settles collector failures for fire-and-forget restore callers', async () => {
+    const result = await collectMissingSubtitleOcrBitmapAssetsSafely(
+      [{ bitmaps: [{ cueId: 'cue-1', startTimeMs: 0, endTimeMs: 1, width: 1, height: 1 }] }],
+      async () => {
+        throw new Error('collection failed');
+      },
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('Expected collection failure');
+    }
+    expect(result.error).toBeInstanceOf(Error);
+  });
+});
+
+describe('getSubtitleOcrPreviewRestoreRetry', () => {
+  it('bounds collection retries and drops superseded hydration tokens', () => {
+    expect(getSubtitleOcrPreviewRestoreRetry(0, true)).toEqual({
+      shouldRetry: true,
+      nextAttempt: 1,
+    });
+    expect(getSubtitleOcrPreviewRestoreRetry(2, true)).toEqual({
+      shouldRetry: true,
+      nextAttempt: 3,
+    });
+    expect(getSubtitleOcrPreviewRestoreRetry(3, true)).toEqual({
+      shouldRetry: false,
+      nextAttempt: 3,
+    });
+    expect(getSubtitleOcrPreviewRestoreRetry(0, false)).toEqual({
+      shouldRetry: false,
+      nextAttempt: 0,
+    });
+  });
+
+  it('settles repeated collection failures after the bounded retry sequence', () => {
+    const attempts: number[] = [];
+    let attempt = 0;
+    let queued = true;
+
+    while (queued) {
+      const retry = getSubtitleOcrPreviewRestoreRetry(attempt, true);
+      attempts.push(attempt);
+      queued = retry.shouldRetry;
+      attempt = retry.nextAttempt;
+    }
+
+    expect(attempts).toEqual([0, 1, 2, 3]);
+    expect(queued).toBe(false);
+  });
+
 });
 
 describe('parseSubtitleOcrProbeDurationSeconds', () => {

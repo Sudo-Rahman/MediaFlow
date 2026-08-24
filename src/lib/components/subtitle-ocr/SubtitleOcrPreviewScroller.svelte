@@ -10,8 +10,8 @@
   interface SubtitleOcrPreviewScrollerProps {
     cue: SubtitleOcrCue | null;
     bitmap: SubtitleOcrCueBitmap | null;
-    cues?: SubtitleOcrCue[];
-    bitmaps?: SubtitleOcrCueBitmap[];
+    cues?: readonly SubtitleOcrCue[];
+    bitmaps?: readonly SubtitleOcrCueBitmap[];
     cueIndex?: number;
     selected?: boolean;
     disabled?: boolean;

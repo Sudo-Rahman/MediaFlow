@@ -329,6 +329,96 @@ describe('subtitleOcrStore', () => {
     expect(subtitleOcrStore.getRenderedBitmaps('a')[0]?.previewPath).toBe('/tmp/cue-live.png');
   });
 
+  it('keeps live projection array and entry identity across append and replacement', () => {
+    subtitleOcrStore.addItems([source('a')]);
+    subtitleOcrStore.beginProcessingDraft('a', {
+      runId: 'run-identity',
+      name: 'Version 1 Draft',
+    });
+    subtitleOcrStore.appendProcessingDraftCue('a', 'run-identity', {
+      bitmap: bitmap('cue-one'),
+      rawCue: rawCue('cue-one', 'raw one'),
+      provisionalCue: cue('cue-one', 'one'),
+    });
+
+    const firstCues = subtitleOcrStore.getRenderedCues('a');
+    const firstBitmaps = subtitleOcrStore.getRenderedBitmaps('a');
+    const firstCue = firstCues[0];
+    const firstBitmap = firstBitmaps[0];
+    if (!firstCue || !firstBitmap) {
+      throw new Error('Expected the first live projection entry');
+    }
+    expect(Object.isFrozen(firstCues)).toBe(true);
+    expect(Object.isFrozen(firstCue)).toBe(true);
+    expect(Object.isFrozen(firstCue.sourceCueIds)).toBe(true);
+    expect(Object.isFrozen(firstBitmaps)).toBe(true);
+    expect(Object.isFrozen(firstBitmap)).toBe(true);
+
+    subtitleOcrStore.appendProcessingDraftCue('a', 'run-identity', {
+      bitmap: bitmap('cue-two'),
+      rawCue: rawCue('cue-two', 'raw two'),
+      provisionalCue: cue('cue-two', 'two'),
+    });
+
+    const appendedCues = subtitleOcrStore.getRenderedCues('a');
+    const appendedBitmaps = subtitleOcrStore.getRenderedBitmaps('a');
+    expect(appendedCues).not.toBe(firstCues);
+    expect(appendedBitmaps).not.toBe(firstBitmaps);
+    expect(appendedCues[0]).toBe(firstCue);
+    expect(appendedBitmaps[0]).toBe(firstBitmap);
+
+    subtitleOcrStore.appendProcessingDraftCue('a', 'run-identity', {
+      bitmap: { ...bitmap('cue-one'), previewPath: '/tmp/cue-one-replaced.png' },
+      rawCue: rawCue('cue-one', 'raw one replaced'),
+      provisionalCue: { ...cue('cue-one', 'one replaced') },
+    });
+
+    const replacedCues = subtitleOcrStore.getRenderedCues('a');
+    const replacedBitmaps = subtitleOcrStore.getRenderedBitmaps('a');
+    expect(replacedCues[0]).not.toBe(firstCue);
+    expect(replacedBitmaps[0]).not.toBe(firstBitmap);
+    expect(replacedCues[1]).toBe(appendedCues[1]);
+    expect(replacedBitmaps[1]).toBe(appendedBitmaps[1]);
+    expect(replacedCues[0]?.text).toBe('one replaced');
+    expect(replacedBitmaps[0]?.previewPath).toBe('/tmp/cue-one-replaced.png');
+  });
+
+  it('restores one bitmap with copy-on-write sharing across versions', () => {
+    subtitleOcrStore.addItems([source('a')]);
+    const firstVersion = version('v1', 'one');
+    firstVersion.bitmaps = [bitmap('cue-v1')];
+    const secondVersion = version('v2', 'two');
+    secondVersion.bitmaps = [bitmap('cue-v2')];
+    subtitleOcrStore.addVersion('a', firstVersion);
+    subtitleOcrStore.addVersion('a', secondVersion);
+
+    subtitleOcrStore.selectVersion('a', 'v1');
+    const firstCues = subtitleOcrStore.getRenderedCues('a');
+    const firstBitmaps = subtitleOcrStore.getRenderedBitmaps('a');
+    subtitleOcrStore.selectVersion('a', 'v2');
+    const secondCues = subtitleOcrStore.getRenderedCues('a');
+    const secondBitmaps = subtitleOcrStore.getRenderedBitmaps('a');
+
+    subtitleOcrStore.selectVersion('a', 'v1');
+    expect(subtitleOcrStore.updateRestoredBitmap('a', {
+      ...bitmap('cue-v1'),
+      previewPath: '/tmp/restored-v1.png',
+    })).toBe(true);
+
+    const restoredCues = subtitleOcrStore.getRenderedCues('a');
+    const restoredBitmaps = subtitleOcrStore.getRenderedBitmaps('a');
+    expect(restoredCues).toBe(firstCues);
+    expect(restoredCues[0]).toBe(firstCues[0]);
+    expect(restoredBitmaps).not.toBe(firstBitmaps);
+    expect(restoredBitmaps[0]).not.toBe(firstBitmaps[0]);
+    expect(restoredBitmaps[0]?.previewPath).toBe('/tmp/restored-v1.png');
+
+    subtitleOcrStore.selectVersion('a', 'v2');
+    expect(subtitleOcrStore.getRenderedCues('a')).toBe(secondCues);
+    expect(subtitleOcrStore.getRenderedBitmaps('a')).not.toBe(secondBitmaps);
+    expect(subtitleOcrStore.getRenderedBitmaps('a')[0]?.previewPath).toBe('/tmp/restored-v1.png');
+  });
+
   it('keeps an existing completed version visible when a new OCR draft starts', () => {
     subtitleOcrStore.addItems([source('a')]);
     subtitleOcrStore.addVersion('a', version('v1', 'one'));
@@ -473,6 +563,119 @@ describe('subtitleOcrStore', () => {
     expect([...subtitleOcrStore.processingScopeItemIds]).toEqual(['a', 'b']);
   });
 
+  it('keeps the original batch scope after an item finishes', () => {
+    subtitleOcrStore.startProcessing(['a', 'b', 'c']);
+
+    subtitleOcrStore.finishProcessingItem('a');
+
+    expect([...subtitleOcrStore.processingScopeItemIds]).toEqual(['b', 'c']);
+    expect([...subtitleOcrStore.processingBatchItemIds]).toEqual(['a', 'b', 'c']);
+  });
+
+  it('returns a cloned processing batch set', () => {
+    subtitleOcrStore.startProcessing(['a', 'b']);
+
+    const batch = subtitleOcrStore.processingBatchItemIds;
+    batch.delete('a');
+
+    expect([...subtitleOcrStore.processingBatchItemIds]).toEqual(['a', 'b']);
+  });
+
+  it('tracks only items that have entered the current processing run', () => {
+    subtitleOcrStore.addItems([source('a')]);
+    subtitleOcrStore.setItemStatus('a', 'completed');
+    subtitleOcrStore.setProgress('a', {
+      phase: 'ocr',
+      current: 100,
+      total: 100,
+      totalKnown: true,
+      percentage: 100,
+    });
+    subtitleOcrStore.startProcessing(['a', 'b']);
+
+    expect([...subtitleOcrStore.processingStartedItemIds]).toEqual([]);
+    expect(subtitleOcrStore.markProcessingItemStarted('a', 'ocr_processing')).toBe(true);
+    expect([...subtitleOcrStore.processingStartedItemIds]).toEqual(['a']);
+    expect(subtitleOcrStore.getItemSnapshot('a')).toMatchObject({
+      status: 'ocr_processing',
+      progress: undefined,
+      error: undefined,
+    });
+
+    const detachedStartedIds = subtitleOcrStore.processingStartedItemIds;
+    detachedStartedIds.delete('a');
+    expect([...subtitleOcrStore.processingStartedItemIds]).toEqual(['a']);
+
+    subtitleOcrStore.stopProcessing();
+    expect([...subtitleOcrStore.processingStartedItemIds]).toEqual([]);
+  });
+
+  it('refuses a second processing owner without overwriting the active batch', () => {
+    expect(subtitleOcrStore.startProcessing(['a', 'b'])).toBe(true);
+    subtitleOcrStore.markProcessingItemStarted('a', 'ocr_processing');
+
+    expect(subtitleOcrStore.startProcessing(['replacement'])).toBe(false);
+    expect([...subtitleOcrStore.processingBatchItemIds]).toEqual(['a', 'b']);
+    expect([...subtitleOcrStore.processingScopeItemIds]).toEqual(['a', 'b']);
+    expect([...subtitleOcrStore.processingStartedItemIds]).toEqual(['a']);
+  });
+
+  it('keeps an exposed import non-runnable until current hydration completes', () => {
+    subtitleOcrStore.addItems([source('a')]);
+    const firstToken = subtitleOcrStore.startHydration('a');
+
+    expect(subtitleOcrStore.isItemHydrating('a')).toBe(true);
+    expect(subtitleOcrStore.startProcessing(['a'])).toBe(false);
+    expect(subtitleOcrStore.processingBatchItemIds.size).toBe(0);
+
+    subtitleOcrStore.finishHydration('a', firstToken);
+    expect(subtitleOcrStore.isHydrationCurrent('a', firstToken)).toBe(false);
+    expect(subtitleOcrStore.isHydrationTokenValid('a', firstToken)).toBe(true);
+
+    const replacementToken = subtitleOcrStore.startHydration('a');
+    expect(subtitleOcrStore.isHydrationTokenValid('a', firstToken)).toBe(false);
+    expect(subtitleOcrStore.isHydrationCurrent('a', replacementToken)).toBe(true);
+
+    expect(subtitleOcrStore.replaceHydratedItemVersions(
+      'a',
+      firstToken,
+      [version('stale', 'stale')],
+      'stale',
+    )).toBe(false);
+    expect(subtitleOcrStore.getItemSnapshot('a')?.versions).toHaveLength(0);
+
+    expect(subtitleOcrStore.replaceHydratedItemVersions(
+      'a',
+      replacementToken,
+      [version('hydrated', 'hydrated')],
+      'hydrated',
+    )).toBe(true);
+    subtitleOcrStore.finishHydration('a', replacementToken);
+    expect(subtitleOcrStore.startProcessing(['a'])).toBe(true);
+    subtitleOcrStore.markProcessingItemStarted('a');
+    expect(subtitleOcrStore.getItemSnapshot('a')?.status).toBe('decoding');
+  });
+
+  it('completes hydration without stealing an active processing owner', () => {
+    subtitleOcrStore.addItems([source('a'), source('b')]);
+    const hydrationToken = subtitleOcrStore.startHydration('a');
+
+    expect(subtitleOcrStore.startProcessing(['b'])).toBe(true);
+    subtitleOcrStore.markProcessingItemStarted('b', 'ocr_processing');
+    expect(subtitleOcrStore.replaceHydratedItemVersions(
+      'a',
+      hydrationToken,
+      [version('hydrated', 'hydrated')],
+      'hydrated',
+    )).toBe(true);
+    subtitleOcrStore.finishHydration('a', hydrationToken);
+
+    expect([...subtitleOcrStore.processingBatchItemIds]).toEqual(['b']);
+    expect(subtitleOcrStore.startProcessing(['a'])).toBe(false);
+    subtitleOcrStore.stopProcessing();
+    expect(subtitleOcrStore.startProcessing(['a'])).toBe(true);
+  });
+
   it('cancels one processing item without marking the whole batch as cancelling', () => {
     subtitleOcrStore.addItems([source('a'), source('b')]);
     subtitleOcrStore.startProcessing(['a', 'b']);
@@ -483,6 +686,7 @@ describe('subtitleOcrStore', () => {
     expect(subtitleOcrStore.isItemCancelled('a')).toBe(true);
     expect(subtitleOcrStore.isCancelling).toBe(false);
     expect([...subtitleOcrStore.processingScopeItemIds]).toEqual(['b']);
+    expect([...subtitleOcrStore.processingBatchItemIds]).toEqual(['a', 'b']);
     expect(subtitleOcrStore.items.find((item) => item.id === 'a')?.status).toBe('ready');
   });
 
@@ -499,6 +703,62 @@ describe('subtitleOcrStore', () => {
     expect(item?.progress).toBeUndefined();
     expect(item?.activeVersionId).toBe('v1');
     expect([...subtitleOcrStore.processingScopeItemIds]).toEqual(['b']);
+    expect([...subtitleOcrStore.processingBatchItemIds]).toEqual(['a', 'b']);
+  });
+
+  it('ignores cancellation requests for items that left the active scope', () => {
+    subtitleOcrStore.addItems([source('a'), source('b')]);
+    subtitleOcrStore.startProcessing(['a', 'b']);
+    subtitleOcrStore.markProcessingItemStarted('a');
+    subtitleOcrStore.finishProcessingItem('a');
+
+    subtitleOcrStore.cancelProcessing('a');
+
+    expect(subtitleOcrStore.isItemCancelled('a')).toBe(false);
+    expect([...subtitleOcrStore.processingScopeItemIds]).toEqual(['b']);
+    expect([...subtitleOcrStore.processingBatchItemIds]).toEqual(['a', 'b']);
+  });
+
+  it('exposes lightweight detached item and export summaries', () => {
+    subtitleOcrStore.addItems([source('a')]);
+    subtitleOcrStore.addVersion('a', version('v1', 'before'));
+    subtitleOcrStore.setProgress('a', {
+      phase: 'ocr',
+      current: 10,
+      total: 100,
+      percentage: 10,
+    });
+
+    const itemSummary = subtitleOcrStore.itemSummaries[0];
+    const exportSummary = subtitleOcrStore.exportItemSummaries[0];
+    if (!itemSummary || !exportSummary) {
+      throw new Error('Expected Subtitle OCR summaries');
+    }
+
+    itemSummary.displayName = 'mutated.sup';
+    if (itemSummary.progress) {
+      itemSummary.progress.percentage = 99;
+    }
+    exportSummary.versions[0].name = 'mutated';
+
+    expect(itemSummary.versionCount).toBe(1);
+    expect(itemSummary.hasActiveVersion).toBe(true);
+    expect('versions' in itemSummary).toBe(false);
+    expect(subtitleOcrStore.itemSummaries[0]).toMatchObject({
+      displayName: 'a.sup',
+      progress: { percentage: 10 },
+    });
+    expect(subtitleOcrStore.exportItemSummaries[0]?.versions[0]?.name).toBe('v1');
+    expect(subtitleOcrStore.getItemSnapshot('a')?.versions[0]?.finalCues[0]?.text).toBe('before');
+
+    const workspaceSummary = subtitleOcrStore.getWorkspaceItemSummary('a');
+    expect(workspaceSummary?.versions[0]).toEqual({
+      id: 'v1',
+      name: 'v1',
+      createdAt: '2026-05-28T00:00:01.000Z',
+      mode: 'full_ocr',
+    });
+    expect('finalCues' in (workspaceSummary?.versions[0] ?? {})).toBe(false);
   });
 
   it('ignores stale progress after an item is cancelled', () => {

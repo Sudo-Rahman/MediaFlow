@@ -9,6 +9,8 @@ use crate::tools::media_metadata::{
 };
 use serde_json::Value;
 use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -263,6 +265,133 @@ fn build_merge_args(
     Ok(args)
 }
 
+struct PreparedMergeTracks {
+    tracks: Vec<Value>,
+    temporary_paths: Vec<PathBuf>,
+}
+
+impl Drop for PreparedMergeTracks {
+    fn drop(&mut self) {
+        for path in &self.temporary_paths {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+fn is_ass_subtitle_path(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("ass") || extension.eq_ignore_ascii_case("ssa")
+        })
+}
+
+fn normalize_ass_line_endings(content: &[u8]) -> Vec<u8> {
+    // FFmpeg keeps the ASS header in Matroska's CodecPrivate data. CRLF line
+    // endings are needed for compatibility with players that parse that
+    // header differently from a standalone ASS file.
+    if std::str::from_utf8(content).is_err() {
+        return content.to_vec();
+    }
+
+    let mut normalized = Vec::with_capacity(content.len());
+    let mut previous_was_carriage_return = false;
+
+    for &byte in content {
+        match byte {
+            b'\r' => {
+                normalized.push(byte);
+                previous_was_carriage_return = true;
+            }
+            b'\n' => {
+                if !previous_was_carriage_return {
+                    normalized.push(b'\r');
+                }
+                normalized.push(byte);
+                previous_was_carriage_return = false;
+            }
+            _ => {
+                normalized.push(byte);
+                previous_was_carriage_return = false;
+            }
+        }
+    }
+
+    normalized
+}
+
+fn prepare_merge_tracks(
+    tracks: &[Value],
+    output_path: &str,
+) -> Result<PreparedMergeTracks, String> {
+    let mut prepared_tracks = tracks.to_vec();
+    let mut temporary_paths = Vec::new();
+
+    for (track_index, track) in prepared_tracks.iter_mut().enumerate() {
+        let Some(input_path) = track
+            .get("inputPath")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+
+        if !is_ass_subtitle_path(&input_path) {
+            continue;
+        }
+
+        let content = std::fs::read(&input_path)
+            .map_err(|error| format!("Failed to read ASS subtitle {}: {}", input_path, error))?;
+        let normalized = normalize_ass_line_endings(&content);
+        if normalized == content {
+            continue;
+        }
+
+        let extension = Path::new(&input_path)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("ass");
+        let temporary_path =
+            merge_neighbor_path(Path::new(output_path), &format!("ass-{}", track_index))
+                .with_extension(extension);
+        let mut temporary_file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary_path)
+            .map_err(|error| {
+                format!(
+                    "Failed to create normalized ASS subtitle {}: {}",
+                    temporary_path.display(),
+                    error
+                )
+            })?;
+
+        if let Err(error) = temporary_file
+            .write_all(&normalized)
+            .and_then(|_| temporary_file.flush())
+        {
+            let _ = std::fs::remove_file(&temporary_path);
+            return Err(format!(
+                "Failed to write normalized ASS subtitle {}: {}",
+                temporary_path.display(),
+                error
+            ));
+        }
+        drop(temporary_file);
+
+        if let Some(input_path_value) = track.get_mut("inputPath") {
+            *input_path_value = Value::String(temporary_path.to_string_lossy().into_owned());
+        }
+        temporary_paths.push(temporary_path);
+    }
+
+    Ok(PreparedMergeTracks {
+        tracks: prepared_tracks,
+        temporary_paths,
+    })
+}
+
 fn emit_merge_progress(
     app: &tauri::AppHandle,
     video_path: &str,
@@ -375,9 +504,10 @@ pub(super) async fn merge_tracks_with_bins(
     let final_output_path = Path::new(output_path);
     let temp_output_path = merge_neighbor_path(final_output_path, "tmp");
     let temp_output_str = temp_output_path.to_string_lossy().to_string();
+    let prepared_tracks = prepare_merge_tracks(tracks, output_path)?;
     let args = build_merge_args(
         video_path,
-        tracks,
+        &prepared_tracks.tracks,
         source_track_configs,
         &streams,
         &temp_output_str,
@@ -412,7 +542,7 @@ pub(super) async fn merge_tracks_with_bins(
     }
     drop(activity_tx);
 
-    let output = wait_with_output_progress_watchdog(
+    let wait_result = wait_with_output_progress_watchdog(
         child,
         "FFmpeg merge",
         activity_rx,
@@ -422,7 +552,9 @@ pub(super) async fn merge_tracks_with_bins(
     .map_err(|error| {
         remove_partial_merge_output(&temp_output_str);
         error
-    })?;
+    });
+    drop(prepared_tracks);
+    let output = wait_result?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -477,10 +609,11 @@ pub(crate) async fn merge_tracks(
     let final_output_path = Path::new(&output_path);
     let temp_output_path = merge_neighbor_path(final_output_path, "tmp");
     let temp_output_str = temp_output_path.to_string_lossy().to_string();
+    let prepared_tracks = prepare_merge_tracks(&tracks, &output_path)?;
 
     let args = build_merge_args(
         &video_path,
-        &tracks,
+        &prepared_tracks.tracks,
         source_track_configs.as_deref(),
         &streams,
         &temp_output_str,
@@ -549,7 +682,7 @@ pub(crate) async fn merge_tracks(
     }
     drop(activity_tx);
 
-    let output = wait_with_output_progress_watchdog(
+    let wait_result = wait_with_output_progress_watchdog(
         child,
         "FFmpeg merge",
         activity_rx,
@@ -560,7 +693,9 @@ pub(crate) async fn merge_tracks(
         clear_merge_tracking(&video_path);
         remove_partial_merge_output(&temp_output_str);
         error
-    })?;
+    });
+    drop(prepared_tracks);
+    let output = wait_result?;
 
     clear_merge_tracking(&video_path);
 
@@ -1036,6 +1171,114 @@ mod tests {
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         assert_eq!(default_disposition, 1);
+    }
+
+    #[tokio::test]
+    async fn merge_tracks_normalizes_external_ass_codec_private_line_endings() {
+        let video = crate::test_support::assets::ensure_sample_video()
+            .await
+            .expect("failed to load local sample video");
+        let temp = tempfile::tempdir().expect("failed to create tempdir");
+        let subtitle = temp.path().join("sub.ass");
+        std::fs::write(
+            &subtitle,
+            b"[Script Info]\n\
+ScriptType: v4.00+\n\
+PlayResX: 640\n\
+PlayResY: 360\n\n\
+[V4+ Styles]\n\
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n\
+Style: Default,Arial,24,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,0,2,20,20,40,1\n\n\
+[Events]\n\
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: 0,0:00:00.00,0:00:00.50,Default,,0,0,0,,First\n\
+Dialogue: 0,0:00:00.60,0:00:01.20,Default,,0,0,0,,Second\n",
+        )
+        .expect("failed to write ASS subtitle");
+        let output = temp.path().join("merged.mkv");
+        let tracks = vec![json!({
+            "inputPath": subtitle.to_string_lossy().to_string(),
+            "config": {
+                "language": "eng",
+                "title": "English",
+                "default": true,
+                "forced": false
+            }
+        })];
+
+        let probe_json = crate::tools::ffprobe::probe::probe_file_with_ffprobe(
+            crate::test_support::ffmpeg::ffprobe_path(),
+            video.to_string_lossy().as_ref(),
+        )
+        .await
+        .expect("probe should succeed");
+        let probe_value: Value =
+            serde_json::from_str(&probe_json).expect("valid probe json expected");
+        let source_track_configs: Vec<Value> = probe_value
+            .get("streams")
+            .and_then(|value| value.as_array())
+            .expect("streams should be an array")
+            .iter()
+            .filter_map(|stream| {
+                let index = stream.get("index")?.as_u64()?;
+                let codec_type = stream
+                    .get("codec_type")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default();
+                let enabled = matches!(codec_type, "video" | "audio" | "subtitle");
+                Some(json!({
+                    "originalIndex": index,
+                    "config": {
+                        "enabled": enabled
+                    }
+                }))
+            })
+            .collect();
+
+        merge_tracks_with_bins(
+            crate::test_support::ffmpeg::ffprobe_path(),
+            crate::test_support::ffmpeg::ffmpeg_path(),
+            video.to_string_lossy().as_ref(),
+            &tracks,
+            Some(&source_track_configs),
+            output.to_string_lossy().as_ref(),
+        )
+        .await
+        .expect("merge should succeed");
+
+        let probe_output = std::process::Command::new(crate::test_support::ffmpeg::ffprobe_path())
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "s:0",
+                "-show_streams",
+                "-show_data",
+                "-of",
+                "json",
+                output.to_string_lossy().as_ref(),
+            ])
+            .output()
+            .expect("ffprobe should run");
+        assert!(
+            probe_output.status.success(),
+            "ffprobe failed: {}",
+            String::from_utf8_lossy(&probe_output.stderr)
+        );
+
+        let value: Value =
+            serde_json::from_slice(&probe_output.stdout).expect("valid stream probe expected");
+        let extradata = value
+            .get("streams")
+            .and_then(|streams| streams.as_array())
+            .and_then(|streams| streams.first())
+            .and_then(|stream| stream.get("extradata"))
+            .and_then(|value| value.as_str())
+            .expect("ASS stream should expose codec private data");
+        assert!(
+            extradata.contains("0d 0a"),
+            "ASS codec private data should use CRLF line endings: {extradata}"
+        );
     }
 
     #[tokio::test]

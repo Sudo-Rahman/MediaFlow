@@ -2,7 +2,10 @@
   import { useId } from 'bits-ui';
 
   import * as Select from '$lib/components/ui/select';
-  import type { SubtitleOcrProcessingDraft, SubtitleOcrVersion } from '$lib/types';
+  import type {
+    SubtitleOcrProcessingDraftSummary,
+    SubtitleOcrVersionSummary,
+  } from '$lib/stores';
   import { cn } from '$lib/utils';
   import {
     buildSubtitleOcrVersionOptions,
@@ -10,9 +13,9 @@
   } from './subtitle-ocr-version-selector';
 
   interface SubtitleOcrVersionSelectorProps {
-    versions: SubtitleOcrVersion[];
+    versions: SubtitleOcrVersionSummary[];
     activeVersionId: string | null;
-    processingDraft?: SubtitleOcrProcessingDraft;
+    processingDraft?: SubtitleOcrProcessingDraftSummary;
     compact?: boolean;
     onSelectVersion: (versionId: string) => void;
   }

@@ -30,7 +30,10 @@
     saveSubtitleOcrData,
   } from '$lib/services/subtitle-ocr-storage';
   import { cleanupSubtitleOcrCuesWithAi } from '$lib/services/subtitle-ocr-ai-cleanup';
-  import { mediaflowModelCatalogStore, subtitleOcrStore } from '$lib/stores';
+  import {
+    mediaflowModelCatalogStore,
+    subtitleOcrStore,
+  } from '$lib/stores';
   import { isSubtitleOcrProgressPhaseStale } from '$lib/stores/subtitle-ocr-progress';
   import {
     isLLMSelectionAvailable,
@@ -54,18 +57,19 @@
   import {
     buildSubtitleOcrProgressFromEvent,
     buildSubtitleOcrSourceSnapshot,
-    collectMissingSubtitleOcrBitmapAssets,
+    collectMissingSubtitleOcrBitmapAssetsSafely,
     filterSubtitleOcrPersistenceForItem,
-    getSubtitleOcrActiveVersionItemIds,
     getSubtitleOcrBackendCancelTargets,
-    getSubtitleOcrVersionedItemIds,
-    mergeRestoredSubtitleOcrBitmapAssets,
+    getSubtitleOcrPreviewRestoreRetry,
     mergeSubtitleOcrPersistenceForItem,
     resolveSubtitleOcrExpectedBitmapCount,
     resolveSubtitleOcrEffectiveModelForConfig,
     shouldApplySubtitleOcrProgressEvent,
+    shouldApplySubtitleOcrRestoreResult,
     summarizeSubtitleOcrItems,
+    SUBTITLE_OCR_PREVIEW_RESTORE_MAX_RETRIES,
   } from './subtitle-ocr-view-state';
+  import { createSubtitleOcrPreviewRestoreState } from './subtitle-ocr-preview-restore-state';
 
   interface SubtitleOcrViewProps {
     onNavigateToSettings?: () => void;
@@ -95,6 +99,7 @@
 
   type ProcessItemResult = 'completed' | 'cancelled' | 'error';
   type ProcessingResultCounts = Record<ProcessItemResult, number>;
+  type PreviewRestoreOutcome = 'completed' | 'deferred' | 'retry' | 'failed' | 'stale';
 
   let { onNavigateToSettings }: SubtitleOcrViewProps = $props();
 
@@ -104,6 +109,7 @@
   let trackDialogTracks = $state.raw<SubtitleOcrTrackMetadata[]>([]);
   let queuedTrackDialogs = $state.raw<TrackDialogRequest[]>([]);
   let resultDialogOpen = $state(false);
+  let resultDialogItemId = $state<string | null>(null);
   let retryAllDialogOpen = $state(false);
   let retryDialogOpen = $state(false);
   let retryDialogItemId = $state<string | null>(null);
@@ -117,6 +123,8 @@
   const backendCancelableRunIdsByItemId = new SvelteMap<string, string>();
   const previewRestoreRunIdsByItemId = new SvelteMap<string, string>();
   const persistenceQueues = new SvelteMap<string, Promise<void>>();
+  const pendingPreviewRestores = createSubtitleOcrPreviewRestoreState();
+  let flushingPendingPreviewRestores = false;
   let cancelRequested = false;
 
   const IMPORT_EXTENSIONS = [
@@ -175,10 +183,16 @@
     });
   }
 
-  const items = $derived(subtitleOcrStore.items);
-  const selectedItem = $derived(subtitleOcrStore.selectedItem ?? null);
+  const items = $derived(subtitleOcrStore.itemSummaries);
+  const selectedItem = $derived.by(() => {
+    const selectedId = subtitleOcrStore.selectedItemId;
+    return selectedId ? subtitleOcrStore.getWorkspaceItemSummary(selectedId) ?? null : null;
+  });
+  const resultDialogItem = $derived.by(() => (
+    resultDialogItemId ? subtitleOcrStore.getItemSnapshot(resultDialogItemId) ?? null : null
+  ));
   const reviewVersion = $derived(
-    selectedItem ? subtitleOcrStore.getReviewVersion(selectedItem.id) ?? null : null,
+    selectedItem ? subtitleOcrStore.getReviewVersionSummary(selectedItem.id) ?? null : null,
   );
   const renderedCues = $derived(
     selectedItem ? subtitleOcrStore.getRenderedCues(selectedItem.id) : [],
@@ -186,14 +200,16 @@
   const reviewBitmaps = $derived(
     selectedItem ? subtitleOcrStore.getRenderedBitmaps(selectedItem.id) : [],
   );
-  const selectedProcessingDraft = $derived(selectedItem?.processingDraft);
+  const selectedProcessingDraft = $derived(
+    selectedItem ? subtitleOcrStore.getProcessingDraftSummary(selectedItem.id) : undefined,
+  );
   const activeReviewTargetId = $derived(selectedItem?.reviewTargetId ?? selectedItem?.activeVersionId ?? null);
   const selectedReviewIsReadOnly = $derived(
     selectedItem ? subtitleOcrStore.isProcessingDraftSelected(selectedItem.id) : false,
   );
   const retryDialogItem = $derived(
     retryDialogItemId
-      ? subtitleOcrStore.items.find((item) => item.id === retryDialogItemId) ?? null
+      ? subtitleOcrStore.getItemSnapshot(retryDialogItemId) ?? null
       : null,
   );
   const retryDialogActiveVersion = $derived(
@@ -207,10 +223,18 @@
   const restoringPreviewItemIds = $derived.by(() => (
     new Set(previewRestoreRunIdsByItemId.keys())
   ));
-  const summary = $derived.by(() => summarizeSubtitleOcrItems(items));
-  const retryableItemIds = $derived.by(() => getSubtitleOcrVersionedItemIds(items));
+  const summary = $derived.by(() => summarizeSubtitleOcrItems(
+    items.filter((item) => !subtitleOcrStore.isItemHydrating(item.id)),
+  ));
+  const retryableItemIds = $derived.by(() => (
+    items
+      .filter((item) => item.versionCount > 0 && !subtitleOcrStore.isItemHydrating(item.id))
+      .map((item) => item.id)
+  ));
   const aiCleanupRetryableItemIds = $derived.by(() => (
-    getSubtitleOcrActiveVersionItemIds(items)
+    items
+      .filter((item) => item.hasActiveVersion && !subtitleOcrStore.isItemHydrating(item.id))
+      .map((item) => item.id)
   ));
   const retryCount = $derived(retryableItemIds.length);
   const aiCleanupRetryCount = $derived(aiCleanupRetryableItemIds.length);
@@ -336,6 +360,7 @@
       activeRunIdsByItemId.clear();
       backendCancelableRunIdsByItemId.clear();
       previewRestoreRunIdsByItemId.clear();
+      pendingPreviewRestores.clear();
     };
   });
 
@@ -367,7 +392,7 @@
   }
 
   function getStoreItem(itemId: string): SubtitleOcrSourceItem | undefined {
-    return subtitleOcrStore.items.find((item) => item.id === itemId);
+    return subtitleOcrStore.getItemSnapshot(itemId);
   }
 
   function isProgressPhase(value: string): value is SubtitleOcrProgress['phase'] {
@@ -400,8 +425,10 @@
       return;
     }
 
-    const currentItem = getStoreItem(payload.itemId);
-    if (isSubtitleOcrProgressPhaseStale(currentItem?.progress, payload.phase)) {
+    if (isSubtitleOcrProgressPhaseStale(
+      subtitleOcrStore.getItemProgress(payload.itemId),
+      payload.phase,
+    )) {
       return;
     }
 
@@ -435,24 +462,7 @@
       return;
     }
 
-    const currentItem = getStoreItem(payload.itemId);
-    if (!currentItem || currentItem.versions.length === 0) {
-      return;
-    }
-
-    const restoredVersions = mergeRestoredSubtitleOcrBitmapAssets(
-      currentItem.versions,
-      [payload.bitmap],
-    );
-    subtitleOcrStore.replaceItemVersions(
-      currentItem.id,
-      restoredVersions,
-      currentItem.activeVersionId,
-      {
-        preserveProgress: true,
-        preserveError: true,
-      },
-    );
+    subtitleOcrStore.updateRestoredBitmap(payload.itemId, payload.bitmap);
   }
 
   function handleSubtitleOcrLiveCue(payload: SubtitleOcrLiveCueEvent): void {
@@ -513,25 +523,31 @@
     });
   }
 
-  async function hydrateImportedItem(item: SubtitleOcrSourceItem): Promise<void> {
+  async function hydrateImportedItem(item: SubtitleOcrSourceItem, hydrationToken: string): Promise<void> {
+    let hydrationFinished = false;
     try {
       const data = await loadSubtitleOcrData(item.sourcePath);
-      if (!data) {
+      if (!subtitleOcrStore.isHydrationCurrent(item.id, hydrationToken) || !data) {
         return;
       }
 
       const matchingData = filterSubtitleOcrPersistenceForItem(item, data);
-      if (!matchingData) {
+      if (!subtitleOcrStore.isHydrationCurrent(item.id, hydrationToken) || !matchingData) {
         return;
       }
 
-      subtitleOcrStore.replaceItemVersions(
+      if (!subtitleOcrStore.replaceHydratedItemVersions(
         item.id,
+        hydrationToken,
         matchingData.versions,
         matchingData.activeVersionId,
         { status: 'completed' },
-      );
-      await restoreMissingPreviewAssets(item.id);
+      )) {
+        return;
+      }
+      subtitleOcrStore.finishHydration(item.id, hydrationToken);
+      hydrationFinished = true;
+      await restoreMissingPreviewAssets(item.id, hydrationToken);
     } catch (error) {
       logAndToast.warning({
         source: 'subtitle-ocr',
@@ -539,6 +555,11 @@
         details: sanitizeProcessingMessage(error),
         showAction: false,
       });
+    } finally {
+      if (!hydrationFinished) {
+        subtitleOcrStore.finishHydration(item.id, hydrationToken);
+      }
+      requestPendingPreviewRestoreFlush();
     }
   }
 
@@ -571,8 +592,14 @@
       });
     }
 
+    const hydrationTokens = new Map(
+      addedItems.map((item) => [item.id, subtitleOcrStore.startHydration(item.id)]),
+    );
     for (const item of addedItems) {
-      await hydrateImportedItem(item);
+      const hydrationToken = hydrationTokens.get(item.id);
+      if (hydrationToken) {
+        await hydrateImportedItem(item, hydrationToken);
+      }
     }
   }
 
@@ -767,14 +794,19 @@
 
   function handleOpenVersions(itemId: string): void {
     subtitleOcrStore.selectItem(itemId);
+    resultDialogItemId = itemId;
     resultDialogOpen = true;
   }
 
   function getProcessableItemIds(itemIds: string[]): string[] {
     const requestedIds = new Set(itemIds);
 
-    return subtitleOcrStore.items
-      .filter((item) => requestedIds.has(item.id) && PROCESSABLE_STATUSES.has(item.status))
+    return subtitleOcrStore.itemSummaries
+      .filter((item) => (
+        requestedIds.has(item.id)
+        && !subtitleOcrStore.isItemHydrating(item.id)
+        && PROCESSABLE_STATUSES.has(item.status)
+      ))
       .map((item) => item.id);
   }
 
@@ -845,30 +877,191 @@
     };
   }
 
-  async function restoreMissingPreviewAssets(itemId: string): Promise<void> {
-    const item = getStoreItem(itemId);
-    if (!item || item.versions.length === 0) {
+  function discardPendingPreviewRestore(itemId: string, expectedToken?: string): boolean {
+    return pendingPreviewRestores.discard(itemId, expectedToken);
+  }
+
+  function handlePreviewRestoreCollectionFailure(
+    itemId: string,
+    hydrationToken: string,
+    error: unknown,
+  ): PreviewRestoreOutcome {
+    if (!subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)) {
+      discardPendingPreviewRestore(itemId, hydrationToken);
+      return 'stale';
+    }
+
+    const retry = getSubtitleOcrPreviewRestoreRetry(
+      pendingPreviewRestores.get(itemId, hydrationToken)?.attempts ?? 0,
+      true,
+    );
+    const details = sanitizeProcessingMessage(error);
+    if (retry.shouldRetry) {
+      if (!pendingPreviewRestores.retry(itemId, hydrationToken, retry.nextAttempt)) {
+        return 'stale';
+      }
+      logAndToast.warning({
+        source: 'subtitle-ocr',
+        title: 'Subtitle OCR previews could not be checked',
+        details: `Missing preview assets will be retried after processing releases (${retry.nextAttempt}/${SUBTITLE_OCR_PREVIEW_RESTORE_MAX_RETRIES}). ${details}`,
+        showAction: false,
+      });
+      return 'retry';
+    }
+
+    discardPendingPreviewRestore(itemId, hydrationToken);
+    subtitleOcrStore.setItemStatus(itemId, 'completed');
+    subtitleOcrStore.setProgress(itemId, undefined);
+    subtitleOcrStore.addLog(
+      'warning',
+      `Could not check missing Subtitle OCR previews after ${SUBTITLE_OCR_PREVIEW_RESTORE_MAX_RETRIES} attempts: ${details}`,
+      itemId,
+    );
+    logAndToast.warning({
+      source: 'subtitle-ocr',
+      title: 'Subtitle OCR previews were not restored',
+      details: 'The OCR text remains available, but missing cue images could not be checked after several attempts.',
+      showAction: false,
+    });
+    return 'failed';
+  }
+
+  function schedulePendingPreviewRestoreRetry(itemId: string, hydrationToken: string): void {
+    if (
+      !subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)
+    ) {
       return;
     }
 
-    const missingBitmaps = await collectMissingSubtitleOcrBitmapAssets(
+    pendingPreviewRestores.schedule(itemId, hydrationToken, requestPendingPreviewRestoreFlush);
+  }
+
+  async function flushPendingPreviewRestores(): Promise<void> {
+    if (flushingPendingPreviewRestores || subtitleOcrStore.isProcessing) {
+      return;
+    }
+
+    const pendingRestore = pendingPreviewRestores.listCurrent().find((entry) => (
+      entry.phase === 'queued'
+      && !subtitleOcrStore.isItemHydrating(entry.itemId)
+      && subtitleOcrStore.isHydrationTokenValid(entry.itemId, entry.hydrationToken)
+    ));
+    for (const entry of pendingPreviewRestores.listCurrent()) {
+      if (
+        entry.phase === 'queued'
+        && !subtitleOcrStore.isHydrationTokenValid(entry.itemId, entry.hydrationToken)
+      ) {
+        discardPendingPreviewRestore(entry.itemId, entry.hydrationToken);
+      }
+    }
+    if (!pendingRestore) {
+      return;
+    }
+
+    const { itemId, hydrationToken } = pendingRestore;
+    flushingPendingPreviewRestores = true;
+    let outcome: PreviewRestoreOutcome = 'failed';
+    try {
+      outcome = await restoreMissingPreviewAssets(itemId, hydrationToken);
+    } catch (error) {
+      outcome = handlePreviewRestoreCollectionFailure(itemId, hydrationToken, error);
+    } finally {
+      flushingPendingPreviewRestores = false;
+      if (
+        outcome === 'retry'
+        && !subtitleOcrStore.isProcessing
+        && pendingPreviewRestores.hasQueued()
+      ) {
+        schedulePendingPreviewRestoreRetry(itemId, hydrationToken);
+      }
+      if (
+        outcome !== 'deferred'
+        && outcome !== 'retry'
+        && !subtitleOcrStore.isProcessing
+        && pendingPreviewRestores.hasQueued()
+      ) {
+        requestPendingPreviewRestoreFlush();
+      }
+    }
+  }
+
+  function requestPendingPreviewRestoreFlush(): void {
+    void flushPendingPreviewRestores().catch(() => {
+      subtitleOcrStore.addLog(
+        'warning',
+        'Pending Subtitle OCR preview restoration stopped unexpectedly',
+      );
+    });
+  }
+
+  async function restoreMissingPreviewAssets(
+    itemId: string,
+    hydrationToken: string,
+  ): Promise<PreviewRestoreOutcome> {
+    if (!subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)) {
+      discardPendingPreviewRestore(itemId, hydrationToken);
+      return 'stale';
+    }
+
+    const claimed = pendingPreviewRestores.begin(itemId, hydrationToken, true);
+    if (!claimed) {
+      if (pendingPreviewRestores.getCurrent(itemId)?.hydrationToken === hydrationToken) {
+        return 'stale';
+      }
+
+      if (pendingPreviewRestores.queue(itemId, hydrationToken, true)) {
+        return 'deferred';
+      }
+
+      return 'stale';
+    }
+
+    const item = getStoreItem(itemId);
+    if (!item || item.versions.length === 0) {
+      discardPendingPreviewRestore(itemId, hydrationToken);
+      return 'completed';
+    }
+
+    const collection = await collectMissingSubtitleOcrBitmapAssetsSafely(
       item.versions,
       collectMissingPreviewAssets,
     );
-    if (missingBitmaps.length === 0) {
-      return;
+    if (!collection.ok) {
+      return handlePreviewRestoreCollectionFailure(itemId, hydrationToken, collection.error);
     }
+
+    if (!subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)) {
+      discardPendingPreviewRestore(itemId, hydrationToken);
+      return 'stale';
+    }
+    const missingBitmaps = collection.bitmaps;
+    if (missingBitmaps.length === 0) {
+      discardPendingPreviewRestore(itemId, hydrationToken);
+      return 'completed';
+    }
+
+    let processingStarted = false;
+    if (!subtitleOcrStore.startProcessing([item.id])) {
+      if (!pendingPreviewRestores.requeue(itemId, hydrationToken)) {
+        return 'stale';
+      }
+      return 'deferred';
+    }
+    processingStarted = true;
 
     const runId = createSubtitleOcrRunId(`${item.id}-restore`);
     previewRestoreRunIdsByItemId.set(item.id, runId);
     activeRunIdsByItemId.set(item.id, runId);
-    subtitleOcrStore.startProcessing([item.id]);
+    subtitleOcrStore.markProcessingItemStarted(item.id, 'decoding');
     subtitleOcrStore.addLog('info', `Restoring ${missingBitmaps.length} missing preview asset${missingBitmaps.length === 1 ? '' : 's'}`, item.id);
 
     try {
       setManualProgress(item.id, 'decoding');
       const sourcePath = await preparePipelineSource(item, runId);
-      if (cancelRequested || subtitleOcrStore.isItemCancelled(item.id)) {
+      if (!shouldApplySubtitleOcrRestoreResult(
+        cancelRequested,
+        subtitleOcrStore.isItemCancelled(item.id),
+      )) {
         throw new Error('Subtitle OCR operation cancelled');
       }
 
@@ -878,21 +1071,26 @@
         buildPreviewRestoreArgs(item, sourcePath, runId, missingBitmaps),
       );
       backendCancelableRunIdsByItemId.delete(item.id);
+      if (!shouldApplySubtitleOcrRestoreResult(
+        cancelRequested,
+        subtitleOcrStore.isItemCancelled(item.id),
+      ) || !subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)) {
+        throw new Error('Subtitle OCR operation cancelled');
+      }
 
-      const latestItem = getStoreItem(item.id) ?? item;
-      const restoredVersions = mergeRestoredSubtitleOcrBitmapAssets(
-        latestItem.versions,
-        restoredBitmaps,
-      );
-      subtitleOcrStore.replaceItemVersions(
+      for (const restoredBitmap of restoredBitmaps) {
+        subtitleOcrStore.updateRestoredBitmap(item.id, restoredBitmap);
+      }
+      subtitleOcrStore.setItemStatus(item.id, 'completed');
+      await persistItem(
         item.id,
-        restoredVersions,
-        latestItem.activeVersionId,
-        {
-          status: 'completed',
-        },
+        () => subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken),
       );
-      await persistItem(item.id);
+      if (!subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)) {
+        discardPendingPreviewRestore(itemId, hydrationToken);
+        return 'stale';
+      }
+      discardPendingPreviewRestore(itemId, hydrationToken);
       subtitleOcrStore.addLog(
         'success',
         `Restored ${restoredBitmaps.length}/${missingBitmaps.length} missing preview assets`,
@@ -907,7 +1105,13 @@
           showAction: false,
         });
       }
+      return 'completed';
     } catch (error) {
+      if (!subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)) {
+        discardPendingPreviewRestore(itemId, hydrationToken);
+        return 'stale';
+      }
+
       subtitleOcrStore.setItemStatus(item.id, 'completed');
       subtitleOcrStore.setProgress(item.id, undefined);
       if (!isCancellationError(error) && !cancelRequested && !subtitleOcrStore.isItemCancelled(item.id)) {
@@ -918,14 +1122,29 @@
           showAction: false,
         });
       }
+      discardPendingPreviewRestore(itemId, hydrationToken);
+      return 'failed';
     } finally {
+      if (claimed) {
+        const current = pendingPreviewRestores.get(itemId, hydrationToken);
+        if (current?.phase === 'in_flight') {
+          pendingPreviewRestores.finish(itemId, hydrationToken);
+        }
+      }
       backendCancelableRunIdsByItemId.delete(item.id);
       activeRunIdsByItemId.delete(item.id);
       previewRestoreRunIdsByItemId.delete(item.id);
-      subtitleOcrStore.stopProcessing();
-      subtitleOcrStore.setItemStatus(item.id, 'completed');
-      subtitleOcrStore.setProgress(item.id, undefined);
-      cancelRequested = false;
+      if (processingStarted) {
+        subtitleOcrStore.stopProcessing();
+      }
+      if (processingStarted && subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)) {
+        subtitleOcrStore.setItemStatus(item.id, 'completed');
+        subtitleOcrStore.setProgress(item.id, undefined);
+      }
+      if (processingStarted) {
+        cancelRequested = false;
+      }
+      requestPendingPreviewRestoreFlush();
     }
   }
 
@@ -983,7 +1202,7 @@
     }
   }
 
-  async function persistItem(itemId: string): Promise<void> {
+  async function persistItem(itemId: string, shouldPersist?: () => boolean): Promise<void> {
     const item = getStoreItem(itemId);
     if (!item) {
       return;
@@ -993,12 +1212,18 @@
     const previous = persistenceQueues.get(sourcePath) ?? Promise.resolve();
     const next = previous.catch(() => {}).then(async () => {
       const latestItem = getStoreItem(itemId);
-      if (!latestItem || latestItem.sourcePath !== sourcePath) {
+      if (!latestItem || latestItem.sourcePath !== sourcePath || (shouldPersist && !shouldPersist())) {
         return;
       }
 
       try {
+        if (shouldPersist && !shouldPersist()) {
+          return;
+        }
         const existingData = await loadSubtitleOcrData(sourcePath);
+        if (shouldPersist && !shouldPersist()) {
+          return;
+        }
         const saved = await saveSubtitleOcrData(
           sourcePath,
           mergeSubtitleOcrPersistenceForItem(latestItem, existingData, new Date().toISOString()),
@@ -1047,6 +1272,13 @@
     configOverride?: SubtitleOcrConfig,
     versionNameOverride?: string,
   ): Promise<ProcessItemResult> {
+    if (!subtitleOcrStore.markProcessingItemStarted(
+      item.id,
+      item.sourceKind === 'container_track' ? 'extracting' : 'decoding',
+    )) {
+      return 'cancelled';
+    }
+
     const runId = createSubtitleOcrRunId(item.id);
     const initialItem = getStoreItem(item.id) ?? item;
     const versionName = versionNameOverride ?? `Version ${initialItem.versions.length + 1}`;
@@ -1166,7 +1398,9 @@
     }
 
     cancelRequested = false;
-    subtitleOcrStore.startProcessing(processableItemIds);
+    if (!subtitleOcrStore.startProcessing(processableItemIds)) {
+      return;
+    }
     const counts = createProcessingResultCounts();
 
     try {
@@ -1201,17 +1435,22 @@
     } finally {
       subtitleOcrStore.stopProcessing();
       cancelRequested = false;
+      requestPendingPreviewRestoreFlush();
     }
 
     reportProcessingSummary('Subtitle OCR finished', counts);
   }
 
   function getCurrentRetryableItemIds(): string[] {
-    return getSubtitleOcrVersionedItemIds(subtitleOcrStore.items);
+    return subtitleOcrStore.itemSummaries
+      .filter((item) => item.versionCount > 0 && !subtitleOcrStore.isItemHydrating(item.id))
+      .map((item) => item.id);
   }
 
   function getCurrentAiCleanupRetryableItemIds(): string[] {
-    return getSubtitleOcrActiveVersionItemIds(subtitleOcrStore.items);
+    return subtitleOcrStore.itemSummaries
+      .filter((item) => item.hasActiveVersion && !subtitleOcrStore.isItemHydrating(item.id))
+      .map((item) => item.id);
   }
 
   function handleStart(): void {
@@ -1245,6 +1484,7 @@
     const itemIds = Array.from(processingScopeItemIds);
     if (itemIds.length === 0) {
       subtitleOcrStore.stopProcessing();
+      requestPendingPreviewRestoreFlush();
       return;
     }
 
@@ -1395,7 +1635,7 @@
     versionName: string,
     config: SubtitleOcrConfig,
   ): Promise<void> {
-    if (subtitleOcrStore.isProcessing) {
+    if (subtitleOcrStore.isProcessing || subtitleOcrStore.isItemHydrating(itemId)) {
       return;
     }
 
@@ -1405,7 +1645,9 @@
     }
 
     cancelRequested = false;
-    subtitleOcrStore.startProcessing([itemId]);
+    if (!subtitleOcrStore.startProcessing([itemId])) {
+      return;
+    }
     const counts = createProcessingResultCounts();
 
     try {
@@ -1413,6 +1655,7 @@
     } finally {
       subtitleOcrStore.stopProcessing();
       cancelRequested = false;
+      requestPendingPreviewRestoreFlush();
     }
 
     reportProcessingSummary('Subtitle OCR AI cleanup retry finished', counts);
@@ -1422,7 +1665,8 @@
     itemIds: string[],
     config: SubtitleOcrConfig,
   ): Promise<void> {
-    if (itemIds.length === 0 || subtitleOcrStore.isProcessing) {
+    const processableItemIds = itemIds.filter((itemId) => !subtitleOcrStore.isItemHydrating(itemId));
+    if (processableItemIds.length === 0 || subtitleOcrStore.isProcessing) {
       return;
     }
 
@@ -1432,11 +1676,13 @@
     }
 
     cancelRequested = false;
-    subtitleOcrStore.startProcessing(itemIds);
+    if (!subtitleOcrStore.startProcessing(processableItemIds)) {
+      return;
+    }
     const counts = createProcessingResultCounts();
 
     try {
-      for (const itemId of itemIds) {
+      for (const itemId of processableItemIds) {
         if (cancelRequested) {
           break;
         }
@@ -1458,6 +1704,7 @@
     } finally {
       subtitleOcrStore.stopProcessing();
       cancelRequested = false;
+      requestPendingPreviewRestoreFlush();
     }
 
     reportProcessingSummary('Subtitle OCR AI cleanup retry finished', counts);
@@ -1468,6 +1715,10 @@
     versionName: string | undefined,
     config: SubtitleOcrConfig,
   ): Promise<ProcessItemResult> {
+    if (!subtitleOcrStore.markProcessingItemStarted(itemId, 'ai_cleaning')) {
+      return 'cancelled';
+    }
+
     const item = getStoreItem(itemId);
     const activeVersion = subtitleOcrStore.getActiveVersion(itemId);
     if (!item || !activeVersion) {
@@ -1522,14 +1773,17 @@
   }
 
   function handleRemove(itemId: string): void {
+    discardPendingPreviewRestore(itemId);
     subtitleOcrStore.removeItem(itemId);
   }
 
   function handleClearAll(): void {
+    pendingPreviewRestores.clear();
     selectedCueIdsByItemId = {};
     retryAllDialogOpen = false;
     retryDialogOpen = false;
     retryDialogItemId = null;
+    resultDialogItemId = null;
     subtitleOcrStore.clearItems();
   }
 
@@ -1620,8 +1874,13 @@
 
 <SubtitleOcrResultDialog
   bind:open={resultDialogOpen}
-  onOpenChange={(open) => { resultDialogOpen = open; }}
-  item={selectedItem}
+  onOpenChange={(open) => {
+    resultDialogOpen = open;
+    if (!open) {
+      resultDialogItemId = null;
+    }
+  }}
+  item={resultDialogItem}
 />
 
 <SubtitleOcrRetryDialog

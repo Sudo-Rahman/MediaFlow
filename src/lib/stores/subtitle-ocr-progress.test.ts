@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import type { SubtitleOcrProgress } from '$lib/types';
 import {
+  calculateSubtitleOcrBatchProgress,
   isSubtitleOcrProgressPhaseStale,
   mergeSubtitleOcrProgress,
+  type SubtitleOcrBatchProgressItem,
+  type SubtitleOcrBatchProgressMetric,
 } from './subtitle-ocr-progress';
 
 function progress(overrides: Partial<SubtitleOcrProgress>): SubtitleOcrProgress {
@@ -170,5 +173,136 @@ describe('mergeSubtitleOcrProgress', () => {
       .toBe(true);
     expect(isSubtitleOcrProgressPhaseStale(progress({ phase: 'ocr' }), 'ai_cleaning'))
       .toBe(false);
+  });
+});
+
+describe('calculateSubtitleOcrBatchProgress', () => {
+  it('does not count stale completed or error statuses before retry items start', () => {
+    const metric = calculateSubtitleOcrBatchProgress(
+      [
+        { id: 'completed', status: 'completed' },
+        { id: 'error', status: 'error' },
+        { id: 'queued', status: 'ready' },
+      ],
+      new Set(['completed', 'error', 'queued']),
+      new Set(['completed', 'error', 'queued']),
+      new Set(),
+      new Set(),
+      true,
+    );
+
+    expect(metric).toEqual({
+      doneUnits: 0,
+      totalUnits: 3,
+      settledCount: 0,
+    });
+  });
+
+  it('keeps retry progress monotonic with a stable denominator as items start and settle', () => {
+    const batchItemIds = new Set(['a', 'b', 'c']);
+    const scopeItemIds = new Set(batchItemIds);
+    const startedItemIds = new Set<string>();
+    const cancelledItemIds = new Set<string>();
+    const metrics: SubtitleOcrBatchProgressMetric[] = [];
+    const measure = (items: SubtitleOcrBatchProgressItem[]) => {
+      metrics.push(calculateSubtitleOcrBatchProgress(
+        items,
+        batchItemIds,
+        scopeItemIds,
+        startedItemIds,
+        cancelledItemIds,
+        true,
+      ));
+    };
+
+    measure([
+      { id: 'a', status: 'completed' },
+      { id: 'b', status: 'error' },
+      { id: 'c', status: 'ready' },
+    ]);
+    startedItemIds.add('a');
+    measure([
+      { id: 'a', status: 'ocr_processing', progress: progress({ percentage: 40, overallPercentage: 40 }) },
+      { id: 'b', status: 'error' },
+      { id: 'c', status: 'ready' },
+    ]);
+    measure([
+      { id: 'a', status: 'completed' },
+      { id: 'b', status: 'error' },
+      { id: 'c', status: 'ready' },
+    ]);
+    scopeItemIds.delete('a');
+    measure([
+      { id: 'a', status: 'completed' },
+      { id: 'b', status: 'error' },
+      { id: 'c', status: 'ready' },
+    ]);
+    startedItemIds.add('b');
+    measure([
+      { id: 'a', status: 'completed' },
+      { id: 'b', status: 'ocr_processing', progress: progress({ percentage: 20, overallPercentage: 20 }) },
+      { id: 'c', status: 'ready' },
+    ]);
+    measure([
+      { id: 'a', status: 'completed' },
+      { id: 'b', status: 'error' },
+      { id: 'c', status: 'ready' },
+    ]);
+    scopeItemIds.delete('b');
+    startedItemIds.add('c');
+    measure([
+      { id: 'a', status: 'completed' },
+      { id: 'b', status: 'error' },
+      { id: 'c', status: 'ocr_processing', progress: progress({ percentage: 70, overallPercentage: 70 }) },
+    ]);
+
+    expect(metrics.map((metric) => metric.doneUnits)).toEqual([0, 0.4, 1, 1, 1.2, 2, 2.7]);
+    expect(metrics.every((metric) => metric.totalUnits === 3)).toBe(true);
+    expect(metrics.map((metric) => metric.settledCount)).toEqual([0, 0, 1, 1, 1, 2, 2]);
+  });
+
+  it('keeps the original batch denominator after completed items leave the active scope', () => {
+    const metric = calculateSubtitleOcrBatchProgress(
+      [
+        { id: 'completed', status: 'completed' },
+        {
+          id: 'active',
+          status: 'ocr_processing',
+          progress: progress({ percentage: 50, overallPercentage: 60 }),
+        },
+        { id: 'queued', status: 'ready' },
+      ],
+      new Set(['completed', 'active', 'queued']),
+      new Set(['active', 'queued']),
+      new Set(['active']),
+      new Set(),
+      true,
+    );
+
+    expect(metric).toEqual({
+      doneUnits: 1.6,
+      totalUnits: 3,
+      settledCount: 1,
+    });
+  });
+
+  it('counts individually cancelled items as settled without shrinking the batch', () => {
+    const metric = calculateSubtitleOcrBatchProgress(
+      [
+        { id: 'cancelled', status: 'ready' },
+        { id: 'active', status: 'decoding', progress: progress({ percentage: 20 }) },
+      ],
+      new Set(['cancelled', 'active']),
+      new Set(['active']),
+      new Set(['active']),
+      new Set(['cancelled']),
+      true,
+    );
+
+    expect(metric).toEqual({
+      doneUnits: 1.2,
+      totalUnits: 2,
+      settledCount: 1,
+    });
   });
 });

@@ -13,7 +13,12 @@ import type {
   SubtitleOcrVersion,
   SubtitleOcrVobSubPair,
 } from '$lib/types';
-import { DEFAULT_SUBTITLE_OCR_CONFIG, LLM_PROVIDERS, OCR_LANGUAGES } from '$lib/types';
+import {
+  cloneSubtitleOcrSourceSnapshot,
+  DEFAULT_SUBTITLE_OCR_CONFIG,
+  LLM_PROVIDERS,
+  OCR_LANGUAGES,
+} from '$lib/types';
 import { loadMediaflowData, saveMediaflowData } from './mediaflow-storage';
 
 export interface CreateSubtitleOcrVersionInput {
@@ -232,50 +237,6 @@ function cloneConfig(config: SubtitleOcrConfig): SubtitleOcrConfig {
   };
 }
 
-function cloneTrack(track: SubtitleOcrTrackMetadata): SubtitleOcrTrackMetadata {
-  return {
-    streamIndex: track.streamIndex,
-    codec: track.codec,
-    codecLabel: track.codecLabel,
-    ...(track.language !== undefined ? { language: track.language } : {}),
-    ...(track.title !== undefined ? { title: track.title } : {}),
-    ...(track.forced !== undefined ? { forced: track.forced } : {}),
-    ...(track.default !== undefined ? { default: track.default } : {}),
-  };
-}
-
-function clonePair(pair: SubtitleOcrVobSubPair): SubtitleOcrVobSubPair {
-  return {
-    idxPath: pair.idxPath,
-    subPath: pair.subPath,
-  };
-}
-
-function cloneSourceSnapshot(snapshot: SubtitleOcrSourceSnapshot): SubtitleOcrSourceSnapshot {
-  switch (snapshot.sourceKind) {
-    case 'container_track':
-      return {
-        sourceKind: 'container_track',
-        sourcePath: snapshot.sourcePath,
-        ocrModelOverride: snapshot.ocrModelOverride,
-        track: cloneTrack(snapshot.track),
-      };
-    case 'standalone_sup':
-      return {
-        sourceKind: 'standalone_sup',
-        sourcePath: snapshot.sourcePath,
-        ocrModelOverride: snapshot.ocrModelOverride,
-      };
-    case 'standalone_vobsub':
-      return {
-        sourceKind: 'standalone_vobsub',
-        sourcePath: snapshot.sourcePath,
-        ocrModelOverride: snapshot.ocrModelOverride,
-        pair: clonePair(snapshot.pair),
-      };
-  }
-}
-
 function cloneBitmap(bitmap: SubtitleOcrCueBitmap): SubtitleOcrCueBitmap {
   return {
     cueId: bitmap.cueId,
@@ -344,7 +305,7 @@ function cloneVersion(version: SubtitleOcrVersion): SubtitleOcrVersion {
     mode: version.mode,
     configSnapshot: cloneConfig(version.configSnapshot),
     effectiveOcrModel: version.effectiveOcrModel,
-    sourceSnapshot: cloneSourceSnapshot(version.sourceSnapshot),
+    sourceSnapshot: cloneSubtitleOcrSourceSnapshot(version.sourceSnapshot),
     bitmaps: version.bitmaps.map(cloneBitmap),
     rawOcr: version.rawOcr.map(cloneRawCue),
     stabilizedCues: version.stabilizedCues.map(cloneCue),
@@ -368,7 +329,7 @@ export function createSubtitleOcrVersion(input: CreateSubtitleOcrVersionInput): 
     mode: input.mode,
     configSnapshot: cloneConfig(input.configSnapshot),
     effectiveOcrModel: input.effectiveOcrModel,
-    sourceSnapshot: cloneSourceSnapshot(input.sourceSnapshot),
+    sourceSnapshot: cloneSubtitleOcrSourceSnapshot(input.sourceSnapshot),
     bitmaps: input.bitmaps.map(cloneBitmap),
     rawOcr: input.rawOcr.map(cloneRawCue),
     stabilizedCues: input.stabilizedCues.map(cloneCue),

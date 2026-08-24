@@ -44,6 +44,7 @@
   import { formatFileSize } from '$lib/utils/format';
   import { OS, formatTransferRate, getAllowedOcrVersionExportFormats, normalizeOcrSubtitles, toRustOcrSubtitles } from '$lib/utils';
   import { logStore } from '$lib/stores/logs.svelte';
+  import { calculateSubtitleOcrBatchProgress } from '$lib/stores/subtitle-ocr-progress';
   import { audioToSubsStore, videoOcrStore, translationStore, extractionStore, mergeStore, renameStore, transcodeStore, updaterStore, subtitleOcrStore } from '$lib/stores';
   import { logAndToast } from '$lib/utils/log-toast';
 
@@ -222,33 +223,18 @@
   });
 
   const subtitleOcrMetric = $derived.by((): ToolProgressMetric => {
-    const scopeIds = Array.from(subtitleOcrStore.processingScopeItemIds);
-    const items = subtitleOcrStore.items;
-    let doneUnits = 0;
-    let settledCount = 0;
-
-    for (const itemId of scopeIds) {
-      const item = items.find((entry) => entry.id === itemId);
-      if (!item) {
-        doneUnits += 1;
-        settledCount += 1;
-        continue;
-      }
-
-      if (item.status === 'completed' || item.status === 'error') {
-        doneUnits += 1;
-        settledCount += 1;
-      } else if (subtitleOcrStore.isProcessing) {
-        doneUnits += clampPercentage(
-          item.progress?.overallPercentage ?? item.progress?.percentage ?? 0,
-        ) / 100;
-      } else {
-        doneUnits += 1;
-        settledCount += 1;
-      }
-    }
-
-    const totalUnits = scopeIds.length;
+    const {
+      doneUnits,
+      totalUnits,
+      settledCount,
+    } = calculateSubtitleOcrBatchProgress(
+      subtitleOcrStore.itemSummaries,
+      subtitleOcrStore.processingBatchItemIds,
+      subtitleOcrStore.processingScopeItemIds,
+      subtitleOcrStore.processingStartedItemIds,
+      subtitleOcrStore.cancelledItemIds,
+      subtitleOcrStore.isProcessing,
+    );
     return {
       toolId: 'subtitle-ocr',
       label: 'Subtitle OCR',
@@ -468,7 +454,7 @@
   const hasOcrExportableData = $derived(ocrExportGroups.length > 0);
 
   const subtitleOcrExportGroups = $derived.by(() => {
-    return buildSubtitleOcrExportGroups(subtitleOcrStore.items);
+    return buildSubtitleOcrExportGroups(subtitleOcrStore.exportItemSummaries);
   });
 
   const hasSubtitleOcrExportableData = $derived(subtitleOcrExportGroups.length > 0);

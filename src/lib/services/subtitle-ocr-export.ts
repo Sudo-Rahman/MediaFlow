@@ -5,6 +5,7 @@ import {
   SUBTITLE_OCR_OUTPUT_FORMATS,
   type SubtitleOcrCue,
   type SubtitleOcrSourceItem,
+  type SubtitleOcrVersion,
 } from '$lib/types';
 
 import {
@@ -20,6 +21,10 @@ import {
 export const SUBTITLE_OCR_ALLOWED_EXPORT_FORMATS = ['ass', 'srt', 'vtt'] as const;
 
 export type SubtitleOcrExportFormat = (typeof SUBTITLE_OCR_ALLOWED_EXPORT_FORMATS)[number];
+
+type SubtitleOcrExportGroupSource = Pick<SubtitleOcrSourceItem, 'id' | 'displayName'> & {
+  versions: readonly Pick<SubtitleOcrVersion, 'id' | 'name' | 'createdAt'>[];
+};
 
 export interface RustSubtitleOcrCue {
   id: string;
@@ -201,7 +206,7 @@ export async function exportSubtitleOcrVersion({
 }
 
 export function buildSubtitleOcrExportGroups(
-  items: readonly SubtitleOcrSourceItem[],
+  items: readonly SubtitleOcrExportGroupSource[],
 ): VersionedExportGroup[] {
   return items
     .map((item): VersionedExportGroup | null => {

@@ -230,6 +230,33 @@ export function getSubtitleOcrEffectiveModel(
   return item.ocrModelOverride === 'default' ? globalModel : item.ocrModelOverride;
 }
 
+export function cloneSubtitleOcrSourceSnapshot(
+  snapshot: SubtitleOcrSourceSnapshot,
+): SubtitleOcrSourceSnapshot {
+  switch (snapshot.sourceKind) {
+    case 'container_track':
+      return {
+        sourceKind: snapshot.sourceKind,
+        sourcePath: snapshot.sourcePath,
+        ocrModelOverride: snapshot.ocrModelOverride,
+        track: { ...snapshot.track },
+      };
+    case 'standalone_sup':
+      return {
+        sourceKind: snapshot.sourceKind,
+        sourcePath: snapshot.sourcePath,
+        ocrModelOverride: snapshot.ocrModelOverride,
+      };
+    case 'standalone_vobsub':
+      return {
+        sourceKind: snapshot.sourceKind,
+        sourcePath: snapshot.sourcePath,
+        ocrModelOverride: snapshot.ocrModelOverride,
+        pair: { ...snapshot.pair },
+      };
+  }
+}
+
 interface SubtitleOcrVersionList {
   versions: readonly { id: string }[];
 }
@@ -247,7 +274,9 @@ export function hasSubtitleOcrVersions(item: SubtitleOcrVersionList): boolean {
   return item.versions.length > 0;
 }
 
-export function buildSubtitleOcrSourceLabel(item: SubtitleOcrSourceItem): string {
+export function buildSubtitleOcrSourceLabel(
+  item: SubtitleOcrSourceSnapshot & { displayName: string },
+): string {
   if (item.sourceKind !== 'container_track' || !item.track) {
     return item.displayName;
   }

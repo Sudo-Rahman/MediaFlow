@@ -17,8 +17,8 @@
   import { resolveSubtitleOcrBitmapSrc } from './subtitle-ocr-preview-src';
 
   interface SubtitleOcrFilmstripProps {
-    bitmaps: SubtitleOcrCueBitmap[];
-    cues: SubtitleOcrCue[];
+    bitmaps: readonly SubtitleOcrCueBitmap[];
+    cues: readonly SubtitleOcrCue[];
     selectedCueId: string | null;
     viewportStartMs: number;
     viewportEndMs: number;

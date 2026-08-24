@@ -1,4 +1,8 @@
-import type { SubtitleOcrProcessingDraft, SubtitleOcrVersion } from '$lib/types';
+import type {
+  SubtitleOcrProcessingDraftSummary,
+  SubtitleOcrVersionSummary,
+} from '$lib/stores';
+import type { SubtitleOcrProcessingDraft } from '$lib/types';
 import { buildSubtitleOcrProcessingDraftId } from '$lib/utils/subtitle-ocr-review-target';
 
 export interface SubtitleOcrVersionOption {
@@ -15,7 +19,7 @@ const dateFormatter = new Intl.DateTimeFormat('en-US', {
   minute: '2-digit',
 });
 
-export function getSubtitleOcrVersionModeLabel(version: SubtitleOcrVersion): string {
+export function getSubtitleOcrVersionModeLabel(version: SubtitleOcrVersionSummary): string {
   return version.mode === 'ai_cleanup_only' ? 'AI cleanup' : 'Full OCR';
 }
 
@@ -42,8 +46,8 @@ export function buildSubtitleOcrVersionOptions({
   versions,
   processingDraft,
 }: {
-  versions: readonly SubtitleOcrVersion[];
-  processingDraft?: SubtitleOcrProcessingDraft;
+  versions: readonly SubtitleOcrVersionSummary[];
+  processingDraft?: SubtitleOcrProcessingDraftSummary | SubtitleOcrProcessingDraft;
 }): SubtitleOcrVersionOption[] {
   const versionOptions = versions.map((version) => ({
     id: version.id,

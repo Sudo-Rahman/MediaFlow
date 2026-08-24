@@ -14,27 +14,51 @@ import type {
   SubtitleOcrVersion,
   SubtitleOcrVobSubPair,
 } from '$lib/types';
-import { DEFAULT_SUBTITLE_OCR_CONFIG } from '$lib/types';
+import { cloneSubtitleOcrSourceSnapshot, DEFAULT_SUBTITLE_OCR_CONFIG } from '$lib/types';
 import {
   buildSubtitleOcrProcessingDraftId,
   isSubtitleOcrProcessingDraftId,
 } from '$lib/utils/subtitle-ocr-review-target';
 import { logStore } from './logs.svelte';
 import { mergeSubtitleOcrProgress } from './subtitle-ocr-progress';
-
-interface SubtitleOcrItemFields {
-  id: string;
-  displayName: string;
-  status: SubtitleOcrStatus;
-  size?: number;
-  duration?: number;
-  error?: string;
-  progress?: SubtitleOcrProgress;
-  versions: SubtitleOcrVersion[];
-  activeVersionId: string | null;
-  reviewTargetId?: string | null;
-  processingDraft?: SubtitleOcrProcessingDraft;
-}
+import {
+  EMPTY_SUBTITLE_OCR_BITMAPS,
+  EMPTY_SUBTITLE_OCR_CUES,
+  bitmapMatchesLiveBitmap,
+  cloneBitmap,
+  cloneCue,
+  cloneRawCue,
+  cueMatchesLiveCue,
+  freezeBitmapProjection,
+  freezeCueProjection,
+  rawCueMatchesLiveRawCue,
+  restoredBitmapMatches,
+  upsertBy,
+} from './subtitle-ocr-cow';
+import {
+  cloneConfig,
+  clonePair,
+  cloneProcessingDraft,
+  cloneProgress,
+  cloneTrack,
+  cloneVersion,
+  findVersionByReviewTarget,
+  isProcessingDraftSelected,
+  normalizeActiveVersionId,
+  normalizeReviewTargetId,
+  resolveSelectedVersionId,
+  type SubtitleOcrItemFields,
+} from './subtitle-ocr-snapshots';
+import {
+  buildSubtitleOcrItemSummary,
+  buildSubtitleOcrProcessingDraftSummary,
+  buildSubtitleOcrVersionSummary,
+  type SubtitleOcrExportItemSummary,
+  type SubtitleOcrItemSummary,
+  type SubtitleOcrProcessingDraftSummary,
+  type SubtitleOcrVersionSummary,
+  type SubtitleOcrWorkspaceItemSummary,
+} from './subtitle-ocr-summaries';
 
 interface SubtitleOcrItemUpdates {
   displayName?: string;
@@ -52,13 +76,19 @@ interface ReplaceSubtitleOcrItemVersionsOptions {
   preserveError?: boolean;
 }
 
+type SubtitleOcrProcessingStatus = 'extracting' | 'decoding' | 'ocr_processing' | 'ai_cleaning';
+
 let items = $state.raw<SubtitleOcrSourceItem[]>([]);
 let selectedItemId = $state<string | null>(null);
 let config = $state<SubtitleOcrConfig>({ ...DEFAULT_SUBTITLE_OCR_CONFIG });
 let isProcessing = $state(false);
 let isCancelling = $state(false);
 let processingScopeItemIds = $state<Set<string>>(new Set());
+let processingBatchItemIds = $state<Set<string>>(new Set());
+let processingStartedItemIds = $state<Set<string>>(new Set());
 let cancelledItemIds = $state<Set<string>>(new Set());
+let hydratingItemTokens = $state<Map<string, string>>(new Map());
+let completedHydrationTokens = $state<Map<string, string>>(new Map());
 let logs = $state<SubtitleOcrLogEntry[]>([]);
 
 function hasOwn(value: object, key: PropertyKey): boolean {
@@ -67,148 +97,6 @@ function hasOwn(value: object, key: PropertyKey): boolean {
 
 function generateLogId(): string {
   return `subtitle-ocr-log-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-}
-
-function cloneConfig(value: SubtitleOcrConfig): SubtitleOcrConfig {
-  return { ...value };
-}
-
-function cloneTrack(track: SubtitleOcrTrackMetadata): SubtitleOcrTrackMetadata {
-  return { ...track };
-}
-
-function clonePair(pair: SubtitleOcrVobSubPair): SubtitleOcrVobSubPair {
-  return { ...pair };
-}
-
-function cloneProgress(progress: SubtitleOcrProgress): SubtitleOcrProgress {
-  return { ...progress };
-}
-
-function cloneCue(cue: SubtitleOcrCue): SubtitleOcrCue {
-  return {
-    ...cue,
-    sourceCueIds: [...cue.sourceCueIds],
-  };
-}
-
-function cloneBitmap(bitmap: SubtitleOcrCueBitmap): SubtitleOcrCueBitmap {
-  return { ...bitmap };
-}
-
-function cloneRawCue(rawCue: SubtitleOcrRawCue): SubtitleOcrRawCue {
-  return {
-    ...rawCue,
-    boxes: rawCue.boxes.map((box) => ({ ...box })),
-  };
-}
-
-function cloneSourceSnapshot(snapshot: SubtitleOcrSourceSnapshot): SubtitleOcrSourceSnapshot {
-  switch (snapshot.sourceKind) {
-    case 'container_track':
-      return {
-        sourceKind: 'container_track',
-        sourcePath: snapshot.sourcePath,
-        ocrModelOverride: snapshot.ocrModelOverride,
-        track: cloneTrack(snapshot.track),
-      };
-    case 'standalone_sup':
-      return {
-        sourceKind: 'standalone_sup',
-        sourcePath: snapshot.sourcePath,
-        ocrModelOverride: snapshot.ocrModelOverride,
-      };
-    case 'standalone_vobsub':
-      return {
-        sourceKind: 'standalone_vobsub',
-        sourcePath: snapshot.sourcePath,
-        ocrModelOverride: snapshot.ocrModelOverride,
-        pair: clonePair(snapshot.pair),
-      };
-  }
-}
-
-function cloneVersion(version: SubtitleOcrVersion): SubtitleOcrVersion {
-  return {
-    ...version,
-    configSnapshot: cloneConfig(version.configSnapshot),
-    sourceSnapshot: cloneSourceSnapshot(version.sourceSnapshot),
-    bitmaps: version.bitmaps.map(cloneBitmap),
-    rawOcr: version.rawOcr.map(cloneRawCue),
-    stabilizedCues: version.stabilizedCues.map(cloneCue),
-    finalCues: version.finalCues.map(cloneCue),
-  };
-}
-
-function cloneProcessingDraft(draft: SubtitleOcrProcessingDraft): SubtitleOcrProcessingDraft {
-  return {
-    runId: draft.runId,
-    name: draft.name,
-    startedAt: draft.startedAt,
-    bitmaps: draft.bitmaps.map(cloneBitmap),
-    rawOcr: draft.rawOcr.map(cloneRawCue),
-    finalCues: draft.finalCues.map(cloneCue),
-  };
-}
-
-function normalizeReviewTargetId(
-  versions: SubtitleOcrVersion[],
-  activeVersionId: string | null,
-  reviewTargetId: string | null | undefined,
-  processingDraft?: SubtitleOcrProcessingDraft,
-): string | null {
-  if (
-    processingDraft
-    && reviewTargetId === buildSubtitleOcrProcessingDraftId(processingDraft.runId)
-  ) {
-    return reviewTargetId;
-  }
-
-  if (reviewTargetId && versions.some((version) => version.id === reviewTargetId)) {
-    return reviewTargetId;
-  }
-
-  return normalizeActiveVersionId(versions, activeVersionId);
-}
-
-function normalizeActiveVersionId(versions: SubtitleOcrVersion[], activeVersionId: string | null): string | null {
-  if (activeVersionId === null) {
-    return null;
-  }
-
-  return versions.some((version) => version.id === activeVersionId)
-    ? activeVersionId
-    : versions[0]?.id ?? null;
-}
-
-function findVersionByReviewTarget(item: SubtitleOcrSourceItem): SubtitleOcrVersion | undefined {
-  const targetId = item.reviewTargetId ?? item.activeVersionId;
-  if (isSubtitleOcrProcessingDraftId(targetId)) {
-    return undefined;
-  }
-
-  return item.versions.find((version) => version.id === targetId)
-    ?? findActiveVersion(item)
-    ?? item.versions[0];
-}
-
-function isProcessingDraftSelected(item: SubtitleOcrSourceItem): boolean {
-  return Boolean(
-    item.processingDraft
-    && item.reviewTargetId === buildSubtitleOcrProcessingDraftId(item.processingDraft.runId),
-  );
-}
-
-function resolveSelectedVersionId(item: SubtitleOcrSourceItem, versionId: string | null): string | null {
-  if (versionId === null) {
-    return null;
-  }
-
-  if (item.versions.some((version) => version.id === versionId)) {
-    return versionId;
-  }
-
-  return normalizeActiveVersionId(item.versions, item.activeVersionId);
 }
 
 function cloneItemFields(item: SubtitleOcrSourceItem): SubtitleOcrItemFields {
@@ -231,6 +119,22 @@ function cloneItemFields(item: SubtitleOcrSourceItem): SubtitleOcrItemFields {
       item.processingDraft,
     ),
     processingDraft: item.processingDraft ? cloneProcessingDraft(item.processingDraft) : undefined,
+  };
+}
+
+function referenceItemFields(item: SubtitleOcrSourceItem): SubtitleOcrItemFields {
+  return {
+    id: item.id,
+    displayName: item.displayName,
+    status: item.status,
+    size: item.size,
+    duration: item.duration,
+    error: item.error,
+    progress: item.progress,
+    versions: item.versions,
+    activeVersionId: item.activeVersionId,
+    reviewTargetId: item.reviewTargetId,
+    processingDraft: item.processingDraft,
   };
 }
 
@@ -266,7 +170,7 @@ function buildItemFromSnapshot(
 }
 
 function cloneItem(item: SubtitleOcrSourceItem): SubtitleOcrSourceItem {
-  return buildItemFromSnapshot(cloneSourceSnapshot(item), cloneItemFields(item));
+  return buildItemFromSnapshot(cloneSubtitleOcrSourceSnapshot(item), cloneItemFields(item));
 }
 
 function applySourceUpdates(
@@ -304,7 +208,7 @@ function applyItemUpdates(
   item: SubtitleOcrSourceItem,
   updates: Partial<SubtitleOcrSourceItem>,
 ): SubtitleOcrSourceItem {
-  const fields = cloneItemFields(item);
+  const fields = referenceItemFields(item);
 
   if (updates.id !== undefined) fields.id = updates.id;
   if (updates.displayName !== undefined) fields.displayName = updates.displayName;
@@ -318,17 +222,23 @@ function applyItemUpdates(
       : undefined;
   }
   if (updates.versions !== undefined) {
-    fields.versions = updates.versions.map(cloneVersion);
+    fields.versions = updates.versions;
   }
   if (updates.activeVersionId !== undefined) fields.activeVersionId = updates.activeVersionId;
   if (hasOwn(updates, 'reviewTargetId')) {
     fields.reviewTargetId = updates.reviewTargetId;
   }
   if (hasOwn(updates, 'processingDraft')) {
-    fields.processingDraft = updates.processingDraft
-      ? cloneProcessingDraft(updates.processingDraft)
-      : undefined;
+    fields.processingDraft = updates.processingDraft;
   }
+
+  fields.activeVersionId = normalizeActiveVersionId(fields.versions, fields.activeVersionId);
+  fields.reviewTargetId = normalizeReviewTargetId(
+    fields.versions,
+    fields.activeVersionId,
+    fields.reviewTargetId,
+    fields.processingDraft,
+  );
 
   return buildItemFromSnapshot(applySourceUpdates(item, updates), fields);
 }
@@ -337,7 +247,7 @@ function applySafeItemUpdates(
   item: SubtitleOcrSourceItem,
   updates: SubtitleOcrItemUpdates,
 ): SubtitleOcrSourceItem {
-  const fields = cloneItemFields(item);
+  const fields = referenceItemFields(item);
 
   if (updates.displayName !== undefined) fields.displayName = updates.displayName;
   if (updates.status !== undefined) fields.status = updates.status;
@@ -364,40 +274,6 @@ function findActiveVersion(item: SubtitleOcrSourceItem): SubtitleOcrVersion | un
   return item.versions.find((version) => version.id === item.activeVersionId);
 }
 
-function upsertBy<T>(
-  values: readonly T[],
-  candidate: T,
-  matches: (value: T) => boolean,
-  clone: (value: T) => T,
-): T[] {
-  let replaced = false;
-  const nextValues = values.map((value) => {
-    if (!matches(value)) {
-      return clone(value);
-    }
-
-    replaced = true;
-    return clone(candidate);
-  });
-
-  return replaced ? nextValues : [...nextValues, clone(candidate)];
-}
-
-function cueMatchesLiveCue(cue: SubtitleOcrCue, liveCue: SubtitleOcrCue): boolean {
-  return cue.id === liveCue.id
-    || cue.sourceCueIds.some((sourceCueId) => liveCue.sourceCueIds.includes(sourceCueId));
-}
-
-function bitmapMatchesLiveBitmap(bitmap: SubtitleOcrCueBitmap, liveBitmap: SubtitleOcrCueBitmap): boolean {
-  return Boolean(bitmap.cacheKey && liveBitmap.cacheKey && bitmap.cacheKey === liveBitmap.cacheKey)
-    || bitmap.cueId === liveBitmap.cueId;
-}
-
-function rawCueMatchesLiveRawCue(rawCue: SubtitleOcrRawCue, liveRawCue: SubtitleOcrRawCue): boolean {
-  return Boolean(rawCue.cacheKey && liveRawCue.cacheKey && rawCue.cacheKey === liveRawCue.cacheKey)
-    || rawCue.cueId === liveRawCue.cueId;
-}
-
 export const subtitleOcrStore = {
   get items(): SubtitleOcrSourceItem[] {
     return items.map(cloneItem);
@@ -405,6 +281,18 @@ export const subtitleOcrStore = {
 
   get selectedItemId() {
     return selectedItemId;
+  },
+
+  get itemSummaries(): SubtitleOcrItemSummary[] {
+    return items.map(buildSubtitleOcrItemSummary);
+  },
+
+  get exportItemSummaries(): SubtitleOcrExportItemSummary[] {
+    return items.map((item) => ({
+      id: item.id,
+      displayName: item.displayName,
+      versions: item.versions.map(buildSubtitleOcrVersionSummary),
+    }));
   },
 
   get selectedItem(): SubtitleOcrSourceItem | undefined {
@@ -428,8 +316,20 @@ export const subtitleOcrStore = {
     return new Set(processingScopeItemIds);
   },
 
+  get processingBatchItemIds() {
+    return new Set(processingBatchItemIds);
+  },
+
+  get processingStartedItemIds() {
+    return new Set(processingStartedItemIds);
+  },
+
   get cancelledItemIds() {
     return new Set(cancelledItemIds);
+  },
+
+  get hydratingItemIds() {
+    return new Set(hydratingItemTokens.keys());
   },
 
   get logs(): SubtitleOcrLogEntry[] {
@@ -443,7 +343,11 @@ export const subtitleOcrStore = {
     isProcessing = false;
     isCancelling = false;
     processingScopeItemIds = new Set();
+    processingBatchItemIds = new Set();
+    processingStartedItemIds = new Set();
     cancelledItemIds = new Set();
+    hydratingItemTokens = new Map();
+    completedHydrationTokens = new Map();
     logs = [];
   },
 
@@ -491,7 +395,15 @@ export const subtitleOcrStore = {
 
     items = items.filter((item) => item.id !== itemId);
     processingScopeItemIds = new Set([...processingScopeItemIds].filter((id) => id !== itemId));
+    processingBatchItemIds = new Set([...processingBatchItemIds].filter((id) => id !== itemId));
+    processingStartedItemIds = new Set([...processingStartedItemIds].filter((id) => id !== itemId));
     cancelledItemIds = new Set([...cancelledItemIds].filter((id) => id !== itemId));
+    const nextHydratingItemTokens = new Map(hydratingItemTokens);
+    nextHydratingItemTokens.delete(itemId);
+    hydratingItemTokens = nextHydratingItemTokens;
+    const nextCompletedHydrationTokens = new Map(completedHydrationTokens);
+    nextCompletedHydrationTokens.delete(itemId);
+    completedHydrationTokens = nextCompletedHydrationTokens;
     if (selectedItemId === itemId) {
       selectedItemId = items[removedIndex]?.id ?? items[removedIndex - 1]?.id ?? null;
     }
@@ -501,7 +413,50 @@ export const subtitleOcrStore = {
     items = [];
     selectedItemId = null;
     processingScopeItemIds = new Set();
+    processingBatchItemIds = new Set();
+    processingStartedItemIds = new Set();
     cancelledItemIds = new Set();
+    hydratingItemTokens = new Map();
+    completedHydrationTokens = new Map();
+  },
+
+  startHydration(itemId: string): string {
+    const token = `${itemId}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`;
+    const nextHydratingItemTokens = new Map(hydratingItemTokens);
+    nextHydratingItemTokens.set(itemId, token);
+    hydratingItemTokens = nextHydratingItemTokens;
+    const nextCompletedHydrationTokens = new Map(completedHydrationTokens);
+    nextCompletedHydrationTokens.delete(itemId);
+    completedHydrationTokens = nextCompletedHydrationTokens;
+    return token;
+  },
+
+  isItemHydrating(itemId: string): boolean {
+    return hydratingItemTokens.has(itemId);
+  },
+
+  isHydrationCurrent(itemId: string, token: string): boolean {
+    return hydratingItemTokens.get(itemId) === token && items.some((item) => item.id === itemId);
+  },
+
+  isHydrationTokenValid(itemId: string, token: string): boolean {
+    return (
+      (hydratingItemTokens.get(itemId) === token || completedHydrationTokens.get(itemId) === token)
+      && items.some((item) => item.id === itemId)
+    );
+  },
+
+  finishHydration(itemId: string, token: string): void {
+    if (hydratingItemTokens.get(itemId) !== token) {
+      return;
+    }
+
+    const nextHydratingItemTokens = new Map(hydratingItemTokens);
+    nextHydratingItemTokens.delete(itemId);
+    hydratingItemTokens = nextHydratingItemTokens;
+    const nextCompletedHydrationTokens = new Map(completedHydrationTokens);
+    nextCompletedHydrationTokens.set(itemId, token);
+    completedHydrationTokens = nextCompletedHydrationTokens;
   },
 
   setItemStatus(itemId: string, status: SubtitleOcrStatus, error?: string) {
@@ -534,7 +489,7 @@ export const subtitleOcrStore = {
 
       return applyItemUpdates(item, {
         status: 'completed',
-        versions: [...item.versions.map(cloneVersion), nextVersion],
+        versions: [...item.versions, nextVersion],
         activeVersionId: nextVersion.id,
         reviewTargetId: nextVersion.id,
         progress: undefined,
@@ -568,6 +523,51 @@ export const subtitleOcrStore = {
     });
   },
 
+  replaceHydratedItemVersions(
+    itemId: string,
+    hydrationToken: string,
+    versions: SubtitleOcrVersion[],
+    activeVersionId: string | null,
+    options: ReplaceSubtitleOcrItemVersionsOptions = {},
+  ): boolean {
+    if (!this.isHydrationCurrent(itemId, hydrationToken) || processingScopeItemIds.has(itemId)) {
+      return false;
+    }
+
+    this.replaceItemVersions(itemId, versions, activeVersionId, options);
+    return true;
+  },
+
+  updateRestoredBitmap(itemId: string, restoredBitmap: SubtitleOcrCueBitmap): boolean {
+    let updated = false;
+
+    items = items.map((item) => {
+      if (item.id !== itemId || !restoredBitmap.previewPath) {
+        return item;
+      }
+
+      const versions = item.versions.map((version) => {
+        let versionUpdated = false;
+        const bitmaps = version.bitmaps.map((bitmap) => {
+          if (!restoredBitmapMatches(bitmap, restoredBitmap)
+            || bitmap.previewPath === restoredBitmap.previewPath) {
+            return bitmap;
+          }
+
+          versionUpdated = true;
+          updated = true;
+          return { ...bitmap, previewPath: restoredBitmap.previewPath };
+        });
+
+        return versionUpdated ? { ...version, bitmaps } : version;
+      });
+
+      return updated ? applyItemUpdates(item, { versions }) : item;
+    });
+
+    return updated;
+  },
+
   selectVersion(itemId: string, versionId: string | null) {
     items = items.map((item) => {
       if (item.id !== itemId) {
@@ -597,6 +597,37 @@ export const subtitleOcrStore = {
     return version ? cloneVersion(version) : undefined;
   },
 
+  getItemSnapshot(itemId: string): SubtitleOcrSourceItem | undefined {
+    const item = findItem(itemId);
+    return item ? cloneItem(item) : undefined;
+  },
+
+  getItemProgress(itemId: string): SubtitleOcrProgress | undefined {
+    const progress = findItem(itemId)?.progress;
+    return progress ? cloneProgress(progress) : undefined;
+  },
+
+  getWorkspaceItemSummary(itemId: string): SubtitleOcrWorkspaceItemSummary | undefined {
+    const item = findItem(itemId);
+    return item
+      ? {
+          ...buildSubtitleOcrItemSummary(item),
+          versions: item.versions.map(buildSubtitleOcrVersionSummary),
+        }
+      : undefined;
+  },
+
+  getReviewVersionSummary(itemId: string): SubtitleOcrVersionSummary | undefined {
+    const item = findItem(itemId);
+    const version = item ? findVersionByReviewTarget(item) : undefined;
+    return version ? buildSubtitleOcrVersionSummary(version) : undefined;
+  },
+
+  getProcessingDraftSummary(itemId: string): SubtitleOcrProcessingDraftSummary | undefined {
+    const draft = findItem(itemId)?.processingDraft;
+    return draft ? buildSubtitleOcrProcessingDraftSummary(draft) : undefined;
+  },
+
   getReviewVersion(itemId: string): SubtitleOcrVersion | undefined {
     const item = findItem(itemId);
     const version = item ? findVersionByReviewTarget(item) : undefined;
@@ -614,32 +645,32 @@ export const subtitleOcrStore = {
     return version ? version.finalCues.map(cloneCue) : [];
   },
 
-  getRenderedCues(itemId: string): SubtitleOcrCue[] {
+  getRenderedCues(itemId: string): readonly SubtitleOcrCue[] {
     const item = findItem(itemId);
     if (!item) {
-      return [];
+      return EMPTY_SUBTITLE_OCR_CUES;
     }
 
     if (isProcessingDraftSelected(item) && item.processingDraft) {
-      return item.processingDraft.finalCues.map(cloneCue);
+      return freezeCueProjection(item.processingDraft.finalCues);
     }
 
     const version = findVersionByReviewTarget(item);
-    return version ? version.finalCues.map(cloneCue) : [];
+    return version ? freezeCueProjection(version.finalCues) : EMPTY_SUBTITLE_OCR_CUES;
   },
 
-  getRenderedBitmaps(itemId: string): SubtitleOcrCueBitmap[] {
+  getRenderedBitmaps(itemId: string): readonly SubtitleOcrCueBitmap[] {
     const item = findItem(itemId);
     if (!item) {
-      return [];
+      return EMPTY_SUBTITLE_OCR_BITMAPS;
     }
 
     if (isProcessingDraftSelected(item) && item.processingDraft) {
-      return item.processingDraft.bitmaps.map(cloneBitmap);
+      return freezeBitmapProjection(item.processingDraft.bitmaps);
     }
 
     const version = findVersionByReviewTarget(item);
-    return version ? version.bitmaps.map(cloneBitmap) : [];
+    return version ? freezeBitmapProjection(version.bitmaps) : EMPTY_SUBTITLE_OCR_BITMAPS;
   },
 
   updateCueText(itemId: string, cueId: string, text: string): boolean {
@@ -663,17 +694,17 @@ export const subtitleOcrStore = {
       let changed = false;
       const versions = item.versions.map((version) => {
         if (version.id !== reviewVersion.id) {
-          return cloneVersion(version);
+          return version;
         }
 
         const finalCues = version.finalCues.map((cue) => {
           if (cue.id !== cueId) {
-            return cloneCue(cue);
+            return cue;
           }
 
           foundCue = true;
           if (cue.text === text) {
-            return cloneCue(cue);
+            return cue;
           }
 
           changed = true;
@@ -684,11 +715,11 @@ export const subtitleOcrStore = {
         });
 
         if (!changed) {
-          return cloneVersion(version);
+          return version;
         }
 
         return {
-          ...cloneVersion(version),
+          ...version,
           finalCues,
         };
       });
@@ -789,7 +820,7 @@ export const subtitleOcrStore = {
 
       return applyItemUpdates(item, {
         status: 'completed',
-        versions: [...item.versions.map(cloneVersion), nextVersion],
+        versions: [...item.versions, nextVersion],
         activeVersionId,
         reviewTargetId: wasViewingProcessingDraft ? nextVersion.id : item.reviewTargetId ?? activeVersionId,
         processingDraft: undefined,
@@ -814,23 +845,32 @@ export const subtitleOcrStore = {
     });
   },
 
-  startProcessing(itemIds: string[]) {
+  startProcessing(itemIds: string[]): boolean {
+    if (isProcessing || itemIds.some((itemId) => hydratingItemTokens.has(itemId))) {
+      return false;
+    }
+
     isProcessing = true;
     isCancelling = false;
     processingScopeItemIds = new Set(itemIds);
+    processingBatchItemIds = new Set(itemIds);
+    processingStartedItemIds = new Set();
     cancelledItemIds = new Set();
     this.addLog(
       'info',
       itemIds.length === 1
         ? 'Starting Subtitle OCR processing'
-        : `Starting Subtitle OCR processing for ${itemIds.length} sources`,
+      : `Starting Subtitle OCR processing for ${itemIds.length} sources`,
     );
+    return true;
   },
 
   stopProcessing() {
     isProcessing = false;
     isCancelling = false;
     processingScopeItemIds = new Set();
+    processingBatchItemIds = new Set();
+    processingStartedItemIds = new Set();
     cancelledItemIds = new Set();
   },
 
@@ -842,7 +882,40 @@ export const subtitleOcrStore = {
     return cancelledItemIds.has(itemId);
   },
 
+  markProcessingItemStarted(
+    itemId: string,
+    status: SubtitleOcrProcessingStatus = 'decoding',
+  ): boolean {
+    if (
+      !isProcessing
+      || hydratingItemTokens.has(itemId)
+      || !processingScopeItemIds.has(itemId)
+      || cancelledItemIds.has(itemId)
+    ) {
+      return false;
+    }
+
+    if (processingStartedItemIds.has(itemId)) {
+      return true;
+    }
+
+    processingStartedItemIds = new Set([...processingStartedItemIds, itemId]);
+    items = items.map((item) => (item.id === itemId
+      ? applyItemUpdates(item, {
+          status,
+          progress: undefined,
+          error: undefined,
+        })
+      : item));
+
+    return true;
+  },
+
   cancelProcessing(itemId: string) {
+    if (!processingScopeItemIds.has(itemId)) {
+      return;
+    }
+
     cancelledItemIds = new Set([...cancelledItemIds, itemId]);
     processingScopeItemIds = new Set([...processingScopeItemIds].filter((id) => id !== itemId));
 

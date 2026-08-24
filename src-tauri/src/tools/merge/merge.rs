@@ -245,6 +245,8 @@ fn build_merge_args(
     args.push("copy".to_string());
     args.push("-c:s".to_string());
     args.push("copy".to_string());
+    args.push("-max_interleave_delta".to_string());
+    args.push("0".to_string());
 
     let attached_start_idx = source_track_selections.len();
     for (i, (_, track)) in attached_track_inputs.iter().enumerate() {
@@ -798,6 +800,20 @@ mod tests {
 
         assert!(has_arg_pair(&args, "-map", "0:0"));
         assert!(!has_arg_pair(&args, "-map", "0:6"));
+    }
+
+    #[test]
+    fn build_merge_args_disables_ffmpeg_interleave_buffering_for_mkv() {
+        let source_streams = vec![json!({
+            "index": 0,
+            "codec_type": "video",
+            "codec_name": "hevc"
+        })];
+
+        let args = build_merge_args("/tmp/video.mkv", &[], None, &source_streams, "/tmp/out.mkv")
+            .expect("merge arguments should be built");
+
+        assert!(has_arg_pair(&args, "-max_interleave_delta", "0"));
     }
 
     #[test]

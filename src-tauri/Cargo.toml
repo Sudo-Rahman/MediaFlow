@@ -66,6 +66,7 @@ ocr-rs = { git = "https://github.com/zibo-chen/rust-paddle-ocr.git", branch = "n
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "^3", features = ["apple-native"] }
 cocoa = "0.26.0"
+objc2 = "0.6.4"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSColor", "NSView", "NSWindow", "objc2-quartz-core"] }
 objc2-core-foundation = { version = "0.3.2", default-features = false }
 objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["CALayer", "objc2-core-foundation"] }

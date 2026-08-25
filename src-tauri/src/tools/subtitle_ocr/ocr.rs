@@ -111,6 +111,22 @@ pub(crate) async fn run_subtitle_ocr_pipeline(
     let item_id_for_task = item_id.clone();
     let run_id_for_task = run_id.clone();
     let task = tokio::task::spawn_blocking(move || {
+        #[cfg(target_os = "macos")]
+        return objc2::rc::autoreleasepool(|_| {
+            // Tokio blocking workers do not provide AppKit's usual autorelease scope.
+            run_subtitle_ocr_pipeline_blocking(
+                &item_id_for_task,
+                &run_id_for_task,
+                &source,
+                app,
+                models_dir,
+                &language,
+                use_gpu,
+                expected_bitmap_count,
+            )
+        });
+
+        #[cfg(not(target_os = "macos"))]
         run_subtitle_ocr_pipeline_blocking(
             &item_id_for_task,
             &run_id_for_task,
@@ -492,7 +508,7 @@ fn emit_live_cue_event(
     );
 }
 
-fn ocr_decoded_bitmap(
+fn ocr_decoded_bitmap_inner(
     engine: &ocr_rs::OcrEngine,
     decoded: DecodedBitmapCue,
     detect_placement: bool,
@@ -503,6 +519,21 @@ fn ocr_decoded_bitmap(
     })?;
     let image = DynamicImage::ImageRgba8(image);
     recognize_subtitle_ocr_image(engine, &metadata, &image, detect_placement)
+}
+
+fn ocr_decoded_bitmap(
+    engine: &ocr_rs::OcrEngine,
+    decoded: DecodedBitmapCue,
+    detect_placement: bool,
+) -> Result<SubtitleOcrRawCue, String> {
+    #[cfg(target_os = "macos")]
+    // MNN creates temporary Metal objects for every variable-sized bitmap.
+    return objc2::rc::autoreleasepool(|_| {
+        ocr_decoded_bitmap_inner(engine, decoded, detect_placement)
+    });
+
+    #[cfg(not(target_os = "macos"))]
+    ocr_decoded_bitmap_inner(engine, decoded, detect_placement)
 }
 
 fn recognize_subtitle_ocr_image(

@@ -13,6 +13,7 @@ dependencies = [
  "keyring",
  "libc",
  "num_cpus",
+ "objc2",
  "objc2-app-kit",
  "objc2-core-foundation",
  "objc2-quartz-core",

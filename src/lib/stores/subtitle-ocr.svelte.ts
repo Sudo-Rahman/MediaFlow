@@ -459,6 +459,21 @@ export const subtitleOcrStore = {
     completedHydrationTokens = nextCompletedHydrationTokens;
   },
 
+  invalidateHydration(itemId: string, token?: string): boolean {
+    const currentToken = hydratingItemTokens.get(itemId) ?? completedHydrationTokens.get(itemId);
+    if (!currentToken || (token !== undefined && currentToken !== token)) {
+      return false;
+    }
+
+    const nextHydratingItemTokens = new Map(hydratingItemTokens);
+    nextHydratingItemTokens.delete(itemId);
+    hydratingItemTokens = nextHydratingItemTokens;
+    const nextCompletedHydrationTokens = new Map(completedHydrationTokens);
+    nextCompletedHydrationTokens.delete(itemId);
+    completedHydrationTokens = nextCompletedHydrationTokens;
+    return true;
+  },
+
   setItemStatus(itemId: string, status: SubtitleOcrStatus, error?: string) {
     items = items.map((item) => {
       if (item.id !== itemId) {
@@ -911,7 +926,7 @@ export const subtitleOcrStore = {
     return true;
   },
 
-  cancelProcessing(itemId: string) {
+  cancelProcessing(itemId: string, logCancellation = true) {
     if (!processingScopeItemIds.has(itemId)) {
       return;
     }
@@ -937,7 +952,16 @@ export const subtitleOcrStore = {
       });
     });
 
-    this.addLog('warning', 'Processing cancelled by user', itemId);
+    if (logCancellation) {
+      this.addLog('warning', 'Processing cancelled by user', itemId);
+    }
+  },
+
+  cancelProcessingBatch(itemIds: Iterable<string>) {
+    for (const itemId of new Set(itemIds)) {
+      processingScopeItemIds = new Set([...processingScopeItemIds, itemId]);
+      this.cancelProcessing(itemId, false);
+    }
   },
 
   finishProcessingItem(itemId: string) {

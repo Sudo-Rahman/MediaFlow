@@ -676,6 +676,22 @@ describe('subtitleOcrStore', () => {
     expect(subtitleOcrStore.startProcessing(['a'])).toBe(true);
   });
 
+  it('invalidates current and completed hydration tokens for cancel-all', () => {
+    subtitleOcrStore.addItems([source('a')]);
+    const token = subtitleOcrStore.startHydration('a');
+
+    expect(subtitleOcrStore.invalidateHydration('a', token)).toBe(true);
+    expect(subtitleOcrStore.isItemHydrating('a')).toBe(false);
+    expect(subtitleOcrStore.isHydrationCurrent('a', token)).toBe(false);
+    expect(subtitleOcrStore.isHydrationTokenValid('a', token)).toBe(false);
+    expect(subtitleOcrStore.invalidateHydration('a', token)).toBe(false);
+
+    const completedToken = subtitleOcrStore.startHydration('a');
+    subtitleOcrStore.finishHydration('a', completedToken);
+    expect(subtitleOcrStore.invalidateHydration('a', completedToken)).toBe(true);
+    expect(subtitleOcrStore.isHydrationTokenValid('a', completedToken)).toBe(false);
+  });
+
   it('cancels one processing item without marking the whole batch as cancelling', () => {
     subtitleOcrStore.addItems([source('a'), source('b')]);
     subtitleOcrStore.startProcessing(['a', 'b']);
@@ -704,6 +720,72 @@ describe('subtitleOcrStore', () => {
     expect(item?.activeVersionId).toBe('v1');
     expect([...subtitleOcrStore.processingScopeItemIds]).toEqual(['b']);
     expect([...subtitleOcrStore.processingBatchItemIds]).toEqual(['a', 'b']);
+  });
+
+  it('settles every active item before a cancel-all backend request completes', () => {
+    subtitleOcrStore.addItems([source('a'), source('b')]);
+    subtitleOcrStore.addVersion('a', version('v1', 'before'));
+    subtitleOcrStore.startProcessing(['a', 'b']);
+    subtitleOcrStore.markProcessingItemStarted('a', 'decoding');
+    subtitleOcrStore.markProcessingItemStarted('b', 'extracting');
+    subtitleOcrStore.setProgress('a', {
+      phase: 'decoding',
+      current: 1,
+      total: 10,
+      totalKnown: true,
+      percentage: 10,
+    });
+    subtitleOcrStore.setProgress('b', {
+      phase: 'extracting',
+      current: 1,
+      total: 4,
+      totalKnown: true,
+      percentage: 25,
+    });
+
+    subtitleOcrStore.cancelProcessingBatch(['a', 'b']);
+
+    const versionedItem = subtitleOcrStore.getItemSnapshot('a');
+    const unversionedItem = subtitleOcrStore.getItemSnapshot('b');
+    expect(versionedItem?.status).toBe('completed');
+    expect(versionedItem?.progress).toBeUndefined();
+    expect(versionedItem?.activeVersionId).toBe('v1');
+    expect(unversionedItem?.status).toBe('ready');
+    expect(unversionedItem?.progress).toBeUndefined();
+    expect([...subtitleOcrStore.processingScopeItemIds]).toEqual([]);
+    expect(subtitleOcrStore.isItemCancelled('a')).toBe(true);
+    expect(subtitleOcrStore.isItemCancelled('b')).toBe(true);
+    expect(subtitleOcrStore.isProcessing).toBe(true);
+
+    subtitleOcrStore.setProgress('a', {
+      phase: 'decoding',
+      current: 2,
+      total: 10,
+      totalKnown: true,
+      percentage: 20,
+    });
+    subtitleOcrStore.cancelProcessingBatch(['a', 'b']);
+    expect(subtitleOcrStore.getItemSnapshot('a')?.progress).toBeUndefined();
+
+    subtitleOcrStore.stopProcessing();
+    expect(subtitleOcrStore.startProcessing(['a'])).toBe(true);
+    expect(subtitleOcrStore.markProcessingItemStarted('a', 'decoding')).toBe(true);
+  });
+
+  it('settles map-owned processing items even after they left the active scope', () => {
+    subtitleOcrStore.addItems([source('a')]);
+    subtitleOcrStore.addVersion('a', version('v1', 'before'));
+    subtitleOcrStore.startProcessing(['a']);
+    subtitleOcrStore.markProcessingItemStarted('a', 'decoding');
+    subtitleOcrStore.finishProcessingItem('a');
+
+    subtitleOcrStore.cancelProcessingBatch(['a']);
+
+    expect(subtitleOcrStore.getItemSnapshot('a')).toMatchObject({
+      status: 'completed',
+      activeVersionId: 'v1',
+    });
+    expect(subtitleOcrStore.isItemCancelled('a')).toBe(true);
   });
 
   it('ignores cancellation requests for items that left the active scope', () => {

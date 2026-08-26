@@ -8,13 +8,19 @@ import { getFileName } from '$lib/utils/format';
 export type SubtitleOcrImportTrack = SubtitleOcrTrackMetadata;
 
 interface ImportSelectedSubtitleOcrTracksOptions {
+  generation: number;
   sourcePath: string;
   sourceDuration?: number;
   tracks: readonly SubtitleOcrImportTrack[];
   selectedTrackIndices: ReadonlySet<number>;
   getTrackOverride: (streamIndex: number) => SubtitleOcrModelOverride;
   closeDialog: () => void;
-  onImport: (items: SubtitleOcrSourceItem[]) => void | Promise<void>;
+  onImport: (selection: SubtitleOcrTrackImportSelection) => void | Promise<void>;
+}
+
+export interface SubtitleOcrTrackImportSelection {
+  readonly generation: number;
+  readonly items: readonly SubtitleOcrSourceItem[];
 }
 
 function buildTrackItemId(sourcePath: string, streamIndex: number): string {
@@ -81,6 +87,7 @@ export function resolveImportButtonLabel(count: number): string {
 }
 
 export async function importSelectedSubtitleOcrTracks({
+  generation,
   sourcePath,
   sourceDuration,
   tracks,
@@ -98,6 +105,19 @@ export async function importSelectedSubtitleOcrTracks({
       sourceDuration,
     ));
 
-  closeDialog();
-  await onImport(items);
+  const selection = Object.freeze({
+    generation,
+    items: Object.freeze(items),
+  });
+
+  let importPromise: void | Promise<void>;
+  try {
+    // Calling the parent first lets it claim the generation lease synchronously.
+    // The dialog closes in finally, while the already-started import is awaited.
+    importPromise = onImport(selection);
+  } finally {
+    closeDialog();
+  }
+
+  await importPromise;
 }

@@ -87,6 +87,7 @@ describe('subtitle OCR import dialog state', () => {
     });
 
     const pending = importSelectedSubtitleOcrTracks({
+      generation: 4,
       sourcePath: '/media/Movie.mkv',
       sourceDuration: 7421.25,
       tracks: [track],
@@ -95,19 +96,20 @@ describe('subtitle OCR import dialog state', () => {
       closeDialog: () => {
         events.push('close');
       },
-      onImport: async (items) => {
+      onImport: async (selection) => {
         events.push('import-start');
-        expect(items[0]?.duration).toBe(7421.25);
+        expect(selection.generation).toBe(4);
+        expect(selection.items[0]?.duration).toBe(7421.25);
         await importPromise;
         events.push('import-finish');
       },
     });
 
-    expect(events).toEqual(['close', 'import-start']);
+    expect(events).toEqual(['import-start', 'close']);
 
     finishImport();
     await pending;
 
-    expect(events).toEqual(['close', 'import-start', 'import-finish']);
+    expect(events).toEqual(['import-start', 'close', 'import-finish']);
   });
 });

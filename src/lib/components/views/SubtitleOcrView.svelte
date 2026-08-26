@@ -9,7 +9,6 @@
   import { SvelteMap } from 'svelte/reactivity';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-  import { open } from '@tauri-apps/plugin-dialog';
 
   import {
     SubtitleOcrImportTracksDialog,
@@ -21,64 +20,46 @@
     SubtitleOcrWorkspace,
   } from '$lib/components/subtitle-ocr';
   import {
-    buildStandaloneSubtitleOcrItems,
-    getSubtitleOcrImportKind,
-  } from '$lib/services/subtitle-ocr-import';
-  import {
-    createSubtitleOcrVersion,
-    loadSubtitleOcrData,
-    saveSubtitleOcrData,
-  } from '$lib/services/subtitle-ocr-storage';
-  import { cleanupSubtitleOcrCuesWithAi } from '$lib/services/subtitle-ocr-ai-cleanup';
-  import {
     mediaflowModelCatalogStore,
     subtitleOcrStore,
   } from '$lib/stores';
   import { isSubtitleOcrProgressPhaseStale } from '$lib/stores/subtitle-ocr-progress';
   import {
     isLLMSelectionAvailable,
-    type SubtitleOcrCue,
     type SubtitleOcrCueBitmap,
     type SubtitleOcrConfig,
-    type SubtitleOcrPipelineResult,
     type SubtitleOcrProgress,
     type SubtitleOcrLiveCueEvent,
     type SubtitleOcrRetryMode,
     type SubtitleOcrSourceItem,
     type SubtitleOcrStatus,
-    type SubtitleOcrMediaInfo,
     type SubtitleOcrTrackMetadata,
-    type SubtitleOcrVersion,
     type SubtitleOcrVobSubPair,
   } from '$lib/types';
-  import { getFileName } from '$lib/utils/format';
   import { logAndToast } from '$lib/utils/log-toast';
-
   import {
     buildSubtitleOcrProgressFromEvent,
-    buildSubtitleOcrSourceSnapshot,
-    collectMissingSubtitleOcrBitmapAssetsSafely,
-    filterSubtitleOcrPersistenceForItem,
+    deleteSubtitleOcrRunIdIfCurrent,
     getSubtitleOcrBackendCancelTargets,
-    getSubtitleOcrPreviewRestoreRetry,
-    mergeSubtitleOcrPersistenceForItem,
     resolveSubtitleOcrExpectedBitmapCount,
     resolveSubtitleOcrEffectiveModelForConfig,
     shouldApplySubtitleOcrProgressEvent,
-    shouldApplySubtitleOcrRestoreResult,
     summarizeSubtitleOcrItems,
-    SUBTITLE_OCR_PREVIEW_RESTORE_MAX_RETRIES,
   } from './subtitle-ocr-view-state';
-  import { createSubtitleOcrPreviewRestoreState } from './subtitle-ocr-preview-restore-state';
-
+  import {
+    createSubtitleOcrImportGenerationCoordinator,
+    type SubtitleOcrImportLease,
+  } from './subtitle-ocr-import-generation';
+  import {
+    createSubtitleOcrImportCoordination,
+  } from './subtitle-ocr-import-coordination';
+  import { createSubtitleOcrPreviewCoordination } from './subtitle-ocr-preview-coordination';
+  import { createSubtitleOcrProcessingCoordination } from './subtitle-ocr-processing-coordination';
+  import { createSubtitleOcrProcessingSupport } from './subtitle-ocr-processing-support';
+  import { createSubtitleOcrCancellationScope } from './subtitle-ocr-cancellation-scope';
+  import { cancelSubtitleOcrItem } from './subtitle-ocr-item-cancellation';
   interface SubtitleOcrViewProps {
     onNavigateToSettings?: () => void;
-  }
-
-  interface TrackDialogRequest {
-    sourcePath: string;
-    sourceDuration?: number;
-    tracks: SubtitleOcrTrackMetadata[];
   }
 
   interface SubtitleOcrProgressEventPayload {
@@ -97,17 +78,13 @@
     bitmap: SubtitleOcrCueBitmap;
   }
 
-  type ProcessItemResult = 'completed' | 'cancelled' | 'error';
-  type ProcessingResultCounts = Record<ProcessItemResult, number>;
-  type PreviewRestoreOutcome = 'completed' | 'deferred' | 'retry' | 'failed' | 'stale';
-
   let { onNavigateToSettings }: SubtitleOcrViewProps = $props();
 
   let trackDialogOpen = $state(false);
   let trackDialogSourcePath = $state('');
   let trackDialogSourceDuration = $state<number | undefined>(undefined);
   let trackDialogTracks = $state.raw<SubtitleOcrTrackMetadata[]>([]);
-  let queuedTrackDialogs = $state.raw<TrackDialogRequest[]>([]);
+  let trackDialogLease = $state<SubtitleOcrImportLease | null>(null);
   let resultDialogOpen = $state(false);
   let resultDialogItemId = $state<string | null>(null);
   let retryAllDialogOpen = $state(false);
@@ -123,65 +100,17 @@
   const backendCancelableRunIdsByItemId = new SvelteMap<string, string>();
   const previewRestoreRunIdsByItemId = new SvelteMap<string, string>();
   const persistenceQueues = new SvelteMap<string, Promise<void>>();
-  const pendingPreviewRestores = createSubtitleOcrPreviewRestoreState();
-  let flushingPendingPreviewRestores = false;
   let cancelRequested = false;
+  const importGenerationCoordinator = createSubtitleOcrImportGenerationCoordinator();
+  let activeImportGeneration = $state<number | null>(null);
+  let pendingPreviewRestoreActivity = $state(0);
 
-  const IMPORT_EXTENSIONS = [
-    'mkv',
-    'm2ts',
-    'mp4',
-    'avi',
-    'mov',
-    'webm',
-    'm4v',
-    'mks',
-    'sup',
-    'idx',
-    'sub',
-  ];
-  const PROCESSABLE_STATUSES = new Set<SubtitleOcrStatus>(['ready', 'completed', 'error']);
   const PROGRESS_PHASES = new Set<SubtitleOcrProgress['phase']>([
     'extracting',
     'decoding',
     'ocr',
     'ai_cleaning',
   ]);
-
-  function createProcessingResultCounts(): ProcessingResultCounts {
-    return {
-      completed: 0,
-      cancelled: 0,
-      error: 0,
-    };
-  }
-
-  function recordProcessingResult(counts: ProcessingResultCounts, result: ProcessItemResult): void {
-    counts[result] += 1;
-  }
-
-  function summarizeProcessingResults(counts: ProcessingResultCounts): string {
-    const parts: string[] = [];
-    if (counts.completed > 0) parts.push(`${counts.completed} completed`);
-    if (counts.error > 0) parts.push(`${counts.error} failed`);
-    if (counts.cancelled > 0) parts.push(`${counts.cancelled} cancelled`);
-    return parts.join(', ');
-  }
-
-  function reportProcessingSummary(title: string, counts: ProcessingResultCounts): void {
-    const details = summarizeProcessingResults(counts);
-    if (!details) {
-      return;
-    }
-
-    const level = counts.error > 0 ? 'warning' : 'success';
-    logAndToast[level]({
-      source: 'subtitle-ocr',
-      title: `${title}: ${details}`,
-      details,
-      showAction: false,
-    });
-  }
 
   const items = $derived(subtitleOcrStore.itemSummaries);
   const selectedItem = $derived.by(() => {
@@ -223,6 +152,17 @@
   const restoringPreviewItemIds = $derived.by(() => (
     new Set(previewRestoreRunIdsByItemId.keys())
   ));
+  const canCancelImportWork = $derived.by(() => {
+    pendingPreviewRestoreActivity;
+    return activeImportGeneration !== null
+      || importCoordination.hasHydrationWork
+      || previewCoordination.hasQueued
+      || previewCoordination.activeRestoreGenerations.size > 0
+      || importCoordination.hasDialogWork;
+  });
+  const subtitleOcrCancellationActive = $derived(
+    subtitleOcrStore.isProcessing || canCancelImportWork,
+  );
   const summary = $derived.by(() => summarizeSubtitleOcrItems(
     items.filter((item) => !subtitleOcrStore.isItemHydrating(item.id)),
   ));
@@ -357,23 +297,17 @@
         controller.abort();
       }
       aiCleanupControllers.clear();
+      importGenerationCoordinator.cancelAll();
+      activeImportGeneration = importGenerationCoordinator.activeGeneration;
+      pendingPreviewRestoreActivity += 1;
+      importCoordination.clear();
       activeRunIdsByItemId.clear();
       backendCancelableRunIdsByItemId.clear();
       previewRestoreRunIdsByItemId.clear();
-      pendingPreviewRestores.clear();
+      previewCoordination.clear();
+      pendingPreviewRestoreActivity += 1;
     };
   });
-
-  function showImportWarnings(warnings: readonly string[]): void {
-    for (const warning of warnings) {
-      logAndToast.warning({
-        source: 'subtitle-ocr',
-        title: 'Subtitle OCR import warning',
-        details: warning,
-        showAction: false,
-      });
-    }
-  }
 
   function getSanitizedImportErrorDetails(error: unknown): string {
     if (error instanceof Error && error.name.trim()) {
@@ -389,6 +323,60 @@
       title: 'Subtitle OCR import failed',
       details: getSanitizedImportErrorDetails(error),
     });
+  }
+
+  const cancellationScope = createSubtitleOcrCancellationScope({
+    setCancelRequested: (value) => { cancelRequested = value; },
+    isProcessing: () => subtitleOcrStore.isProcessing,
+    setCancelling: subtitleOcrStore.setCancelling,
+  });
+
+  function beginImportGeneration(): SubtitleOcrImportLease {
+    cancellationScope.prepareForImport();
+    const lease = importGenerationCoordinator.begin();
+    activeImportGeneration = importGenerationCoordinator.activeGeneration;
+    pendingPreviewRestoreActivity += 1;
+    return lease;
+  }
+
+  function retainImportGeneration(generation: number): SubtitleOcrImportLease | null {
+    const lease = importGenerationCoordinator.retain(generation);
+    if (lease) {
+      activeImportGeneration = importGenerationCoordinator.activeGeneration;
+      pendingPreviewRestoreActivity += 1;
+    }
+    return lease;
+  }
+
+  function isImportGenerationCancelled(generation: number): boolean {
+    return importGenerationCoordinator.isCancelled(generation);
+  }
+
+  function isImportGenerationCurrent(generation: number): boolean {
+    return importGenerationCoordinator.isCurrent(generation);
+  }
+
+  function isImportGenerationUsable(generation: number): boolean {
+    return importGenerationCoordinator.isUsable(generation);
+  }
+
+  function releaseImportGeneration(lease: SubtitleOcrImportLease): void {
+    const wasActiveGeneration = activeImportGeneration === lease.generation;
+    if (!importGenerationCoordinator.release(lease)) {
+      return;
+    }
+
+    activeImportGeneration = importGenerationCoordinator.activeGeneration;
+    pendingPreviewRestoreActivity += 1;
+    if (
+      wasActiveGeneration
+      && activeImportGeneration === null
+      && !importGenerationCoordinator.isCancelled(lease.generation)
+      && !subtitleOcrStore.isProcessing
+    ) {
+      cancellationScope.setCancelRequested(false);
+      subtitleOcrStore.setCancelling(false);
+    }
   }
 
   function getStoreItem(itemId: string): SubtitleOcrSourceItem | undefined {
@@ -496,18 +484,7 @@
 
     return normalized.length > 500 ? `${normalized.slice(0, 497)}...` : normalized;
   }
-
-  function isCancellationError(error: unknown): boolean {
-    return sanitizeProcessingMessage(error).toLowerCase().includes('cancelled');
-  }
-
-  async function collectMissingPreviewAssets(
-    bitmaps: SubtitleOcrCueBitmap[],
-  ): Promise<SubtitleOcrCueBitmap[]> {
-    return invoke<SubtitleOcrCueBitmap[]>('collect_missing_subtitle_ocr_bitmap_assets', {
-      bitmaps,
-    });
-  }
+  function isCancellationError(error: unknown): boolean { return sanitizeProcessingMessage(error).toLowerCase().includes('cancelled'); }
 
   function setManualProgress(
     itemId: string,
@@ -515,277 +492,66 @@
     percentage = 0,
   ): void {
     subtitleOcrStore.setItemStatus(itemId, statusForProgressPhase(phase));
-    subtitleOcrStore.setProgress(itemId, {
-      phase,
-      current: percentage,
-      total: 100,
-      percentage,
-    });
+    subtitleOcrStore.setProgress(itemId, { phase, current: percentage, total: 100, percentage });
   }
 
-  async function hydrateImportedItem(item: SubtitleOcrSourceItem, hydrationToken: string): Promise<void> {
-    let hydrationFinished = false;
-    try {
-      const data = await loadSubtitleOcrData(item.sourcePath);
-      if (!subtitleOcrStore.isHydrationCurrent(item.id, hydrationToken) || !data) {
-        return;
-      }
+  const processingSupport = createSubtitleOcrProcessingSupport({
+    persistenceQueues,
+    getStoreItem,
+    sanitizeProcessingMessage,
+  });
+  const { createSubtitleOcrRunId, persistItem } = processingSupport;
 
-      const matchingData = filterSubtitleOcrPersistenceForItem(item, data);
-      if (!subtitleOcrStore.isHydrationCurrent(item.id, hydrationToken) || !matchingData) {
-        return;
-      }
+  const previewCoordination = createSubtitleOcrPreviewCoordination({
+    previewRestoreRunIdsByItemId,
+    activeRunIdsByItemId,
+    backendCancelableRunIdsByItemId,
+    getStoreItem,
+    createSubtitleOcrRunId,
+    preparePipelineSource,
+    buildPreviewRestoreArgs,
+    setManualProgress,
+    persistItem,
+    sanitizeProcessingMessage,
+    isCancellationError,
+    getCancelRequested: () => cancelRequested,
+    isImportGenerationUsable,
+    isImportGenerationCancelled,
+    retainImportGeneration,
+    releaseImportGeneration,
+    getActiveImportGeneration: () => activeImportGeneration,
+    onCancelledRestoreSettled: cancellationScope.clearPreviewIfOwned,
+    collectMissingPreviewAssets: processingSupport.collectMissingPreviewAssets,
+    onActivity: () => { pendingPreviewRestoreActivity += 1; },
+  });
 
-      if (!subtitleOcrStore.replaceHydratedItemVersions(
-        item.id,
-        hydrationToken,
-        matchingData.versions,
-        matchingData.activeVersionId,
-        { status: 'completed' },
-      )) {
-        return;
-      }
-      subtitleOcrStore.finishHydration(item.id, hydrationToken);
-      hydrationFinished = true;
-      await restoreMissingPreviewAssets(item.id, hydrationToken);
-    } catch (error) {
-      logAndToast.warning({
-        source: 'subtitle-ocr',
-        title: 'Could not load saved Subtitle OCR versions',
-        details: sanitizeProcessingMessage(error),
-        showAction: false,
-      });
-    } finally {
-      if (!hydrationFinished) {
-        subtitleOcrStore.finishHydration(item.id, hydrationToken);
-      }
-      requestPendingPreviewRestoreFlush();
-    }
-  }
+  const importCoordination = createSubtitleOcrImportCoordination({
+    beginImportGeneration,
+    retainImportGeneration,
+    releaseImportGeneration,
+    isImportGenerationCurrent,
+    isImportGenerationCancelled,
+    restoreMissingPreviewAssets: previewCoordination.restoreMissingPreviewAssets,
+    requestPendingPreviewRestoreFlush: previewCoordination.requestPendingPreviewRestoreFlush,
+    resolveVobSubPair: (path) => invoke<SubtitleOcrVobSubPair>('resolve_subtitle_ocr_vobsub_pair', { path }),
+    sanitizeProcessingMessage,
+    reportImportError,
+    onDialogStateChange: (state) => {
+      trackDialogOpen = state.open;
+      trackDialogSourcePath = state.sourcePath;
+      trackDialogSourceDuration = state.sourceDuration;
+      trackDialogTracks = state.tracks;
+      trackDialogLease = state.lease;
+    },
+    onActivity: () => { pendingPreviewRestoreActivity += 1; },
+  });
 
-  async function addImportedItems(nextItems: SubtitleOcrSourceItem[]): Promise<void> {
-    if (nextItems.length === 0) {
-      return;
-    }
-
-    const addedItems = subtitleOcrStore.addItems(nextItems);
-    if (addedItems.length === 0) {
-      logAndToast.warning({
-        source: 'subtitle-ocr',
-        title: 'Subtitle sources are already imported',
-        details: 'No new Subtitle OCR sources were added because every selected source is already in the workspace.',
-        showAction: false,
-      });
-    } else if (addedItems.length < nextItems.length) {
-      logAndToast.warning({
-        source: 'subtitle-ocr',
-        title: 'Some subtitle sources were already imported',
-        details: `${addedItems.length} of ${nextItems.length} selected Subtitle OCR sources were added.`,
-        showAction: false,
-      });
-    } else {
-      logAndToast.success({
-        source: 'subtitle-ocr',
-        title: addedItems.length === 1 ? 'Subtitle source imported' : 'Subtitle sources imported',
-        details: `${addedItems.length} Subtitle OCR source${addedItems.length === 1 ? '' : 's'} added.`,
-        showAction: false,
-      });
-    }
-
-    const hydrationTokens = new Map(
-      addedItems.map((item) => [item.id, subtitleOcrStore.startHydration(item.id)]),
-    );
-    for (const item of addedItems) {
-      const hydrationToken = hydrationTokens.get(item.id);
-      if (hydrationToken) {
-        await hydrateImportedItem(item, hydrationToken);
-      }
-    }
-  }
-
-  async function importStandalonePaths(paths: string[]): Promise<void> {
-    if (paths.length === 0) {
-      return;
-    }
-
-    const result = await buildStandaloneSubtitleOcrItems(paths, resolveVobSubPair);
-    await addImportedItems(result.items);
-    showImportWarnings(result.warnings);
-
-    if (result.items.length === 0 && result.warnings.length === 0) {
-      logAndToast.warning({
-        source: 'subtitle-ocr',
-        title: 'No complete standalone subtitle sources found',
-        details: 'Standalone Subtitle OCR imports must be SUP files or complete IDX/SUB pairs.',
-        showAction: false,
-      });
-    }
-  }
-
-  async function resolveVobSubPair(path: string): Promise<SubtitleOcrVobSubPair> {
-    return invoke<SubtitleOcrVobSubPair>('resolve_subtitle_ocr_vobsub_pair', { path });
-  }
-
-  async function probeContainerPath(path: string): Promise<TrackDialogRequest | null> {
-    try {
-      const mediaInfo = await invoke<SubtitleOcrMediaInfo>('probe_subtitle_ocr_media', { path });
-      const { tracks } = mediaInfo;
-      if (tracks.length === 0) {
-        logAndToast.warning({
-          source: 'subtitle-ocr',
-          title: `No bitmap subtitle tracks found in ${getFileName(path)}`,
-          details: `MediaFlow could not find PGS or VobSub subtitle tracks in ${path}.`,
-          context: { filePath: path },
-          showAction: false,
-        });
-        return null;
-      }
-
-      return {
-        sourcePath: path,
-        sourceDuration: mediaInfo.durationSeconds,
-        tracks,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logAndToast.error({
-        source: 'subtitle-ocr',
-        title: `Could not inspect ${getFileName(path)}`,
-        details: sanitizeProcessingMessage(message),
-        context: { filePath: path },
-      });
-      return null;
-    }
-  }
-
-  async function importContainerPaths(paths: string[]): Promise<void> {
-    if (paths.length === 0) {
-      return;
-    }
-
-    const requests: TrackDialogRequest[] = [];
-    for (const path of paths) {
-      const request = await probeContainerPath(path);
-      if (request) {
-        requests.push(request);
-      }
-    }
-
-    enqueueTrackDialogs(requests);
-  }
-
-  function enqueueTrackDialogs(requests: TrackDialogRequest[]): void {
-    if (requests.length === 0) {
-      return;
-    }
-
-    if (trackDialogOpen) {
-      queuedTrackDialogs = [...queuedTrackDialogs, ...requests];
-      return;
-    }
-
-    const [nextRequest, ...remainingRequests] = requests;
-    if (!nextRequest) {
-      return;
-    }
-
-    queuedTrackDialogs = [...queuedTrackDialogs, ...remainingRequests];
-    openTrackDialog(nextRequest);
-  }
-
-  function openTrackDialog(request: TrackDialogRequest): void {
-    trackDialogSourcePath = request.sourcePath;
-    trackDialogSourceDuration = request.sourceDuration;
-    trackDialogTracks = request.tracks;
-    trackDialogOpen = true;
-  }
-
-  function closeTrackDialog(): void {
-    trackDialogOpen = false;
-    trackDialogSourcePath = '';
-    trackDialogSourceDuration = undefined;
-    trackDialogTracks = [];
-  }
-
-  function openNextTrackDialog(): void {
-    const [nextRequest, ...remainingRequests] = queuedTrackDialogs;
-    if (!nextRequest) {
-      return;
-    }
-
-    queuedTrackDialogs = remainingRequests;
-    openTrackDialog(nextRequest);
-  }
-
-  function handleTrackDialogOpenChange(open: boolean): void {
-    if (open) {
-      trackDialogOpen = true;
-      return;
-    }
-
-    closeTrackDialog();
-    if (queuedTrackDialogs.length > 0) {
-      queueMicrotask(openNextTrackDialog);
-    }
-  }
-
-  async function handleImportTracks(importedItems: SubtitleOcrSourceItem[]): Promise<void> {
-    await addImportedItems(importedItems);
-  }
-
-  async function importPaths(paths: string[]): Promise<void> {
-    const standalonePaths: string[] = [];
-    const containerPaths: string[] = [];
-
-    for (const path of paths) {
-      const kind = getSubtitleOcrImportKind(path);
-      if (kind === 'container') {
-        containerPaths.push(path);
-      } else if (kind === 'standalone_sup' || kind === 'standalone_vobsub_part') {
-        standalonePaths.push(path);
-      }
-    }
-
-    if (standalonePaths.length === 0 && containerPaths.length === 0) {
-      logAndToast.warning({
-        source: 'subtitle-ocr',
-        title: 'No supported subtitle OCR sources found',
-        details: 'Supported Subtitle OCR sources are containers with bitmap subtitle tracks, SUP files, or IDX/SUB pairs.',
-        showAction: false,
-      });
-      return;
-    }
-
-    await importStandalonePaths(standalonePaths);
-    await importContainerPaths(containerPaths);
-  }
-
-  async function handleImport(): Promise<void> {
-    try {
-      const selected = await open({
-        multiple: true,
-        filters: [{
-          name: 'Subtitle OCR sources',
-          extensions: IMPORT_EXTENSIONS,
-        }],
-      });
-
-      if (!selected) {
-        return;
-      }
-
-      await importPaths(Array.isArray(selected) ? selected : [selected]);
-    } catch (error) {
-      reportImportError(error);
-    }
+  function requestPendingPreviewRestoreFlush(): void {
+    previewCoordination.requestPendingPreviewRestoreFlush();
   }
 
   export async function handleFileDrop(paths: string[]): Promise<void> {
-    try {
-      await importPaths(paths);
-    } catch (error) {
-      reportImportError(error);
-    }
+    await importCoordination.handleFileDrop(paths);
   }
 
   function handleSelectItem(itemId: string): void {
@@ -796,23 +562,6 @@
     subtitleOcrStore.selectItem(itemId);
     resultDialogItemId = itemId;
     resultDialogOpen = true;
-  }
-
-  function getProcessableItemIds(itemIds: string[]): string[] {
-    const requestedIds = new Set(itemIds);
-
-    return subtitleOcrStore.itemSummaries
-      .filter((item) => (
-        requestedIds.has(item.id)
-        && !subtitleOcrStore.isItemHydrating(item.id)
-        && PROCESSABLE_STATUSES.has(item.status)
-      ))
-      .map((item) => item.id);
-  }
-
-  function createSubtitleOcrRunId(itemId: string): string {
-    const randomSegment = Math.random().toString(36).slice(2, 10);
-    return `${itemId}-${Date.now()}-${randomSegment}`;
   }
 
   async function preparePipelineSource(item: SubtitleOcrSourceItem, runId: string): Promise<string> {
@@ -831,7 +580,7 @@
         runId,
       });
     } finally {
-      backendCancelableRunIdsByItemId.delete(item.id);
+      deleteSubtitleOcrRunIdIfCurrent(backendCancelableRunIdsByItemId, item.id, runId);
     }
   }
 
@@ -877,584 +626,26 @@
     };
   }
 
-  function discardPendingPreviewRestore(itemId: string, expectedToken?: string): boolean {
-    return pendingPreviewRestores.discard(itemId, expectedToken);
-  }
-
-  function handlePreviewRestoreCollectionFailure(
-    itemId: string,
-    hydrationToken: string,
-    error: unknown,
-  ): PreviewRestoreOutcome {
-    if (!subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)) {
-      discardPendingPreviewRestore(itemId, hydrationToken);
-      return 'stale';
-    }
-
-    const retry = getSubtitleOcrPreviewRestoreRetry(
-      pendingPreviewRestores.get(itemId, hydrationToken)?.attempts ?? 0,
-      true,
-    );
-    const details = sanitizeProcessingMessage(error);
-    if (retry.shouldRetry) {
-      if (!pendingPreviewRestores.retry(itemId, hydrationToken, retry.nextAttempt)) {
-        return 'stale';
-      }
-      logAndToast.warning({
-        source: 'subtitle-ocr',
-        title: 'Subtitle OCR previews could not be checked',
-        details: `Missing preview assets will be retried after processing releases (${retry.nextAttempt}/${SUBTITLE_OCR_PREVIEW_RESTORE_MAX_RETRIES}). ${details}`,
-        showAction: false,
-      });
-      return 'retry';
-    }
-
-    discardPendingPreviewRestore(itemId, hydrationToken);
-    subtitleOcrStore.setItemStatus(itemId, 'completed');
-    subtitleOcrStore.setProgress(itemId, undefined);
-    subtitleOcrStore.addLog(
-      'warning',
-      `Could not check missing Subtitle OCR previews after ${SUBTITLE_OCR_PREVIEW_RESTORE_MAX_RETRIES} attempts: ${details}`,
-      itemId,
-    );
-    logAndToast.warning({
-      source: 'subtitle-ocr',
-      title: 'Subtitle OCR previews were not restored',
-      details: 'The OCR text remains available, but missing cue images could not be checked after several attempts.',
-      showAction: false,
-    });
-    return 'failed';
-  }
-
-  function schedulePendingPreviewRestoreRetry(itemId: string, hydrationToken: string): void {
-    if (
-      !subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)
-    ) {
-      return;
-    }
-
-    pendingPreviewRestores.schedule(itemId, hydrationToken, requestPendingPreviewRestoreFlush);
-  }
-
-  async function flushPendingPreviewRestores(): Promise<void> {
-    if (flushingPendingPreviewRestores || subtitleOcrStore.isProcessing) {
-      return;
-    }
-
-    const pendingRestore = pendingPreviewRestores.listCurrent().find((entry) => (
-      entry.phase === 'queued'
-      && !subtitleOcrStore.isItemHydrating(entry.itemId)
-      && subtitleOcrStore.isHydrationTokenValid(entry.itemId, entry.hydrationToken)
-    ));
-    for (const entry of pendingPreviewRestores.listCurrent()) {
-      if (
-        entry.phase === 'queued'
-        && !subtitleOcrStore.isHydrationTokenValid(entry.itemId, entry.hydrationToken)
-      ) {
-        discardPendingPreviewRestore(entry.itemId, entry.hydrationToken);
-      }
-    }
-    if (!pendingRestore) {
-      return;
-    }
-
-    const { itemId, hydrationToken } = pendingRestore;
-    flushingPendingPreviewRestores = true;
-    let outcome: PreviewRestoreOutcome = 'failed';
-    try {
-      outcome = await restoreMissingPreviewAssets(itemId, hydrationToken);
-    } catch (error) {
-      outcome = handlePreviewRestoreCollectionFailure(itemId, hydrationToken, error);
-    } finally {
-      flushingPendingPreviewRestores = false;
-      if (
-        outcome === 'retry'
-        && !subtitleOcrStore.isProcessing
-        && pendingPreviewRestores.hasQueued()
-      ) {
-        schedulePendingPreviewRestoreRetry(itemId, hydrationToken);
-      }
-      if (
-        outcome !== 'deferred'
-        && outcome !== 'retry'
-        && !subtitleOcrStore.isProcessing
-        && pendingPreviewRestores.hasQueued()
-      ) {
-        requestPendingPreviewRestoreFlush();
-      }
-    }
-  }
-
-  function requestPendingPreviewRestoreFlush(): void {
-    void flushPendingPreviewRestores().catch(() => {
-      subtitleOcrStore.addLog(
-        'warning',
-        'Pending Subtitle OCR preview restoration stopped unexpectedly',
-      );
-    });
-  }
-
-  async function restoreMissingPreviewAssets(
-    itemId: string,
-    hydrationToken: string,
-  ): Promise<PreviewRestoreOutcome> {
-    if (!subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)) {
-      discardPendingPreviewRestore(itemId, hydrationToken);
-      return 'stale';
-    }
-
-    const claimed = pendingPreviewRestores.begin(itemId, hydrationToken, true);
-    if (!claimed) {
-      if (pendingPreviewRestores.getCurrent(itemId)?.hydrationToken === hydrationToken) {
-        return 'stale';
-      }
-
-      if (pendingPreviewRestores.queue(itemId, hydrationToken, true)) {
-        return 'deferred';
-      }
-
-      return 'stale';
-    }
-
-    const item = getStoreItem(itemId);
-    if (!item || item.versions.length === 0) {
-      discardPendingPreviewRestore(itemId, hydrationToken);
-      return 'completed';
-    }
-
-    const collection = await collectMissingSubtitleOcrBitmapAssetsSafely(
-      item.versions,
-      collectMissingPreviewAssets,
-    );
-    if (!collection.ok) {
-      return handlePreviewRestoreCollectionFailure(itemId, hydrationToken, collection.error);
-    }
-
-    if (!subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)) {
-      discardPendingPreviewRestore(itemId, hydrationToken);
-      return 'stale';
-    }
-    const missingBitmaps = collection.bitmaps;
-    if (missingBitmaps.length === 0) {
-      discardPendingPreviewRestore(itemId, hydrationToken);
-      return 'completed';
-    }
-
-    let processingStarted = false;
-    if (!subtitleOcrStore.startProcessing([item.id])) {
-      if (!pendingPreviewRestores.requeue(itemId, hydrationToken)) {
-        return 'stale';
-      }
-      return 'deferred';
-    }
-    processingStarted = true;
-
-    const runId = createSubtitleOcrRunId(`${item.id}-restore`);
-    previewRestoreRunIdsByItemId.set(item.id, runId);
-    activeRunIdsByItemId.set(item.id, runId);
-    subtitleOcrStore.markProcessingItemStarted(item.id, 'decoding');
-    subtitleOcrStore.addLog('info', `Restoring ${missingBitmaps.length} missing preview asset${missingBitmaps.length === 1 ? '' : 's'}`, item.id);
-
-    try {
-      setManualProgress(item.id, 'decoding');
-      const sourcePath = await preparePipelineSource(item, runId);
-      if (!shouldApplySubtitleOcrRestoreResult(
-        cancelRequested,
-        subtitleOcrStore.isItemCancelled(item.id),
-      )) {
-        throw new Error('Subtitle OCR operation cancelled');
-      }
-
-      backendCancelableRunIdsByItemId.set(item.id, runId);
-      const restoredBitmaps = await invoke<SubtitleOcrCueBitmap[]>(
-        'restore_subtitle_ocr_bitmap_assets',
-        buildPreviewRestoreArgs(item, sourcePath, runId, missingBitmaps),
-      );
-      backendCancelableRunIdsByItemId.delete(item.id);
-      if (!shouldApplySubtitleOcrRestoreResult(
-        cancelRequested,
-        subtitleOcrStore.isItemCancelled(item.id),
-      ) || !subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)) {
-        throw new Error('Subtitle OCR operation cancelled');
-      }
-
-      for (const restoredBitmap of restoredBitmaps) {
-        subtitleOcrStore.updateRestoredBitmap(item.id, restoredBitmap);
-      }
-      subtitleOcrStore.setItemStatus(item.id, 'completed');
-      await persistItem(
-        item.id,
-        () => subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken),
-      );
-      if (!subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)) {
-        discardPendingPreviewRestore(itemId, hydrationToken);
-        return 'stale';
-      }
-      discardPendingPreviewRestore(itemId, hydrationToken);
-      subtitleOcrStore.addLog(
-        'success',
-        `Restored ${restoredBitmaps.length}/${missingBitmaps.length} missing preview assets`,
-        item.id,
-      );
-
-      if (restoredBitmaps.length < missingBitmaps.length) {
-        logAndToast.warning({
-          source: 'subtitle-ocr',
-          title: 'Some Subtitle OCR previews were not restored',
-          details: 'The OCR text remains available, but some cue images could not be regenerated.',
-          showAction: false,
-        });
-      }
-      return 'completed';
-    } catch (error) {
-      if (!subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)) {
-        discardPendingPreviewRestore(itemId, hydrationToken);
-        return 'stale';
-      }
-
-      subtitleOcrStore.setItemStatus(item.id, 'completed');
-      subtitleOcrStore.setProgress(item.id, undefined);
-      if (!isCancellationError(error) && !cancelRequested && !subtitleOcrStore.isItemCancelled(item.id)) {
-        logAndToast.warning({
-          source: 'subtitle-ocr',
-          title: 'Subtitle OCR previews were not restored',
-          details: 'The OCR text remains available, but missing cue images could not be regenerated.',
-          showAction: false,
-        });
-      }
-      discardPendingPreviewRestore(itemId, hydrationToken);
-      return 'failed';
-    } finally {
-      if (claimed) {
-        const current = pendingPreviewRestores.get(itemId, hydrationToken);
-        if (current?.phase === 'in_flight') {
-          pendingPreviewRestores.finish(itemId, hydrationToken);
-        }
-      }
-      backendCancelableRunIdsByItemId.delete(item.id);
-      activeRunIdsByItemId.delete(item.id);
-      previewRestoreRunIdsByItemId.delete(item.id);
-      if (processingStarted) {
-        subtitleOcrStore.stopProcessing();
-      }
-      if (processingStarted && subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)) {
-        subtitleOcrStore.setItemStatus(item.id, 'completed');
-        subtitleOcrStore.setProgress(item.id, undefined);
-      }
-      if (processingStarted) {
-        cancelRequested = false;
-      }
-      requestPendingPreviewRestoreFlush();
-    }
-  }
-
-  async function runAiCleanupForItem(
-    itemId: string,
-    cues: SubtitleOcrCue[],
-    config: SubtitleOcrConfig = subtitleOcrStore.config,
-  ): Promise<{ cues: SubtitleOcrCue[]; applied: boolean; cancelled: boolean }> {
-    const controller = new AbortController();
-    aiCleanupControllers.set(itemId, controller);
-    setManualProgress(itemId, 'ai_cleaning');
-    subtitleOcrStore.addLog('info', 'Running Subtitle OCR AI cleanup', itemId);
-
-    try {
-      const result = await cleanupSubtitleOcrCuesWithAi(cues, {
-        provider: config.aiCleanupProvider,
-        model: config.aiCleanupModel,
-        signal: controller.signal,
-      });
-
-      if (result.cancelled || controller.signal.aborted) {
-        return { cues, applied: false, cancelled: true };
-      }
-
-      if (subtitleOcrStore.isItemCancelled(itemId)) {
-        return { cues, applied: false, cancelled: true };
-      }
-
-      if (!result.success) {
-        logAndToast.warning({
-          source: 'subtitle-ocr',
-          title: 'Subtitle OCR AI cleanup skipped',
-          details: result.error ? sanitizeProcessingMessage(result.error) : 'AI cleanup failed.',
-          showAction: false,
-        });
-        return { cues, applied: false, cancelled: false };
-      }
-
-      if (result.error) {
-        subtitleOcrStore.addLog(
-          'warning',
-          `AI cleanup partially applied: ${sanitizeProcessingMessage(result.error)}`,
-          itemId,
-        );
-      }
-
-      subtitleOcrStore.addLog(
-        'success',
-        `AI cleanup completed (${cues.length} -> ${result.cues.length} cues)`,
-        itemId,
-      );
-      return { cues: result.cues, applied: true, cancelled: false };
-    } finally {
-      aiCleanupControllers.delete(itemId);
-    }
-  }
-
-  async function persistItem(itemId: string, shouldPersist?: () => boolean): Promise<void> {
-    const item = getStoreItem(itemId);
-    if (!item) {
-      return;
-    }
-
-    const sourcePath = item.sourcePath;
-    const previous = persistenceQueues.get(sourcePath) ?? Promise.resolve();
-    const next = previous.catch(() => {}).then(async () => {
-      const latestItem = getStoreItem(itemId);
-      if (!latestItem || latestItem.sourcePath !== sourcePath || (shouldPersist && !shouldPersist())) {
-        return;
-      }
-
-      try {
-        if (shouldPersist && !shouldPersist()) {
-          return;
-        }
-        const existingData = await loadSubtitleOcrData(sourcePath);
-        if (shouldPersist && !shouldPersist()) {
-          return;
-        }
-        const saved = await saveSubtitleOcrData(
-          sourcePath,
-          mergeSubtitleOcrPersistenceForItem(latestItem, existingData, new Date().toISOString()),
-        );
-
-        if (!saved) {
-          logAndToast.warning({
-            source: 'subtitle-ocr',
-            title: 'Subtitle OCR versions were not saved',
-            details: 'The Subtitle OCR changes could not be written to the MediaFlow sidecar.',
-            showAction: false,
-          });
-        }
-      } catch (error) {
-        logAndToast.warning({
-          source: 'subtitle-ocr',
-          title: 'Subtitle OCR versions were not saved',
-          details: sanitizeProcessingMessage(error),
-          showAction: false,
-        });
-      }
-    });
-
-    persistenceQueues.set(sourcePath, next);
-    try {
-      await next;
-    } finally {
-      if (persistenceQueues.get(sourcePath) === next) {
-        persistenceQueues.delete(sourcePath);
-      }
-    }
-  }
-
-  function restoreCancelledItemStatus(itemId: string): void {
-    const latestItem = getStoreItem(itemId);
-    const status: SubtitleOcrStatus = latestItem && latestItem.versions.length > 0
-      ? 'completed'
-      : 'ready';
-
-    subtitleOcrStore.setItemStatus(itemId, status);
-    subtitleOcrStore.setProgress(itemId, undefined);
-  }
-
-  async function processItem(
-    item: SubtitleOcrSourceItem,
-    configOverride?: SubtitleOcrConfig,
-    versionNameOverride?: string,
-  ): Promise<ProcessItemResult> {
-    if (!subtitleOcrStore.markProcessingItemStarted(
-      item.id,
-      item.sourceKind === 'container_track' ? 'extracting' : 'decoding',
-    )) {
-      return 'cancelled';
-    }
-
-    const runId = createSubtitleOcrRunId(item.id);
-    const initialItem = getStoreItem(item.id) ?? item;
-    const versionName = versionNameOverride ?? `Version ${initialItem.versions.length + 1}`;
-    activeRunIdsByItemId.set(item.id, runId);
-    subtitleOcrStore.beginProcessingDraft(item.id, {
-      runId,
-      name: `${versionName} Draft`,
-    });
-    subtitleOcrStore.addLog('info', 'Starting Subtitle OCR run', item.id);
-
-    try {
-      setManualProgress(
-        item.id,
-        item.sourceKind === 'container_track' ? 'extracting' : 'decoding',
-      );
-
-      const sourcePath = await preparePipelineSource(item, runId);
-      if (cancelRequested || subtitleOcrStore.isItemCancelled(item.id)) {
-        throw new Error('Subtitle OCR operation cancelled');
-      }
-
-      setManualProgress(item.id, 'decoding');
-      const { args, config, effectiveOcrModel } = buildPipelineArgs(
-        item,
-        sourcePath,
-        runId,
-        configOverride,
-      );
-      backendCancelableRunIdsByItemId.set(item.id, runId);
-      const result = await invoke<SubtitleOcrPipelineResult>('run_subtitle_ocr_pipeline', args);
-      backendCancelableRunIdsByItemId.delete(item.id);
-      activeRunIdsByItemId.delete(item.id);
-      const stats = result.stats;
-      subtitleOcrStore.addLog(
-        'info',
-        `Decoded ${stats.decodedBitmapCount} bitmap cues, skipped ${stats.skippedEmptyBitmapCount} empty, reused ${stats.deduplicatedBitmapCount} duplicates, OCR processed ${stats.ocrProcessedBitmapCount}, kept ${result.rawOcrCues.length} raw cues, stabilized ${result.stabilizedCues.length} cues`,
-        item.id,
-      );
-      if (cancelRequested || subtitleOcrStore.isItemCancelled(item.id)) {
-        throw new Error('Subtitle OCR operation cancelled');
-      }
-
-      const ocrFinalCues = result.finalCues;
-      const cleanup = config.aiCleanupEnabled
-        ? await runAiCleanupForItem(item.id, ocrFinalCues, config)
-        : { cues: ocrFinalCues, applied: false, cancelled: false };
-
-      if (cleanup.cancelled || cancelRequested || subtitleOcrStore.isItemCancelled(item.id)) {
-        throw new Error('Subtitle OCR operation cancelled');
-      }
-
-      const latestItem = getStoreItem(item.id) ?? item;
-      const version = createSubtitleOcrVersion({
-        name: versionName,
-        mode: 'full_ocr',
-        configSnapshot: config,
-        effectiveOcrModel,
-        sourceSnapshot: buildSubtitleOcrSourceSnapshot(latestItem),
-        bitmaps: result.decodedCues.map((cue) => ({ ...cue })),
-        rawOcr: result.rawOcrCues.map((cue) => ({
-          ...cue,
-          boxes: cue.boxes.map((box) => ({ ...box })),
-        })),
-        stabilizedCues: result.stabilizedCues.map((cue) => ({
-          ...cue,
-          sourceCueIds: [...cue.sourceCueIds],
-        })),
-        finalCues: cleanup.cues.map((cue) => ({
-          ...cue,
-          sourceCueIds: [...cue.sourceCueIds],
-        })),
-        aiCleanupApplied: cleanup.applied,
-      });
-
-      subtitleOcrStore.completeProcessingDraft(item.id, runId, version);
-      await persistItem(item.id);
-      subtitleOcrStore.addLog('success', `Generated ${version.finalCues.length} final cues`, item.id);
-      return 'completed';
-    } catch (error) {
-      backendCancelableRunIdsByItemId.delete(item.id);
-      activeRunIdsByItemId.delete(item.id);
-      subtitleOcrStore.clearProcessingDraft(item.id, runId);
-      subtitleOcrStore.setProgress(item.id, undefined);
-
-      if (isCancellationError(error) || cancelRequested || subtitleOcrStore.isItemCancelled(item.id)) {
-        restoreCancelledItemStatus(item.id);
-        return 'cancelled';
-      }
-
-      const details = sanitizeProcessingMessage(error);
-      subtitleOcrStore.setItemStatus(item.id, 'error', details);
-      logAndToast.error({
-        source: 'subtitle-ocr',
-        title: 'Subtitle OCR failed',
-        details,
-      });
-      return 'error';
-    }
-  }
-
-  async function runProcessingItems(
-    itemIds: string[],
-    configByItemId: ReadonlyMap<string, SubtitleOcrConfig> = new Map(),
-    versionNameByItemId: ReadonlyMap<string, string> = new Map(),
-  ): Promise<void> {
-    const processableItemIds = getProcessableItemIds(itemIds);
-    if (processableItemIds.length === 0 || subtitleOcrStore.isProcessing) {
-      return;
-    }
-
-    const unavailableAiConfig = processableItemIds
-      .map((itemId) => configByItemId.get(itemId) ?? subtitleOcrStore.config)
-      .find((config) => config.aiCleanupEnabled && !canUseSubtitleOcrAiCleanup(config));
-    if (unavailableAiConfig) {
-      warnSubtitleOcrAiCleanupUnavailable();
-      return;
-    }
-
-    cancelRequested = false;
-    if (!subtitleOcrStore.startProcessing(processableItemIds)) {
-      return;
-    }
-    const counts = createProcessingResultCounts();
-
-    try {
-      for (const itemId of processableItemIds) {
-        if (cancelRequested) {
-          break;
-        }
-
-        if (subtitleOcrStore.isItemCancelled(itemId)) {
-          recordProcessingResult(counts, 'cancelled');
-          continue;
-        }
-
-        const item = getStoreItem(itemId);
-        if (!item) {
-          continue;
-        }
-
-        const result = await processItem(
-          item,
-          configByItemId.get(itemId),
-          versionNameByItemId.get(itemId),
-        );
-        recordProcessingResult(counts, result);
-        if (!cancelRequested) {
-          subtitleOcrStore.finishProcessingItem(itemId);
-        }
-        if (result === 'cancelled' && cancelRequested) {
-          break;
-        }
-      }
-    } finally {
-      subtitleOcrStore.stopProcessing();
-      cancelRequested = false;
-      requestPendingPreviewRestoreFlush();
-    }
-
-    reportProcessingSummary('Subtitle OCR finished', counts);
-  }
-
-  function getCurrentRetryableItemIds(): string[] {
-    return subtitleOcrStore.itemSummaries
-      .filter((item) => item.versionCount > 0 && !subtitleOcrStore.isItemHydrating(item.id))
-      .map((item) => item.id);
-  }
-
-  function getCurrentAiCleanupRetryableItemIds(): string[] {
-    return subtitleOcrStore.itemSummaries
-      .filter((item) => item.hasActiveVersion && !subtitleOcrStore.isItemHydrating(item.id))
-      .map((item) => item.id);
-  }
+  const processingCoordination = createSubtitleOcrProcessingCoordination({
+    aiCleanupControllers,
+    activeRunIdsByItemId,
+    backendCancelableRunIdsByItemId,
+    getStoreItem,
+    preparePipelineSource,
+    buildPipelineArgs,
+    setManualProgress,
+    persistItem,
+    requestPendingPreviewRestoreFlush,
+    sanitizeProcessingMessage,
+    isCancellationError,
+    canUseSubtitleOcrAiCleanup,
+    warnSubtitleOcrAiCleanupUnavailable,
+    getCancelRequested: () => cancelRequested,
+    setCancelRequested: cancellationScope.setCancelRequested,
+  });
 
   function handleStart(): void {
-    void runProcessingItems(
+    void processingCoordination.runProcessingItems(
       items
         .filter((item) => item.status === 'ready')
         .map((item) => item.id),
@@ -1462,7 +653,7 @@
   }
 
   function handleOpenRetryAllDialog(): void {
-    if (getCurrentRetryableItemIds().length === 0) {
+    if (processingCoordination.getCurrentRetryableItemIds().length === 0) {
       logAndToast.warning({
         source: 'subtitle-ocr',
         title: 'No Subtitle OCR versions available for retry',
@@ -1476,19 +667,51 @@
   }
 
   async function handleCancel(): Promise<void> {
-    if (subtitleOcrStore.isCancelling) {
+    if (subtitleOcrStore.isCancelling && !canCancelImportWork) {
       return;
     }
 
     const processingScopeItemIds = subtitleOcrStore.processingScopeItemIds;
-    const itemIds = Array.from(processingScopeItemIds);
+    const backendItemIds = new Set([
+      ...processingScopeItemIds,
+      ...backendCancelableRunIdsByItemId.keys(),
+    ]);
+    const backendCancelTargets = getSubtitleOcrBackendCancelTargets(
+      backendItemIds,
+      backendCancelableRunIdsByItemId,
+    );
+    subtitleOcrStore.cancelProcessingBatch(backendItemIds);
+    const activePreviewGenerations = previewCoordination.activeRestoreGenerations;
+    const previewRestoreGeneration = activePreviewGenerations.values().next().value;
+    const hasPreviewRestore = activePreviewGenerations.size > 0;
+    if (
+      activeImportGeneration !== null
+      || importCoordination.hasDialogWork
+      || importCoordination.hasHydrationWork
+      || hasPreviewRestore
+    ) {
+      importGenerationCoordinator.cancelAll();
+      previewCoordination.cancel();
+      pendingPreviewRestoreActivity += 1;
+      importCoordination.cancelQueuedAndCurrent();
+      importCoordination.invalidateHydrations();
+    }
+
+    const itemIds = Array.from(backendItemIds);
     if (itemIds.length === 0) {
       subtitleOcrStore.stopProcessing();
+      cancellationScope.clear();
+      subtitleOcrStore.setCancelling(false);
       requestPendingPreviewRestoreFlush();
       return;
     }
 
-    cancelRequested = true;
+    cancellationScope.setCancelRequested(true);
+    if (hasPreviewRestore && previewRestoreGeneration !== undefined) {
+      cancellationScope.ownPreviewRestore(previewRestoreGeneration);
+    } else {
+      cancellationScope.ownProcessing();
+    }
     subtitleOcrStore.setCancelling(true);
     subtitleOcrStore.addLog(
       'warning',
@@ -1497,10 +720,6 @@
     for (const itemId of itemIds) {
       aiCleanupControllers.get(itemId)?.abort();
     }
-    const backendCancelTargets = getSubtitleOcrBackendCancelTargets(
-      processingScopeItemIds,
-      backendCancelableRunIdsByItemId,
-    );
     await Promise.allSettled(
       backendCancelTargets.map(({ itemId, runId }) => (
         invoke('cancel_subtitle_ocr_operation', { itemId, runId })
@@ -1509,38 +728,41 @@
   }
 
   async function handleCancelItem(itemId: string): Promise<void> {
-    if (!subtitleOcrStore.isProcessing || subtitleOcrStore.isItemCancelled(itemId)) {
-      return;
-    }
-
     const item = getStoreItem(itemId);
     if (!item) {
       return;
     }
 
-    const backendRunId = backendCancelableRunIdsByItemId.get(itemId);
-    if (backendRunId) {
-      try {
-        await invoke('cancel_subtitle_ocr_operation', { itemId, runId: backendRunId });
-      } catch (error) {
-        logAndToast.warning({
-          source: 'subtitle-ocr',
-          title: 'Subtitle OCR cancel request failed',
-          details: sanitizeProcessingMessage(error),
-          context: { filePath: item.sourcePath },
-          showAction: false,
+    const result = await cancelSubtitleOcrItem(
+      {
+        aiCleanupControllers,
+        activeRunIdsByItemId,
+        backendCancelableRunIdsByItemId,
+        previewRestoreRunIdsByItemId,
+        getItem: getStoreItem,
+        isProcessing: () => subtitleOcrStore.isProcessing,
+        isItemCancelled: subtitleOcrStore.isItemCancelled,
+        cancelProcessing: (cancelledItemId) => subtitleOcrStore.cancelProcessing(cancelledItemId),
+      },
+      itemId,
+      async ({ itemId: targetItemId, backendRunId }) => {
+        await invoke('cancel_subtitle_ocr_operation', {
+          itemId: targetItemId,
+          runId: backendRunId,
         });
-        return;
-      }
-
-      backendCancelableRunIdsByItemId.delete(itemId);
+      },
+    );
+    if (!result?.backendError) {
+      return;
     }
 
-    aiCleanupControllers.get(itemId)?.abort();
-    aiCleanupControllers.delete(itemId);
-    activeRunIdsByItemId.delete(itemId);
-    previewRestoreRunIdsByItemId.delete(itemId);
-    subtitleOcrStore.cancelProcessing(itemId);
+    logAndToast.warning({
+      source: 'subtitle-ocr',
+      title: 'Subtitle OCR cancel request failed',
+      details: sanitizeProcessingMessage(result.backendError),
+      context: { filePath: item.sourcePath },
+      showAction: false,
+    });
   }
 
   function handleOpenRetryDialog(itemId: string): void {
@@ -1577,7 +799,7 @@
     }
 
     if (mode === 'full_ocr') {
-      void runProcessingItems(
+      void processingCoordination.runProcessingItems(
         [itemId],
         new Map([[itemId, config]]),
         new Map([[itemId, versionName]]),
@@ -1585,7 +807,7 @@
       return;
     }
 
-    void runAiCleanupRetry(itemId, versionName, config);
+    void processingCoordination.runAiCleanupRetry(itemId, versionName, config);
   }
 
   function handleRetryAllDialogConfirm(
@@ -1597,7 +819,7 @@
       return;
     }
 
-    const itemIds = getCurrentRetryableItemIds();
+    const itemIds = processingCoordination.getCurrentRetryableItemIds();
     if (itemIds.length === 0) {
       logAndToast.warning({
         source: 'subtitle-ocr',
@@ -1609,14 +831,14 @@
     }
 
     if (mode === 'full_ocr') {
-      void runProcessingItems(
+      void processingCoordination.runProcessingItems(
         itemIds,
         new Map(itemIds.map((itemId) => [itemId, config])),
       );
       return;
     }
 
-    const aiCleanupItemIds = getCurrentAiCleanupRetryableItemIds();
+    const aiCleanupItemIds = processingCoordination.getCurrentAiCleanupRetryableItemIds();
     if (aiCleanupItemIds.length === 0) {
       logAndToast.warning({
         source: 'subtitle-ocr',
@@ -1627,158 +849,19 @@
       return;
     }
 
-    void runAiCleanupRetryItems(aiCleanupItemIds, config);
-  }
-
-  async function runAiCleanupRetry(
-    itemId: string,
-    versionName: string,
-    config: SubtitleOcrConfig,
-  ): Promise<void> {
-    if (subtitleOcrStore.isProcessing || subtitleOcrStore.isItemHydrating(itemId)) {
-      return;
-    }
-
-    if (!canUseSubtitleOcrAiCleanup(config)) {
-      warnSubtitleOcrAiCleanupUnavailable();
-      return;
-    }
-
-    cancelRequested = false;
-    if (!subtitleOcrStore.startProcessing([itemId])) {
-      return;
-    }
-    const counts = createProcessingResultCounts();
-
-    try {
-      recordProcessingResult(counts, await processAiCleanupRetryItem(itemId, versionName, config));
-    } finally {
-      subtitleOcrStore.stopProcessing();
-      cancelRequested = false;
-      requestPendingPreviewRestoreFlush();
-    }
-
-    reportProcessingSummary('Subtitle OCR AI cleanup retry finished', counts);
-  }
-
-  async function runAiCleanupRetryItems(
-    itemIds: string[],
-    config: SubtitleOcrConfig,
-  ): Promise<void> {
-    const processableItemIds = itemIds.filter((itemId) => !subtitleOcrStore.isItemHydrating(itemId));
-    if (processableItemIds.length === 0 || subtitleOcrStore.isProcessing) {
-      return;
-    }
-
-    if (!canUseSubtitleOcrAiCleanup(config)) {
-      warnSubtitleOcrAiCleanupUnavailable();
-      return;
-    }
-
-    cancelRequested = false;
-    if (!subtitleOcrStore.startProcessing(processableItemIds)) {
-      return;
-    }
-    const counts = createProcessingResultCounts();
-
-    try {
-      for (const itemId of processableItemIds) {
-        if (cancelRequested) {
-          break;
-        }
-
-        if (subtitleOcrStore.isItemCancelled(itemId)) {
-          recordProcessingResult(counts, 'cancelled');
-          continue;
-        }
-
-        const result = await processAiCleanupRetryItem(itemId, undefined, config);
-        recordProcessingResult(counts, result);
-        if (!cancelRequested) {
-          subtitleOcrStore.finishProcessingItem(itemId);
-        }
-        if (result === 'cancelled' && cancelRequested) {
-          break;
-        }
-      }
-    } finally {
-      subtitleOcrStore.stopProcessing();
-      cancelRequested = false;
-      requestPendingPreviewRestoreFlush();
-    }
-
-    reportProcessingSummary('Subtitle OCR AI cleanup retry finished', counts);
-  }
-
-  async function processAiCleanupRetryItem(
-    itemId: string,
-    versionName: string | undefined,
-    config: SubtitleOcrConfig,
-  ): Promise<ProcessItemResult> {
-    if (!subtitleOcrStore.markProcessingItemStarted(itemId, 'ai_cleaning')) {
-      return 'cancelled';
-    }
-
-    const item = getStoreItem(itemId);
-    const activeVersion = subtitleOcrStore.getActiveVersion(itemId);
-    if (!item || !activeVersion) {
-      return 'error';
-    }
-
-    try {
-      const cleanup = await runAiCleanupForItem(itemId, activeVersion.finalCues, config);
-      if (cleanup.cancelled || cancelRequested || subtitleOcrStore.isItemCancelled(itemId)) {
-        restoreCancelledItemStatus(itemId);
-        return 'cancelled';
-      }
-
-      if (!cleanup.applied) {
-        restoreCancelledItemStatus(itemId);
-        return 'error';
-      }
-
-      const latestItem = getStoreItem(itemId) ?? item;
-      const version: SubtitleOcrVersion = createSubtitleOcrVersion({
-        name: versionName || `Version ${latestItem.versions.length + 1}`,
-        mode: 'ai_cleanup_only',
-        configSnapshot: config,
-        effectiveOcrModel: activeVersion.effectiveOcrModel,
-        sourceSnapshot: activeVersion.sourceSnapshot,
-        bitmaps: activeVersion.bitmaps,
-        rawOcr: activeVersion.rawOcr,
-        stabilizedCues: activeVersion.stabilizedCues,
-        finalCues: cleanup.cues,
-        aiCleanupApplied: true,
-      });
-
-      subtitleOcrStore.addVersion(itemId, version);
-      await persistItem(itemId);
-      subtitleOcrStore.addLog('success', `Created ${version.name} with AI cleanup`, itemId);
-      return 'completed';
-    } catch (error) {
-      if (isCancellationError(error) || cancelRequested || subtitleOcrStore.isItemCancelled(itemId)) {
-        restoreCancelledItemStatus(itemId);
-        return 'cancelled';
-      }
-
-      const details = sanitizeProcessingMessage(error);
-      subtitleOcrStore.setItemStatus(itemId, 'error', details);
-      logAndToast.error({
-        source: 'subtitle-ocr',
-        title: 'Subtitle OCR AI cleanup retry failed',
-        details,
-      });
-      return 'error';
-    }
+    void processingCoordination.runAiCleanupRetryItems(aiCleanupItemIds, config);
   }
 
   function handleRemove(itemId: string): void {
-    discardPendingPreviewRestore(itemId);
+    previewCoordination.discardPendingPreviewRestore(itemId);
+    importCoordination.invalidateHydration(itemId);
     subtitleOcrStore.removeItem(itemId);
   }
 
   function handleClearAll(): void {
-    pendingPreviewRestores.clear();
+    previewCoordination.clear();
+    pendingPreviewRestoreActivity += 1;
+    importCoordination.clear();
     selectedCueIdsByItemId = {};
     retryAllDialogOpen = false;
     retryDialogOpen = false;
@@ -1814,10 +897,10 @@
   <SubtitleOcrSidebar
     {items}
     selectedItemId={selectedItem?.id ?? null}
-    isProcessing={subtitleOcrStore.isProcessing}
+    isProcessing={subtitleOcrCancellationActive}
     processingScopeItemIds={subtitleOcrStore.processingScopeItemIds}
     {restoringPreviewItemIds}
-    onImport={handleImport}
+    onImport={importCoordination.handleImport}
     onSelectItem={handleSelectItem}
     onOpenVersions={handleOpenVersions}
     onRetry={handleOpenRetryDialog}
@@ -1847,9 +930,11 @@
       config={subtitleOcrStore.config}
       {canStart}
       {canRetryAll}
-      isProcessing={subtitleOcrStore.isProcessing}
+      isProcessing={subtitleOcrCancellationActive}
       isCancelling={subtitleOcrStore.isCancelling}
-      cancelActionKind={restoringPreviewItemIds.size > 0 ? 'restore' : 'ocr'}
+      cancelActionKind={
+        restoringPreviewItemIds.size > 0 || canCancelImportWork ? 'restore' : 'ocr'
+      }
       readyCount={summary.readyCount}
       {retryCount}
       {actionHint}
@@ -1865,11 +950,12 @@
 
 <SubtitleOcrImportTracksDialog
   bind:open={trackDialogOpen}
-  onOpenChange={handleTrackDialogOpenChange}
+  generation={trackDialogLease?.generation ?? 0}
+  onOpenChange={importCoordination.handleDialogOpenChange}
   sourcePath={trackDialogSourcePath}
   sourceDuration={trackDialogSourceDuration}
   tracks={trackDialogTracks}
-  onImport={handleImportTracks}
+  onImport={importCoordination.handleImportTracks}
 />
 
 <SubtitleOcrResultDialog

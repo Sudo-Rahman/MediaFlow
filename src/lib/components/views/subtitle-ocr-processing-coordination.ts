@@ -111,6 +111,10 @@ function reportProcessingSummary(title: string, counts: ProcessingResultCounts):
 export function createSubtitleOcrProcessingCoordination(
   context: SubtitleOcrProcessingCoordinationContext,
 ): SubtitleOcrProcessingCoordination {
+  function isProcessingSessionCurrent(processingSessionId: string): boolean {
+    return subtitleOcrStore.processingSessionId === processingSessionId;
+  }
+
   function restoreCancelledItemStatus(itemId: string): void {
     const latestItem = context.getStoreItem(itemId);
     const status: SubtitleOcrStatus = latestItem && latestItem.versions.length > 0
@@ -185,12 +189,15 @@ export function createSubtitleOcrProcessingCoordination(
       );
       return { cues: result.cues, applied: true, cancelled: false };
     } finally {
-      context.aiCleanupControllers.delete(itemId);
+      if (context.aiCleanupControllers.get(itemId) === controller) {
+        context.aiCleanupControllers.delete(itemId);
+      }
     }
   }
 
   async function processItem(
     item: SubtitleOcrSourceItem,
+    processingSessionId: string,
     configOverride?: SubtitleOcrConfig,
     versionNameOverride?: string,
   ): Promise<SubtitleOcrProcessItemResult> {
@@ -218,7 +225,11 @@ export function createSubtitleOcrProcessingCoordination(
       );
 
       const sourcePath = await context.preparePipelineSource(item, runId);
-      if (context.getCancelRequested() || subtitleOcrStore.isItemCancelled(item.id)) {
+      if (
+        !isProcessingSessionCurrent(processingSessionId)
+        || context.getCancelRequested()
+        || subtitleOcrStore.isItemCancelled(item.id)
+      ) {
         throw new Error('Subtitle OCR operation cancelled');
       }
 
@@ -233,6 +244,9 @@ export function createSubtitleOcrProcessingCoordination(
       const result = await invoke<SubtitleOcrPipelineResult>('run_subtitle_ocr_pipeline', args);
       deleteSubtitleOcrRunIdIfCurrent(context.backendCancelableRunIdsByItemId, item.id, runId);
       deleteSubtitleOcrRunIdIfCurrent(context.activeRunIdsByItemId, item.id, runId);
+      if (!isProcessingSessionCurrent(processingSessionId)) {
+        throw new Error('Subtitle OCR operation cancelled');
+      }
       const stats = result.stats;
       subtitleOcrStore.addLog(
         'info',
@@ -248,7 +262,12 @@ export function createSubtitleOcrProcessingCoordination(
         ? await runAiCleanupForItem(item.id, ocrFinalCues, config)
         : { cues: ocrFinalCues, applied: false, cancelled: false };
 
-      if (cleanup.cancelled || context.getCancelRequested() || subtitleOcrStore.isItemCancelled(item.id)) {
+      if (
+        !isProcessingSessionCurrent(processingSessionId)
+        || cleanup.cancelled
+        || context.getCancelRequested()
+        || subtitleOcrStore.isItemCancelled(item.id)
+      ) {
         throw new Error('Subtitle OCR operation cancelled');
       }
 
@@ -283,6 +302,9 @@ export function createSubtitleOcrProcessingCoordination(
       deleteSubtitleOcrRunIdIfCurrent(context.backendCancelableRunIdsByItemId, item.id, runId);
       deleteSubtitleOcrRunIdIfCurrent(context.activeRunIdsByItemId, item.id, runId);
       subtitleOcrStore.clearProcessingDraft(item.id, runId);
+      if (!isProcessingSessionCurrent(processingSessionId)) {
+        return 'cancelled';
+      }
       subtitleOcrStore.setProgress(item.id, undefined);
 
       if (
@@ -323,7 +345,10 @@ export function createSubtitleOcrProcessingCoordination(
 
     context.setCancelRequested(false);
     if (!subtitleOcrStore.startProcessing(processableItemIds)) return;
+    const processingSessionId = subtitleOcrStore.processingSessionId;
+    if (!processingSessionId) return;
     const counts = createProcessingResultCounts();
+    let completedOwnSession = false;
 
     try {
       for (const itemId of processableItemIds) {
@@ -339,20 +364,24 @@ export function createSubtitleOcrProcessingCoordination(
 
         const result = await processItem(
           item,
+          processingSessionId,
           configByItemId.get(itemId),
           versionNameByItemId.get(itemId),
         );
         recordProcessingResult(counts, result);
+        if (!isProcessingSessionCurrent(processingSessionId)) break;
         if (!context.getCancelRequested()) subtitleOcrStore.finishProcessingItem(itemId);
         if (result === 'cancelled' && context.getCancelRequested()) break;
       }
     } finally {
-      subtitleOcrStore.stopProcessing();
-      context.setCancelRequested(false);
-      context.requestPendingPreviewRestoreFlush();
+      completedOwnSession = subtitleOcrStore.stopProcessing(processingSessionId);
+      if (completedOwnSession) {
+        context.setCancelRequested(false);
+        context.requestPendingPreviewRestoreFlush();
+      }
     }
 
-    reportProcessingSummary('Subtitle OCR finished', counts);
+    if (completedOwnSession) reportProcessingSummary('Subtitle OCR finished', counts);
   }
 
   function getCurrentRetryableItemIds(): string[] {
@@ -381,17 +410,29 @@ export function createSubtitleOcrProcessingCoordination(
 
     context.setCancelRequested(false);
     if (!subtitleOcrStore.startProcessing([itemId])) return;
+    const processingSessionId = subtitleOcrStore.processingSessionId;
+    if (!processingSessionId) return;
     const counts = createProcessingResultCounts();
+    let completedOwnSession = false;
 
     try {
-      recordProcessingResult(counts, await processAiCleanupRetryItem(itemId, versionName, config));
+      recordProcessingResult(counts, await processAiCleanupRetryItem(
+        itemId,
+        versionName,
+        config,
+        processingSessionId,
+      ));
     } finally {
-      subtitleOcrStore.stopProcessing();
-      context.setCancelRequested(false);
-      context.requestPendingPreviewRestoreFlush();
+      completedOwnSession = subtitleOcrStore.stopProcessing(processingSessionId);
+      if (completedOwnSession) {
+        context.setCancelRequested(false);
+        context.requestPendingPreviewRestoreFlush();
+      }
     }
 
-    reportProcessingSummary('Subtitle OCR AI cleanup retry finished', counts);
+    if (completedOwnSession) {
+      reportProcessingSummary('Subtitle OCR AI cleanup retry finished', counts);
+    }
   }
 
   async function runAiCleanupRetryItems(
@@ -408,7 +449,10 @@ export function createSubtitleOcrProcessingCoordination(
 
     context.setCancelRequested(false);
     if (!subtitleOcrStore.startProcessing(processableItemIds)) return;
+    const processingSessionId = subtitleOcrStore.processingSessionId;
+    if (!processingSessionId) return;
     const counts = createProcessingResultCounts();
+    let completedOwnSession = false;
 
     try {
       for (const itemId of processableItemIds) {
@@ -419,24 +463,35 @@ export function createSubtitleOcrProcessingCoordination(
           continue;
         }
 
-        const result = await processAiCleanupRetryItem(itemId, undefined, config);
+        const result = await processAiCleanupRetryItem(
+          itemId,
+          undefined,
+          config,
+          processingSessionId,
+        );
         recordProcessingResult(counts, result);
+        if (!isProcessingSessionCurrent(processingSessionId)) break;
         if (!context.getCancelRequested()) subtitleOcrStore.finishProcessingItem(itemId);
         if (result === 'cancelled' && context.getCancelRequested()) break;
       }
     } finally {
-      subtitleOcrStore.stopProcessing();
-      context.setCancelRequested(false);
-      context.requestPendingPreviewRestoreFlush();
+      completedOwnSession = subtitleOcrStore.stopProcessing(processingSessionId);
+      if (completedOwnSession) {
+        context.setCancelRequested(false);
+        context.requestPendingPreviewRestoreFlush();
+      }
     }
 
-    reportProcessingSummary('Subtitle OCR AI cleanup retry finished', counts);
+    if (completedOwnSession) {
+      reportProcessingSummary('Subtitle OCR AI cleanup retry finished', counts);
+    }
   }
 
   async function processAiCleanupRetryItem(
     itemId: string,
     versionName: string | undefined,
     config: SubtitleOcrConfig,
+    processingSessionId: string,
   ): Promise<SubtitleOcrProcessItemResult> {
     if (!subtitleOcrStore.markProcessingItemStarted(itemId, 'ai_cleaning')) return 'cancelled';
 
@@ -446,6 +501,9 @@ export function createSubtitleOcrProcessingCoordination(
 
     try {
       const cleanup = await runAiCleanupForItem(itemId, activeVersion.finalCues, config);
+      if (!isProcessingSessionCurrent(processingSessionId)) {
+        return 'cancelled';
+      }
       if (cleanup.cancelled || context.getCancelRequested() || subtitleOcrStore.isItemCancelled(itemId)) {
         restoreCancelledItemStatus(itemId);
         return 'cancelled';
@@ -475,6 +533,9 @@ export function createSubtitleOcrProcessingCoordination(
       subtitleOcrStore.addLog('success', `Created ${version.name} with AI cleanup`, itemId);
       return 'completed';
     } catch (error) {
+      if (!isProcessingSessionCurrent(processingSessionId)) {
+        return 'cancelled';
+      }
       if (
         context.isCancellationError(error)
         || context.getCancelRequested()

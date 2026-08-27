@@ -161,6 +161,21 @@ describe('Subtitle OCR preview coordination', () => {
     }));
   });
 
+  it('warns when preview restoration fails without cancellation', async () => {
+    const harness = createHarness();
+    const lease = harness.generationCoordinator.begin();
+    const token = subtitleOcrStore.startHydration('restore');
+    subtitleOcrStore.finishHydration('restore', token);
+    invokeMock.mockRejectedValue(new Error('restore unavailable'));
+
+    await expect(
+      harness.coordination.restoreMissingPreviewAssets('restore', token, lease.generation),
+    ).resolves.toBe('failed');
+    expect(warningMock).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Subtitle OCR previews were not restored',
+    }));
+  });
+
   it('resets an active restore cancellation and allows a fresh restore', async () => {
     const harness = createHarness();
     const firstLease = harness.generationCoordinator.begin();

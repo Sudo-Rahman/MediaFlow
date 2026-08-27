@@ -83,6 +83,8 @@ let selectedItemId = $state<string | null>(null);
 let config = $state<SubtitleOcrConfig>({ ...DEFAULT_SUBTITLE_OCR_CONFIG });
 let isProcessing = $state(false);
 let isCancelling = $state(false);
+let processingSessionId = $state<string | null>(null);
+let processingSessionSequence = 0;
 let processingScopeItemIds = $state<Set<string>>(new Set());
 let processingBatchItemIds = $state<Set<string>>(new Set());
 let processingStartedItemIds = $state<Set<string>>(new Set());
@@ -312,6 +314,10 @@ export const subtitleOcrStore = {
     return isCancelling;
   },
 
+  get processingSessionId() {
+    return processingSessionId;
+  },
+
   get processingScopeItemIds() {
     return new Set(processingScopeItemIds);
   },
@@ -342,6 +348,7 @@ export const subtitleOcrStore = {
     config = { ...DEFAULT_SUBTITLE_OCR_CONFIG };
     isProcessing = false;
     isCancelling = false;
+    processingSessionId = null;
     processingScopeItemIds = new Set();
     processingBatchItemIds = new Set();
     processingStartedItemIds = new Set();
@@ -867,6 +874,8 @@ export const subtitleOcrStore = {
 
     isProcessing = true;
     isCancelling = false;
+    processingSessionSequence += 1;
+    processingSessionId = `subtitle-ocr-session-${processingSessionSequence}`;
     processingScopeItemIds = new Set(itemIds);
     processingBatchItemIds = new Set(itemIds);
     processingStartedItemIds = new Set();
@@ -880,13 +889,19 @@ export const subtitleOcrStore = {
     return true;
   },
 
-  stopProcessing() {
+  stopProcessing(expectedSessionId?: string): boolean {
+    if (expectedSessionId !== undefined && processingSessionId !== expectedSessionId) {
+      return false;
+    }
+
     isProcessing = false;
     isCancelling = false;
+    processingSessionId = null;
     processingScopeItemIds = new Set();
     processingBatchItemIds = new Set();
     processingStartedItemIds = new Set();
     cancelledItemIds = new Set();
+    return true;
   },
 
   setCancelling(value: boolean) {

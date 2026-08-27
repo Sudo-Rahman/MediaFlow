@@ -255,11 +255,13 @@ export function createSubtitleOcrPreviewCoordination(
     }
 
     let processingStarted = false;
+    let processingSessionId: string | null = null;
     if (!subtitleOcrStore.startProcessing([item.id])) {
       if (!pendingPreviewRestores.requeue(itemId, hydrationToken) || !retainQueuedRestoreLease(itemId, generation)) return 'stale';
       return 'deferred';
     }
     processingStarted = true;
+    processingSessionId = subtitleOcrStore.processingSessionId;
     const runId = context.createSubtitleOcrRunId(`${item.id}-restore`);
     context.previewRestoreRunIdsByItemId.set(item.id, runId);
     context.activeRunIdsByItemId.set(item.id, runId);
@@ -314,6 +316,12 @@ export function createSubtitleOcrPreviewCoordination(
       subtitleOcrStore.setProgress(item.id, undefined);
       if (!context.isCancellationError(error) && !context.getCancelRequested() && !subtitleOcrStore.isItemCancelled(item.id)) {
         subtitleOcrStore.addLog('warning', 'Subtitle OCR previews were not restored', item.id);
+        logAndToast.warning({
+          source: 'subtitle-ocr',
+          title: 'Subtitle OCR previews were not restored',
+          details: 'The OCR text remains available, but missing cue images could not be regenerated.',
+          showAction: false,
+        });
       }
       discardPendingPreviewRestore(itemId, hydrationToken);
       return 'failed';
@@ -334,12 +342,14 @@ export function createSubtitleOcrPreviewCoordination(
       deleteSubtitleOcrRunIdIfCurrent(context.backendCancelableRunIdsByItemId, item.id, runId);
       deleteSubtitleOcrRunIdIfCurrent(context.activeRunIdsByItemId, item.id, runId);
       deleteSubtitleOcrRunIdIfCurrent(context.previewRestoreRunIdsByItemId, item.id, runId);
-      if (processingStarted) subtitleOcrStore.stopProcessing();
-      if (processingStarted && subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)) {
+      const stoppedProcessing = processingStarted
+        && processingSessionId !== null
+        && subtitleOcrStore.stopProcessing(processingSessionId);
+      if (stoppedProcessing && subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)) {
         subtitleOcrStore.setItemStatus(item.id, 'completed');
         subtitleOcrStore.setProgress(item.id, undefined);
       }
-      if (processingStarted) requestPendingPreviewRestoreFlush();
+      if (stoppedProcessing) requestPendingPreviewRestoreFlush();
       if (context.isImportGenerationCancelled(generation)) {
         context.onCancelledRestoreSettled(generation);
       }

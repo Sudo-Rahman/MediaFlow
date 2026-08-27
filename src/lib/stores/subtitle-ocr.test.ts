@@ -676,6 +676,26 @@ describe('subtitleOcrStore', () => {
     expect(subtitleOcrStore.startProcessing(['a'])).toBe(true);
   });
 
+  it('does not let a stale processing finalizer stop a newer session', () => {
+    subtitleOcrStore.addItems([source('a'), source('b')]);
+    expect(subtitleOcrStore.startProcessing(['a'])).toBe(true);
+    const staleSessionId = subtitleOcrStore.processingSessionId;
+    expect(staleSessionId).not.toBeNull();
+
+    subtitleOcrStore.stopProcessing();
+    expect(subtitleOcrStore.startProcessing(['b'])).toBe(true);
+    const currentSessionId = subtitleOcrStore.processingSessionId;
+    expect(currentSessionId).not.toBe(staleSessionId);
+
+    expect(subtitleOcrStore.stopProcessing(staleSessionId!)).toBe(false);
+    expect(subtitleOcrStore.isProcessing).toBe(true);
+    expect(subtitleOcrStore.processingSessionId).toBe(currentSessionId);
+    expect([...subtitleOcrStore.processingScopeItemIds]).toEqual(['b']);
+
+    expect(subtitleOcrStore.stopProcessing(currentSessionId!)).toBe(true);
+    expect(subtitleOcrStore.isProcessing).toBe(false);
+  });
+
   it('invalidates current and completed hydration tokens for cancel-all', () => {
     subtitleOcrStore.addItems([source('a')]);
     const token = subtitleOcrStore.startHydration('a');

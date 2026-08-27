@@ -297,9 +297,7 @@
         controller.abort();
       }
       aiCleanupControllers.clear();
-      importGenerationCoordinator.cancelAll();
-      activeImportGeneration = importGenerationCoordinator.activeGeneration;
-      pendingPreviewRestoreActivity += 1;
+      cancelImportGenerations();
       importCoordination.clear();
       activeRunIdsByItemId.clear();
       backendCancelableRunIdsByItemId.clear();
@@ -330,6 +328,12 @@
     isProcessing: () => subtitleOcrStore.isProcessing,
     setCancelling: subtitleOcrStore.setCancelling,
   });
+
+  function cancelImportGenerations(): void {
+    importGenerationCoordinator.cancelAll();
+    activeImportGeneration = importGenerationCoordinator.activeGeneration;
+    pendingPreviewRestoreActivity += 1;
+  }
 
   function beginImportGeneration(): SubtitleOcrImportLease {
     cancellationScope.prepareForImport();
@@ -690,7 +694,7 @@
       || importCoordination.hasHydrationWork
       || hasPreviewRestore
     ) {
-      importGenerationCoordinator.cancelAll();
+      cancelImportGenerations();
       previewCoordination.cancel();
       pendingPreviewRestoreActivity += 1;
       importCoordination.cancelQueuedAndCurrent();

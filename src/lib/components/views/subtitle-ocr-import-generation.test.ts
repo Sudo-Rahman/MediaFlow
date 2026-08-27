@@ -22,6 +22,7 @@ describe('Subtitle OCR import generation coordinator', () => {
     const cancelled = coordinator.begin();
     const oldRetained = coordinator.begin();
     expect(coordinator.cancelAll()).toEqual([cancelled.generation]);
+    expect(coordinator.activeGeneration).toBeNull();
 
     const fresh = coordinator.begin();
     expect(fresh.generation).not.toBe(cancelled.generation);

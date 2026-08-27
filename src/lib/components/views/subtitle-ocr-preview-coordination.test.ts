@@ -10,7 +10,11 @@ import { DEFAULT_SUBTITLE_OCR_CONFIG } from '$lib/types';
 import { subtitleOcrStore } from '$lib/stores';
 
 const invokeMock = vi.hoisted(() => vi.fn());
+const warningMock = vi.hoisted(() => vi.fn());
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
+vi.mock('$lib/utils/log-toast', () => ({
+  logAndToast: { warning: warningMock },
+}));
 
 import { createSubtitleOcrImportGenerationCoordinator } from './subtitle-ocr-import-generation';
 import { createSubtitleOcrPreviewCoordination } from './subtitle-ocr-preview-coordination';
@@ -65,7 +69,11 @@ function source(): SubtitleOcrSourceItem {
   };
 }
 
-function createHarness() {
+function createHarness(
+  collectMissingPreviewAssets: (
+    bitmaps: SubtitleOcrCueBitmap[],
+  ) => Promise<SubtitleOcrCueBitmap[]> = async (bitmaps) => bitmaps,
+) {
   const generationCoordinator = createSubtitleOcrImportGenerationCoordinator();
   const previewRestoreRunIdsByItemId = new Map<string, string>();
   const activeRunIdsByItemId = new Map<string, string>();
@@ -102,7 +110,7 @@ function createHarness() {
         cancelRequested = false;
       }
     },
-    collectMissingPreviewAssets: async (bitmaps) => bitmaps,
+    collectMissingPreviewAssets,
     onActivity: () => {},
   });
 
@@ -129,6 +137,28 @@ describe('Subtitle OCR preview coordination', () => {
     subtitleOcrStore.reset();
     subtitleOcrStore.addItems([source()]);
     invokeMock.mockReset();
+    warningMock.mockReset();
+  });
+
+  it('warns when the backend restores only part of the missing previews', async () => {
+    const secondBitmap: SubtitleOcrCueBitmap = {
+      ...bitmap,
+      cueId: 'cue-2',
+      startTimeMs: 1000,
+      endTimeMs: 2000,
+    };
+    const harness = createHarness(async () => [bitmap, secondBitmap]);
+    const lease = harness.generationCoordinator.begin();
+    const token = subtitleOcrStore.startHydration('restore');
+    subtitleOcrStore.finishHydration('restore', token);
+    invokeMock.mockResolvedValue([bitmap]);
+
+    await expect(
+      harness.coordination.restoreMissingPreviewAssets('restore', token, lease.generation),
+    ).resolves.toBe('completed');
+    expect(warningMock).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Some Subtitle OCR previews were not restored',
+    }));
   });
 
   it('resets an active restore cancellation and allows a fresh restore', async () => {

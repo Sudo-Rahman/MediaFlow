@@ -6,6 +6,7 @@ import type {
   SubtitleOcrProgress,
   SubtitleOcrSourceItem,
 } from '$lib/types';
+import { logAndToast } from '$lib/utils/log-toast';
 
 import {
   collectMissingSubtitleOcrBitmapAssetsSafely,
@@ -295,6 +296,14 @@ export function createSubtitleOcrPreviewCoordination(
       }
       discardPendingPreviewRestore(itemId, hydrationToken);
       subtitleOcrStore.addLog('success', `Restored ${restoredBitmaps.length}/${collection.bitmaps.length} missing preview assets`, item.id);
+      if (restoredBitmaps.length < collection.bitmaps.length) {
+        logAndToast.warning({
+          source: 'subtitle-ocr',
+          title: 'Some Subtitle OCR previews were not restored',
+          details: 'The OCR text remains available, but some cue images could not be regenerated.',
+          showAction: false,
+        });
+      }
       return 'completed';
     } catch (error) {
       if (!context.isImportGenerationUsable(generation) || !subtitleOcrStore.isHydrationTokenValid(itemId, hydrationToken)) {

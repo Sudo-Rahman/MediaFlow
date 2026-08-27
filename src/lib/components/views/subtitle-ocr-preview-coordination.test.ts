@@ -176,6 +176,36 @@ describe('Subtitle OCR preview coordination', () => {
     }));
   });
 
+  it('warns when collecting missing previews exhausts its retries', async () => {
+    const harness = createHarness(async () => {
+      throw new Error('collection unavailable');
+    });
+    const lease = harness.generationCoordinator.begin();
+    const token = subtitleOcrStore.startHydration('restore');
+    subtitleOcrStore.finishHydration('restore', token);
+
+    await expect(
+      harness.coordination.restoreMissingPreviewAssets('restore', token, lease.generation),
+    ).resolves.toBe('retry');
+    await expect(
+      harness.coordination.restoreMissingPreviewAssets('restore', token, lease.generation),
+    ).resolves.toBe('retry');
+    await expect(
+      harness.coordination.restoreMissingPreviewAssets('restore', token, lease.generation),
+    ).resolves.toBe('retry');
+    await expect(
+      harness.coordination.restoreMissingPreviewAssets('restore', token, lease.generation),
+    ).resolves.toBe('failed');
+
+    expect(warningMock).toHaveBeenCalledTimes(1);
+    expect(warningMock).toHaveBeenCalledWith({
+      source: 'subtitle-ocr',
+      title: 'Subtitle OCR previews were not restored',
+      details: 'The OCR text remains available, but missing cue images could not be checked after several attempts.',
+      showAction: false,
+    });
+  });
+
   it('resets an active restore cancellation and allows a fresh restore', async () => {
     const harness = createHarness();
     const firstLease = harness.generationCoordinator.begin();

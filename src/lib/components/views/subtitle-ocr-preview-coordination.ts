@@ -147,6 +147,12 @@ export function createSubtitleOcrPreviewCoordination(
       `Could not check missing Subtitle OCR previews after ${SUBTITLE_OCR_PREVIEW_RESTORE_MAX_RETRIES} attempts: ${details}`,
       itemId,
     );
+    logAndToast.warning({
+      source: 'subtitle-ocr',
+      title: 'Subtitle OCR previews were not restored',
+      details: 'The OCR text remains available, but missing cue images could not be checked after several attempts.',
+      showAction: false,
+    });
     return 'failed';
   }
 

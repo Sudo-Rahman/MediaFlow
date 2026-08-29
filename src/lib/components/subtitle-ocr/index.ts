@@ -16,6 +16,7 @@ export {
   resolveImportButtonLabel,
   toggleTrackSelection,
   type SubtitleOcrImportTrack,
+  type SubtitleOcrTrackImportSelection,
 } from './subtitle-ocr-import-dialog-state';
 export {
   buildTimelineBuckets,

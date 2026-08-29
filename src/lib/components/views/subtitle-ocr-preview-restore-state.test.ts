@@ -49,4 +49,18 @@ describe('Subtitle OCR preview restore state', () => {
       phase: 'queued',
     });
   });
+
+  it('clears queued and active entries for cancel-all while tolerating late completion', () => {
+    const state = createSubtitleOcrPreviewRestoreState();
+
+    expect(state.begin('active', 'A', true)).toBe(true);
+    expect(state.queue('queued', 'B', true)).toBe(true);
+
+    state.clear();
+
+    expect(state.listCurrent()).toEqual([]);
+    expect(state.hasQueued()).toBe(false);
+    expect(state.finish('active', 'A')).toBe(false);
+    expect(state.discard('queued', 'B')).toBe(false);
+  });
 });

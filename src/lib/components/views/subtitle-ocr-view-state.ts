@@ -138,6 +138,10 @@ export function getSubtitleOcrActiveVersionItemIds(
     .map((item) => item.id);
 }
 
+/**
+ * Event delivery is scoped to the exact current run. Cancellation removes the
+ * run mapping synchronously, so settled run IDs need no retained tombstones.
+ */
 export function shouldApplySubtitleOcrProgressEvent(
   itemId: string,
   runId: string | undefined,
@@ -150,6 +154,16 @@ export function shouldApplySubtitleOcrProgressEvent(
 
   const activeRunId = activeRunIdsByItemId.get(itemId);
   return activeRunId !== undefined && runId === activeRunId;
+}
+
+export function deleteSubtitleOcrRunIdIfCurrent(
+  runIdsByItemId: Map<string, string>,
+  itemId: string,
+  runId: string,
+): void {
+  if (runIdsByItemId.get(itemId) === runId) {
+    runIdsByItemId.delete(itemId);
+  }
 }
 
 export function shouldApplySubtitleOcrRestoreResult(

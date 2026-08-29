@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Check, ScanText } from '@lucide/svelte';
 
-  import type { SubtitleOcrModelOverride, SubtitleOcrSourceItem } from '$lib/types';
+  import type { SubtitleOcrModelOverride } from '$lib/types';
   import { OCR_LANGUAGES } from '$lib/types/video-ocr';
   import { Button } from '$lib/components/ui/button';
   import { Badge } from '$lib/components/ui/badge';
@@ -19,20 +19,23 @@
     selectForcedTrackSelection,
     toggleTrackSelection,
     type SubtitleOcrImportTrack,
+    type SubtitleOcrTrackImportSelection,
   } from './subtitle-ocr-import-dialog-state';
 
   interface SubtitleOcrImportTracksDialogProps {
     open: boolean;
+    generation: number;
     onOpenChange: (open: boolean) => void;
     sourcePath: string;
     sourceDuration?: number;
     tracks: SubtitleOcrImportTrack[];
-    onImport: (items: SubtitleOcrSourceItem[]) => void | Promise<void>;
+    onImport: (selection: SubtitleOcrTrackImportSelection) => void | Promise<void>;
     onCancel?: () => void;
   }
 
   let {
     open = $bindable(false),
+    generation,
     onOpenChange,
     sourcePath,
     sourceDuration,
@@ -119,6 +122,7 @@
     isImporting = true;
     try {
       await importSelectedSubtitleOcrTracks({
+        generation,
         sourcePath,
         sourceDuration,
         tracks,

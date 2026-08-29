@@ -83,6 +83,8 @@ let selectedItemId = $state<string | null>(null);
 let config = $state<SubtitleOcrConfig>({ ...DEFAULT_SUBTITLE_OCR_CONFIG });
 let isProcessing = $state(false);
 let isCancelling = $state(false);
+let processingSessionId = $state<string | null>(null);
+let processingSessionSequence = 0;
 let processingScopeItemIds = $state<Set<string>>(new Set());
 let processingBatchItemIds = $state<Set<string>>(new Set());
 let processingStartedItemIds = $state<Set<string>>(new Set());
@@ -312,6 +314,10 @@ export const subtitleOcrStore = {
     return isCancelling;
   },
 
+  get processingSessionId() {
+    return processingSessionId;
+  },
+
   get processingScopeItemIds() {
     return new Set(processingScopeItemIds);
   },
@@ -342,6 +348,7 @@ export const subtitleOcrStore = {
     config = { ...DEFAULT_SUBTITLE_OCR_CONFIG };
     isProcessing = false;
     isCancelling = false;
+    processingSessionId = null;
     processingScopeItemIds = new Set();
     processingBatchItemIds = new Set();
     processingStartedItemIds = new Set();
@@ -457,6 +464,21 @@ export const subtitleOcrStore = {
     const nextCompletedHydrationTokens = new Map(completedHydrationTokens);
     nextCompletedHydrationTokens.set(itemId, token);
     completedHydrationTokens = nextCompletedHydrationTokens;
+  },
+
+  invalidateHydration(itemId: string, token?: string): boolean {
+    const currentToken = hydratingItemTokens.get(itemId) ?? completedHydrationTokens.get(itemId);
+    if (!currentToken || (token !== undefined && currentToken !== token)) {
+      return false;
+    }
+
+    const nextHydratingItemTokens = new Map(hydratingItemTokens);
+    nextHydratingItemTokens.delete(itemId);
+    hydratingItemTokens = nextHydratingItemTokens;
+    const nextCompletedHydrationTokens = new Map(completedHydrationTokens);
+    nextCompletedHydrationTokens.delete(itemId);
+    completedHydrationTokens = nextCompletedHydrationTokens;
+    return true;
   },
 
   setItemStatus(itemId: string, status: SubtitleOcrStatus, error?: string) {
@@ -852,6 +874,8 @@ export const subtitleOcrStore = {
 
     isProcessing = true;
     isCancelling = false;
+    processingSessionSequence += 1;
+    processingSessionId = `subtitle-ocr-session-${processingSessionSequence}`;
     processingScopeItemIds = new Set(itemIds);
     processingBatchItemIds = new Set(itemIds);
     processingStartedItemIds = new Set();
@@ -865,13 +889,19 @@ export const subtitleOcrStore = {
     return true;
   },
 
-  stopProcessing() {
+  stopProcessing(expectedSessionId?: string): boolean {
+    if (expectedSessionId !== undefined && processingSessionId !== expectedSessionId) {
+      return false;
+    }
+
     isProcessing = false;
     isCancelling = false;
+    processingSessionId = null;
     processingScopeItemIds = new Set();
     processingBatchItemIds = new Set();
     processingStartedItemIds = new Set();
     cancelledItemIds = new Set();
+    return true;
   },
 
   setCancelling(value: boolean) {
@@ -911,7 +941,7 @@ export const subtitleOcrStore = {
     return true;
   },
 
-  cancelProcessing(itemId: string) {
+  cancelProcessing(itemId: string, logCancellation = true) {
     if (!processingScopeItemIds.has(itemId)) {
       return;
     }
@@ -937,7 +967,16 @@ export const subtitleOcrStore = {
       });
     });
 
-    this.addLog('warning', 'Processing cancelled by user', itemId);
+    if (logCancellation) {
+      this.addLog('warning', 'Processing cancelled by user', itemId);
+    }
+  },
+
+  cancelProcessingBatch(itemIds: Iterable<string>) {
+    for (const itemId of new Set(itemIds)) {
+      processingScopeItemIds = new Set([...processingScopeItemIds, itemId]);
+      this.cancelProcessing(itemId, false);
+    }
   },
 
   finishProcessingItem(itemId: string) {

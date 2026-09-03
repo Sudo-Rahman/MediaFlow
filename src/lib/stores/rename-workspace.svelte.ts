@@ -122,6 +122,7 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
   let abortController = $state<AbortController | null>(null);
   let userPresets = $state<RulePreset[]>([]);
   let presetsLoaded = $state(false);
+  let activePresetId = $state<string | null>(null);
   let recalculateTimeoutId: ReturnType<typeof setTimeout> | null = null;
   let isRecalculating = false;
   let unsubscribePresetChanges: (() => void) | null = null;
@@ -737,6 +738,10 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
       return presetsLoaded;
     },
 
+    get activePreset(): RulePreset | null {
+      return [...BUILT_IN_PRESETS, ...userPresets].find((preset) => preset.id === activePresetId) ?? null;
+    },
+
     async loadPresets() {
       ensurePresetSubscription();
 
@@ -767,13 +772,43 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
         enabled: rule.enabled,
         config: { ...rule.config },
       }));
+      activePresetId = preset.id;
 
       scheduleRecalculation();
     },
 
     async saveAsPreset(name: string, description: string): Promise<RulePreset | null> {
       try {
-        return await savePresetToStorage(name, description, rules);
+        const savedPreset = await savePresetToStorage(name, description, rules);
+        if (!userPresets.some((preset) => preset.id === savedPreset.id)) {
+          userPresets = [...userPresets, savedPreset];
+        }
+        activePresetId = savedPreset.id;
+        return savedPreset;
+      } catch (error) {
+        console.error('Failed to save preset:', error);
+        return null;
+      }
+    },
+
+    async saveActivePreset(): Promise<RulePreset | null> {
+      const activePreset = [...BUILT_IN_PRESETS, ...userPresets]
+        .find((preset) => preset.id === activePresetId);
+
+      if (!activePreset || activePreset.isBuiltIn) {
+        return null;
+      }
+
+      try {
+        const updatedPreset = await updatePresetInStorage(activePreset.id, { rules });
+        if (!updatedPreset) {
+          return null;
+        }
+
+        userPresets = userPresets.map((preset) => (
+          preset.id === updatedPreset.id ? updatedPreset : preset
+        ));
+        return updatedPreset;
       } catch (error) {
         console.error('Failed to save preset:', error);
         return null;
@@ -801,7 +836,11 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
 
     async deletePreset(presetId: string): Promise<boolean> {
       try {
-        return await deletePresetFromStorage(presetId);
+        const deleted = await deletePresetFromStorage(presetId);
+        if (deleted && activePresetId === presetId) {
+          activePresetId = null;
+        }
+        return deleted;
       } catch (error) {
         console.error('Failed to delete preset:', error);
         return false;

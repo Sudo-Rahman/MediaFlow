@@ -96,6 +96,15 @@
     dialogOpen = false;
   }
 
+  function handleDialogKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Enter' || event.isComposing || !(event.target instanceof HTMLInputElement)) {
+      return;
+    }
+
+    event.preventDefault();
+    handleCloseDialog();
+  }
+
   function handleDndConsider(e: CustomEvent<DndEvent<RenameRule>>) {
     localRules = e.detail.items;
   }
@@ -207,6 +216,7 @@
 <!-- Edit Rule Dialog -->
 <Dialog.Root bind:open={dialogOpen}>
   <Dialog.Content
+    onkeydown={handleDialogKeydown}
     class={cn(
       'max-h-[85vh] overflow-x-hidden overflow-y-auto',
       editingRule?.type === 'series-number' ? 'sm:max-w-2xl' : 'sm:max-w-md',

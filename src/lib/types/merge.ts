@@ -1,5 +1,6 @@
 import type { TrackType } from './media';
 import type { LLMProvider } from './translation';
+import type { SourceGroup } from './source-group';
 
 // Types for Batch Merge
 
@@ -20,6 +21,7 @@ export interface MergeVideoFile {
   episodeNumber?: number;
   // Tracks to be merged into this file
   attachedTracks: AttachedTrack[];
+  sourceGroup?: SourceGroup;
 }
 
 // Imported track (to merge)
@@ -36,6 +38,7 @@ export interface ImportedTrack {
   episodeNumber?: number;
   // Track config
   config: MergeTrackConfig;
+  sourceGroup?: SourceGroup;
 }
 
 // Track attached to a video file

@@ -32,6 +32,14 @@ export function buildProbedFileUpdate(
 ): Partial<AudioFile> {
   const selectedTrack = audioTracks[trackIndex];
 
+  if (audioTracks.length === 0) {
+    return {
+      status: 'error',
+      error: 'No audio tracks found in this file.',
+      audioTrackCount: 0,
+    };
+  }
+
   return {
     duration: probeResult.duration,
     format: selectedTrack?.codec,

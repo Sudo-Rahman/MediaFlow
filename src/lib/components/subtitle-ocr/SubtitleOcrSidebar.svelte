@@ -7,15 +7,15 @@
     RotateCw,
     ScanText,
     Trash2,
-    Upload,
     X,
   } from '@lucide/svelte';
 
   import type { SubtitleOcrStatus } from '$lib/types';
+  import { getToolImportPolicy } from '$lib/types/import-policy';
   import { buildSubtitleOcrSourceLabel } from '$lib/types';
   import type { SubtitleOcrItemSummary } from '$lib/stores';
   import { OCR_LANGUAGES } from '$lib/types/video-ocr';
-  import { FileItemCard } from '$lib/components/shared';
+  import { FileItemCard, ToolImportButton } from '$lib/components/shared';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
   import { ImportDropZone } from '$lib/components/ui/import-drop-zone';
@@ -40,6 +40,7 @@
     processingScopeItemIds: ReadonlySet<string>;
     restoringPreviewItemIds?: ReadonlySet<string>;
     onImport: () => void | Promise<void>;
+    onImportFolders: () => void | Promise<void>;
     onSelectItem: (itemId: string) => void;
     onOpenVersions: (itemId: string) => void;
     onRetry: (itemId: string) => void;
@@ -55,6 +56,7 @@
     processingScopeItemIds,
     restoringPreviewItemIds = new Set<string>(),
     onImport,
+    onImportFolders,
     onSelectItem,
     onOpenVersions,
     onRetry,
@@ -63,7 +65,7 @@
     onClearAll,
   }: SubtitleOcrSidebarProps = $props();
 
-  const SUPPORTED_FORMATS = 'MKV, M2TS, VOB, SUP, IDX/SUB';
+  const SUPPORTED_FORMATS = getToolImportPolicy('subtitle-ocr').formatLabel;
   const PROCESSING_STATUSES = new Set<SubtitleOcrStatus>([
     'scanning',
     'extracting',
@@ -168,10 +170,12 @@
           <Trash2 class="size-4" />
         </Button>
       {/if}
-      <Button size="sm" onclick={() => void onImport()} disabled={isProcessing}>
-        <Upload class="size-4" />
-        Add
-      </Button>
+      <ToolImportButton
+        targetTool="subtitle-ocr"
+        onBrowse={() => void onImport()}
+        onBrowseFolders={() => void onImportFolders()}
+        disabled={isProcessing}
+      />
     </div>
   </div>
 

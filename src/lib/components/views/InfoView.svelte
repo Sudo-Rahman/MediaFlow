@@ -5,57 +5,42 @@
 </script>
 
 <script lang="ts">
-  import { open } from '@tauri-apps/plugin-dialog';
   import { toast } from 'svelte-sonner';
 
   import { InfoDetailsPanel, InfoFileSidebar } from '$lib/components/info';
   import { infoStore, toolImportStore } from '$lib/stores';
   import type { FileInfo } from '$lib/stores/info.svelte';
+  import type { ExpandedImportFile } from '$lib/types';
   import type { ImportSourceId } from '$lib/types/tool-import';
   import { scanFiles } from '$lib/services/ffprobe';
   import { getFileName } from '$lib/utils/format';
   import { log } from '$lib/utils/log-toast';
+  import {
+    expandToolImportRoots,
+    expandedFilesFromPaths,
+    pickAndExpandToolImport,
+    toolImportPolicy,
+  } from '$lib/services/import-coordination';
 
-  import { SUPPORTED_EXTENSIONS, SUPPORTED_FORMATS } from '$lib/components/info/info-utils';
+  import { SUPPORTED_FORMATS } from '$lib/components/info/info-utils';
 
   const selectedFile = $derived(infoStore.selectedFile ?? null);
+  const importPolicy = toolImportPolicy('info');
 
   export async function handleFileDrop(paths: string[]) {
-    const supportedPaths = paths.filter((path) => {
-      const extension = getPathExtension(path);
-      return SUPPORTED_EXTENSIONS.includes(extension as (typeof SUPPORTED_EXTENSIONS)[number]);
-    });
-
-    if (supportedPaths.length === 0) {
-      toast.warning('No supported media files detected');
-      return;
-    }
-
-    await addFiles(supportedPaths);
+    await addExpandedFiles(await expandToolImportRoots(paths, importPolicy, 'ffprobe'));
   }
 
-  function getPathExtension(path: string): string {
-    const normalized = path.toLowerCase();
-    const lastDot = normalized.lastIndexOf('.');
-    return lastDot >= 0 ? normalized.slice(lastDot) : '';
+  async function handleAddFiles(): Promise<void> {
+    await addExpandedFiles(await pickAndExpandToolImport(importPolicy, 'ffprobe', 'files'));
   }
 
-  async function handleAddFiles() {
-    const selected = await open({
-      multiple: true,
-      filters: [{
-        name: 'Media files',
-        extensions: SUPPORTED_EXTENSIONS.map((extension) => extension.slice(1)),
-      }],
-    });
-
-    if (selected) {
-      const paths = Array.isArray(selected) ? selected : [selected];
-      await addFiles(paths);
-    }
+  async function handleAddFolders(): Promise<void> {
+    await addExpandedFiles(await pickAndExpandToolImport(importPolicy, 'ffprobe', 'folders'));
   }
 
-  async function addFiles(paths: string[]) {
+  async function addExpandedFiles(expandedFiles: readonly ExpandedImportFile[]): Promise<void> {
+    const paths = expandedFiles.map(({ path }) => path);
     let added = 0;
     let skipped = 0;
 
@@ -147,7 +132,7 @@
       return;
     }
 
-    await addFiles(paths);
+    await addExpandedFiles(expandedFilesFromPaths(paths));
   }
 
   function handleRemoveFile(fileId: string) {
@@ -165,6 +150,7 @@
     selectedFileId={infoStore.selectedFileId}
     supportedFormats={SUPPORTED_FORMATS}
     onBrowse={handleAddFiles}
+    onBrowseFolders={handleAddFolders}
     onSelectSource={handleImportFromSource}
     onSelectFile={infoStore.selectFile}
     onRemoveFile={handleRemoveFile}

@@ -41,7 +41,7 @@
     onClearAll={onClearAll}
     onRemoveFile={onRemoveFile}
     emptyStateTitle="No files in the transcode queue"
-    emptyStateSubtitle="Add files in Transcode to prepare output names."
+    emptyStateSubtitle="Import files in Transcode to prepare output names."
   >
     {#snippet actionPanel()}
       <div class="space-y-3">

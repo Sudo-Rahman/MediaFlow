@@ -57,6 +57,18 @@ describe('subtitle OCR import helpers', () => {
     ]);
   });
 
+  it('pairs IDX and SUB files case-insensitively across path separators', () => {
+    expect(resolveVobSubPairCandidates([
+      String.raw`C:\Subs\Movie.IDX`,
+      String.raw`c:\subs\movie.sub`,
+    ])).toEqual([{
+      basePath: String.raw`C:\Subs\Movie`,
+      idxPath: String.raw`C:\Subs\Movie.IDX`,
+      subPath: String.raw`c:\subs\movie.sub`,
+      complete: true,
+    }]);
+  });
+
   it('resolves missing pair files through the supplied backend resolver', async () => {
     const resolveVobSubPair = vi.fn(async (path: string) => {
       expect(path).toBe('/subs/French.idx');

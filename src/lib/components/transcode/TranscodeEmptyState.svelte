@@ -1,14 +1,7 @@
 <script lang="ts">
   import { FileVideo } from '@lucide/svelte';
 
-  import { Button } from '$lib/components/ui/button';
   import * as Empty from '$lib/components/ui/empty';
-
-  interface Props {
-    onAddFiles?: () => void | Promise<void>;
-  }
-
-  let { onAddFiles }: Props = $props();
 </script>
 
 <div class="flex-1 p-6">
@@ -23,10 +16,7 @@
       </Empty.Description>
     </Empty.Header>
     <Empty.Content>
-      <Button onclick={onAddFiles}>
-        <FileVideo class="size-4 mr-2" />
-        Add Files
-      </Button>
+      <p class="text-sm text-muted-foreground">Use the Import menu in the sidebar to get started.</p>
     </Empty.Content>
   </Empty.Root>
 </div>

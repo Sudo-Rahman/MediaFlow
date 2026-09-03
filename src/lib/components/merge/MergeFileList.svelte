@@ -187,7 +187,7 @@
           <p class="text-sm text-muted-foreground">No files</p>
           <Button variant="outline" size="sm" class="mt-3" onclick={onAddFiles}>
             <Plus class="size-4 mr-1" />
-            Add files
+            Import
           </Button>
         </div>
       {/if}

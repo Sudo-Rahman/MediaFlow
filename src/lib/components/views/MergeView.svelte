@@ -8,7 +8,6 @@
   import { onDestroy, onMount, untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-  import { open } from '@tauri-apps/plugin-dialog';
   import { toast } from 'svelte-sonner';
 
   import { useToolHeader } from '$lib/components/layout/tool-header-context.svelte';
@@ -22,6 +21,13 @@
   import { getBaseName, getDirectoryFromPath, getExtension, type ResolveRenameTargetPathContext } from '$lib/services/rename';
   import { createRenameWorkspaceStore, mergeStore, settingsStore, toolImportStore } from '$lib/stores';
   import { getFileName, resolveOutputFolderDisplay } from '$lib/utils';
+  import type { ExpandedImportFile } from '$lib/types';
+  import {
+    expandMergeMixedImportRoots,
+    expandedFilesFromPaths,
+    pickAndExpandToolImport,
+    toolImportPolicy,
+  } from '$lib/services/import-coordination';
   import { logAndToast } from '$lib/utils/log-toast';
   import { getCodecFromExtension, type ImportedTrack, type MergeTrackConfig, type MergeProgressEvent, type MergeVideoFile, type RenameFile } from '$lib/types';
   import type { ImportItem, ImportSourceId, ImportableKind } from '$lib/types/tool-import';
@@ -35,9 +41,10 @@
   const VIDEO_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'];
   const SUBTITLE_EXTENSIONS = ['.ass', '.ssa', '.srt', '.sub', '.idx', '.vtt', '.sup'];
   const AUDIO_EXTENSIONS = ['.aac', '.ac3', '.dts', '.flac', '.mp3', '.ogg', '.wav', '.eac3', '.opus'];
-  const ALL_EXTENSIONS = [...VIDEO_EXTENSIONS, ...SUBTITLE_EXTENSIONS, ...AUDIO_EXTENSIONS];
   const VIDEO_FORMATS = VIDEO_EXTENSIONS.map((extension) => extension.slice(1).toUpperCase());
   const STALE_AI_MATCH_MESSAGE = 'Files changed while AI Match was running. Run AI Match again.';
+  const videoImportPolicy = toolImportPolicy('merge', 'merge-video');
+  const trackImportPolicy = toolImportPolicy('merge', 'merge-track');
 
   type ForcedImportType = 'video' | 'subtitle' | 'audio';
 
@@ -219,6 +226,7 @@
       size: video.size,
       modifiedAt: video.modifiedAt,
       createdAt: video.createdAt,
+      sourceGroup: video.sourceGroup,
     };
   }
 
@@ -288,46 +296,31 @@
   }
 
   export async function handleFileDrop(paths: string[]) {
-    const supportedPaths = paths.filter((path) => {
-      const extension = path.toLowerCase().substring(path.lastIndexOf('.'));
-      return ALL_EXTENSIONS.includes(extension);
-    });
-
-    if (supportedPaths.length === 0) {
-      toast.warning('No supported files detected');
-      return;
-    }
-
-    await addFiles(supportedPaths);
+    await addFiles(await expandMergeMixedImportRoots(paths));
   }
 
   async function handleAddVideoFiles(): Promise<void> {
-    const selected = await open({
-      multiple: true,
-      filters: [{ name: 'Video files', extensions: VIDEO_EXTENSIONS.map((extension) => extension.slice(1)) }],
-    });
+    await addFiles(await pickAndExpandToolImport(videoImportPolicy, 'merge', 'files'));
+  }
 
-    if (selected) {
-      await addFiles(Array.isArray(selected) ? selected : [selected]);
-    }
+  async function handleAddVideoFolders(): Promise<void> {
+    await addFiles(await pickAndExpandToolImport(videoImportPolicy, 'merge', 'folders'));
   }
 
   async function handleAddTrackFiles(): Promise<void> {
-    const selected = await open({
-      multiple: true,
-      filters: [
-        { name: 'All tracks', extensions: [...SUBTITLE_EXTENSIONS, ...AUDIO_EXTENSIONS].map((extension) => extension.slice(1)) },
-        { name: 'Subtitles', extensions: SUBTITLE_EXTENSIONS.map((extension) => extension.slice(1)) },
-        { name: 'Audio', extensions: AUDIO_EXTENSIONS.map((extension) => extension.slice(1)) },
-      ],
-    });
-
-    if (selected) {
-      await addFiles(Array.isArray(selected) ? selected : [selected]);
-    }
+    await addFiles(await pickAndExpandToolImport(trackImportPolicy, 'merge', 'files'));
   }
 
-  async function addFiles(paths: string[], forcedTypes?: Map<string, ForcedImportType>): Promise<void> {
+  async function handleAddTrackFolders(): Promise<void> {
+    await addFiles(await pickAndExpandToolImport(trackImportPolicy, 'merge', 'folders'));
+  }
+
+  async function addFiles(
+    expandedFiles: readonly ExpandedImportFile[],
+    forcedTypes?: Map<string, ForcedImportType>,
+  ): Promise<void> {
+    const paths = expandedFiles.map(({ path }) => path);
+    const sourceGroupByPath = new Map(expandedFiles.map(({ path, sourceGroup }) => [path, sourceGroup]));
     if (mergeStore.status === 'completed') {
       mergeStore.reset();
     }
@@ -356,6 +349,7 @@
           size: 0,
           tracks: [],
           status: 'scanning',
+          sourceGroup: sourceGroupByPath.get(path),
         });
         videoPaths.push(path);
         videoFileIds.set(path, fileId);
@@ -371,6 +365,7 @@
           codec: getCodecFromExtension(extension),
           language: undefined,
           title: name,
+          sourceGroup: sourceGroupByPath.get(path),
         });
         tracksAdded += 1;
       }
@@ -466,7 +461,7 @@
       return;
     }
 
-    await addFiles(paths, forcedTypes);
+    await addFiles(expandedFilesFromPaths(paths), forcedTypes);
   }
 
   function handleAutoMatch(): void {
@@ -1080,6 +1075,7 @@
     {isCancelling}
     currentProcessingPath={mergeStore.runtimeProgress.currentFilePath}
     onAddVideoFiles={handleAddVideoFiles}
+    onAddVideoFolders={handleAddVideoFolders}
     onRequestClearAll={handleRequestClearAll}
     onSelectVideo={(fileId) => mergeStore.selectVideo(fileId)}
     onCancelFile={(fileId) => { void handleCancelFile(fileId); }}
@@ -1088,6 +1084,7 @@
     onAutoMatchModeChange={(mode) => mergeStore.setAutoMatchMode(mode)}
     onEditSourceTrack={handleEditSourceTrack}
     onAddTrackFiles={handleAddTrackFiles}
+    onAddTrackFolders={handleAddTrackFolders}
     onEditImportedTrack={handleEditImportedTrack}
     onImportFromSource={handleImportFromSource}
     onSelectOutputDir={handleSelectOutputDir}

@@ -13,13 +13,19 @@ import type {
   RemoveConfig,
   CaseConfig,
   NumberConfig,
+  SeriesNumberConfig,
   MoveConfig,
   TimestampConfig,
   ClearConfig,
   TextConfig,
   RenameResult,
+  RenameRuleContext,
+  SortConfig,
 } from '$lib/types/rename';
+import { sourceGroupForDirectFileParent, type SourceGroup } from '$lib/types/source-group';
 import { invoke } from '@tauri-apps/api/core';
+
+export type { RenameRuleContext } from '$lib/types/rename';
 
 /**
  * Generate a unique ID
@@ -69,16 +75,26 @@ export function getDirectoryFromPath(path: string): string {
   return '';
 }
 
-/**
- * Natural sort comparison for filenames
- * Handles numeric parts correctly: "file1" < "file2" < "file10"
- */
 export function naturalCompare(a: string, b: string): number {
-  const collator = new Intl.Collator(undefined, {
-    numeric: true,
-    sensitivity: 'base',
-  });
-  return collator.compare(a, b);
+  return new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare(a, b);
+}
+
+export function compareRenameFiles(
+  left: RenameFile,
+  right: RenameFile,
+  sortConfig: SortConfig,
+): number {
+  const multiplier = sortConfig.direction === 'asc' ? 1 : -1;
+  switch (sortConfig.field) {
+    case 'name':
+      return multiplier * naturalCompare(left.originalName, right.originalName);
+    case 'size':
+      return multiplier * ((left.size ?? 0) - (right.size ?? 0));
+    case 'date':
+      return multiplier * ((left.modifiedAt?.getTime() ?? 0) - (right.modifiedAt?.getTime() ?? 0));
+    default:
+      return 0;
+  }
 }
 
 /**
@@ -211,6 +227,23 @@ function applyNumber(name: string, config: NumberConfig, index: number): string 
   }
 }
 
+function applySeriesNumber(name: string, config: SeriesNumberConfig, context: RenameRuleContext, file?: RenameFile): string {
+  const seasonNumber = context.seasonNumber ?? file?.seasonNumber ?? 1;
+  const episodeNumber = config.start + (context.seriesIndex * config.step);
+  const token = `S${String(seasonNumber).padStart(2, '0')}E${String(episodeNumber).padStart(config.padding, '0')}`;
+
+  switch (config.position) {
+    case 'prefix':
+      return token + config.separator + name;
+    case 'suffix':
+      return name + config.separator + token;
+    case 'replace':
+      return token;
+    default:
+      return name;
+  }
+}
+
 /**
  * Apply move rule
  */
@@ -294,13 +327,23 @@ function applyText(_name: string, config: TextConfig): string {
 /**
  * Apply a single rule to a name
  */
+function normalizeRuleContext(indexOrContext: number | RenameRuleContext): RenameRuleContext {
+  if (typeof indexOrContext === 'number') {
+    return { globalIndex: indexOrContext, seriesIndex: indexOrContext };
+  }
+
+  return indexOrContext;
+}
+
 export function applyRule(
   name: string,
   rule: RenameRule,
-  index: number,
+  indexOrContext: number | RenameRuleContext,
   file?: RenameFile
 ): string {
   if (!rule.enabled) return name;
+
+  const context = normalizeRuleContext(indexOrContext);
   
   switch (rule.type) {
     case 'prefix':
@@ -316,7 +359,9 @@ export function applyRule(
     case 'case':
       return applyCase(name, rule.config as CaseConfig);
     case 'number':
-      return applyNumber(name, rule.config as NumberConfig, index);
+      return applyNumber(name, rule.config as NumberConfig, context.globalIndex);
+    case 'series-number':
+      return applySeriesNumber(name, rule.config as SeriesNumberConfig, context, file);
     case 'move':
       return applyMove(name, rule.config as MoveConfig);
     case 'timestamp':
@@ -336,14 +381,14 @@ export function applyRule(
 export function applyAllRules(
   name: string,
   rules: RenameRule[],
-  index: number,
+  indexOrContext: number | RenameRuleContext,
   file?: RenameFile
 ): string {
   let result = name;
   
   for (const rule of rules) {
     if (rule.enabled) {
-      result = applyRule(result, rule, index, file);
+      result = applyRule(result, rule, indexOrContext, file);
     }
   }
   
@@ -387,7 +432,8 @@ export function createRenameFile(
   path: string,
   size?: number,
   modifiedAt?: Date,
-  createdAt?: Date
+  createdAt?: Date,
+  sourceGroup?: SourceGroup,
 ): RenameFile {
   const filename = getFileNameFromPath(path);
   const baseName = getBaseName(filename);
@@ -404,6 +450,7 @@ export function createRenameFile(
     size,
     modifiedAt,
     createdAt,
+    sourceGroup: sourceGroup ?? sourceGroupForDirectFileParent(path),
   };
 }
 
@@ -603,6 +650,12 @@ export function getRuleSummary(rule: RenameRule): string {
       const config = rule.config as NumberConfig;
       const example = String(config.start).padStart(config.padding, '0');
       return `${config.position}: ${example}, ${example}, ...`;
+    }
+    case 'series-number': {
+      const config = rule.config as SeriesNumberConfig;
+      const episode = String(config.start).padStart(config.padding, '0');
+      const token = `S01E${episode}`;
+      return `${config.position}: ${token}`;
     }
     case 'move': {
       const config = rule.config as MoveConfig;

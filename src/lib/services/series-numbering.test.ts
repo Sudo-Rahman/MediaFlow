@@ -238,4 +238,58 @@ describe('series numbering', () => {
       seasonNumber: 2,
     })).toBe('Episode');
   });
+
+  it('detects and formats season zero for specials folders and filenames', () => {
+    const files = [
+      file('special1', 'Special Feature', '/media/show/Season 0'),
+      file('special2', 'Show S00E02', '/media/show/Specials'),
+    ];
+    const plan = planSeriesNumbering(files, sortConfig);
+
+    const season0Res = plan.resolutions.find((r) => r.groupKey === '/media/show/Season 0');
+    expect(season0Res?.status).toBe('resolved');
+    expect(season0Res?.seasonNumber).toBe(0);
+
+    const specialsRes = plan.resolutions.find((r) => r.groupKey === '/media/show/Specials');
+    expect(specialsRes?.status).toBe('resolved');
+    expect(specialsRes?.seasonNumber).toBe(0);
+
+    expect(applyAllRules('Special Feature', [seriesRule()], plan.contextsByFileId.get('special1')!))
+      .toBe('Special Feature_S00E01');
+    expect(applyAllRules('Show S00E02', [seriesRule()], plan.contextsByFileId.get('special2')!))
+      .toBe('Show S00E02_S00E01');
+  });
+
+  it('clamps padding between 1 and 10 without throwing RangeError', () => {
+    const context = { globalIndex: 0, seriesIndex: 0, seasonNumber: 1 };
+
+    const largePaddingRule: RenameRule = {
+      id: 'series',
+      type: 'series-number',
+      enabled: true,
+      config: {
+        position: 'suffix',
+        start: 1,
+        step: 1,
+        padding: 9999999,
+        separator: '_',
+      },
+    };
+    expect(() => applyAllRules('Episode', [largePaddingRule], context)).not.toThrow();
+    expect(applyAllRules('Episode', [largePaddingRule], context)).toBe('Episode_S01E0000000001');
+
+    const zeroPaddingRule: RenameRule = {
+      id: 'series',
+      type: 'series-number',
+      enabled: true,
+      config: {
+        position: 'suffix',
+        start: 1,
+        step: 1,
+        padding: 0,
+        separator: '_',
+      },
+    };
+    expect(applyAllRules('Episode', [zeroPaddingRule], context)).toBe('Episode_S01E1');
+  });
 });

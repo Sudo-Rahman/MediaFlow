@@ -69,6 +69,16 @@
             {selectedTracksCount}
           </Badge>
         </Item.Root>
+        {#if workspace.hasSeriesNumberingIssues}
+          <Item.Root size="xs" variant="muted" class="justify-between">
+            <Item.Content>
+              <Item.Title>Series numbering</Item.Title>
+            </Item.Content>
+            <Badge variant="destructive">
+              Needs selection
+            </Badge>
+          </Item.Root>
+        {/if}
       </div>
     {/snippet}
   </RenameWorkspace>

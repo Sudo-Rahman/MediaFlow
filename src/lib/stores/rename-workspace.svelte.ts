@@ -328,7 +328,7 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
     },
 
     setSeasonAssignment(groupKey: string, seasonNumber: number): void {
-      if (!Number.isInteger(seasonNumber) || seasonNumber < 1) {
+      if (!Number.isInteger(seasonNumber) || seasonNumber < 0) {
         return;
       }
 

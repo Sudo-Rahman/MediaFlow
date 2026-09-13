@@ -69,6 +69,14 @@
               {outputConflictCount}
             </Badge>
           </Item.Root>
+          {#if workspace.hasSeriesNumberingIssues}
+            <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+              <Item.Title>Series numbering</Item.Title>
+              <Badge variant="destructive">
+                Needs selection
+              </Badge>
+            </Item.Root>
+          {/if}
         </Item.Group>
       </div>
     {/snippet}

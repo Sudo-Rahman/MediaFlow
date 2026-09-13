@@ -26,8 +26,9 @@
   ];
 
   const preview = $derived.by(() => {
-    const episode = String(config.start).padStart(config.padding, '0');
-    const nextEpisode = String(config.start + config.step).padStart(config.padding, '0');
+    const safePadding = Math.min(10, Math.max(1, config.padding || 1));
+    const episode = String(config.start).padStart(safePadding, '0');
+    const nextEpisode = String(config.start + config.step).padStart(safePadding, '0');
     return `S01E${episode}, S01E${nextEpisode}, …`;
   });
   const resolutions = $derived(workspace.seriesResolutions);
@@ -50,7 +51,9 @@
 
   function handlePaddingChange(event: Event): void {
     const target = event.target as HTMLInputElement;
-    onUpdate({ ...config, padding: parseInt(target.value, 10) || 1 });
+    const raw = parseInt(target.value, 10);
+    const clamped = Number.isNaN(raw) ? 1 : Math.min(10, Math.max(1, raw));
+    onUpdate({ ...config, padding: clamped });
   }
 
   function handleSeparatorChange(event: Event): void {
@@ -63,7 +66,7 @@
     const value = Number.parseInt(target.value, 10);
     if (target.value.trim() === '') {
       workspace.clearSeasonAssignment(groupKey);
-    } else if (Number.isInteger(value) && value > 0) {
+    } else if (Number.isInteger(value) && value >= 0) {
       workspace.setSeasonAssignment(groupKey, value);
     }
   }
@@ -162,7 +165,7 @@
                 <Input
                   id={seasonInputId}
                   type="number"
-                  min="1"
+                  min="0"
                   value={resolution.explicitSeasonNumber ?? resolution.seasonNumber ?? ''}
                   aria-label={`Season for ${resolution.label}`}
                   oninput={(event) => handleSeasonInput(resolution.groupKey, event)}

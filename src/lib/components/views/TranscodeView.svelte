@@ -581,8 +581,13 @@
       return;
     }
 
-    if (outputConflictCount > 0) {
+    if (outputConflictCount > 0 || outputNamingWorkspace.hasConflicts) {
       toast.error('Please resolve output naming conflicts before transcoding');
+      return;
+    }
+
+    if (outputNamingWorkspace.hasBlockingIssues) {
+      toast.error('Please resolve series numbering issues before transcoding');
       return;
     }
 
@@ -1121,6 +1126,7 @@
         <TranscodeQueueBar
           readyCount={readyQueueFiles.length}
           conflictCount={outputConflictCount}
+          hasBlockingIssues={outputNamingWorkspace.hasBlockingIssues}
           isProcessing={transcodeStore.isProcessing}
           isCancelling={transcodeStore.isCancelling}
           progress={transcodeStore.progress}

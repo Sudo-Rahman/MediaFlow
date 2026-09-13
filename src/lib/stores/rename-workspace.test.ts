@@ -39,6 +39,19 @@ describe('rename workspace series numbering', () => {
     expect(workspace.hasSeriesNumberingIssues).toBe(false);
     expect(workspace.hasBlockingIssues).toBe(false);
     expect(workspace.files[0]?.newName).toBe('Episode 1_S03E01');
+
+    // Test Season 0 assignment for specials
+    workspace.setSeasonAssignment('/media/show', 0);
+    workspace.recalculateImmediate();
+    expect(workspace.hasSeriesNumberingIssues).toBe(false);
+    expect(workspace.hasBlockingIssues).toBe(false);
+    expect(workspace.files[0]?.newName).toBe('Episode 1_S00E01');
+
+    // Negative values should be ignored
+    workspace.setSeasonAssignment('/media/show', -1);
+    workspace.recalculateImmediate();
+    expect(workspace.files[0]?.newName).toBe('Episode 1_S00E01');
+
     workspace.destroy();
   });
 

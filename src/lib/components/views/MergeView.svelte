@@ -574,8 +574,13 @@
       videosToMerge.some((video) => video.id === file.id) && file.selected,
     );
     const conflictCount = outputNamingWorkspace.getConflicts(selectedNamingFiles).size;
-    if (conflictCount > 0) {
+    if (conflictCount > 0 || outputNamingWorkspace.hasConflicts) {
       toast.error('Please resolve output naming conflicts before merging.');
+      return;
+    }
+
+    if (outputNamingWorkspace.hasBlockingIssues) {
+      toast.error('Please resolve series numbering issues before merging.');
       return;
     }
 

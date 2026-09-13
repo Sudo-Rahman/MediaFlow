@@ -192,7 +192,7 @@ function addSeason(candidates: Set<number>, value: number | undefined): void {
 }
 
 function normalizeSeason(value: number | undefined): number | undefined {
-  return value !== undefined && Number.isInteger(value) && value > 0 ? value : undefined;
+  return value !== undefined && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 function getGroupLabel(sourceGroup: SourceGroup, fallback: string): string {

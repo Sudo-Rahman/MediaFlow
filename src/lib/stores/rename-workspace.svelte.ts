@@ -24,6 +24,7 @@ import {
 import type { BuildNewPathOptions } from '$lib/services/rename';
 import {
   assignSeriesSeasonsSequentially,
+  getSeriesGroupKeys,
   planSeriesNumbering,
   type SeriesGroupResolution,
   type SeriesNumberingIssue,
@@ -147,9 +148,7 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
   }
 
   function pruneSeasonAssignments(sourceFiles: RenameFile[] = files): void {
-    const activeGroupKeys = new Set(
-      planSeriesNumbering(sourceFiles, sortConfig, seasonAssignments).resolutions.map((resolution) => resolution.groupKey),
-    );
+    const activeGroupKeys = new Set(getSeriesGroupKeys(sourceFiles));
     const nextAssignments = new Map(
       [...seasonAssignments].filter(([groupKey]) => activeGroupKeys.has(groupKey)),
     );
@@ -305,9 +304,27 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
       return workspace.seriesIssues.length > 0;
     },
 
+    get hasEnabledSeriesRule(): boolean {
+      return rules.some((rule) => rule.enabled && rule.type === 'series-number');
+    },
+
     get hasBlockingIssues(): boolean {
-      const hasEnabledSeriesRule = rules.some((rule) => rule.enabled && rule.type === 'series-number');
-      return workspace.hasConflicts || (hasEnabledSeriesRule && workspace.hasSeriesNumberingIssues);
+      return workspace.hasConflicts || (workspace.hasEnabledSeriesRule && workspace.hasSeriesNumberingIssues);
+    },
+
+    hasSeriesIssuesForFiles(targetFiles: readonly RenameFile[]): boolean {
+      if (!workspace.hasEnabledSeriesRule) {
+        return false;
+      }
+      return planSeriesNumbering(targetFiles, sortConfig, seasonAssignments).issues.length > 0;
+    },
+
+    hasBlockingIssuesForFiles(targetFiles: readonly RenameFile[]): boolean {
+      const conflicts = workspace.getConflicts(targetFiles as RenameFile[]);
+      if (conflicts.size > 0) {
+        return true;
+      }
+      return workspace.hasSeriesIssuesForFiles(targetFiles);
     },
 
     get isProcessing(): boolean {
@@ -325,6 +342,10 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
 
     getTargetPath(file: RenameFile): string {
       return buildNewPath(file, getTargetPathOptions());
+    },
+
+    get seasonAssignments(): ReadonlyMap<string, number> {
+      return seasonAssignments;
     },
 
     setSeasonAssignment(groupKey: string, seasonNumber: number): void {

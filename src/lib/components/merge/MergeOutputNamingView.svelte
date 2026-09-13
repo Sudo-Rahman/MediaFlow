@@ -69,7 +69,7 @@
             {selectedTracksCount}
           </Badge>
         </Item.Root>
-        {#if workspace.hasSeriesNumberingIssues}
+        {#if workspace.hasEnabledSeriesRule && workspace.hasSeriesNumberingIssues}
           <Item.Root size="xs" variant="muted" class="justify-between">
             <Item.Content>
               <Item.Title>Series numbering</Item.Title>

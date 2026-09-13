@@ -27,8 +27,9 @@
 
   const preview = $derived.by(() => {
     const safePadding = Math.min(10, Math.max(1, config.padding || 1));
+    const safeStep = Math.max(1, config.step || 1);
     const episode = String(config.start).padStart(safePadding, '0');
-    const nextEpisode = String(config.start + config.step).padStart(safePadding, '0');
+    const nextEpisode = String(config.start + safeStep).padStart(safePadding, '0');
     return `S01E${episode}, S01E${nextEpisode}, …`;
   });
   const resolutions = $derived(workspace.seriesResolutions);
@@ -41,12 +42,14 @@
 
   function handleStartChange(event: Event): void {
     const target = event.target as HTMLInputElement;
-    onUpdate({ ...config, start: parseInt(target.value, 10) || 1 });
+    const raw = parseInt(target.value, 10);
+    onUpdate({ ...config, start: Number.isNaN(raw) ? 1 : Math.max(0, raw) });
   }
 
   function handleStepChange(event: Event): void {
     const target = event.target as HTMLInputElement;
-    onUpdate({ ...config, step: parseInt(target.value, 10) || 1 });
+    const raw = parseInt(target.value, 10);
+    onUpdate({ ...config, step: Number.isNaN(raw) ? 1 : Math.max(1, raw) });
   }
 
   function handlePaddingChange(event: Event): void {

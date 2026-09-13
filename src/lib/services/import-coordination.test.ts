@@ -14,7 +14,11 @@ vi.mock('$lib/utils/log-toast', () => ({
   logAndToast: { warning: warningMock },
 }));
 
-import { expandToolImportRoots, summarizeImportWarnings } from './import-coordination';
+import {
+  collapseVobSubImportFiles,
+  expandToolImportRoots,
+  summarizeImportWarnings,
+} from './import-coordination';
 import { getToolImportPolicy } from '$lib/types/import-policy';
 
 describe('import warning aggregation', () => {
@@ -119,3 +123,50 @@ describe('import warning aggregation', () => {
     expect(JSON.stringify(warningMock.mock.calls)).not.toContain('secret path and backend token');
   });
 });
+
+describe('collapseVobSubImportFiles', () => {
+  it('collapses matching .sub when companion .idx is present in import files', () => {
+    const files = [
+      { path: '/media/movie.idx' },
+      { path: '/media/movie.sub' },
+      { path: '/media/other.srt' },
+    ];
+    expect(collapseVobSubImportFiles(files)).toEqual([
+      { path: '/media/movie.idx' },
+      { path: '/media/other.srt' },
+    ]);
+  });
+
+  it('keeps standalone .sub files when no matching .idx exists', () => {
+    const files = [
+      { path: '/media/standalone.sub' },
+      { path: '/media/track.idx' },
+    ];
+    expect(collapseVobSubImportFiles(files)).toEqual([
+      { path: '/media/standalone.sub' },
+      { path: '/media/track.idx' },
+    ]);
+  });
+
+  it('collapses .sub when matching .idx is already among existingPaths', () => {
+    const files = [
+      { path: '/media/existing-movie.sub' },
+      { path: '/media/new-movie.srt' },
+    ];
+    const existing = ['/media/existing-movie.idx'];
+    expect(collapseVobSubImportFiles(files, existing)).toEqual([
+      { path: '/media/new-movie.srt' },
+    ]);
+  });
+
+  it('handles case-insensitivity and backslash path normalization', () => {
+    const files = [
+      { path: 'C:\\Media\\Show.IDX' },
+      { path: 'C:/Media/show.SUB' },
+    ];
+    expect(collapseVobSubImportFiles(files)).toEqual([
+      { path: 'C:\\Media\\Show.IDX' },
+    ]);
+  });
+});
+

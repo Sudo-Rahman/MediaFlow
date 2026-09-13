@@ -4,7 +4,7 @@ import { createRenameWorkspaceStore } from '$lib/stores/rename-workspace.svelte'
 import { buildNewPath } from '$lib/services/rename';
 import type { RenameFile } from '$lib/types/rename';
 
-function file(id: string, name: string, groupKey = '/media/show'): RenameFile {
+function file(id: string, name: string, groupKey = '/media/show', seasonNumber?: number): RenameFile {
   return {
     id,
     originalPath: `${groupKey}/${name}.mkv`,
@@ -19,6 +19,7 @@ function file(id: string, name: string, groupKey = '/media/show'): RenameFile {
       selectedRootKind: 'folder',
       relativePath: `${name}.mkv`,
     },
+    seasonNumber,
   };
 }
 
@@ -101,4 +102,78 @@ describe('rename workspace series numbering', () => {
     expect(renamedFile && buildNewPath(renamedFile)).toBe('/media/show/Episode 01_S02E01.mkv');
     workspace.destroy();
   });
+
+  it('preserves season assignment when files in a group are deselected', () => {
+    const workspace = createRenameWorkspaceStore();
+    workspace.addFiles([file('a', 'A', '/media/show'), file('b', 'B', '/media/other')]);
+    workspace.addRule('series-number');
+    workspace.setSeasonAssignment('/media/show', 4);
+    workspace.setSeasonAssignment('/media/other', 2);
+    workspace.recalculateImmediate();
+
+    expect(workspace.seasonAssignments.get('/media/show')).toBe(4);
+
+    // Deselect file 'a'
+    workspace.toggleFileSelection('a');
+    workspace.recalculateImmediate();
+
+    // The assignment for /media/show should still be preserved because file 'a' is still in the workspace
+    expect(workspace.seasonAssignments.get('/media/show')).toBe(4);
+
+    // Re-select file 'a'
+    workspace.toggleFileSelection('a');
+    workspace.recalculateImmediate();
+    expect(workspace.seasonAssignments.get('/media/show')).toBe(4);
+    expect(workspace.files.find((f) => f.id === 'a')?.newName).toBe('A_S04E01');
+
+    workspace.destroy();
+  });
+
+  it('reflects hasEnabledSeriesRule correctly', () => {
+    const workspace = createRenameWorkspaceStore();
+    expect(workspace.hasEnabledSeriesRule).toBe(false);
+
+    workspace.addRule('number');
+    expect(workspace.hasEnabledSeriesRule).toBe(false);
+
+    workspace.addRule('series-number');
+    expect(workspace.hasEnabledSeriesRule).toBe(true);
+
+    // Disable the rule
+    const seriesRuleId = workspace.rules.find((r) => r.type === 'series-number')?.id;
+    if (seriesRuleId) {
+      workspace.toggleRule(seriesRuleId);
+      expect(workspace.hasEnabledSeriesRule).toBe(false);
+    }
+
+    workspace.destroy();
+  });
+
+  it('scopes series issues and blocking checks to specified subsets of files', () => {
+    const workspace = createRenameWorkspaceStore();
+    const fileA = file('a', 'Show S01E01', '/media/conflict', 1);
+    const fileB = file('b', 'Show S02E01', '/media/conflict', 2);
+    const fileC = file('c', 'Episode 1', '/media/clean');
+
+    workspace.addFiles([fileA, fileB, fileC]);
+    workspace.addRule('series-number');
+    workspace.setSeasonAssignment('/media/clean', 1);
+    workspace.recalculateImmediate();
+
+    // The whole workspace has issues due to conflict in /media/conflict
+    expect(workspace.hasSeriesNumberingIssues).toBe(true);
+    expect(workspace.hasBlockingIssues).toBe(true);
+
+    const cleanFiles = workspace.files.filter((f) => f.id === 'c');
+    const conflictFiles = workspace.files.filter((f) => f.id === 'a' || f.id === 'b');
+
+    expect(workspace.hasSeriesIssuesForFiles(cleanFiles)).toBe(false);
+    expect(workspace.hasBlockingIssuesForFiles(cleanFiles)).toBe(false);
+
+    expect(workspace.hasSeriesIssuesForFiles(conflictFiles)).toBe(true);
+    expect(workspace.hasBlockingIssuesForFiles(conflictFiles)).toBe(true);
+
+    workspace.destroy();
+  });
 });
+

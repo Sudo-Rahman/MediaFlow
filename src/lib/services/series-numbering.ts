@@ -113,6 +113,16 @@ export function assignSeriesSeasonsSequentially(
   return assignments;
 }
 
+/** Collect normalized group keys for all files, regardless of selection status. */
+export function getSeriesGroupKeys(files: readonly RenameFile[]): string[] {
+  const keys = new Set<string>();
+  for (const file of files) {
+    const sourceGroup = resolveSourceGroup(file.originalPath, file.sourceGroup);
+    keys.add(normalizePathForIdentity(sourceGroup.groupKey));
+  }
+  return [...keys];
+}
+
 function groupSelectedFiles(files: readonly RenameFile[]): Map<string, SeriesFileGroup> {
   const groups = new Map<string, SeriesFileGroup>();
 

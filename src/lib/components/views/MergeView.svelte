@@ -23,6 +23,7 @@
   import { getFileName, resolveOutputFolderDisplay } from '$lib/utils';
   import type { ExpandedImportFile } from '$lib/types';
   import {
+    collapseVobSubImportFiles,
     expandMergeMixedImportRoots,
     expandedFilesFromPaths,
     pickAndExpandToolImport,
@@ -319,8 +320,15 @@
     expandedFiles: readonly ExpandedImportFile[],
     forcedTypes?: Map<string, ForcedImportType>,
   ): Promise<void> {
-    const paths = expandedFiles.map(({ path }) => path);
-    const sourceGroupByPath = new Map(expandedFiles.map(({ path, sourceGroup }) => [path, sourceGroup]));
+    const effectiveExpandedFiles = collapseVobSubImportFiles(
+      expandedFiles,
+      [
+        ...mergeStore.importedTracks.map((track) => track.path),
+        ...mergeStore.videoFiles.map((video) => video.path),
+      ],
+    );
+    const paths = effectiveExpandedFiles.map(({ path }) => path);
+    const sourceGroupByPath = new Map(effectiveExpandedFiles.map(({ path, sourceGroup }) => [path, sourceGroup]));
     if (mergeStore.status === 'completed') {
       mergeStore.reset();
     }
@@ -574,12 +582,12 @@
       videosToMerge.some((video) => video.id === file.id) && file.selected,
     );
     const conflictCount = outputNamingWorkspace.getConflicts(selectedNamingFiles).size;
-    if (conflictCount > 0 || outputNamingWorkspace.hasConflicts) {
+    if (conflictCount > 0) {
       toast.error('Please resolve output naming conflicts before merging.');
       return;
     }
 
-    if (outputNamingWorkspace.hasBlockingIssues) {
+    if (outputNamingWorkspace.hasSeriesIssuesForFiles(selectedNamingFiles)) {
       toast.error('Please resolve series numbering issues before merging.');
       return;
     }

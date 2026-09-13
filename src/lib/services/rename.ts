@@ -209,7 +209,8 @@ function applyCase(name: string, config: CaseConfig): string {
  * Apply number rule
  */
 function applyNumber(name: string, config: NumberConfig, index: number): string {
-  const num = config.start + (index * config.step);
+  const step = Math.max(1, config.step || 1);
+  const num = config.start + (index * step);
   const padding = Math.min(10, Math.max(1, config.padding || 1));
   const paddedNum = String(num).padStart(padding, '0');
   
@@ -230,7 +231,8 @@ function applyNumber(name: string, config: NumberConfig, index: number): string 
 
 function applySeriesNumber(name: string, config: SeriesNumberConfig, context: RenameRuleContext, file?: RenameFile): string {
   const seasonNumber = context.seasonNumber ?? file?.seasonNumber ?? 1;
-  const episodeNumber = config.start + (context.seriesIndex * config.step);
+  const step = Math.max(1, config.step || 1);
+  const episodeNumber = config.start + (context.seriesIndex * step);
   const padding = Math.min(10, Math.max(1, config.padding || 1));
   const token = `S${String(seasonNumber).padStart(2, '0')}E${String(episodeNumber).padStart(padding, '0')}`;
 

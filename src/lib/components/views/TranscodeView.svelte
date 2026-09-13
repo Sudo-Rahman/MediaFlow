@@ -180,6 +180,16 @@
     const selectedIds = new Set(outputNamingWorkspace.selectedFiles.map((file) => file.id));
     return transcodeStore.files.filter((file) => file.status === 'ready' && selectedIds.has(file.id));
   });
+  const selectedReadyNamingFiles = $derived.by(() => {
+    const readyIds = new Set(readyQueueFiles.map((file) => file.id));
+    return outputNamingWorkspace.files.filter((file) => file.selected && readyIds.has(file.id));
+  });
+  const readyNamingConflictCount = $derived.by(() =>
+    outputNamingWorkspace.getConflicts(selectedReadyNamingFiles).size,
+  );
+  const hasReadySeriesIssues = $derived.by(() =>
+    outputNamingWorkspace.hasSeriesIssuesForFiles(selectedReadyNamingFiles),
+  );
   const outputConflictCount = $derived.by(() => {
     const selectedWorkspaceFiles = outputNamingWorkspace.files.filter((file) => file.selected);
     return outputNamingWorkspace.getConflicts(selectedWorkspaceFiles).size;
@@ -581,12 +591,16 @@
       return;
     }
 
-    if (outputConflictCount > 0 || outputNamingWorkspace.hasConflicts) {
+    const selectedNamingFiles = outputNamingWorkspace.files.filter((file) =>
+      filesToProcess.some((readyFile) => readyFile.id === file.id) && file.selected,
+    );
+    const conflictCount = outputNamingWorkspace.getConflicts(selectedNamingFiles).size;
+    if (conflictCount > 0) {
       toast.error('Please resolve output naming conflicts before transcoding');
       return;
     }
 
-    if (outputNamingWorkspace.hasBlockingIssues) {
+    if (outputNamingWorkspace.hasSeriesIssuesForFiles(selectedNamingFiles)) {
       toast.error('Please resolve series numbering issues before transcoding');
       return;
     }
@@ -1125,8 +1139,8 @@
 
         <TranscodeQueueBar
           readyCount={readyQueueFiles.length}
-          conflictCount={outputConflictCount}
-          hasBlockingIssues={outputNamingWorkspace.hasBlockingIssues}
+          conflictCount={readyNamingConflictCount}
+          hasBlockingIssues={hasReadySeriesIssues}
           isProcessing={transcodeStore.isProcessing}
           isCancelling={transcodeStore.isCancelling}
           progress={transcodeStore.progress}

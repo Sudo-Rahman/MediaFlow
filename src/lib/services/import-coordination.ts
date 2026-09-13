@@ -113,3 +113,45 @@ export function expandedFilesFromPaths(paths: readonly string[]): ExpandedImport
     sourceGroup: resolveSourceGroup(path, undefined),
   }));
 }
+
+function stripFileExtension(path: string): string {
+  const lastDot = path.lastIndexOf('.');
+  const lastSeparator = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  return lastDot > lastSeparator ? path.slice(0, lastDot) : path;
+}
+
+/**
+ * Collapse matching .idx/.sub pairs into a single logical .idx import.
+ *
+ * For VobSub subtitles, FFmpeg expects only the .idx file as input and loads
+ * the companion .sub file automatically. If both files are imported as separate
+ * tracks, multiplexing duplicates the subtitle or fails.
+ */
+export function collapseVobSubImportFiles<T extends { path: string }>(
+  files: readonly T[],
+  existingPaths: Iterable<string> = [],
+): T[] {
+  const idxBases = new Set<string>();
+
+  for (const file of files) {
+    if (file.path.toLowerCase().endsWith('.idx')) {
+      idxBases.add(stripFileExtension(file.path).replaceAll('\\', '/').toLowerCase());
+    }
+  }
+
+  for (const existingPath of existingPaths) {
+    if (existingPath.toLowerCase().endsWith('.idx')) {
+      idxBases.add(stripFileExtension(existingPath).replaceAll('\\', '/').toLowerCase());
+    }
+  }
+
+  return files.filter((file) => {
+    if (file.path.toLowerCase().endsWith('.sub')) {
+      const base = stripFileExtension(file.path).replaceAll('\\', '/').toLowerCase();
+      if (idxBases.has(base)) {
+        return false;
+      }
+    }
+    return true;
+  });
+}

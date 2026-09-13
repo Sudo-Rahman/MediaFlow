@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { applyAllRules } from '$lib/services/rename';
 import {
   assignSeriesSeasonsSequentially,
+  getSeriesGroupKeys,
   planSeriesNumbering,
 } from '$lib/services/series-numbering';
 import type { RenameFile, RenameRule, SortConfig } from '$lib/types/rename';
@@ -292,4 +293,47 @@ describe('series numbering', () => {
     };
     expect(applyAllRules('Episode', [zeroPaddingRule], context)).toBe('Episode_S01E1');
   });
+
+  it('clamps step to at least 1 for series-number and number rules', () => {
+    const context = { globalIndex: 2, seriesIndex: 2, seasonNumber: 1 };
+    const negativeStepSeriesRule: RenameRule = {
+      id: 'series',
+      type: 'series-number',
+      enabled: true,
+      config: {
+        position: 'suffix',
+        start: 1,
+        step: -5,
+        padding: 2,
+        separator: '_',
+      },
+    };
+    expect(applyAllRules('Episode', [negativeStepSeriesRule], context)).toBe('Episode_S01E03');
+
+    const zeroStepNumberRule: RenameRule = {
+      id: 'num',
+      type: 'number',
+      enabled: true,
+      config: {
+        position: 'prefix',
+        start: 10,
+        step: 0,
+        padding: 2,
+        separator: '_',
+      },
+    };
+    expect(applyAllRules('File', [zeroStepNumberRule], context)).toBe('12_File');
+  });
+
+  it('collects unique series group keys regardless of file selection', () => {
+    const file1 = file('1', 'A', '/media/showA');
+    file1.selected = false;
+    const file2 = file('2', 'B', '/media/showA');
+    file2.selected = true;
+    const file3 = file('3', 'C', '/media/showB');
+    file3.selected = false;
+
+    expect(getSeriesGroupKeys([file1, file2, file3])).toEqual(['/media/showA', '/media/showB']);
+  });
 });
+

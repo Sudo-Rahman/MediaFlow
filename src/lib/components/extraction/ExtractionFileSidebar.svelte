@@ -15,7 +15,8 @@
     isProcessing: boolean;
     currentProcessingPath: string | null;
     supportedFormats: string[];
-    onImport?: () => void | Promise<void>;
+    onImport: () => void | Promise<void>;
+    onImportFolders: () => void | Promise<void>;
     onClearAll?: () => void;
     onSelectFile?: (path: string) => void;
     onCancelFile?: (path: string) => void | Promise<void>;
@@ -30,6 +31,7 @@
     currentProcessingPath,
     supportedFormats,
     onImport,
+    onImportFolders,
     onClearAll,
     onSelectFile,
     onCancelFile,
@@ -52,7 +54,7 @@
           <span class="sr-only">Clear list</span>
         </Button>
       {/if}
-      <ToolImportButton targetTool="extract" onBrowse={onImport} />
+      <ToolImportButton targetTool="extract" onBrowse={onImport} onBrowseFolders={onImportFolders} />
     </div>
   </div>
 

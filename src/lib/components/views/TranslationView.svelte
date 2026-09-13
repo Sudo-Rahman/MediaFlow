@@ -6,7 +6,6 @@
 
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte';
-  import { open } from '@tauri-apps/plugin-dialog';
   import { readTextFile } from '@tauri-apps/plugin-fs';
   import { toast } from 'svelte-sonner';
 
@@ -30,9 +29,16 @@
     SubtitleFile,
     TranslationJob,
     TranslationModelSelection,
+    ExpandedImportFile,
   } from '$lib/types';
   import { SUPPORTED_LANGUAGES } from '$lib/types';
   import type { ImportSelectionMode, ImportSourceId, VersionedImportItem } from '$lib/types/tool-import';
+  import {
+    expandToolImportRoots,
+    expandedFilesFromPaths,
+    pickAndExpandToolImport,
+    toolImportPolicy,
+  } from '$lib/services/import-coordination';
 
   import { ToolImportSourceDialog } from '$lib/components/shared';
 
@@ -60,6 +66,7 @@
   }
 
   let { onNavigateToSettings }: TranslationViewProps = $props();
+  const importPolicy = toolImportPolicy('translate');
 
   let sourceDialogOpen = $state(false);
   let sourceDialogSourceId = $state<ImportSourceId | null>(null);
@@ -183,17 +190,11 @@
 
   // Expose API for drag & drop from parent
   export async function handleFileDrop(paths: string[]) {
-    const subtitlePaths = paths.filter(p =>
-      SUBTITLE_EXTENSIONS.some(ext => p.toLowerCase().endsWith(ext))
-    );
+    await importExpandedFiles(await expandToolImportRoots(paths, importPolicy, 'translation'));
+  }
 
-    if (subtitlePaths.length === 0) {
-      toast.warning('No valid subtitle files detected');
-      return;
-    }
-
-    // Load all files
-    for (const path of subtitlePaths) {
+  async function importExpandedFiles(expandedFiles: readonly ExpandedImportFile[]): Promise<void> {
+    for (const { path } of expandedFiles) {
       await loadSubtitleFile(path);
     }
   }
@@ -232,7 +233,7 @@
         name,
         format,
         content,
-        size: new Blob([content]).size
+        size: new Blob([content]).size,
       };
 
       clearTokenCountCacheForPath(path);
@@ -270,27 +271,24 @@
 
   async function handleImportClick() {
     try {
-      const selected = await open({
-        multiple: true,
-        filters: [{
-          name: 'Subtitle files',
-          extensions: SUBTITLE_EXTENSIONS.map(ext => ext.slice(1))
-        }]
-      });
-
-      if (selected) {
-        const paths = Array.isArray(selected) ? selected : [selected];
-        for (const path of paths) {
-          if (typeof path === 'string') {
-            await loadSubtitleFile(path);
-          }
-        }
-      }
+      await importExpandedFiles(await pickAndExpandToolImport(importPolicy, 'translation', 'files'));
     } catch (error) {
       logAndToast.error({
         source: 'translation',
         title: 'Error opening file dialog',
         details: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  async function handleImportFolders(): Promise<void> {
+    try {
+      await importExpandedFiles(await pickAndExpandToolImport(importPolicy, 'translation', 'folders'));
+    } catch (error) {
+      logAndToast.error({
+        source: 'translation',
+        title: 'Error opening folder dialog',
+        details: error instanceof Error ? error.message : String(error),
       });
     }
   }
@@ -1371,6 +1369,7 @@
       onOpenResult={(job) => openResultDialog(job.id)}
       onRetryJob={handleRetryRequest}
       onImportClick={handleImportClick}
+      onImportFolders={handleImportFolders}
       onImportFromSource={handleImportFromSource}
       onBatchCountChange={(value) => translationStore.setBatchCount(value)}
       onTranslateAll={handleTranslateAll}

@@ -20,9 +20,11 @@
 
   // Preview of numbering
   const preview = $derived.by(() => {
-    const num1 = String(config.start).padStart(config.padding, '0');
-    const num2 = String(config.start + config.step).padStart(config.padding, '0');
-    const num3 = String(config.start + config.step * 2).padStart(config.padding, '0');
+    const safePadding = Math.min(10, Math.max(1, config.padding || 1));
+    const safeStep = Math.max(1, config.step || 1);
+    const num1 = String(config.start).padStart(safePadding, '0');
+    const num2 = String(config.start + safeStep).padStart(safePadding, '0');
+    const num3 = String(config.start + safeStep * 2).padStart(safePadding, '0');
     return `${num1}, ${num2}, ${num3}...`;
   });
 
@@ -34,17 +36,21 @@
 
   function handleStartChange(e: Event) {
     const target = e.target as HTMLInputElement;
-    onUpdate({ ...config, start: parseInt(target.value) || 0 });
+    const raw = parseInt(target.value, 10);
+    onUpdate({ ...config, start: Number.isNaN(raw) ? 0 : raw });
   }
 
   function handleStepChange(e: Event) {
     const target = e.target as HTMLInputElement;
-    onUpdate({ ...config, step: parseInt(target.value) || 1 });
+    const raw = parseInt(target.value, 10);
+    onUpdate({ ...config, step: Number.isNaN(raw) ? 1 : Math.max(1, raw) });
   }
 
   function handlePaddingChange(e: Event) {
     const target = e.target as HTMLInputElement;
-    onUpdate({ ...config, padding: parseInt(target.value) || 1 });
+    const raw = parseInt(target.value, 10);
+    const clamped = Number.isNaN(raw) ? 1 : Math.min(10, Math.max(1, raw));
+    onUpdate({ ...config, padding: clamped });
   }
 
   function handleSeparatorChange(e: Event) {

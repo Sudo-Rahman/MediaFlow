@@ -218,6 +218,7 @@ export const extensionToCodec: Record<string, string> = {
   '.ssa': 'ssa',
   '.srt': 'subrip',
   '.sub': 'dvd_subtitle',
+  '.idx': 'dvd_subtitle',
   '.vtt': 'webvtt',
   '.sup': 'hdmv_pgs_subtitle',
   

@@ -7,6 +7,7 @@
   interface Props {
     readyCount: number;
     conflictCount: number;
+    hasBlockingIssues?: boolean;
     isProcessing: boolean;
     isCancelling: boolean;
     progress: number;
@@ -23,6 +24,7 @@
   let {
     readyCount,
     conflictCount,
+    hasBlockingIssues = false,
     isProcessing,
     isCancelling,
     progress,
@@ -89,6 +91,8 @@
       {readyCount} ready file(s)
       {#if conflictCount > 0}
         · {conflictCount} conflict(s)
+      {:else if hasBlockingIssues}
+        · series numbering issue
       {/if}
       {#if isProcessing && totalFiles > 0}
         · {Math.round(progress)}% overall
@@ -117,7 +121,7 @@
         Cancel All
       </Button>
     {:else}
-      <Button onclick={onStartTranscode} disabled={readyCount === 0 || conflictCount > 0}>
+      <Button onclick={onStartTranscode} disabled={readyCount === 0 || conflictCount > 0 || hasBlockingIssues}>
         <Play class="size-4 mr-2" />
         Start Transcode
       </Button>

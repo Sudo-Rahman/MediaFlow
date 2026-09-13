@@ -6,7 +6,6 @@
 
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { open } from '@tauri-apps/plugin-dialog';
   import { exists } from '@tauri-apps/plugin-fs';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -22,7 +21,14 @@
   import { formatFileSize } from '$lib/utils/format';
   import type { RenameCopyProgressEvent } from '$lib/types/progress';
   import type { ImportSourceId } from '$lib/types/tool-import';
+  import type { ExpandedImportFile } from '$lib/types';
   import type { RenameMode, RenameFile } from '$lib/types/rename';
+  import {
+    expandToolImportRoots,
+    expandedFilesFromPaths,
+    pickAndExpandToolImport,
+    toolImportPolicy,
+  } from '$lib/services/import-coordination';
 
   import { RenameWorkspace } from '$lib/components/rename';
   import RenameExecutionPanel from '$lib/components/rename/RenameExecutionPanel.svelte';
@@ -35,6 +41,7 @@
   }
 
   const COPY_CANCELLED_ERROR = 'Copy cancelled';
+  const importPolicy = toolImportPolicy('rename');
 
   let overwriteDialogOpen = $state(false);
   let pendingCopyPlan = $state.raw<RenameExecutionPlanItem[] | null>(null);
@@ -45,18 +52,20 @@
     return errorMsg === COPY_CANCELLED_ERROR || errorMsg.includes(COPY_CANCELLED_ERROR);
   }
 
-  async function buildRenameFiles(paths: string[]): Promise<RenameFile[]> {
+  async function buildRenameFiles(expandedFiles: readonly ExpandedImportFile[]): Promise<RenameFile[]> {
     return Promise.all(
-      paths.map(async (path) => {
+      expandedFiles.map(async ({ path, sourceGroup }) => {
         const metadata = await fetchFileMetadata(path);
-        return createRenameFile(path, metadata.size, metadata.modifiedAt, metadata.createdAt);
+        return createRenameFile(path, metadata.size, metadata.modifiedAt, metadata.createdAt, sourceGroup);
       }),
     );
   }
 
-  async function addPathsToWorkspace(paths: string[], successMessage: string): Promise<void> {
-    if (paths.length === 0) {
-      toast.warning('No files detected');
+  async function addPathsToWorkspace(
+    expandedFiles: readonly ExpandedImportFile[],
+    successMessage: string,
+  ): Promise<void> {
+    if (expandedFiles.length === 0) {
       return;
     }
 
@@ -64,7 +73,7 @@
       renameStore.resetProgress();
     }
 
-    const newFiles = await buildRenameFiles(paths);
+    const newFiles = await buildRenameFiles(expandedFiles);
     renameStore.addFiles(newFiles);
     toast.success(successMessage);
   }
@@ -113,24 +122,31 @@
   });
 
   export async function handleFileDrop(paths: string[]) {
-    await addPathsToWorkspace(paths, `${paths.length} file(s) added`);
+    const expandedFiles = await expandToolImportRoots(paths, importPolicy, 'rename');
+    await addPathsToWorkspace(expandedFiles, `${expandedFiles.length} file(s) added`);
   }
 
   async function handleImportClick() {
     try {
-      const selected = await open({
-        multiple: true,
-        title: 'Select files to rename',
-      });
-
-      if (selected) {
-        const paths = Array.isArray(selected) ? selected : [selected];
-        await handleFileDrop(paths);
-      }
+      const expandedFiles = await pickAndExpandToolImport(importPolicy, 'rename', 'files');
+      await addPathsToWorkspace(expandedFiles, `${expandedFiles.length} file(s) imported`);
     } catch (error) {
       logAndToast.error({
         source: 'rename',
         title: 'Error opening file dialog',
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async function handleImportFolders(): Promise<void> {
+    try {
+      const expandedFiles = await pickAndExpandToolImport(importPolicy, 'rename', 'folders');
+      await addPathsToWorkspace(expandedFiles, `${expandedFiles.length} file(s) imported`);
+    } catch (error) {
+      logAndToast.error({
+        source: 'rename',
+        title: 'Error opening folder dialog',
         details: error instanceof Error ? error.message : String(error),
       });
     }
@@ -147,7 +163,7 @@
       return;
     }
 
-    await addPathsToWorkspace(paths, `${paths.length} file(s) imported`);
+    await addPathsToWorkspace(expandedFilesFromPaths(paths), `${paths.length} file(s) imported`);
   }
 
   async function handleSelectOutputDir() {
@@ -406,7 +422,7 @@
   );
   const canExecute = $derived(
     selectedCount > 0
-    && !renameStore.hasConflicts
+    && !renameStore.hasBlockingIssues
     && !isProcessing
     && hasChanges
     && (mode === 'rename' || Boolean(outputDir)),
@@ -424,6 +440,7 @@
   workspace={renameStore}
   importTargetTool="rename"
   onBrowseImport={handleImportClick}
+  onBrowseImportFolders={handleImportFolders}
   onSelectImportSource={handleImportFromSource}
   onClearAll={handleClearAll}
 >

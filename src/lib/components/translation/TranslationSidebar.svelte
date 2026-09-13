@@ -9,11 +9,11 @@
   import { Input } from '$lib/components/ui/input';
   import { Label } from '$lib/components/ui/label';
   import type { TranslationJob } from '$lib/types';
+  import { getToolImportPolicy } from '$lib/types/import-policy';
   import type { ImportSourceId } from '$lib/types/tool-import';
 
   import TranslationConfigPanel from './TranslationConfigPanel.svelte';
   import TranslationFileList from './TranslationFileList.svelte';
-  import { SUBTITLE_FORMATS } from './translation-view-utils';
 
   interface TranslationSidebarProps {
     jobs: TranslationJob[];
@@ -30,6 +30,7 @@
     onOpenResult: (job: TranslationJob) => void;
     onRetryJob: (job: TranslationJob) => void;
     onImportClick: () => void | Promise<void>;
+    onImportFolders: () => void | Promise<void>;
     onImportFromSource: (sourceId: ImportSourceId) => void | Promise<void>;
     onBatchCountChange: (value: number) => void;
     onTranslateAll: () => void | Promise<void>;
@@ -52,6 +53,7 @@
     onOpenResult,
     onRetryJob,
     onImportClick,
+    onImportFolders,
     onImportFromSource,
     onBatchCountChange,
     onTranslateAll,
@@ -60,6 +62,7 @@
   }: TranslationSidebarProps = $props();
 
   const jobCount = $derived(jobs.length);
+  const subtitleFormats = getToolImportPolicy('translate').formatLabel;
 
   function handleBatchInput(event: Event): void {
     const value = parseInt((event.currentTarget as HTMLInputElement).value, 10);
@@ -99,6 +102,7 @@
                 label="Import"
                 variant="outline"
                 onBrowse={onImportClick}
+                onBrowseFolders={onImportFolders}
                 onSelectSource={onImportFromSource}
                 disabled={isTranslating}
               />
@@ -124,7 +128,7 @@
             <ImportDropZone
               icon={Languages}
               title="Drop subtitle files here"
-              formats={SUBTITLE_FORMATS}
+              formats={subtitleFormats}
               onBrowse={onImportClick}
               disabled={isTranslating}
             />

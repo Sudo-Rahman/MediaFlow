@@ -9,14 +9,12 @@
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { invoke } from '@tauri-apps/api/core';
   import { tempDir } from '@tauri-apps/api/path';
-  import { open } from '@tauri-apps/plugin-dialog';
   import { mkdir, exists, remove } from '@tauri-apps/plugin-fs';
   import { toast } from 'svelte-sonner';
 
-  import type { AudioFile, AudioTrackInfo, BatchTrackStrategy, DeepgramConfig, TranscriptionVersion } from '$lib/types';
+  import type { AudioFile, AudioTrackInfo, BatchTrackStrategy, DeepgramConfig, ExpandedImportFile, TranscriptionVersion } from '$lib/types';
   import type { ImportSourceId } from '$lib/types/tool-import';
   import type { LogSource } from '$lib/stores/logs.svelte';
-  import { AUDIO_EXTENSIONS } from '$lib/types';
   import { transcribeWithDeepgram } from '$lib/services/deepgram';
   import { transcribeWithMediaFlow } from '$lib/services/mediaflow-transcription';
   import { scanFile } from '$lib/services/ffprobe';
@@ -26,6 +24,12 @@
   import { getFileName } from '$lib/utils/format';
   import { resolveDeepgramTrackLanguage } from '$lib/utils/audio-language';
   import { logAndToast } from '$lib/utils/log-toast';
+  import {
+    expandToolImportRoots,
+    expandedFilesFromPaths,
+    pickAndExpandToolImport,
+    toolImportPolicy,
+  } from '$lib/services/import-coordination';
   import {
     AudioToSubsDialogs,
     AudioToSubsSidebar,
@@ -48,7 +52,8 @@
   // Constants
   const MAX_CONCURRENT_TRANSCODES = 3;
   const OPUS_COMPATIBLE_EXTENSIONS = ['opus'];
-  const AUDIO_FORMATS = 'MP3, WAV, FLAC, AAC, OGG, M4A, OPUS';
+  const importPolicy = toolImportPolicy('audio-to-subs');
+  const AUDIO_FORMATS = importPolicy.formatLabel;
   type TranscriptionLogSource = Extract<LogSource, 'deepgram' | 'mediaflow'>;
 
   let persistedTranscriptionVersionKeys = $state<Set<string>>(new Set());
@@ -324,36 +329,19 @@
 
   // Exposed API for drag & drop
   export async function handleFileDrop(paths: string[]) {
-    const audioExtensions = new Set(AUDIO_EXTENSIONS);
-    const audioPaths = paths.filter(p => {
-      const ext = p.split('.').pop()?.toLowerCase() || '';
-      return audioExtensions.has(ext as typeof AUDIO_EXTENSIONS[number]);
-    });
-
-    if (audioPaths.length === 0) {
-      toast.warning('No audio files found');
-      return;
-    }
-
-    await addFiles(audioPaths);
+    await addExpandedFiles(await expandToolImportRoots(paths, importPolicy, 'deepgram'));
   }
 
-  async function handleAddFiles() {
-    const selected = await open({
-      multiple: true,
-      filters: [{
-        name: 'Audio files',
-        extensions: [...AUDIO_EXTENSIONS]
-      }]
-    });
-
-    if (selected) {
-      const paths = Array.isArray(selected) ? selected : [selected];
-      await addFiles(paths);
-    }
+  async function handleAddFiles(): Promise<void> {
+    await addExpandedFiles(await pickAndExpandToolImport(importPolicy, 'deepgram', 'files'));
   }
 
-  async function addFiles(paths: string[]) {
+  async function handleAddFolders(): Promise<void> {
+    await addExpandedFiles(await pickAndExpandToolImport(importPolicy, 'deepgram', 'folders'));
+  }
+
+  async function addExpandedFiles(expandedFiles: readonly ExpandedImportFile[]): Promise<void> {
+    const paths = expandedFiles.map(({ path }) => path);
     const newFiles = audioToSubsStore.addFilesFromPaths(paths);
     
     const probedFiles: ProbedAudioFile[] = [];
@@ -364,9 +352,20 @@
       
       try {
         const probeResult = await scanFile(file.path);
+        if (probeResult.status === 'error') {
+          audioToSubsStore.updateFile(file.id, {
+            status: 'error',
+            error: probeResult.error ?? 'Scan failed',
+          });
+          continue;
+        }
         const audioTracks = extractAudioTracks(probeResult);
 
-        audioToSubsStore.updateFile(file.id, buildProbedFileUpdate(file, probeResult, audioTracks));
+        const probedUpdate = buildProbedFileUpdate(file, probeResult, audioTracks);
+        audioToSubsStore.updateFile(file.id, probedUpdate);
+        if (probedUpdate.status === 'error') {
+          continue;
+        }
 
         // Load existing transcriptions if any
         const existingData = await loadTranscriptionData(file.path);
@@ -649,7 +648,7 @@
       return;
     }
 
-    await addFiles(paths);
+    await addExpandedFiles(expandedFilesFromPaths(paths));
     toast.success(`${paths.length} audio file(s) imported`);
   }
 
@@ -1185,6 +1184,7 @@
     isTranscribing={audioToSubsStore.isTranscribing}
     audioFormats={AUDIO_FORMATS}
     onBrowse={handleAddFiles}
+    onBrowseFolders={handleAddFolders}
     onImportFromSource={handleImportFromSource}
     onCancelAll={handleCancelAll}
     onClearAll={handleRequestRemoveAll}

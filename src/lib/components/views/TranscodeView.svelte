@@ -8,7 +8,6 @@
   import { onDestroy, onMount, untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-  import { open } from '@tauri-apps/plugin-dialog';
   import { ArrowLeft, Copy, Save, Sparkles, Wand2 } from '@lucide/svelte';
   import { toast } from 'svelte-sonner';
 
@@ -49,6 +48,7 @@
   import { getBaseName, type ResolveRenameTargetPathContext } from '$lib/services/rename';
   import { getFileName } from '$lib/utils/format';
   import type {
+    ExpandedImportFile,
     RenameFile,
     TranscodeFile,
     TranscodePresetTab,
@@ -58,6 +58,11 @@
     TranscodeTab,
   } from '$lib/types';
   import { logAndToast } from '$lib/utils/log-toast';
+  import {
+    expandToolImportRoots,
+    pickAndExpandToolImport,
+    toolImportPolicy,
+  } from '$lib/services/import-coordination';
 
   import { useToolHeader } from '$lib/components/layout/tool-header-context.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -90,6 +95,7 @@
   const AUDIO_EXTENSIONS = ['.m4a', '.aac', '.mp3', '.flac', '.opus', '.wav', '.ogg', '.ac3', '.eac3', '.mka'];
   const SUPPORTED_EXTENSIONS = [...VIDEO_EXTENSIONS, ...AUDIO_EXTENSIONS];
   const SUPPORTED_FORMATS = SUPPORTED_EXTENSIONS.map((extension) => extension.slice(1).toUpperCase());
+  const importPolicy = toolImportPolicy('transcode');
   const toolHeader = useToolHeader();
 
   let infoDialogOpen = $state(false);
@@ -174,6 +180,16 @@
     const selectedIds = new Set(outputNamingWorkspace.selectedFiles.map((file) => file.id));
     return transcodeStore.files.filter((file) => file.status === 'ready' && selectedIds.has(file.id));
   });
+  const selectedReadyNamingFiles = $derived.by(() => {
+    const readyIds = new Set(readyQueueFiles.map((file) => file.id));
+    return outputNamingWorkspace.files.filter((file) => file.selected && readyIds.has(file.id));
+  });
+  const readyNamingConflictCount = $derived.by(() =>
+    outputNamingWorkspace.getConflicts(selectedReadyNamingFiles).size,
+  );
+  const hasReadySeriesIssues = $derived.by(() =>
+    outputNamingWorkspace.hasSeriesIssuesForFiles(selectedReadyNamingFiles),
+  );
   const outputConflictCount = $derived.by(() => {
     const selectedWorkspaceFiles = outputNamingWorkspace.files.filter((file) => file.selected);
     return outputNamingWorkspace.getConflicts(selectedWorkspaceFiles).size;
@@ -201,7 +217,7 @@
     return VIDEO_EXTENSIONS.includes(getExtensionFromPath(path));
   }
 
-  function createPlaceholderFile(path: string): TranscodeFile {
+  function createPlaceholderFile(path: string, sourceGroup?: TranscodeFile['sourceGroup']): TranscodeFile {
     const name = getFileName(path);
     const hasVideo = guessHasVideo(path);
     const hasAudio = true;
@@ -240,6 +256,7 @@
       aiError: undefined,
       aiRecommendation: undefined,
       lastOutputPath: undefined,
+      sourceGroup,
     };
   }
 
@@ -282,6 +299,7 @@
       size: file.size,
       modifiedAt: file.modifiedAt,
       createdAt: file.createdAt,
+      sourceGroup: file.sourceGroup,
     };
   }
 
@@ -573,8 +591,17 @@
       return;
     }
 
-    if (outputConflictCount > 0) {
+    const selectedNamingFiles = outputNamingWorkspace.files.filter((file) =>
+      filesToProcess.some((readyFile) => readyFile.id === file.id) && file.selected,
+    );
+    const conflictCount = outputNamingWorkspace.getConflicts(selectedNamingFiles).size;
+    if (conflictCount > 0) {
       toast.error('Please resolve output naming conflicts before transcoding');
+      return;
+    }
+
+    if (outputNamingWorkspace.hasSeriesIssuesForFiles(selectedNamingFiles)) {
+      toast.error('Please resolve series numbering issues before transcoding');
       return;
     }
 
@@ -682,7 +709,9 @@
     transcodeStore.setCancelling(false);
   }
 
-  async function addFiles(paths: string[]): Promise<void> {
+  async function addFiles(expandedFiles: readonly ExpandedImportFile[]): Promise<void> {
+    const paths = expandedFiles.map(({ path }) => path);
+    const sourceGroupByPath = new Map(expandedFiles.map(({ path, sourceGroup }) => [path, sourceGroup]));
     let added = 0;
     let skipped = 0;
     const scanPaths: string[] = [];
@@ -694,7 +723,7 @@
         continue;
       }
 
-      const placeholder = createPlaceholderFile(path);
+      const placeholder = createPlaceholderFile(path, sourceGroupByPath.get(path));
       transcodeStore.addFiles([placeholder]);
       scanPaths.push(path);
       fileIdsByPath.set(path, placeholder.id);
@@ -770,6 +799,7 @@
           error: undefined,
           profile,
           metadata: transcodeMetadata,
+          sourceGroup: sourceGroupByPath.get(scanned.path),
         });
         added += 1;
       }
@@ -785,30 +815,15 @@
   }
 
   export async function handleFileDrop(paths: string[]): Promise<void> {
-    const supportedPaths = paths.filter((path) => SUPPORTED_EXTENSIONS.includes(getExtensionFromPath(path)));
-    if (supportedPaths.length === 0) {
-      toast.warning('No supported media files detected');
-      return;
-    }
-
-    await addFiles(supportedPaths);
+    await addFiles(await expandToolImportRoots(paths, importPolicy, 'ffmpeg'));
   }
 
   async function handleAddFiles(): Promise<void> {
-    const selected = await open({
-      multiple: true,
-      filters: [{
-        name: 'Media files',
-        extensions: SUPPORTED_EXTENSIONS.map((extension) => extension.slice(1)),
-      }],
-    });
+    await addFiles(await pickAndExpandToolImport(importPolicy, 'ffmpeg', 'files'));
+  }
 
-    if (!selected) {
-      return;
-    }
-
-    const paths = Array.isArray(selected) ? selected : [selected];
-    await addFiles(paths);
+  async function handleAddFolders(): Promise<void> {
+    await addFiles(await pickAndExpandToolImport(importPolicy, 'ffmpeg', 'folders'));
   }
 
   async function initializeView(): Promise<void> {
@@ -986,12 +1001,13 @@
       onRemoveFile={handleRemoveFile}
       onCancelFile={handleCancelFile}
       onAddFiles={handleAddFiles}
+      onAddFolders={handleAddFolders}
       onClearAll={handleClearAll}
     />
 
     <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
       {#if !selectedFile}
-        <TranscodeEmptyState onAddFiles={handleAddFiles} />
+        <TranscodeEmptyState />
       {:else}
         <TranscodeSelectedFileHeader file={selectedFile} />
 
@@ -1123,7 +1139,8 @@
 
         <TranscodeQueueBar
           readyCount={readyQueueFiles.length}
-          conflictCount={outputConflictCount}
+          conflictCount={readyNamingConflictCount}
+          hasBlockingIssues={hasReadySeriesIssues}
           isProcessing={transcodeStore.isProcessing}
           isCancelling={transcodeStore.isCancelling}
           progress={transcodeStore.progress}

@@ -64,14 +64,15 @@ export function resolveVobSubPairCandidates(paths: string[]): VobSubPairCandidat
     }
 
     const basePath = stripExtension(path);
-    const existing = byBase.get(basePath) ?? { basePath, complete: false };
+    const baseKey = basePath.replaceAll('\\', '/').toLocaleLowerCase('en-US');
+    const existing = byBase.get(baseKey) ?? { basePath, complete: false };
     if (extension === 'idx') {
       existing.idxPath = path;
     } else {
       existing.subPath = path;
     }
     existing.complete = Boolean(existing.idxPath && existing.subPath);
-    byBase.set(basePath, existing);
+    byBase.set(baseKey, existing);
   }
 
   return [...byBase.values()].sort((a, b) => a.basePath.localeCompare(b.basePath));

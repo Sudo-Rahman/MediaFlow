@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { GripVertical, MoreVertical, Copy, Trash2, Pencil, TextCursorInput, Type, Replace, Regex, Eraser, CaseSensitive, Hash, MoveHorizontal, Clock, CircleOff, Text } from '@lucide/svelte';
+  import { GripVertical, MoreVertical, Copy, Trash2, Pencil, TextCursorInput, Type, Replace, Regex, Eraser, CaseSensitive, Hash, ListOrdered, MoveHorizontal, Clock, CircleOff, Text } from '@lucide/svelte';
   import { cn } from '$lib/utils';
   import type { RenameRule, RuleType } from '$lib/types/rename';
   import { RULE_TYPE_LABELS } from '$lib/types/rename';
@@ -42,6 +42,7 @@
     remove: Eraser,
     case: CaseSensitive,
     number: Hash,
+    'series-number': ListOrdered,
     move: MoveHorizontal,
     timestamp: Clock,
     clear: CircleOff,

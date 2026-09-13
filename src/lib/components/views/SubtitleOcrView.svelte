@@ -905,6 +905,7 @@
     processingScopeItemIds={subtitleOcrStore.processingScopeItemIds}
     {restoringPreviewItemIds}
     onImport={importCoordination.handleImport}
+    onImportFolders={importCoordination.handleImportFolders}
     onSelectItem={handleSelectItem}
     onOpenVersions={handleOpenVersions}
     onRetry={handleOpenRetryDialog}

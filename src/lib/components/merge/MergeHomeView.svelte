@@ -29,6 +29,7 @@
     isCancelling: boolean;
     currentProcessingPath: string | null;
     onAddVideoFiles: () => void | Promise<void>;
+    onAddVideoFolders: () => void | Promise<void>;
     onRequestClearAll: () => void;
     onSelectVideo: (fileId: string) => void;
     onCancelFile: (fileId: string) => void | Promise<void>;
@@ -37,6 +38,7 @@
     onAutoMatchModeChange: (mode: 'classic' | 'ai') => void;
     onEditSourceTrack: (trackId: string) => void;
     onAddTrackFiles: () => void | Promise<void>;
+    onAddTrackFolders: () => void | Promise<void>;
     onEditImportedTrack: (trackId: string) => void;
     onImportFromSource: (sourceId: ImportSourceId) => void | Promise<void>;
     onSelectOutputDir: () => void | Promise<void>;
@@ -62,6 +64,7 @@
     isCancelling,
     currentProcessingPath,
     onAddVideoFiles,
+    onAddVideoFolders,
     onRequestClearAll,
     onSelectVideo,
     onCancelFile,
@@ -70,6 +73,7 @@
     onAutoMatchModeChange,
     onEditSourceTrack,
     onAddTrackFiles,
+    onAddTrackFolders,
     onEditImportedTrack,
     onImportFromSource,
     onSelectOutputDir,
@@ -101,6 +105,7 @@
           targetTool="merge"
           sourceFilter={[]}
           onBrowse={onAddVideoFiles}
+          onBrowseFolders={onAddVideoFolders}
           disabled={isProcessing}
         />
       </div>
@@ -230,6 +235,7 @@
       <Tabs.Content value="import" class="flex-1 min-h-0 overflow-auto p-4 mt-0">
         <MergeImportTracksPanel
           onAddTrackFiles={onAddTrackFiles}
+          onAddTrackFolders={onAddTrackFolders}
           onEditImportedTrack={onEditImportedTrack}
           onImportFromSource={onImportFromSource}
         />

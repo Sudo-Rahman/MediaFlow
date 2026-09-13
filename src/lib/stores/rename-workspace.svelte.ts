@@ -17,11 +17,24 @@ import {
   applyAllRules,
   buildNewPath,
   detectConflicts,
-  naturalCompare,
   generateId,
   hasRenameTargetChange,
+  compareRenameFiles,
 } from '$lib/services/rename';
 import type { BuildNewPathOptions } from '$lib/services/rename';
+import {
+  assignSeriesSeasonsSequentially,
+  getSeriesGroupKeys,
+  planSeriesNumbering,
+  type SeriesGroupResolution,
+  type SeriesNumberingIssue,
+} from '$lib/services/series-numbering';
+import {
+  normalizePathForIdentity,
+  resolveSourceGroup,
+  sameSourceGroup,
+  sourceGroupForDirectFileParent,
+} from '$lib/types/source-group';
 import {
   loadUserPresets,
   savePreset as savePresetToStorage,
@@ -59,6 +72,12 @@ function areSourceFileListsEquivalent(currentFiles: RenameFile[], nextFiles: Ren
       || current.size !== next.size
       || current.modifiedAt?.getTime() !== next.modifiedAt?.getTime()
       || current.createdAt?.getTime() !== next.createdAt?.getTime()
+      || current.seasonNumber !== next.seasonNumber
+      || current.episodeNumber !== next.episodeNumber
+      || !sameSourceGroup(
+        resolveSourceGroup(current.originalPath, current.sourceGroup),
+        resolveSourceGroup(next.originalPath, next.sourceGroup),
+      )
     ) {
       return false;
     }
@@ -104,9 +123,11 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
   let abortController = $state<AbortController | null>(null);
   let userPresets = $state<RulePreset[]>([]);
   let presetsLoaded = $state(false);
+  let activePresetId = $state<string | null>(null);
   let recalculateTimeoutId: ReturnType<typeof setTimeout> | null = null;
   let isRecalculating = false;
   let unsubscribePresetChanges: (() => void) | null = null;
+  let seasonAssignments = $state.raw<Map<string, number>>(new Map());
 
   function getTargetPathOptions(): BuildNewPathOptions | undefined {
     const includeOutputDirInTargetPath = options.includeOutputDirInTargetPath ?? mode === 'copy';
@@ -124,6 +145,17 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
 
   function calculateConflicts(sourceFiles: RenameFile[] = files): Map<string, string[]> {
     return detectConflicts(sourceFiles, getTargetPathOptions());
+  }
+
+  function pruneSeasonAssignments(sourceFiles: RenameFile[] = files): void {
+    const activeGroupKeys = new Set(getSeriesGroupKeys(sourceFiles));
+    const nextAssignments = new Map(
+      [...seasonAssignments].filter(([groupKey]) => activeGroupKeys.has(groupKey)),
+    );
+
+    if (nextAssignments.size !== seasonAssignments.size) {
+      seasonAssignments = nextAssignments;
+    }
   }
 
   function ensurePresetSubscription(): void {
@@ -161,37 +193,17 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
 
   function recalculateNewNamesInternal(): void {
     const enabledRules = rules.filter((rule) => rule.enabled);
-    const { field, direction } = sortConfig;
-    const multiplier = direction === 'asc' ? 1 : -1;
-
-    const sortedSelectedFiles = [...files]
-      .filter((file) => file.selected)
-      .sort((a, b) => {
-        switch (field) {
-          case 'name':
-            return multiplier * naturalCompare(a.originalName, b.originalName);
-          case 'size':
-            return multiplier * ((a.size ?? 0) - (b.size ?? 0));
-          case 'date': {
-            const dateA = a.modifiedAt?.getTime() ?? 0;
-            const dateB = b.modifiedAt?.getTime() ?? 0;
-            return multiplier * (dateA - dateB);
-          }
-          default:
-            return 0;
-        }
-      });
-
-    const indexMap = new Map<string, number>();
-    sortedSelectedFiles.forEach((file, index) => indexMap.set(file.id, index));
+    pruneSeasonAssignments(files);
+    const seriesPlan = planSeriesNumbering(files, sortConfig, seasonAssignments);
+    const selectedContexts = seriesPlan.contextsByFileId;
 
     files = files.map((file) => {
       if (!file.selected) {
         return { ...file, newName: file.originalName, status: 'pending' as const, error: undefined };
       }
 
-      const index = indexMap.get(file.id) ?? 0;
-      const newName = applyAllRules(file.originalName, enabledRules, index, file);
+      const context = selectedContexts.get(file.id) ?? { globalIndex: 0, seriesIndex: 0 };
+      const newName = applyAllRules(file.originalName, enabledRules, context, file);
 
       return { ...file, newName, status: 'pending' as const, error: undefined };
     });
@@ -220,23 +232,9 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
 
     get sortedFiles(): RenameFile[] {
       const sorted = [...files];
-      const { field, direction } = sortConfig;
-      const multiplier = direction === 'asc' ? 1 : -1;
 
       sorted.sort((a, b) => {
-        switch (field) {
-          case 'name':
-            return multiplier * naturalCompare(a.originalName, b.originalName);
-          case 'size':
-            return multiplier * ((a.size ?? 0) - (b.size ?? 0));
-          case 'date': {
-            const dateA = a.modifiedAt?.getTime() ?? 0;
-            const dateB = b.modifiedAt?.getTime() ?? 0;
-            return multiplier * (dateA - dateB);
-          }
-          default:
-            return 0;
-        }
+        return compareRenameFiles(a, b, sortConfig);
       });
 
       return sorted;
@@ -294,6 +292,41 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
       return files.filter((file) => file.status === 'conflict').length;
     },
 
+    get seriesResolutions(): SeriesGroupResolution[] {
+      return planSeriesNumbering(files, sortConfig, seasonAssignments).resolutions;
+    },
+
+    get seriesIssues(): SeriesNumberingIssue[] {
+      return planSeriesNumbering(files, sortConfig, seasonAssignments).issues;
+    },
+
+    get hasSeriesNumberingIssues(): boolean {
+      return workspace.seriesIssues.length > 0;
+    },
+
+    get hasEnabledSeriesRule(): boolean {
+      return rules.some((rule) => rule.enabled && rule.type === 'series-number');
+    },
+
+    get hasBlockingIssues(): boolean {
+      return workspace.hasConflicts || (workspace.hasEnabledSeriesRule && workspace.hasSeriesNumberingIssues);
+    },
+
+    hasSeriesIssuesForFiles(targetFiles: readonly RenameFile[]): boolean {
+      if (!workspace.hasEnabledSeriesRule) {
+        return false;
+      }
+      return planSeriesNumbering(targetFiles, sortConfig, seasonAssignments).issues.length > 0;
+    },
+
+    hasBlockingIssuesForFiles(targetFiles: readonly RenameFile[]): boolean {
+      const conflicts = workspace.getConflicts(targetFiles as RenameFile[]);
+      if (conflicts.size > 0) {
+        return true;
+      }
+      return workspace.hasSeriesIssuesForFiles(targetFiles);
+    },
+
     get isProcessing(): boolean {
       return progress.status === 'processing';
     },
@@ -311,6 +344,37 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
       return buildNewPath(file, getTargetPathOptions());
     },
 
+    get seasonAssignments(): ReadonlyMap<string, number> {
+      return seasonAssignments;
+    },
+
+    setSeasonAssignment(groupKey: string, seasonNumber: number): void {
+      if (!Number.isInteger(seasonNumber) || seasonNumber < 0) {
+        return;
+      }
+
+      const normalizedGroupKey = normalizePathForIdentity(groupKey);
+      seasonAssignments = new Map(seasonAssignments).set(normalizedGroupKey, seasonNumber);
+      scheduleRecalculation();
+    },
+
+    clearSeasonAssignment(groupKey: string): void {
+      const normalizedGroupKey = normalizePathForIdentity(groupKey);
+      if (!seasonAssignments.has(normalizedGroupKey)) {
+        return;
+      }
+
+      const nextAssignments = new Map(seasonAssignments);
+      nextAssignments.delete(normalizedGroupKey);
+      seasonAssignments = nextAssignments;
+      scheduleRecalculation();
+    },
+
+    assignSeasonsSequentially(): void {
+      seasonAssignments = assignSeriesSeasonsSequentially(files);
+      scheduleRecalculation();
+    },
+
     getConflicts(sourceFiles: RenameFile[] = files): Map<string, string[]> {
       return calculateConflicts(sourceFiles);
     },
@@ -320,6 +384,7 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
       const uniqueFiles = newFiles.filter((file) => !existingPaths.has(file.originalPath));
 
       files = [...files, ...uniqueFiles];
+      pruneSeasonAssignments();
       scheduleRecalculation();
     },
 
@@ -345,16 +410,19 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
 
       files = nextFiles;
 
+      pruneSeasonAssignments();
       scheduleRecalculation();
     },
 
     removeFile(id: string) {
       files = files.filter((file) => file.id !== id);
+      pruneSeasonAssignments();
       scheduleRecalculation();
     },
 
     removeSelected() {
       files = files.filter((file) => !file.selected);
+      pruneSeasonAssignments();
       scheduleRecalculation();
     },
 
@@ -389,6 +457,7 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
 
     clear() {
       files = [];
+      seasonAssignments = new Map();
       progress = createDefaultProgressState();
     },
 
@@ -645,6 +714,7 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
       outputDir = '';
       searchQuery = '';
       progress = createDefaultProgressState();
+      seasonAssignments = new Map();
     },
 
     resetProgress() {
@@ -668,10 +738,12 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
           newName: baseName,
           selected: true,
           status: 'pending' as const,
+          sourceGroup: sourceGroupForDirectFileParent(path),
         } as RenameFile;
       });
 
       files = newFiles;
+      seasonAssignments = new Map();
       scheduleRecalculation();
     },
 
@@ -685,6 +757,10 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
 
     get presetsLoaded(): boolean {
       return presetsLoaded;
+    },
+
+    get activePreset(): RulePreset | null {
+      return [...BUILT_IN_PRESETS, ...userPresets].find((preset) => preset.id === activePresetId) ?? null;
     },
 
     async loadPresets() {
@@ -717,13 +793,43 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
         enabled: rule.enabled,
         config: { ...rule.config },
       }));
+      activePresetId = preset.id;
 
       scheduleRecalculation();
     },
 
     async saveAsPreset(name: string, description: string): Promise<RulePreset | null> {
       try {
-        return await savePresetToStorage(name, description, rules);
+        const savedPreset = await savePresetToStorage(name, description, rules);
+        if (!userPresets.some((preset) => preset.id === savedPreset.id)) {
+          userPresets = [...userPresets, savedPreset];
+        }
+        activePresetId = savedPreset.id;
+        return savedPreset;
+      } catch (error) {
+        console.error('Failed to save preset:', error);
+        return null;
+      }
+    },
+
+    async saveActivePreset(): Promise<RulePreset | null> {
+      const activePreset = [...BUILT_IN_PRESETS, ...userPresets]
+        .find((preset) => preset.id === activePresetId);
+
+      if (!activePreset || activePreset.isBuiltIn) {
+        return null;
+      }
+
+      try {
+        const updatedPreset = await updatePresetInStorage(activePreset.id, { rules });
+        if (!updatedPreset) {
+          return null;
+        }
+
+        userPresets = userPresets.map((preset) => (
+          preset.id === updatedPreset.id ? updatedPreset : preset
+        ));
+        return updatedPreset;
       } catch (error) {
         console.error('Failed to save preset:', error);
         return null;
@@ -751,7 +857,11 @@ export function createRenameWorkspaceStore(options: RenameWorkspaceOptions = {})
 
     async deletePreset(presetId: string): Promise<boolean> {
       try {
-        return await deletePresetFromStorage(presetId);
+        const deleted = await deletePresetFromStorage(presetId);
+        if (deleted && activePresetId === presetId) {
+          activePresetId = null;
+        }
+        return deleted;
       } catch (error) {
         console.error('Failed to delete preset:', error);
         return false;

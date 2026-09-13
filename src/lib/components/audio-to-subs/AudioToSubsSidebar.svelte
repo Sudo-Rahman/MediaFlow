@@ -15,6 +15,7 @@
     isTranscribing: boolean;
     audioFormats: string;
     onBrowse: () => void | Promise<void>;
+    onBrowseFolders: () => void | Promise<void>;
     onImportFromSource: (sourceId: ImportSourceId) => void | Promise<void>;
     onCancelAll: () => void | Promise<void>;
     onClearAll: () => void;
@@ -31,6 +32,7 @@
     isTranscribing,
     audioFormats,
     onBrowse,
+    onBrowseFolders,
     onImportFromSource,
     onCancelAll,
     onClearAll,
@@ -73,6 +75,7 @@
         <ToolImportButton
           targetTool="audio-to-subs"
           onBrowse={onBrowse}
+          onBrowseFolders={onBrowseFolders}
           onSelectSource={onImportFromSource}
           disabled={isTranscribing}
         />

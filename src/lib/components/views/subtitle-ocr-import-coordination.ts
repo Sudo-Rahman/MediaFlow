@@ -1,5 +1,4 @@
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-dialog';
 
 import {
   buildStandaloneSubtitleOcrItems,
@@ -17,6 +16,11 @@ import type {
 } from '$lib/types';
 import { getFileName } from '$lib/utils/format';
 import { logAndToast } from '$lib/utils/log-toast';
+import {
+  expandToolImportRoots,
+  pickAndExpandToolImport,
+  toolImportPolicy,
+} from '$lib/services/import-coordination';
 
 import type {
   SubtitleOcrImportLease,
@@ -65,6 +69,7 @@ export interface SubtitleOcrImportCoordination {
   readonly hasHydrationWork: boolean;
   importPaths(paths: string[]): Promise<void>;
   handleImport(): Promise<void>;
+  handleImportFolders(): Promise<void>;
   handleFileDrop(paths: string[]): Promise<void>;
   handleImportTracks(selection: SubtitleOcrTrackImportSelection): Promise<void>;
   handleDialogOpenChange(open: boolean): void;
@@ -73,10 +78,6 @@ export interface SubtitleOcrImportCoordination {
   invalidateHydrations(): void;
   clear(): void;
 }
-
-const IMPORT_EXTENSIONS = [
-  'mkv', 'm2ts', 'mp4', 'avi', 'mov', 'webm', 'm4v', 'mks', 'sup', 'idx', 'sub',
-];
 
 export function createSubtitleOcrImportCoordination(
   context: SubtitleOcrImportCoordinationContext,
@@ -361,11 +362,25 @@ export function createSubtitleOcrImportCoordination(
 
   async function handleImport(): Promise<void> {
     try {
-      const selected = await open({
-        multiple: true,
-        filters: [{ name: 'Subtitle OCR sources', extensions: IMPORT_EXTENSIONS }],
-      });
-      if (selected) await importPaths(Array.isArray(selected) ? selected : [selected]);
+      const expandedFiles = await pickAndExpandToolImport(
+        toolImportPolicy('subtitle-ocr'),
+        'subtitle-ocr',
+        'files',
+      );
+      await importPaths(expandedFiles.map(({ path }) => path));
+    } catch (error) {
+      context.reportImportError(error);
+    }
+  }
+
+  async function handleImportFolders(): Promise<void> {
+    try {
+      const expandedFiles = await pickAndExpandToolImport(
+        toolImportPolicy('subtitle-ocr'),
+        'subtitle-ocr',
+        'folders',
+      );
+      await importPaths(expandedFiles.map(({ path }) => path));
     } catch (error) {
       context.reportImportError(error);
     }
@@ -373,7 +388,12 @@ export function createSubtitleOcrImportCoordination(
 
   async function handleFileDrop(paths: string[]): Promise<void> {
     try {
-      await importPaths(paths);
+      const expandedFiles = await expandToolImportRoots(
+        paths,
+        toolImportPolicy('subtitle-ocr'),
+        'subtitle-ocr',
+      );
+      await importPaths(expandedFiles.map(({ path }) => path));
     } catch (error) {
       context.reportImportError(error);
     }
@@ -448,6 +468,7 @@ export function createSubtitleOcrImportCoordination(
     },
     importPaths,
     handleImport,
+    handleImportFolders,
     handleFileDrop,
     handleImportTracks,
     handleDialogOpenChange,

@@ -21,6 +21,7 @@
     showImportButton?: boolean;
     importTargetTool?: ToolId;
     onBrowseImport?: () => void | Promise<void>;
+    onBrowseImportFolders?: () => void | Promise<void>;
     onSelectImportSource?: (sourceId: ImportSourceId) => void | Promise<void>;
     onClearAll?: () => void;
     onRemoveFile?: (id: string) => void;
@@ -36,6 +37,7 @@
     showImportButton = true,
     importTargetTool,
     onBrowseImport,
+    onBrowseImportFolders,
     onSelectImportSource,
     onClearAll,
     onRemoveFile,
@@ -134,11 +136,12 @@
 <div class={`h-full flex overflow-hidden ${className}`.trim()}>
   <div class="flex-1 flex flex-col overflow-hidden">
     <div class="p-3 border-b shrink-0 flex items-center gap-3">
-      {#if showImportButton && importTargetTool && onBrowseImport}
+      {#if showImportButton && importTargetTool && onBrowseImport && onBrowseImportFolders}
         <ToolImportButton
           targetTool={importTargetTool}
-          label="Add Files"
+          label="Import"
           onBrowse={onBrowseImport}
+          onBrowseFolders={onBrowseImportFolders}
           onSelectSource={onSelectImportSource}
         />
       {/if}

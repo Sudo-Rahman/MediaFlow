@@ -43,7 +43,8 @@
     onOpenInfo?: (id: string) => void;
     onRemoveFile?: (id: string) => void;
     onCancelFile?: (id: string) => void | Promise<void>;
-    onAddFiles?: () => void | Promise<void>;
+    onAddFiles: () => void | Promise<void>;
+    onAddFolders: () => void | Promise<void>;
     onClearAll?: () => void;
   }
 
@@ -59,6 +60,7 @@
     onRemoveFile,
     onCancelFile,
     onAddFiles,
+    onAddFolders,
     onClearAll,
   }: Props = $props();
 
@@ -108,8 +110,9 @@
       {/if}
       <ToolImportButton
         targetTool="transcode"
-        label="Add Files"
+        label="Import"
         onBrowse={onAddFiles}
+        onBrowseFolders={onAddFolders}
       />
     </div>
   </div>

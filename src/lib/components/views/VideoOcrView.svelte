@@ -37,7 +37,6 @@
   import { onDestroy, onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-  import { open } from '@tauri-apps/plugin-dialog';
   import { toast } from 'svelte-sonner';
 
   import * as Sheet from '$lib/components/ui/sheet';
@@ -53,6 +52,7 @@
     OcrZoneRole,
     VideoOcrSelection,
     VideoOcrPersistenceData,
+    ExpandedImportFile,
   } from '$lib/types';
   import { isLLMSelectionAvailable, VIDEO_EXTENSIONS } from '$lib/types';
   import { createAsyncTaskQueue } from '$lib/services/async-task-queue';
@@ -88,8 +88,14 @@
   import type { ProcessVideoOcrFileResult } from '$lib/components/video-ocr/video-ocr-processing';
   import { createOcrSegmentFromZone } from '$lib/utils';
   import { logAndToast } from '$lib/utils/log-toast';
+  import {
+    expandToolImportRoots,
+    pickAndExpandToolImport,
+    toolImportPolicy,
+  } from '$lib/services/import-coordination';
 
   const VIDEO_FORMATS = VIDEO_EXTENSIONS.map((ext) => ext.toUpperCase()).join(', ');
+  const importPolicy = toolImportPolicy('video-ocr');
   const FILE_PREPARATION_CONCURRENCY = 1;
   const OPTIONS_PANEL_BREAKPOINT_PX = 1280;
 
@@ -668,37 +674,19 @@
   }
 
   export async function handleFileDrop(paths: string[]): Promise<void> {
-    const videoExtensions = new Set(VIDEO_EXTENSIONS);
-    const videoPaths = paths.filter((path) => {
-      const ext = path.split('.').pop()?.toLowerCase() || '';
-      return videoExtensions.has(ext as typeof VIDEO_EXTENSIONS[number]);
-    });
-
-    if (videoPaths.length === 0) {
-      toast.warning('No video files found');
-      return;
-    }
-
-    await addFiles(videoPaths);
+    await addFiles(await expandToolImportRoots(paths, importPolicy, 'video-ocr'));
   }
 
   async function handleAddFiles(): Promise<void> {
-    const selected = await open({
-      multiple: true,
-      filters: [{
-        name: 'Video files',
-        extensions: [...VIDEO_EXTENSIONS],
-      }],
-    });
-
-    if (!selected) {
-      return;
-    }
-
-    await addFiles(Array.isArray(selected) ? selected : [selected]);
+    await addFiles(await pickAndExpandToolImport(importPolicy, 'video-ocr', 'files'));
   }
 
-  async function addFiles(paths: string[]): Promise<void> {
+  async function handleAddFolders(): Promise<void> {
+    await addFiles(await pickAndExpandToolImport(importPolicy, 'video-ocr', 'folders'));
+  }
+
+  async function addFiles(expandedFiles: readonly ExpandedImportFile[]): Promise<void> {
+    const paths = expandedFiles.map(({ path }) => path);
     const newFiles = videoOcrStore.addFilesFromPaths(paths);
     for (const file of newFiles) {
       queueFileInitialization(file);
@@ -1382,6 +1370,7 @@
         onViewResult={handleViewResult}
         onRetryFile={handleRetryFile}
         onAddFiles={handleAddFiles}
+        onAddFolders={handleAddFolders}
         onClearAll={handleRequestRemoveAll}
       />
     {/if}

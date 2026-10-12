@@ -15,11 +15,12 @@
 
   interface Props {
     onAddTrackFiles: () => void | Promise<void>;
+    onAddTrackFolders: () => void | Promise<void>;
     onEditImportedTrack: (trackId: string) => void;
     onImportFromSource: (sourceId: ImportSourceId) => void | Promise<void>;
   }
 
-  let { onAddTrackFiles, onEditImportedTrack, onImportFromSource }: Props = $props();
+  let { onAddTrackFiles, onAddTrackFolders, onEditImportedTrack, onImportFromSource }: Props = $props();
 
   const FLIP_DURATION_MS = 200;
 
@@ -112,6 +113,7 @@
       label="Add tracks"
       sourceFilter={['extraction_outputs']}
       onBrowse={onAddTrackFiles}
+      onBrowseFolders={onAddTrackFolders}
       onSelectSource={onImportFromSource}
     />
   </div>

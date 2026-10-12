@@ -7,6 +7,7 @@ pub(crate) use crate::tools::ffmpeg::version as ffmpeg_version;
 pub(crate) use crate::tools::ffprobe::probe as ffprobe;
 pub(crate) use crate::tools::fs::cancel as fs_cancel;
 pub(crate) use crate::tools::fs::file_ops as fs_file_ops;
+pub(crate) use crate::tools::fs::import as fs_import;
 pub(crate) use crate::tools::fs::metadata as fs_metadata;
 pub(crate) use crate::tools::fs::open_folder as fs_open_folder;
 pub(crate) use crate::tools::llm;

@@ -12,7 +12,7 @@
     title: string;
     formats: string | string[];
     subtitle?: string;
-    onBrowse?: () => void;
+    onBrowse: () => void | Promise<void>;
     disabled?: boolean;
     class?: string;
     isDragging?: boolean;
@@ -33,10 +33,9 @@
 
   const formatText = $derived(Array.isArray(formats) ? formats.join(', ') : formats);
   const dragActive = $derived((isDragging ?? isDraggingLocal) && !disabled);
-
   function handleBrowse() {
     if (disabled) return;
-    onBrowse?.();
+    void onBrowse();
   }
 </script>
 

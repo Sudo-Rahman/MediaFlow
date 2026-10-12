@@ -41,6 +41,7 @@ pub fn run() {
             commands::merge_cancel::cancel_merge_file,
             commands::fs_file_ops::rename_file,
             commands::fs_file_ops::copy_file,
+            commands::fs_import::expand_import_roots,
             commands::fs_cancel::cancel_copy_file,
             commands::fs_metadata::get_file_metadata,
             commands::tokens::count_tokens,

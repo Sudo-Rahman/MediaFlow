@@ -15,6 +15,7 @@
     selectedFileId: string | null;
     supportedFormats: string[];
     onBrowse: () => void | Promise<void>;
+    onBrowseFolders: () => void | Promise<void>;
     onSelectSource: (sourceId: ImportSourceId) => void | Promise<void>;
     onSelectFile: (fileId: string) => void;
     onRemoveFile: (fileId: string) => void;
@@ -26,6 +27,7 @@
     selectedFileId,
     supportedFormats,
     onBrowse,
+    onBrowseFolders,
     onSelectSource,
     onSelectFile,
     onRemoveFile,
@@ -50,6 +52,7 @@
       <ToolImportButton
         targetTool="info"
         onBrowse={onBrowse}
+        onBrowseFolders={onBrowseFolders}
         onSelectSource={onSelectSource}
       />
     </div>

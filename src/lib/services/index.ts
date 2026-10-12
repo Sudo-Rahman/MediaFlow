@@ -16,3 +16,7 @@ export * from './subtitle-interop';
 export * from './transcode';
 export * from './transcode-ai';
 export * from './output-folder';
+export * from './file-import';
+export * from './import-coordination';
+export * from './series-parser';
+export * from './series-numbering';

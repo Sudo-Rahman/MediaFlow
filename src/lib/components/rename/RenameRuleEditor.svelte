@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Plus, Trash2, TextCursorInput, Type, Replace, Regex, Eraser, CaseSensitive, Hash, MoveHorizontal, Clock, CircleOff, Text } from '@lucide/svelte';
+  import { Plus, Trash2, TextCursorInput, Type, Replace, Regex, Eraser, CaseSensitive, Hash, ListOrdered, MoveHorizontal, Clock, CircleOff, Text } from '@lucide/svelte';
   import { cn } from '$lib/utils';
   import type { RenameRule, RuleType, RuleConfig } from '$lib/types/rename';
   import type { RenameWorkspaceStore } from '$lib/stores/rename.svelte';
@@ -16,6 +16,7 @@
   import RemoveRule from './rules/RemoveRule.svelte';
   import CaseRule from './rules/CaseRule.svelte';
   import NumberRule from './rules/NumberRule.svelte';
+  import SeriesNumberRule from './rules/SeriesNumberRule.svelte';
   import MoveRule from './rules/MoveRule.svelte';
   import TimestampRule from './rules/TimestampRule.svelte';
   import ClearRule from './rules/ClearRule.svelte';
@@ -72,6 +73,7 @@
     remove: Eraser,
     case: CaseSensitive,
     number: Hash,
+    'series-number': ListOrdered,
     move: MoveHorizontal,
     timestamp: Clock,
     clear: CircleOff,
@@ -80,7 +82,7 @@
 
   const ruleTypes: RuleType[] = [
     'prefix', 'suffix', 'replace', 'regex', 
-    'remove', 'case', 'number', 'move', 'timestamp',
+    'remove', 'case', 'number', 'series-number', 'move', 'timestamp',
     'clear', 'text'
   ];
 
@@ -92,6 +94,15 @@
   function handleCloseDialog() {
     editingRuleId = null;
     dialogOpen = false;
+  }
+
+  function handleDialogKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Enter' || event.isComposing || !(event.target instanceof HTMLInputElement)) {
+      return;
+    }
+
+    event.preventDefault();
+    handleCloseDialog();
   }
 
   function handleDndConsider(e: CustomEvent<DndEvent<RenameRule>>) {
@@ -135,7 +146,7 @@
         <DropdownMenu.Content align="end" class="w-56">
           <DropdownMenu.Label>Add Rule</DropdownMenu.Label>
           <DropdownMenu.Separator />
-          {#each ruleTypes as type}
+          {#each ruleTypes as type (type)}
             {@const Icon = RULE_ICONS[type]}
             <DropdownMenu.Item onclick={() => onAddRule(type)}>
               <Icon class="size-4 mr-2" />
@@ -204,7 +215,13 @@
 
 <!-- Edit Rule Dialog -->
 <Dialog.Root bind:open={dialogOpen}>
-  <Dialog.Content class="max-w-md">
+  <Dialog.Content
+    onkeydown={handleDialogKeydown}
+    class={cn(
+      'max-h-[85vh] overflow-x-hidden overflow-y-auto',
+      editingRule?.type === 'series-number' ? 'sm:max-w-2xl' : 'sm:max-w-md',
+    )}
+  >
     <Dialog.Header>
       <Dialog.Title>
         {#if editingRule}
@@ -219,7 +236,7 @@
     </Dialog.Header>
     
     {#if editingRule}
-      <div class="py-4">
+      <div class="min-w-0 py-4">
         {#if editingRule.type === 'prefix'}
           <PrefixRule 
             config={editingRule.config as import('$lib/types/rename').PrefixConfig}
@@ -253,6 +270,12 @@
         {:else if editingRule.type === 'number'}
           <NumberRule 
             config={editingRule.config as import('$lib/types/rename').NumberConfig}
+            onUpdate={(config) => onUpdateRuleConfig(editingRule.id, config)}
+          />
+        {:else if editingRule.type === 'series-number'}
+          <SeriesNumberRule
+            {workspace}
+            config={editingRule.config as import('$lib/types/rename').SeriesNumberConfig}
             onUpdate={(config) => onUpdateRuleConfig(editingRule.id, config)}
           />
         {:else if editingRule.type === 'move'}

@@ -1,6 +1,7 @@
 import type { FileRunState } from './progress';
 import type { FFprobeOutput, Track } from './media';
 import type { LLMProvider } from './translation';
+import type { SourceGroup } from './source-group';
 
 export type TranscodeMode = 'ai' | 'advanced';
 export type TranscodeTab = 'video' | 'audio' | 'subtitles' | 'metadata' | 'output';
@@ -251,6 +252,7 @@ export interface TranscodeFile {
   aiError?: string;
   aiRecommendation?: TranscodeAiRecommendation;
   lastOutputPath?: string;
+  sourceGroup?: SourceGroup;
 }
 
 export interface TranscodeRuntimeProgress {

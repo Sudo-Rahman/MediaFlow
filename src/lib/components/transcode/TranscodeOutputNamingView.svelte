@@ -41,7 +41,7 @@
     onClearAll={onClearAll}
     onRemoveFile={onRemoveFile}
     emptyStateTitle="No files in the transcode queue"
-    emptyStateSubtitle="Add files in Transcode to prepare output names."
+    emptyStateSubtitle="Import files in Transcode to prepare output names."
   >
     {#snippet actionPanel()}
       <div class="space-y-3">
@@ -69,6 +69,14 @@
               {outputConflictCount}
             </Badge>
           </Item.Root>
+          {#if workspace.hasEnabledSeriesRule && workspace.hasSeriesNumberingIssues}
+            <Item.Root variant="outline" size="xs" class="justify-between" role="listitem">
+              <Item.Title>Series numbering</Item.Title>
+              <Badge variant="destructive">
+                Needs selection
+              </Badge>
+            </Item.Root>
+          {/if}
         </Item.Group>
       </div>
     {/snippet}

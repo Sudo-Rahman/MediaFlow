@@ -9,7 +9,6 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
-  import { open } from '@tauri-apps/plugin-dialog';
   import { toast } from 'svelte-sonner';
   import type { UnlistenFn } from '@tauri-apps/api/event';
 
@@ -19,7 +18,12 @@
   import { pickOutputDirectory } from '$lib/services/output-folder';
   import { getFileName } from '$lib/utils/format';
   import { logAndToast } from '$lib/utils/log-toast';
-  import type { ExtractProgressEvent, Track, VideoFile } from '$lib/types';
+  import type { ExtractProgressEvent, ExpandedImportFile, Track, VideoFile } from '$lib/types';
+  import {
+    expandToolImportRoots,
+    pickAndExpandToolImport,
+    toolImportPolicy,
+  } from '$lib/services/import-coordination';
 
   import {
     ExtractionPanel,
@@ -31,6 +35,7 @@
   const SUPPORTED_EXTENSIONS = ['.mkv', '.mp4', '.avi', '.mov', '.webm', '.m4v', '.mks', '.mka'] as const;
   const SUPPORTED_FORMATS = SUPPORTED_EXTENSIONS.map((ext) => ext.slice(1).toUpperCase());
   const EXTRACTION_SOURCE_LABEL = 'Extraction';
+  const importPolicy = toolImportPolicy('extract');
 
   interface ExtractedOutputItem {
     key: string;
@@ -148,13 +153,9 @@
     return null;
   }
 
-  export async function handleFileDrop(paths: string[]) {
-    const videoPaths = paths.filter(p =>
-      SUPPORTED_EXTENSIONS.some(ext => p.toLowerCase().endsWith(ext))
-    );
-
+  async function importExpandedFiles(expandedFiles: readonly ExpandedImportFile[]): Promise<void> {
+    const videoPaths = expandedFiles.map(({ path }) => path);
     if (videoPaths.length === 0) {
-      toast.warning('No valid media files detected');
       return;
     }
 
@@ -169,7 +170,7 @@
       name: getFileName(path),
       size: 0,
       tracks: [],
-      status: 'scanning' as const
+      status: 'scanning' as const,
     }));
 
     fileListStore.addFiles(pendingFiles);
@@ -198,25 +199,30 @@
     toast.success(`${videoPaths.length} file(s) imported`);
   }
 
+  export async function handleFileDrop(paths: string[]) {
+    await importExpandedFiles(await expandToolImportRoots(paths, importPolicy, 'extraction'));
+  }
+
   async function handleImportClick() {
     try {
-      const selected = await open({
-        multiple: true,
-        filters: [{
-          name: 'Media files',
-          extensions: SUPPORTED_EXTENSIONS.map(ext => ext.slice(1))
-        }]
-      });
-
-      if (selected) {
-        const paths = Array.isArray(selected) ? selected : [selected];
-        await handleFileDrop(paths);
-      }
+      await importExpandedFiles(await pickAndExpandToolImport(importPolicy, 'extraction', 'files'));
     } catch (error) {
       logAndToast.error({
         source: 'extraction',
         title: 'Error opening file dialog',
         details: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  async function handleImportFolders(): Promise<void> {
+    try {
+      await importExpandedFiles(await pickAndExpandToolImport(importPolicy, 'extraction', 'folders'));
+    } catch (error) {
+      logAndToast.error({
+        source: 'extraction',
+        title: 'Error opening folder dialog',
+        details: error instanceof Error ? error.message : String(error),
       });
     }
   }
@@ -713,6 +719,7 @@
     currentProcessingPath={activeExtractionFilePath}
     supportedFormats={SUPPORTED_FORMATS}
     onImport={handleImportClick}
+    onImportFolders={handleImportFolders}
     onClearAll={handleRequestClearAll}
     onSelectFile={(path) => fileListStore.selectFile(path)}
     onCancelFile={(path) => { void handleCancelFile(path); }}

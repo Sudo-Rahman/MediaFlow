@@ -20,6 +20,7 @@
     onViewResult: (file: OcrVideoFile) => void;
     onRetryFile: (file: OcrVideoFile) => void;
     onAddFiles: () => void | Promise<void>;
+    onAddFolders: () => void | Promise<void>;
     onClearAll: () => void | Promise<void>;
   }
 
@@ -35,6 +36,7 @@
     onViewResult,
     onRetryFile,
     onAddFiles,
+    onAddFolders,
     onClearAll,
   }: VideoOcrSidebarProps = $props();
 
@@ -61,6 +63,7 @@
       <ToolImportButton
         targetTool="video-ocr"
         onBrowse={() => void onAddFiles()}
+        onBrowseFolders={() => void onAddFolders()}
         disabled={isProcessing}
       />
     </div>

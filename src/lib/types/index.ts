@@ -9,5 +9,7 @@ export * from './audio-to-subs';
 export * from './video-ocr';
 export * from './mediaflow';
 export * from './tool-import';
+export * from './source-group';
+export * from './import-policy';
 export * from './progress';
 export * from './transcode';

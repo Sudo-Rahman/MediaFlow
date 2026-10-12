@@ -1,3 +1,5 @@
+import type { SourceGroup } from './source-group';
+
 // Types for the Rename Tool
 
 /**
@@ -26,6 +28,11 @@ export interface RenameFile {
   size?: number;
   modifiedAt?: Date;
   createdAt?: Date;
+  /** Import root provenance used to retain folder grouping through rename. */
+  sourceGroup?: SourceGroup;
+  /** Series metadata carried across output naming workflows. */
+  seasonNumber?: number;
+  episodeNumber?: number;
 }
 
 export type RenameFileStatus = 'pending' | 'processing' | 'success' | 'error' | 'conflict' | 'cancelled';
@@ -41,6 +48,7 @@ export type RuleType =
   | 'remove'
   | 'case'
   | 'number'
+  | 'series-number'
   | 'move'
   | 'timestamp'
   | 'clear'
@@ -91,6 +99,14 @@ export interface NumberConfig {
   separator: string;
 }
 
+export interface SeriesNumberConfig {
+  position: 'prefix' | 'suffix' | 'replace';
+  start: number;
+  step: number;
+  padding: number;
+  separator: string;
+}
+
 export interface MoveConfig {
   from: number;
   length: number;
@@ -122,6 +138,7 @@ export type RuleConfig =
   | RemoveConfig
   | CaseConfig
   | NumberConfig
+  | SeriesNumberConfig
   | MoveConfig
   | TimestampConfig
   | ClearConfig
@@ -135,6 +152,13 @@ export interface RenameRule {
   type: RuleType;
   enabled: boolean;
   config: RuleConfig;
+}
+
+/** Indexes used while applying rules to the canonical selected-file order. */
+export interface RenameRuleContext {
+  globalIndex: number;
+  seriesIndex: number;
+  seasonNumber?: number;
 }
 
 /**
@@ -182,6 +206,7 @@ export const DEFAULT_RULE_CONFIGS: Record<RuleType, RuleConfig> = {
   remove: { mode: 'first', count: 1, from: 0, to: 0, pattern: '' } as RemoveConfig,
   case: { mode: 'lower' } as CaseConfig,
   number: { position: 'suffix', start: 1, step: 1, padding: 2, separator: '_' } as NumberConfig,
+  'series-number': { position: 'suffix', start: 1, step: 1, padding: 2, separator: '_' } as SeriesNumberConfig,
   move: { from: 0, length: 1, to: 0 } as MoveConfig,
   timestamp: { format: 'YYYY-MM-DD', position: 'prefix', separator: '_', source: 'current' } as TimestampConfig,
   clear: {} as ClearConfig,
@@ -199,6 +224,7 @@ export const RULE_TYPE_LABELS: Record<RuleType, string> = {
   remove: 'Remove',
   case: 'Change Case',
   number: 'Numbering',
+  'series-number': 'Series Numbering',
   move: 'Move/Swap',
   timestamp: 'Timestamp',
   clear: 'Clear',
@@ -216,6 +242,7 @@ export const RULE_TYPE_DESCRIPTIONS: Record<RuleType, string> = {
   remove: 'Remove characters or patterns',
   case: 'Change text case (upper/lower/title)',
   number: 'Add sequential numbering',
+  'series-number': 'Add season and episode numbering per source group',
   move: 'Move a segment to another position',
   timestamp: 'Add date/time stamp',
   clear: 'Remove entire filename',

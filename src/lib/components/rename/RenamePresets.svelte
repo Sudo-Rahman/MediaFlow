@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { FolderOpen, Save, Star, Trash2, ChevronDown, Check } from '@lucide/svelte';
+  import { FolderOpen, Save, CopyPlus, Star, Trash2, ChevronDown, Check } from '@lucide/svelte';
   import type { RulePreset } from '$lib/types/rename';
   import type { RenameWorkspaceStore } from '$lib/stores/rename.svelte';
   import { toast } from 'svelte-sonner';
@@ -42,8 +42,9 @@
   const builtInPresets = $derived(presets.filter(p => p.isBuiltIn));
   const userPresets = $derived(presets.filter(p => !p.isBuiltIn));
   const hasRules = $derived(workspace.rules.length > 0);
+  const activePreset = $derived(workspace.activePreset);
 
-  async function handleSavePreset() {
+  async function handleSaveAsPreset() {
     if (!presetName.trim()) {
       toast.error('Please enter a preset name');
       return;
@@ -53,10 +54,32 @@
     try {
       const result = await workspace.saveAsPreset(presetName.trim(), presetDescription.trim());
       if (result) {
-        toast.success(`Preset "${presetName}" saved`);
+        toast.success(`Preset "${result.name}" saved`);
         saveDialogOpen = false;
         presetName = '';
         presetDescription = '';
+      } else {
+        toast.error('Failed to save preset');
+      }
+    } catch (error) {
+      console.error('Save preset error:', error);
+      toast.error('Failed to save preset');
+    } finally {
+      isSaving = false;
+    }
+  }
+
+  async function handleSaveCurrentPreset() {
+    if (!activePreset || activePreset.isBuiltIn) {
+      openSaveDialog();
+      return;
+    }
+
+    isSaving = true;
+    try {
+      const result = await workspace.saveActivePreset();
+      if (result) {
+        toast.success(`Preset "${result.name}" updated`);
       } else {
         toast.error('Failed to save preset');
       }
@@ -113,20 +136,23 @@
     </DropdownMenu.Trigger>
     <DropdownMenu.Content align="start" class="w-64">
       <DropdownMenu.Label>Built-in Presets</DropdownMenu.Label>
-      {#each builtInPresets as preset}
+      {#each builtInPresets as preset (preset.id)}
         <DropdownMenu.Item onclick={() => handleLoadPreset(preset)}>
           <Star class="size-4 mr-2 text-yellow-500" />
           <div class="flex-1 min-w-0">
             <p class="truncate">{preset.name}</p>
             <p class="text-xs text-muted-foreground truncate">{preset.description}</p>
           </div>
+          {#if activePreset?.id === preset.id}
+            <Check class="size-4 ml-2" />
+          {/if}
         </DropdownMenu.Item>
       {/each}
-      
+
       {#if userPresets.length > 0}
         <DropdownMenu.Separator />
         <DropdownMenu.Label>My Presets</DropdownMenu.Label>
-        {#each userPresets as preset}
+        {#each userPresets as preset (preset.id)}
           <DropdownMenu.Item class="group" onclick={() => handleLoadPreset(preset)}>
             <div class="flex-1 min-w-0">
               <p class="truncate">{preset.name}</p>
@@ -134,6 +160,9 @@
                 <p class="text-xs text-muted-foreground truncate">{preset.description}</p>
               {/if}
             </div>
+            {#if activePreset?.id === preset.id}
+              <Check class="size-4 ml-2" />
+            {/if}
             <button
               class="opacity-0 group-hover:opacity-100 p-1 hover:text-destructive transition-opacity"
               onclick={(e) => {
@@ -149,15 +178,25 @@
     </DropdownMenu.Content>
   </DropdownMenu.Root>
 
-  <!-- Save Preset Button -->
+  <!-- Save Preset Buttons -->
   <Button 
     variant="outline" 
     size="sm" 
-    disabled={!hasRules}
-    onclick={openSaveDialog}
+    disabled={!hasRules || isSaving}
+    onclick={handleSaveCurrentPreset}
+    title={activePreset && !activePreset.isBuiltIn ? `Save "${activePreset.name}"` : 'Save as a new preset'}
   >
     <Save class="size-4 mr-1.5" />
     Save
+  </Button>
+  <Button
+    variant="outline"
+    size="sm"
+    disabled={!hasRules || isSaving}
+    onclick={openSaveDialog}
+  >
+    <CopyPlus class="size-4 mr-1.5" />
+    Save As
   </Button>
 </div>
 
@@ -165,9 +204,9 @@
 <Dialog.Root bind:open={saveDialogOpen}>
   <Dialog.Content class="max-w-md">
     <Dialog.Header>
-      <Dialog.Title>Save Preset</Dialog.Title>
+      <Dialog.Title>Save Preset As</Dialog.Title>
       <Dialog.Description>
-        Save your current rules as a reusable preset.
+        Save your current rules as a new reusable preset.
       </Dialog.Description>
     </Dialog.Header>
     
@@ -200,7 +239,7 @@
       <Button variant="outline" onclick={() => saveDialogOpen = false}>
         Cancel
       </Button>
-      <Button onclick={handleSavePreset} disabled={isSaving}>
+      <Button onclick={handleSaveAsPreset} disabled={isSaving}>
         {#if isSaving}
           Saving...
         {:else}
